@@ -1,0 +1,1514 @@
+import * as fs from "fs";
+import * as path from "path";
+import { readSettings, readAccounts, writeSettings } from "./serverUtils";
+import {
+  AccountInfo,
+  getDownloadUrlWeb,
+  fs_dir_getid,
+  fs_files,
+  getFileInfoById,
+} from "./115";
+import {
+  lifeShow,
+  oncePullLifeEvents,
+  LifeEvent,
+  CREATE_EVENT_TYPES,
+  MOVE_EVENT_TYPES,
+  RENAME_EVENT_TYPES,
+  DELETE_EVENT_TYPES,
+  NEW_FOLDER_EVENT_TYPES,
+  BEHAVIOR_TYPE_TO_NAME,
+} from "./115Life";
+
+// ==================== Types ====================
+
+export interface LifeMonitorConfig {
+  enabled: boolean;
+  accounts: string[];
+  pollInterval: number;
+  pathMappings: Array<{
+    cloudPath: string;
+    localPath: string;
+  }>;
+  mediaExtensions: string[];
+  removeEmptyDirs: boolean;
+  eventTypes: {
+    create: boolean;
+    remove: boolean;
+    rename: boolean;
+    move: boolean;
+  };
+  strmPrefix?: string;
+  enablePathEncoding?: boolean;
+}
+
+export interface LifeMonitorState {
+  running: boolean;
+  account: string;
+  lastFromTime: number;
+  lastFromId: number;
+  lastCheckTime: number;
+  eventsProcessed: number;
+  lastError?: string;
+  status: "idle" | "starting" | "running" | "stopping" | "error";
+}
+
+export interface EventProcessResult {
+  eventId: number;
+  eventType: number;
+  eventTypeName: string;
+  action: "create" | "remove" | "move" | "rename" | "skip" | "error";
+  filePath?: string;
+  localPath?: string;
+  message?: string;
+  success: boolean;
+  timestamp: number;
+}
+
+export type LifeMonitorCallback = (
+  event: "status" | "event" | "log",
+  data: LifeMonitorState | EventProcessResult | string
+) => void;
+
+// ==================== Constants ====================
+
+const DEFAULT_CONFIG: LifeMonitorConfig = {
+  enabled: false,
+  accounts: [],
+  pollInterval: 30,
+  pathMappings: [],
+  mediaExtensions: [".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm"],
+  removeEmptyDirs: true,
+  eventTypes: {
+    create: true,
+    remove: true,
+    rename: true,
+    move: true,
+  },
+  strmPrefix: "",
+  enablePathEncoding: false,
+};
+
+const CONFIG_DIR = path.join(process.cwd(), "../config");
+const stateFile = path.join(CONFIG_DIR, "lifeMonitorState.json");
+const idPathCacheFile = path.join(CONFIG_DIR, "lifeIdPathCache.json");
+const filePathDbFile = path.join(CONFIG_DIR, "lifeFilePathDb.json");
+const apiFallbackFile = path.join(CONFIG_DIR, "lifeApiFallback.json");
+
+const WEB_FALLBACK_DURATION = 24 * 60 * 60;
+const MAX_RECURSION_DEPTH = 10;
+const MAX_FOLDER_FILES = 1000;
+
+// ==================== Global State ====================
+
+const monitorStates = new Map<string, LifeMonitorState>();
+const monitorTimers = new Map<string, NodeJS.Timeout>();
+const monitorCallbacks = new Map<string, Set<LifeMonitorCallback>>();
+
+// In-memory ID→Path cache: key = "accountName:cid"
+const idPathMemoryCache = new Map<string, string>();
+
+// Ensure config directory exists
+function ensureConfigDir() {
+  if (!fs.existsSync(CONFIG_DIR)) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+}
+
+// ==================== Persistent ID→Path Cache ====================
+
+function readIdPathCache(): Record<string, string> {
+  ensureConfigDir();
+  if (!fs.existsSync(idPathCacheFile)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(idPathCacheFile, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeIdPathCache(cache: Record<string, string>) {
+  ensureConfigDir();
+  fs.writeFileSync(idPathCacheFile, JSON.stringify(cache, null, 2), "utf-8");
+}
+
+function getIdPath(account: string, cid: number): string | undefined {
+  const cacheKey = `${account}:${cid}`;
+  const memCached = idPathMemoryCache.get(cacheKey);
+  if (memCached) return memCached;
+
+  const diskCache = readIdPathCache();
+  const diskCached = diskCache[cacheKey];
+  if (diskCached) {
+    idPathMemoryCache.set(cacheKey, diskCached);
+    return diskCached;
+  }
+  return undefined;
+}
+
+function setIdPath(account: string, cid: number, pathStr: string) {
+  const cacheKey = `${account}:${cid}`;
+  idPathMemoryCache.set(cacheKey, pathStr);
+  const diskCache = readIdPathCache();
+  diskCache[cacheKey] = pathStr;
+  writeIdPathCache(diskCache);
+}
+
+// ==================== File Path Database (for old path lookup) ====================
+
+interface FilePathEntry {
+  fileId: number;
+  path: string;
+  fileName: string;
+  parentId: number;
+  pickCode: string;
+  updateTime: number;
+}
+
+function readFilePathDb(): Record<string, FilePathEntry> {
+  ensureConfigDir();
+  if (!fs.existsSync(filePathDbFile)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(filePathDbFile, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeFilePathDb(db: Record<string, FilePathEntry>) {
+  ensureConfigDir();
+  fs.writeFileSync(filePathDbFile, JSON.stringify(db, null, 2), "utf-8");
+}
+
+function filePathDbKey(account: string, fileId: number): string {
+  return `${account}:${fileId}`;
+}
+
+function getFilePathEntry(account: string, fileId: number): FilePathEntry | undefined {
+  const db = readFilePathDb();
+  return db[filePathDbKey(account, fileId)];
+}
+
+function upsertFilePathEntry(account: string, entry: FilePathEntry) {
+  const db = readFilePathDb();
+  db[filePathDbKey(account, entry.fileId)] = entry;
+  writeFilePathDb(db);
+}
+
+function removeFilePathEntry(account: string, fileId: number) {
+  const db = readFilePathDb();
+  delete db[filePathDbKey(account, fileId)];
+  writeFilePathDb(db);
+}
+
+// ==================== API Fallback State ====================
+
+interface ApiFallbackState {
+  ios405Count: number;
+  webFallbackUntil: number;
+}
+
+function readApiFallback(): Record<string, ApiFallbackState> {
+  ensureConfigDir();
+  if (!fs.existsSync(apiFallbackFile)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(apiFallbackFile, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeApiFallback(state: Record<string, ApiFallbackState>) {
+  ensureConfigDir();
+  fs.writeFileSync(apiFallbackFile, JSON.stringify(state, null, 2), "utf-8");
+}
+
+function getPreferredApi(account: string): "ios" | "web" {
+  const state = readApiFallback();
+  const fallback = state[account];
+  if (fallback?.webFallbackUntil && Date.now() / 1000 < fallback.webFallbackUntil) {
+    return "web";
+  }
+  if (fallback?.webFallbackUntil) {
+    delete fallback.webFallbackUntil;
+    state[account] = fallback;
+    writeApiFallback(state);
+  }
+  return "ios";
+}
+
+function record405Error(account: string, app: "ios" | "web") {
+  const state = readApiFallback();
+  let fallback = state[account] || { ios405Count: 0, webFallbackUntil: 0 };
+
+  if (app === "ios") {
+    fallback.ios405Count++;
+    if (fallback.ios405Count >= 3) {
+      fallback.webFallbackUntil = Math.floor(Date.now() / 1000) + WEB_FALLBACK_DURATION;
+      fallback.ios405Count = 0;
+      console.warn(`[LifeMonitor] ${account}: iOS API 连续3次405，24小时内切换为Web API`);
+    }
+  } else {
+    fallback.ios405Count = 0;
+  }
+  state[account] = fallback;
+  writeApiFallback(state);
+}
+
+function reset405Count(account: string) {
+  const state = readApiFallback();
+  if (state[account]) {
+    state[account].ios405Count = 0;
+    writeApiFallback(state);
+  }
+}
+
+// ==================== State Management ====================
+
+function readState(): Record<string, { fromTime: number; fromId: number }> {
+  ensureConfigDir();
+  if (!fs.existsSync(stateFile)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function saveState(account: string, fromTime: number, fromId: number) {
+  const allState = readState();
+  allState[account] = { fromTime, fromId };
+  ensureConfigDir();
+  fs.writeFileSync(stateFile, JSON.stringify(allState, null, 2), "utf-8");
+}
+
+export function getLifeMonitorConfig(): LifeMonitorConfig {
+  const settings = readSettings();
+  const monitor = (settings as Record<string, unknown>).lifeMonitor as LifeMonitorConfig | undefined;
+  if (!monitor) return { ...DEFAULT_CONFIG };
+  return {
+    ...DEFAULT_CONFIG,
+    ...monitor,
+    eventTypes: { ...DEFAULT_CONFIG.eventTypes, ...(monitor.eventTypes || {}) },
+  };
+}
+
+export function saveLifeMonitorConfig(config: LifeMonitorConfig): void {
+  const settings = readSettings();
+  (settings as Record<string, unknown>).lifeMonitor = config;
+  writeSettings(settings);
+}
+
+export function getAllMonitorStates(): Map<string, LifeMonitorState> {
+  return new Map(monitorStates);
+}
+
+export function subscribeMonitor(account: string, callback: LifeMonitorCallback): () => void {
+  if (!monitorCallbacks.has(account)) {
+    monitorCallbacks.set(account, new Set());
+  }
+  monitorCallbacks.get(account)!.add(callback);
+  const state = monitorStates.get(account);
+  if (state) callback("status", state);
+  return () => {
+    monitorCallbacks.get(account)?.delete(callback);
+  };
+}
+
+function notifyCallbacks(account: string, type: "status" | "event" | "log", data: unknown) {
+  const callbacks = monitorCallbacks.get(account);
+  if (callbacks) {
+    callbacks.forEach((cb) => {
+      try {
+        cb(type, data as LifeMonitorState | EventProcessResult | string);
+      } catch (err) {
+        console.error("Life monitor callback error:", err);
+      }
+    });
+  }
+}
+
+function updateState(account: string, partial: Partial<LifeMonitorState>) {
+  const current = monitorStates.get(account) || {
+    running: false,
+    account,
+    lastFromTime: 0,
+    lastFromId: 0,
+    lastCheckTime: 0,
+    eventsProcessed: 0,
+    status: "idle",
+  };
+  const updated = { ...current, ...partial };
+  monitorStates.set(account, updated);
+  notifyCallbacks(account, "status", updated);
+}
+
+// ==================== Path Resolution (3-tier cache) ====================
+
+async function resolvePathByCid(
+  accountInfo: AccountInfo,
+  cid: number
+): Promise<string> {
+  if (cid === 0) return "/";
+
+  const account = accountInfo.name;
+
+  // Tier 1: Memory cache
+  const memCached = getIdPath(account, cid);
+  if (memCached) return memCached;
+
+  // Tier 2: Try to resolve from known path mappings
+  // Check if this CID corresponds to one of our mapped paths
+  const config = getLifeMonitorConfig();
+  for (const mapping of config.pathMappings) {
+    try {
+      const mappedCid = await fs_dir_getid(mapping.cloudPath, {
+        userAgent: readSettings()["user-agent"],
+        accountInfo: accountInfo as AccountInfo,
+      });
+      if (mappedCid === cid) {
+        setIdPath(account, cid, mapping.cloudPath);
+        return mapping.cloudPath;
+      }
+    } catch {
+      // Ignore errors for individual mappings
+    }
+  }
+
+  // Tier 3: Use API to resolve
+  try {
+    const { default: axios } = await import("axios");
+    const userAgent = readSettings()["user-agent"] || "Mozilla/5.0";
+
+    // Try webapi.115.com/files to get file info including parent path
+    const fileInfo = await getFileInfoById(cid, {
+      userAgent,
+      accountInfo: accountInfo as AccountInfo,
+    });
+
+    // If file info includes path, use it
+    if (fileInfo && typeof fileInfo === "object") {
+      const info = fileInfo as Record<string, unknown>;
+      const pathVal = info.path as string | undefined;
+      if (pathVal) {
+        setIdPath(account, cid, pathVal);
+        return pathVal;
+      }
+    }
+
+    // Fallback: use webapi files listing to find the directory name
+    // Then recursively resolve parent
+    const filesData = await fs_files(cid, {
+      userAgent,
+      limit: 1,
+      accountInfo: accountInfo as AccountInfo,
+    });
+
+    // Use the export_dir approach as last resort for path resolution
+    const exportUrl = "https://proapi.115.com/android/2.0/ufile/export_dir";
+    const formData = new URLSearchParams();
+    formData.append("file_ids", String(cid));
+    formData.append("target", "U_1_0");
+    formData.append("layer_limit", "1");
+
+    const exportResp = await axios.post(exportUrl, formData, {
+      headers: {
+        "User-Agent": userAgent,
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        Cookie: accountInfo.cookie,
+      },
+      timeout: 15000,
+    });
+
+    const exportId = exportResp.data?.data?.export_id;
+    if (exportId) {
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const statusUrl = `https://webapi.115.com/files/export_dir?export_id=${exportId}`;
+        const statusResp = await axios.get(statusUrl, {
+          headers: {
+            "User-Agent": userAgent,
+            Cookie: accountInfo.cookie,
+          },
+          timeout: 10000,
+        });
+
+        const exportData = statusResp.data?.data;
+        if (exportData) {
+          const pathStr = extractPathFromExportData(exportData, cid);
+          if (pathStr) {
+            setIdPath(account, cid, pathStr);
+            return pathStr;
+          }
+        }
+      }
+    }
+
+    console.warn(`[LifeMonitor] Cannot resolve path for cid ${cid}`);
+    return "";
+  } catch (error) {
+    console.error(`[LifeMonitor] Error resolving path for cid ${cid}:`, error);
+    return "";
+  }
+}
+
+function extractPathFromExportData(data: unknown, targetCid: number): string {
+  if (!data || typeof data !== "object") return "";
+  const obj = data as Record<string, unknown>;
+
+  const innerData = obj.data as Record<string, unknown> | undefined;
+  if (innerData) {
+    const list = innerData.list as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(list)) {
+      for (const item of list) {
+        if (item.cid === targetCid || item.id === targetCid) {
+          return (item.path || item.file_path || "") as string;
+        }
+        if (item.children) {
+          const found = extractPathFromExportData(item.children, targetCid);
+          if (found) return found;
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(obj.list)) {
+    for (const item of obj.list as Array<Record<string, unknown>>) {
+      if (item.cid === targetCid || item.id === targetCid) {
+        return (item.path || item.file_path || "") as string;
+      }
+    }
+  }
+
+  return "";
+}
+
+async function resolveEventPath(
+  accountInfo: AccountInfo,
+  event: LifeEvent
+): Promise<string> {
+  let parentPath = "";
+  if (event.parent_id > 0) {
+    parentPath = await resolvePathByCid(accountInfo, event.parent_id);
+  } else {
+    parentPath = "/";
+  }
+
+  const fileName = event.file_name || "";
+  if (parentPath === "/" || parentPath === "") {
+    return "/" + fileName;
+  }
+  return parentPath.endsWith("/") ? parentPath + fileName : parentPath + "/" + fileName;
+}
+
+// ==================== Path Utilities ====================
+
+function matchPathMapping(
+  cloudPath: string,
+  pathMappings: LifeMonitorConfig["pathMappings"]
+): { cloudPath: string; localPath: string; relativePath: string } | null {
+  for (const mapping of pathMappings) {
+    const normalizedCloudPath = mapping.cloudPath.endsWith("/")
+      ? mapping.cloudPath
+      : mapping.cloudPath + "/";
+
+    if (cloudPath === mapping.cloudPath || cloudPath.startsWith(normalizedCloudPath)) {
+      const relativePath = cloudPath.slice(mapping.cloudPath.length).replace(/^\//, "");
+      const localPath = path.join(mapping.localPath, relativePath);
+      return {
+        cloudPath: mapping.cloudPath,
+        localPath,
+        relativePath,
+      };
+    }
+  }
+  return null;
+}
+
+function sanitizePathParts(relativePath: string): string {
+  if (process.platform !== "win32") return relativePath;
+  const illegalChars = '<>"|?*';
+  const parts = relativePath.split(path.sep);
+  return parts.map((part) => {
+    let sanitized = part.replace(/:/g, "：");
+    for (const char of illegalChars) {
+      sanitized = sanitized.split(char).join("_");
+    }
+    return sanitized;
+  }).join(path.sep);
+}
+
+function isMediaFile(fileName: string, mediaExtensions: string[]): boolean {
+  const ext = path.extname(fileName).toLowerCase();
+  return mediaExtensions.some((me) => me.toLowerCase() === ext);
+}
+
+function getStrmFileName(fileName: string): string {
+  const ext = path.extname(fileName);
+  if (!ext) return fileName + ".strm";
+  const lowerExt = ext.toLowerCase();
+  if (lowerExt === ".iso") return fileName; // .iso files keep original name
+  return fileName.replace(new RegExp(ext + "$", "i"), ".strm");
+}
+
+function isValidPickCode(pickCode: string): boolean {
+  return !!pickCode && pickCode.length === 17 && /^[a-zA-Z0-9]+$/.test(pickCode);
+}
+
+function generateStrmContent(
+  pickCode: string,
+  fileName: string,
+  config: LifeMonitorConfig
+): string {
+  const strmPrefix = config.strmPrefix || "";
+  const format = `${strmPrefix}/${pickCode}`;
+  return config.enablePathEncoding ? encodeURI(format) : format;
+}
+
+function readStrmContent(strmPath: string): string | null {
+  try {
+    if (!fs.existsSync(strmPath)) return null;
+    return fs.readFileSync(strmPath, "utf-8").trim();
+  } catch {
+    return null;
+  }
+}
+
+function writeStrmContent(strmPath: string, content: string): boolean {
+  try {
+    const dir = path.dirname(strmPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const existing = readStrmContent(strmPath);
+    if (existing === content) return true; // No change
+    fs.writeFileSync(strmPath, content, "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeEmptyParentDirs(startPath: string, rootDirs: Set<string>) {
+  let currentDir = path.dirname(startPath);
+  while (currentDir && !rootDirs.has(currentDir)) {
+    try {
+      const files = fs.readdirSync(currentDir);
+      if (files.length === 0) {
+        fs.rmdirSync(currentDir);
+        console.log(`[LifeMonitor] Removed empty directory: ${currentDir}`);
+        currentDir = path.dirname(currentDir);
+      } else {
+        break;
+      }
+    } catch {
+      break;
+    }
+  }
+}
+
+function getRootDirs(): Set<string> {
+  const config = getLifeMonitorConfig();
+  const roots = new Set<string>();
+  for (const mapping of config.pathMappings) {
+    roots.add(path.resolve(mapping.localPath));
+  }
+  return roots;
+}
+
+// ==================== Event Processing ====================
+
+async function handleCreateEvent(
+  accountInfo: AccountInfo,
+  event: LifeEvent,
+  config: LifeMonitorConfig,
+  mapping: { localPath: string; relativePath: string },
+  cloudPath: string
+): Promise<EventProcessResult> {
+  const result: EventProcessResult = {
+    eventId: event.id,
+    eventType: event.type,
+    eventTypeName: BEHAVIOR_TYPE_TO_NAME[event.type] || "unknown",
+    action: "create",
+    success: false,
+    timestamp: Date.now(),
+    filePath: cloudPath,
+    localPath: mapping.localPath,
+  };
+
+  if (event.file_category === 0) {
+    return handleFolderCreateEvent(accountInfo, event, config, mapping, cloudPath);
+  }
+
+  if (!isValidPickCode(event.pick_code)) {
+    result.message = `无效的 pick_code: ${event.pick_code}`;
+    return result;
+  }
+
+  const strmFileName = getStrmFileName(event.file_name);
+  const strmPath = path.join(path.dirname(mapping.localPath), strmFileName);
+  const strmContent = generateStrmContent(event.pick_code, event.file_name, config);
+
+  if (writeStrmContent(strmPath, strmContent)) {
+    upsertFilePathEntry(accountInfo.name, {
+      fileId: event.file_id,
+      path: cloudPath,
+      fileName: event.file_name,
+      parentId: event.parent_id,
+      pickCode: event.pick_code,
+      updateTime: event.update_time,
+    });
+
+    result.success = true;
+    result.message = `STRM 文件已创建: ${strmPath}`;
+  } else {
+    result.message = `创建 STRM 失败: ${strmPath}`;
+  }
+
+  return result;
+}
+
+async function handleFolderCreateEvent(
+  accountInfo: AccountInfo,
+  event: LifeEvent,
+  config: LifeMonitorConfig,
+  mapping: { localPath: string; relativePath: string },
+  cloudPath: string
+): Promise<EventProcessResult> {
+  const result: EventProcessResult = {
+    eventId: event.id,
+    eventType: event.type,
+    eventTypeName: BEHAVIOR_TYPE_TO_NAME[event.type] || "unknown",
+    action: "create",
+    success: true,
+    timestamp: Date.now(),
+    filePath: cloudPath,
+    localPath: mapping.localPath,
+  };
+
+  const localDir = mapping.localPath;
+  if (!fs.existsSync(localDir)) {
+    fs.mkdirSync(localDir, { recursive: true });
+  }
+
+  // Recursively process folder contents
+  let strmCount = 0;
+  let skippedCount = 0;
+
+  async function processDirectory(cid: number, depth: number) {
+    if (depth > MAX_RECURSION_DEPTH) return;
+
+    try {
+      const userAgent = readSettings()["user-agent"];
+      let offset = 0;
+      const limit = 1000;
+
+      while (true) {
+        const data = await fs_files(cid, {
+          userAgent,
+          limit,
+          offset,
+          accountInfo: accountInfo as AccountInfo,
+        });
+
+        const items = data?.data || [];
+        if (items.length === 0) break;
+
+        for (const item of items) {
+          const itemName = item.n;
+          const itemFid = item.fid;
+          const itemCid = item.cid;
+          const itemFc = item.fc; // 0=file, 1=folder
+
+          if (itemFc === 1) {
+            // Folder - build path and recurse
+            const itemPath = cloudPath.endsWith("/")
+              ? cloudPath + itemName
+              : cloudPath + "/" + itemName;
+            const itemLocalPath = path.join(localDir, sanitizePathParts(itemName));
+
+            if (!fs.existsSync(itemLocalPath)) {
+              fs.mkdirSync(itemLocalPath, { recursive: true });
+            }
+
+            // Cache the path mapping
+            setIdPath(accountInfo.name, itemCid, itemPath);
+            upsertFilePathEntry(accountInfo.name, {
+              fileId: itemFid,
+              path: itemPath,
+              fileName: itemName,
+              parentId: cid,
+              pickCode: "",
+              updateTime: Math.floor(Date.now() / 1000),
+            });
+
+            await processDirectory(itemCid, depth + 1);
+          } else {
+            // File
+            const itemPath = cloudPath.endsWith("/")
+              ? cloudPath + itemName
+              : cloudPath + "/" + itemName;
+
+            // Check if it's a media file
+            if (!isMediaFile(itemName, config.mediaExtensions)) {
+              skippedCount++;
+              continue;
+            }
+
+            // Get pickcode for this file
+            try {
+              const userAgent = readSettings()["user-agent"];
+              const fileInfo = await getFileInfoById(itemFid, {
+                userAgent,
+                accountInfo: accountInfo as AccountInfo,
+              });
+
+              const info = fileInfo as Record<string, unknown> | null;
+              const pickCode = (info?.pickcode || info?.pick_code || "") as string;
+
+              if (isValidPickCode(pickCode)) {
+                const strmFileName = getStrmFileName(itemName);
+                const strmPath = path.join(localDir, strmFileName);
+                const strmContent = generateStrmContent(pickCode, itemName, config);
+
+                if (writeStrmContent(strmPath, strmContent)) {
+                  strmCount++;
+                  setIdPath(accountInfo.name, itemCid, itemPath);
+                  upsertFilePathEntry(accountInfo.name, {
+                    fileId: itemFid,
+                    path: itemPath,
+                    fileName: itemName,
+                    parentId: cid,
+                    pickCode,
+                    updateTime: Math.floor(Date.now() / 1000),
+                  });
+                }
+              } else {
+                skippedCount++;
+              }
+            } catch {
+              skippedCount++;
+            }
+          }
+
+          if (strmCount + skippedCount >= MAX_FOLDER_FILES) return;
+        }
+
+        offset += items.length;
+        if (items.length < limit) break;
+      }
+    } catch (err) {
+      console.error(`[LifeMonitor] Error processing folder cid=${cid}:`, err);
+    }
+  }
+
+  await processDirectory(event.file_id, 0);
+
+  result.action = "create";
+  result.message = `文件夹同步完成: 创建 ${strmCount} 个 STRM，跳过 ${skippedCount} 个非媒体文件`;
+  return result;
+}
+
+async function handleDeleteEvent(
+  accountInfo: AccountInfo,
+  event: LifeEvent,
+  config: LifeMonitorConfig,
+  mapping: { localPath: string; relativePath: string },
+  cloudPath: string
+): Promise<EventProcessResult> {
+  const result: EventProcessResult = {
+    eventId: event.id,
+    eventType: event.type,
+    eventTypeName: BEHAVIOR_TYPE_TO_NAME[event.type] || "unknown",
+    action: "remove",
+    success: false,
+    timestamp: Date.now(),
+    filePath: cloudPath,
+    localPath: mapping.localPath,
+  };
+
+  const rootDirs = getRootDirs();
+
+  if (event.file_category === 0) {
+    if (fs.existsSync(mapping.localPath)) {
+      fs.rmSync(mapping.localPath, { recursive: true, force: true });
+      result.success = true;
+      result.message = `文件夹已删除: ${mapping.localPath}`;
+      removeFilePathEntry(accountInfo.name, event.file_id);
+      if (config.removeEmptyDirs) {
+        removeEmptyParentDirs(mapping.localPath, rootDirs);
+      }
+    } else {
+      result.success = true;
+      result.message = `本地文件夹不存在，跳过: ${mapping.localPath}`;
+    }
+  } else {
+    const strmFileName = getStrmFileName(event.file_name);
+    const strmPath = path.join(path.dirname(mapping.localPath), strmFileName);
+
+    if (fs.existsSync(strmPath)) {
+      fs.unlinkSync(strmPath);
+      result.success = true;
+      result.message = `STRM 文件已删除: ${strmPath}`;
+      removeFilePathEntry(accountInfo.name, event.file_id);
+      if (config.removeEmptyDirs) {
+        removeEmptyParentDirs(strmPath, rootDirs);
+      }
+    } else {
+      result.success = true;
+      result.message = `本地 STRM 文件不存在，跳过: ${strmPath}`;
+    }
+  }
+
+  return result;
+}
+
+async function handleMoveEvent(
+  accountInfo: AccountInfo,
+  event: LifeEvent,
+  config: LifeMonitorConfig,
+  mapping: { localPath: string; relativePath: string },
+  cloudPath: string
+): Promise<EventProcessResult> {
+  const result: EventProcessResult = {
+    eventId: event.id,
+    eventType: event.type,
+    eventTypeName: BEHAVIOR_TYPE_TO_NAME[event.type] || "unknown",
+    action: "move",
+    success: false,
+    timestamp: Date.now(),
+    filePath: cloudPath,
+    localPath: mapping.localPath,
+  };
+
+  // Look up old path from tracking database
+  const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
+  const isFolder = event.file_category === 0;
+
+  if (oldEntry) {
+    const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings);
+
+    if (oldMapping) {
+      if (isFolder) {
+        // Folder move: move the entire local directory
+        if (fs.existsSync(oldMapping.localPath)) {
+          const newParentDir = path.dirname(mapping.localPath);
+          if (!fs.existsSync(newParentDir)) {
+            fs.mkdirSync(newParentDir, { recursive: true });
+          }
+          fs.renameSync(oldMapping.localPath, mapping.localPath);
+          result.success = true;
+          result.message = `文件夹已移动: ${oldMapping.localPath} -> ${mapping.localPath}`;
+        } else {
+          result.success = true;
+          result.message = `旧目录不存在，直接创建: ${mapping.localPath}`;
+          if (!fs.existsSync(mapping.localPath)) {
+            fs.mkdirSync(mapping.localPath, { recursive: true });
+          }
+        }
+      } else {
+        // File move: move the STRM file
+        const oldStrmFileName = getStrmFileName(oldEntry.fileName);
+        const oldStrmPath = path.join(
+          path.dirname(oldMapping.localPath),
+          oldStrmFileName
+        );
+        const newStrmFileName = getStrmFileName(event.file_name);
+        const newStrmPath = path.join(path.dirname(mapping.localPath), newStrmFileName);
+
+        if (fs.existsSync(oldStrmPath)) {
+          const newDir = path.dirname(newStrmPath);
+          if (!fs.existsSync(newDir)) {
+            fs.mkdirSync(newDir, { recursive: true });
+          }
+
+          // If old and new are in same directory, just rename
+          if (path.dirname(oldStrmPath) === path.dirname(newStrmPath)) {
+            fs.renameSync(oldStrmPath, newStrmPath);
+          } else {
+            // Different directories: copy content, delete old
+            const content = readStrmContent(oldStrmPath);
+            if (content) {
+              writeStrmContent(newStrmPath, content);
+              fs.unlinkSync(oldStrmPath);
+            }
+          }
+          result.success = true;
+          result.message = `STRM 已移动: ${oldStrmPath} -> ${newStrmPath}`;
+        } else {
+          // Old STRM doesn't exist, create new one
+          return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+        }
+      }
+
+      // Update tracking database
+      upsertFilePathEntry(accountInfo.name, {
+        fileId: event.file_id,
+        path: cloudPath,
+        fileName: event.file_name,
+        parentId: event.parent_id,
+        pickCode: event.pick_code || oldEntry.pickCode,
+        updateTime: event.update_time,
+      });
+
+      // Clean up old empty directories
+      if (config.removeEmptyDirs) {
+        const rootDirs = getRootDirs();
+        removeEmptyParentDirs(oldMapping.localPath, rootDirs);
+      }
+
+      return result;
+    }
+  }
+
+  // No old entry or old path not in our mappings - create new
+  return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+}
+
+async function handleRenameEvent(
+  accountInfo: AccountInfo,
+  event: LifeEvent,
+  config: LifeMonitorConfig,
+  mapping: { localPath: string; relativePath: string },
+  cloudPath: string
+): Promise<EventProcessResult> {
+  const result: EventProcessResult = {
+    eventId: event.id,
+    eventType: event.type,
+    eventTypeName: BEHAVIOR_TYPE_TO_NAME[event.type] || "unknown",
+    action: "rename",
+    success: false,
+    timestamp: Date.now(),
+    filePath: cloudPath,
+    localPath: mapping.localPath,
+  };
+
+  const isFolder = event.file_category === 0;
+  const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
+
+  if (oldEntry) {
+    const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings);
+
+    if (oldMapping) {
+      if (isFolder) {
+        // Folder rename
+        if (fs.existsSync(oldMapping.localPath)) {
+          if (fs.existsSync(mapping.localPath)) {
+            result.success = true;
+            result.message = `目标目录已存在，跳过重命名: ${mapping.localPath}`;
+            return result;
+          }
+          fs.renameSync(oldMapping.localPath, mapping.localPath);
+          result.success = true;
+          result.message = `文件夹已重命名: ${oldMapping.localPath} -> ${mapping.localPath}`;
+        } else {
+          result.success = true;
+          result.message = `旧目录不存在，创建新目录: ${mapping.localPath}`;
+          if (!fs.existsSync(mapping.localPath)) {
+            fs.mkdirSync(mapping.localPath, { recursive: true });
+          }
+        }
+      } else {
+        // File rename: rename the STRM file
+        const oldStrmFileName = getStrmFileName(oldEntry.fileName);
+        const oldStrmPath = path.join(
+          path.dirname(oldMapping.localPath),
+          oldStrmFileName
+        );
+        const newStrmFileName = getStrmFileName(event.file_name);
+        const newStrmPath = path.join(path.dirname(mapping.localPath), newStrmFileName);
+
+        if (fs.existsSync(oldStrmPath)) {
+          const newDir = path.dirname(newStrmPath);
+          if (!fs.existsSync(newDir)) {
+            fs.mkdirSync(newDir, { recursive: true });
+          }
+
+          if (path.dirname(oldStrmPath) === path.dirname(newStrmPath)) {
+            // Same directory, simple rename
+            fs.renameSync(oldStrmPath, newStrmPath);
+            // Update STRM content with new pick_code
+            if (isValidPickCode(event.pick_code)) {
+              const newContent = generateStrmContent(
+                event.pick_code,
+                event.file_name,
+                config
+              );
+              writeStrmContent(newStrmPath, newContent);
+            }
+          } else {
+            // Different directories
+            const content = readStrmContent(oldStrmPath);
+            if (content) {
+              writeStrmContent(newStrmPath, content);
+              fs.unlinkSync(oldStrmPath);
+            } else {
+              return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+            }
+          }
+
+          // Handle related files (subtitles, nfo, etc.)
+          handleRelatedFileRenames(oldStrmPath, newStrmPath, oldEntry.fileName, event.file_name);
+
+          result.success = true;
+          result.message = `STRM 已重命名: ${oldStrmPath} -> ${newStrmPath}`;
+        } else {
+          return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+        }
+      }
+
+      // Update tracking
+      upsertFilePathEntry(accountInfo.name, {
+        fileId: event.file_id,
+        path: cloudPath,
+        fileName: event.file_name,
+        parentId: event.parent_id,
+        pickCode: event.pick_code || oldEntry.pickCode,
+        updateTime: event.update_time,
+      });
+
+      if (config.removeEmptyDirs) {
+        const rootDirs = getRootDirs();
+        removeEmptyParentDirs(oldMapping.localPath, rootDirs);
+      }
+
+      return result;
+    }
+  }
+
+  // No old entry - create new STRM
+  return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+}
+
+function handleRelatedFileRenames(
+  oldStrmPath: string,
+  newStrmPath: string,
+  oldFileName: string,
+  newFileName: string
+) {
+  const oldDir = path.dirname(oldStrmPath);
+  const oldStem = path.extname(oldFileName) ? path.basename(oldFileName, path.extname(oldFileName)) : oldFileName;
+  const newStem = path.extname(newFileName) ? path.basename(newFileName, path.extname(newFileName)) : newFileName;
+
+  try {
+    const siblings = fs.readdirSync(oldDir);
+    for (const sibling of siblings) {
+      if (sibling.endsWith(".strm")) continue;
+      if (!sibling.startsWith(oldStem)) continue;
+
+      const ext = sibling.slice(oldStem.length);
+      const newName = newStem + ext;
+      const oldPath = path.join(oldDir, sibling);
+      const newPath = path.join(oldDir, newName);
+
+      if (!fs.existsSync(newPath)) {
+        fs.renameSync(oldPath, newPath);
+        console.log(`[LifeMonitor] Related file renamed: ${sibling} -> ${newName}`);
+      }
+    }
+  } catch {
+    // Ignore errors for related files
+  }
+}
+
+function handleNewFolderEvent(
+  event: LifeEvent,
+  mapping: { localPath: string; relativePath: string },
+  cloudPath: string
+): EventProcessResult {
+  const result: EventProcessResult = {
+    eventId: event.id,
+    eventType: event.type,
+    eventTypeName: BEHAVIOR_TYPE_TO_NAME[event.type] || "unknown",
+    action: "create",
+    success: true,
+    timestamp: Date.now(),
+    filePath: cloudPath,
+    localPath: mapping.localPath,
+  };
+
+  if (!fs.existsSync(mapping.localPath)) {
+    fs.mkdirSync(mapping.localPath, { recursive: true });
+    result.message = `本地目录已创建: ${mapping.localPath}`;
+  } else {
+    result.message = `本地目录已存在: ${mapping.localPath}`;
+  }
+
+  return result;
+}
+
+async function processEvent(
+  accountInfo: AccountInfo,
+  event: LifeEvent,
+  config: LifeMonitorConfig
+): Promise<EventProcessResult> {
+  const eventType = event.type;
+  const result: EventProcessResult = {
+    eventId: event.id,
+    eventType,
+    eventTypeName: BEHAVIOR_TYPE_TO_NAME[eventType] || "unknown",
+    action: "skip",
+    success: false,
+    timestamp: Date.now(),
+  };
+
+  try {
+    const cloudPath = await resolveEventPath(accountInfo, event);
+    if (!cloudPath) {
+      result.message = "无法解析文件路径";
+      return result;
+    }
+    result.filePath = cloudPath;
+
+    // Record the path in tracking DB regardless of event type
+    if (isValidPickCode(event.pick_code) || event.file_category === 0) {
+      upsertFilePathEntry(accountInfo.name, {
+        fileId: event.file_id,
+        path: cloudPath,
+        fileName: event.file_name,
+        parentId: event.parent_id,
+        pickCode: event.pick_code || "",
+        updateTime: event.update_time,
+      });
+    }
+
+    const mapping = matchPathMapping(cloudPath, config.pathMappings);
+    if (!mapping) {
+      result.action = "skip";
+      result.message = `路径不在监控范围内: ${cloudPath}`;
+      return result;
+    }
+    result.localPath = mapping.localPath;
+
+    // For file events, check media extension
+    if (event.file_category === 1 && !isMediaFile(event.file_name, config.mediaExtensions)) {
+      result.action = "skip";
+      result.message = `非媒体文件: ${event.file_name}`;
+      return result;
+    }
+
+    if (CREATE_EVENT_TYPES.has(eventType) && config.eventTypes.create) {
+      return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+    } else if (DELETE_EVENT_TYPES.has(eventType) && config.eventTypes.remove) {
+      return handleDeleteEvent(accountInfo, event, config, mapping, cloudPath);
+    } else if (MOVE_EVENT_TYPES.has(eventType) && config.eventTypes.move) {
+      return handleMoveEvent(accountInfo, event, config, mapping, cloudPath);
+    } else if (RENAME_EVENT_TYPES.has(eventType) && config.eventTypes.rename) {
+      return handleRenameEvent(accountInfo, event, config, mapping, cloudPath);
+    } else if (NEW_FOLDER_EVENT_TYPES.has(eventType)) {
+      return handleNewFolderEvent(event, mapping, cloudPath);
+    } else {
+      result.action = "skip";
+      result.message = `事件类型 ${eventType} 未启用处理`;
+      return result;
+    }
+  } catch (err) {
+    result.action = "error";
+    result.message = err instanceof Error ? err.message : String(err);
+    return result;
+  }
+}
+
+// ==================== Polling ====================
+
+async function oncePoll(account: string): Promise<void> {
+  const config = getLifeMonitorConfig();
+  const accounts = readAccounts();
+
+  const accountInfo = accounts.find(
+    (acc: { name: string }) => acc.name === account
+  );
+  if (!accountInfo) {
+    updateState(account, {
+      status: "error",
+      lastError: `Account not found: ${account}`,
+    });
+    return;
+  }
+
+  if (!accountInfo.cookie) {
+    updateState(account, {
+      status: "error",
+      lastError: `Account ${account} has no cookie`,
+    });
+    return;
+  }
+
+  const savedState = readState();
+  const state = savedState[account];
+  const fromTime = state?.fromTime || Math.floor(Date.now() / 1000);
+  const fromId = state?.fromId || 0;
+
+  updateState(account, {
+    status: "running",
+    lastCheckTime: Date.now(),
+  });
+
+  const preferredApi = getPreferredApi(account);
+
+  try {
+    const { events, next_time, next_id } = await oncePullLifeEvents(
+      accountInfo as AccountInfo,
+      fromTime,
+      fromId,
+      preferredApi
+    );
+
+    // Reset 405 counter on success
+    reset405Count(account);
+
+    if (events.length === 0) {
+      updateState(account, {
+        status: "running",
+        lastFromTime: fromTime,
+        lastFromId: fromId,
+      });
+      return;
+    }
+
+    console.log(`[LifeMonitor] Pulled ${events.length} events for ${account}`);
+
+    let processedCount = 0;
+    let errorCount = 0;
+
+    // Process events in reverse order (newest first)
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      const result = await processEvent(accountInfo as AccountInfo, event, config);
+      processedCount++;
+
+      notifyCallbacks(account, "event", result);
+
+      if (!result.success || result.action === "error") {
+        errorCount++;
+        console.error(`[LifeMonitor] Event ${event.id} failed: ${result.message}`);
+      }
+    }
+
+    saveState(account, next_time, next_id);
+    updateState(account, {
+      status: "running",
+      lastFromTime: next_time,
+      lastFromId: next_id,
+      eventsProcessed: (monitorStates.get(account)?.eventsProcessed || 0) + processedCount,
+      lastError: errorCount > 0 ? `${errorCount} events failed` : undefined,
+    });
+
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[LifeMonitor] Poll error for ${account}:`, errorMsg);
+
+    if (errorMsg.includes("405")) {
+      record405Error(account, preferredApi);
+
+      // Try fallback API
+      const fallbackApi = preferredApi === "web" ? "ios" : "web";
+      try {
+        console.log(`[LifeMonitor] Falling back to ${fallbackApi} API for ${account}`);
+        const { events, next_time, next_id } = await oncePullLifeEvents(
+          accountInfo as AccountInfo,
+          fromTime,
+          fromId,
+          fallbackApi as "ios" | "web"
+        );
+
+        if (events.length > 0) {
+          let processedCount = 0;
+          for (let i = events.length - 1; i >= 0; i--) {
+            const result = await processEvent(accountInfo as AccountInfo, events[i], config);
+            processedCount++;
+            notifyCallbacks(account, "event", result);
+          }
+
+          saveState(account, next_time, next_id);
+          updateState(account, {
+            status: "running",
+            lastFromTime: next_time,
+            lastFromId: next_id,
+            eventsProcessed: (monitorStates.get(account)?.eventsProcessed || 0) + processedCount,
+          });
+          return;
+        }
+      } catch (fallbackErr) {
+        console.error(`[LifeMonitor] Fallback also failed:`, fallbackErr);
+      }
+    }
+
+    updateState(account, {
+      status: "error",
+      lastError: errorMsg,
+    });
+  }
+}
+
+// ==================== Monitor Control ====================
+
+export function startMonitor(account: string): boolean {
+  const config = getLifeMonitorConfig();
+
+  if (!config.enabled) {
+    console.log("[LifeMonitor] Monitoring is disabled in settings");
+    return false;
+  }
+
+  if (!config.accounts.includes(account)) {
+    console.log(`[LifeMonitor] Account ${account} not in monitor list`);
+    return false;
+  }
+
+  if (monitorTimers.has(account)) {
+    console.log(`[LifeMonitor] Monitor already running for ${account}`);
+    return false;
+  }
+
+  updateState(account, {
+    running: true,
+    status: "starting",
+    eventsProcessed: 0,
+    lastError: undefined,
+  });
+
+  const pollInterval = Math.max(5, config.pollInterval || 30) * 1000;
+
+  console.log(`[LifeMonitor] Starting monitor for ${account}, interval: ${pollInterval}ms`);
+
+  oncePoll(account).finally(() => {
+    if (monitorStates.get(account)?.running) {
+      updateState(account, { status: "running" });
+    }
+  });
+
+  const timer = setInterval(() => {
+    const state = monitorStates.get(account);
+    if (!state?.running) {
+      stopMonitor(account);
+      return;
+    }
+    oncePoll(account).catch((err) => {
+      console.error(`[LifeMonitor] Poll error for ${account}:`, err);
+    });
+  }, pollInterval);
+
+  monitorTimers.set(account, timer);
+
+  return true;
+}
+
+export function stopMonitor(account: string): void {
+  console.log(`[LifeMonitor] Stopping monitor for ${account}`);
+
+  const timer = monitorTimers.get(account);
+  if (timer) {
+    clearInterval(timer);
+    monitorTimers.delete(account);
+  }
+
+  updateState(account, {
+    running: false,
+    status: "idle",
+  });
+}
+
+export function startAllMonitors(): string[] {
+  const config = getLifeMonitorConfig();
+  const startedAccounts: string[] = [];
+
+  for (const account of config.accounts) {
+    if (startMonitor(account)) {
+      startedAccounts.push(account);
+    }
+  }
+
+  return startedAccounts;
+}
+
+export function stopAllMonitors(): void {
+  for (const account of monitorTimers.keys()) {
+    stopMonitor(account);
+  }
+}
+
+export function getMonitorState(account: string): LifeMonitorState | undefined {
+  return monitorStates.get(account);
+}
+
+export function getMonitorStatus(): {
+  config: LifeMonitorConfig;
+  states: Array<{ account: string; state: LifeMonitorState }>;
+} {
+  const config = getLifeMonitorConfig();
+  const states = config.accounts.map((account) => ({
+    account,
+    state: monitorStates.get(account) || {
+      running: false,
+      account,
+      lastFromTime: 0,
+      lastFromId: 0,
+      lastCheckTime: 0,
+      eventsProcessed: 0,
+      status: "idle" as const,
+    },
+  }));
+
+  return { config, states };
+}
+
+export async function verifyAccount(account: string): Promise<{
+  success: boolean;
+  message: string;
+  details?: Record<string, unknown>;
+}> {
+  const accounts = readAccounts();
+  const accountInfo = accounts.find(
+    (acc: { name: string }) => acc.name === account
+  );
+
+  if (!accountInfo) {
+    return { success: false, message: `Account not found: ${account}` };
+  }
+
+  if (!accountInfo.cookie) {
+    return { success: false, message: `Account ${account} has no cookie` };
+  }
+
+  try {
+    const status = await lifeShow(accountInfo as AccountInfo, "web");
+    if (status.state) {
+      const { events } = await oncePullLifeEvents(
+        accountInfo as AccountInfo,
+        Math.floor(Date.now() / 1000) - 86400,
+        0,
+        "web"
+      );
+
+      return {
+        success: true,
+        message: `生活事件已开启，最近24小时内有 ${events.length} 个事件`,
+        details: {
+          lifeEnabled: true,
+          recentEvents: events.length,
+        },
+      };
+    } else {
+      return {
+        success: false,
+        message: "生活事件未开启，请在 115 网页端或 App 中开启此功能",
+        details: { lifeEnabled: false },
+      };
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      message: `验证失败: ${errorMsg}`,
+    };
+  }
+}
+
+// Export for testing / direct API manipulation
+export function _readIdPathCacheForTest() {
+  return readIdPathCache();
+}
+export function _readFilePathDbForTest() {
+  return readFilePathDb();
+}

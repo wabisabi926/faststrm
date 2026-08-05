@@ -164,12 +164,40 @@ export function normalizeToStrm(path: string): string {
   return path.replace(/\.(mp4|mp3|mkv)$/i, ".strm");
 }
 
+// 监控路径映射
+export interface PathMapping {
+  cloudPath: string;
+  localPath: string;
+}
+
+// 生活事件监控配置
+export interface LifeMonitorSettings {
+  enabled: boolean;
+  accounts: string[];
+  pollInterval: number;
+  pathMappings: PathMapping[];
+  mediaExtensions: string[];
+  removeEmptyDirs: boolean;
+  eventTypes: {
+    create: boolean;
+    remove: boolean;
+    rename: boolean;
+    move: boolean;
+  };
+}
+
 // Settings helpers
 export type AppSettings = {
   "user-agent"?: string;
   internalToken?: string;  // 内部 API 验证 token，首次启动时自动生成
   strmExtensions?: string[];  // strm文件扩展名配置
   downloadExtensions?: string[];  // 需要下载的文件扩展名配置
+  mediaMountPath?: string[];  // 媒体挂载路径
+  download?: {
+    linkMaxPerSecond?: number;
+    linkMaxConcurrent?: number;
+    downloadMaxConcurrent?: number;
+  };
   emby?: {
     url?: string;
     apiKey?: string;
@@ -180,6 +208,7 @@ export type AppSettings = {
     webhookUrl?: string;
     allowedUsers?: number[];  // 简化为只存储用户ID列表
   };
+  lifeMonitor?: LifeMonitorSettings;
 } & Record<string, unknown>;
 
 export function readSettings(): AppSettings {
