@@ -78,7 +78,7 @@ export function AppSidebar() {
               className="flex-shrink-0"
             />
             <div className="flex flex-col">
-              <span className="text-xl font-bold text-foreground">Fast strm</span>
+              <span className="text-xl font-bold text-foreground">Fast Strm</span>
               <span className="text-xs text-muted-foreground">更快、更强的 Strm 管理</span>
             </div>
           </div>
