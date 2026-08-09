@@ -8,4 +8,8 @@
 **/config.json
 **/settings.json
 **/.salt
+**/.env
+**/.env.*
+**/.next
+*.fpk
 cache
