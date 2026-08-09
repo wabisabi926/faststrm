@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs";
 import * as path from "path";
+import { encryptAccounts, decryptAccounts } from "@/lib/passwordCrypto";
 
 const accountFile = path.resolve(process.cwd(), "../config/account.json");
 
@@ -12,13 +13,15 @@ function readAccounts() {
 }
 
 function writeAccounts(data: any) {
-  fs.writeFileSync(accountFile, JSON.stringify(data, null, 2), "utf-8");
+  // 写入前加密敏感字段
+  const encrypted = encryptAccounts(JSON.parse(JSON.stringify(data)));
+  fs.writeFileSync(accountFile, JSON.stringify(encrypted, null, 2), "utf-8");
 }
 
-// GET: 获取所有账号
+// GET: 获取所有账号（返回解密后的数据）
 export async function GET() {
   const accounts = readAccounts();
-  return NextResponse.json(accounts);
+  return NextResponse.json(decryptAccounts(accounts));
 }
 
 // POST: 新建账号（基于 name 唯一）
@@ -62,10 +65,11 @@ export async function POST(req: NextRequest) {
   delete newAccount.accountType; // 避免重复
   delete newAccount.name; // 避免重复
   const finalAccount = { accountType, name, ...newAccount };
-  
+
   accounts.push(finalAccount);
   writeAccounts(accounts);
 
+  // 返回明文（不返回加密后的）
   return NextResponse.json(finalAccount, { status: 201 });
 }
 
@@ -109,7 +113,8 @@ export async function PUT(req: NextRequest) {
   accounts[idx] = { ...accounts[idx], ...body };
   writeAccounts(accounts);
 
-  return NextResponse.json(accounts[idx]);
+  // 返回明文
+  return NextResponse.json({ ...accounts[idx] });
 }
 
 // DELETE: 删除账号（基于 name）

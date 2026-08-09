@@ -28,6 +28,7 @@ import {
 } from "@/lib/enqueueForAccount";
 import { exportDirParse, fs_dir_getid } from "@/lib/115";
 import { sendTelegramNotification } from "@/lib/telegram";
+import { encryptAccounts } from "@/lib/passwordCrypto";
 
 // openlist API 接口类型定义
 interface OpenlistItem {
@@ -520,9 +521,10 @@ export async function POST(req: NextRequest) {
       accountInfo.token = token;
       accountInfo.expiresAt = Math.floor(Date.now() / 1000) + 47 * 60 * 60; // 48小时后过期
 
-      // 保存更新后的账户信息
+      // 保存更新后的账户信息（写入前加密敏感字段）
       const accountPath = path.join(process.cwd(), "../config/account.json");
-      fs.writeFileSync(accountPath, JSON.stringify(accounts, null, 2));
+      const encryptedAccounts = encryptAccounts(JSON.parse(JSON.stringify(accounts)));
+      fs.writeFileSync(accountPath, JSON.stringify(encryptedAccounts, null, 2));
     }
 
     // 获取 openlist 目录树并转换为 115 兼容格式

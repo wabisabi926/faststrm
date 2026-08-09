@@ -2,11 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
 import { createTelegramBot, formatTaskStatusMessage, formatDownloadCompleteMessage } from "./telegram";
+import { decryptAccounts, decryptSettings, encryptSettings } from "./passwordCrypto";
 
 const accountFile = path.join(process.cwd(), "../config", "account.json");
 
 export function readAccounts() {
-  return JSON.parse(fs.readFileSync(accountFile, "utf-8"));
+  const accounts = JSON.parse(fs.readFileSync(accountFile, "utf-8"));
+  return decryptAccounts(accounts);
 }
 
 type Node = {
@@ -226,24 +228,24 @@ export function readSettings(): AppSettings {
   if (!fs.existsSync(settingsFile)) return {} as AppSettings;
   const raw = fs.readFileSync(settingsFile, "utf-8");
   try {
-    return JSON.parse(raw || "{}");
+    const settings = JSON.parse(raw || "{}");
+    return decryptSettings(settings) as AppSettings;
   } catch {
     return {} as AppSettings;
   }
 }
 
 export function writeSettings(next: AppSettings) {
-  const pretty = JSON.stringify(next ?? {}, null, 2);
+  // 写入前加密敏感字段（深拷贝避免修改入参）
+  const encrypted = encryptSettings(JSON.parse(JSON.stringify(next ?? {})));
+  const pretty = JSON.stringify(encrypted, null, 2);
   fs.writeFileSync(settingsFile, pretty, "utf-8");
 }
 
 // 通知 Emby 刷新媒体库（如果在 settings.json 配置了 emby）
 export async function notifyEmbyRefresh() {
   try {
-    const settingsPath = settingsFile;
-    if (!fs.existsSync(settingsPath)) return;
-    const settingsRaw = fs.readFileSync(settingsPath, "utf-8");
-    const settings = JSON.parse(settingsRaw || "{}");
+    const settings = readSettings();
     const emby = settings.emby;
     if (!emby || !emby.url || !emby.apiKey) return;
 

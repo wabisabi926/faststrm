@@ -86,7 +86,13 @@ export default function SettingsPage() {
   const [strmExtensionsInput, setStrmExtensionsInput] = useState("");
   const [downloadExtensionsInput, setDownloadExtensionsInput] = useState("");
   const [mediaMountPathInput, setMediaMountPathInput] = useState("");
-  
+
+  // Change password states
+  const [currentPwd, setCurrentPwd] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [confirmPwd, setConfirmPwd] = useState("");
+  const [changingPwd, setChangingPwd] = useState(false);
+
   // Life monitor states
   const [accounts, setAccounts] = useState<string[]>([]);
   const [monitorStates, setMonitorStates] = useState<MonitorState[]>([]);
@@ -157,6 +163,37 @@ export default function SettingsPage() {
 
     loadData();
   }, []);
+
+  const handleChangePassword = async () => {
+    if (!currentPwd || !newPwd || !confirmPwd) {
+      toast.error("请填写所有密码字段");
+      return;
+    }
+    if (newPwd !== confirmPwd) {
+      toast.error("两次输入的新密码不一致");
+      return;
+    }
+    if (newPwd.length < 6) {
+      toast.error("新密码至少 6 位");
+      return;
+    }
+    setChangingPwd(true);
+    try {
+      await axiosInstance.post("/api/auth/change-password", {
+        currentPassword: currentPwd,
+        newPassword: newPwd,
+      });
+      toast.success("密码修改成功");
+      setCurrentPwd("");
+      setNewPwd("");
+      setConfirmPwd("");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "密码修改失败";
+      toast.error(msg);
+    } finally {
+      setChangingPwd(false);
+    }
+  };
 
   const onSave = async () => {
     setSaving(true);
@@ -844,6 +881,44 @@ export default function SettingsPage() {
       <Separator />
 
       <StrmCleanupCard />
+
+      <Separator />
+
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold">修改密码</h2>
+        <div className="grid gap-2 max-w-sm">
+          <Label htmlFor="currentPassword">当前密码</Label>
+          <Input
+            id="currentPassword"
+            type="password"
+            value={currentPwd}
+            onChange={(e) => setCurrentPwd(e.target.value)}
+            placeholder="输入当前密码"
+          />
+          <Label htmlFor="newPassword">新密码</Label>
+          <Input
+            id="newPassword"
+            type="password"
+            value={newPwd}
+            onChange={(e) => setNewPwd(e.target.value)}
+            placeholder="至少 6 位"
+          />
+          <Label htmlFor="confirmPassword">确认新密码</Label>
+          <Input
+            id="confirmPassword"
+            type="password"
+            value={confirmPwd}
+            onChange={(e) => setConfirmPwd(e.target.value)}
+            placeholder="再次输入新密码"
+          />
+          <Button
+            disabled={changingPwd}
+            onClick={handleChangePassword}
+          >
+            {changingPwd ? "修改中..." : "修改密码"}
+          </Button>
+        </div>
+      </section>
 
       <div className="pt-2 flex gap-2">
         <Button disabled={saving} onClick={onSave}>

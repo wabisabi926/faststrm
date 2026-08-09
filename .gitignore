@@ -7,4 +7,5 @@
 **/tasks.json
 **/config.json
 **/settings.json
+**/.salt
 cache
