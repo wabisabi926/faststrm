@@ -101,7 +101,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
               </div>
               <div className="ml-auto flex items-center gap-1">
                 <a
-                  href="https://github.com/indown/OpenStrm"
+                  href="https://github.com/wabisabi926/faststrm"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center justify-center rounded p-1 hover:bg-accent"

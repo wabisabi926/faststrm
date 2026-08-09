@@ -71,15 +71,15 @@ export function AppSidebar() {
         <div className="p-4 border-b border-border/50">
           <div className="flex items-center gap-3">
             <Image
-              src="/logo.svg"
-              alt="OpenStrm Logo"
+              src="/logo.png"
+              alt="Fast Strm Logo"
               width={36}
               height={36}
               className="flex-shrink-0"
             />
             <div className="flex flex-col">
-              <span className="text-xl font-bold text-foreground">Open Strm</span>
-              <span className="text-xs text-muted-foreground">流媒体管理</span>
+              <span className="text-xl font-bold text-foreground">Fast strm</span>
+              <span className="text-xs text-muted-foreground">更快、更强的 Strm 管理</span>
             </div>
           </div>
         </div>
@@ -130,7 +130,7 @@ export function AppSidebar() {
       <SidebarFooter>
         <div className="flex items-center justify-between mx-2 mb-1 rounded-md px-2 py-1 text-xs group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           <a
-            href="https://github.com/indown/OpenStrm"
+            href="https://github.com/wabisabi926/faststrm"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:justify-center"
