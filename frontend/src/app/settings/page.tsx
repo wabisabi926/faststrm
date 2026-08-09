@@ -5,8 +5,16 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import axiosInstance from "@/lib/axios";
+import { StrmCleanupCard } from "./StrmCleanupCard";
 
 type PathMapping = {
   cloudPath: string;
@@ -26,6 +34,9 @@ type LifeMonitorConfig = {
     rename: boolean;
     move: boolean;
   };
+  minFileSize?: number;
+  firstPullMode?: "latest" | "all" | "last";
+  moveMediaMode?: "recreate" | "local_move";
 };
 
 type Settings = {
@@ -63,6 +74,9 @@ const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
     rename: true,
     move: true,
   },
+  minFileSize: 0,
+  firstPullMode: "latest",
+  moveMediaMode: "local_move",
 };
 
 export default function SettingsPage() {
@@ -92,6 +106,10 @@ export default function SettingsPage() {
     rename: true,
     move: true,
   });
+  const [minFileSize, setMinFileSize] = useState(0); // 字节
+  const [minFileSizeMb, setMinFileSizeMb] = useState(""); // MB 输入框显示用
+  const [firstPullMode, setFirstPullMode] = useState<"latest" | "all" | "last">("latest");
+  const [moveMediaMode, setMoveMediaMode] = useState<"recreate" | "local_move">("local_move");
 
   // New path mapping input
   const [newCloudPath, setNewCloudPath] = useState("");
@@ -116,6 +134,11 @@ export default function SettingsPage() {
         setMediaExtensionsInput((monitor.mediaExtensions || []).join(", "));
         setRemoveEmptyDirs(monitor.removeEmptyDirs ?? true);
         setEventTypes(monitor.eventTypes || DEFAULT_MONITOR_CONFIG.eventTypes);
+        const loadedMinSize = typeof monitor.minFileSize === "number" ? monitor.minFileSize : 0;
+        setMinFileSize(loadedMinSize);
+        setMinFileSizeMb(loadedMinSize > 0 ? (loadedMinSize / (1024 * 1024)).toString() : "");
+        setFirstPullMode(monitor.firstPullMode || "latest");
+        setMoveMediaMode(monitor.moveMediaMode || "local_move");
 
         // Load accounts
         const accountsResp = await axiosInstance.get("/api/account");
@@ -164,6 +187,12 @@ export default function SettingsPage() {
         .map(ext => ext.startsWith(".") ? ext : `.${ext}`)
         .map(ext => ext.toLowerCase());
 
+      // 解析 MB 输入为字节；空值或非法值视为 0（不过滤）
+      const parsedMb = parseFloat(minFileSizeMb);
+      const minBytes = Number.isFinite(parsedMb) && parsedMb > 0
+        ? Math.floor(parsedMb * 1024 * 1024)
+        : 0;
+
       const saveData = {
         ...data,
         strmExtensions,
@@ -177,6 +206,9 @@ export default function SettingsPage() {
           mediaExtensions,
           removeEmptyDirs,
           eventTypes,
+          minFileSize: minBytes,
+          firstPullMode,
+          moveMediaMode,
         },
       };
 
@@ -258,6 +290,10 @@ export default function SettingsPage() {
 
   const handleStartMonitor = async () => {
     try {
+      const parsedMb = parseFloat(minFileSizeMb);
+      const minBytes = Number.isFinite(parsedMb) && parsedMb > 0
+        ? Math.floor(parsedMb * 1024 * 1024)
+        : 0;
       const resp = await axiosInstance.post("/api/lifeMonitor", {
         action: "updateConfig",
         updates: {
@@ -268,6 +304,9 @@ export default function SettingsPage() {
           mediaExtensions: mediaExtensionsInput.split(",").map(e => e.trim()).filter(Boolean),
           removeEmptyDirs,
           eventTypes,
+          minFileSize: minBytes,
+          firstPullMode,
+          moveMediaMode,
         },
       });
       toast.success(resp.data?.message || "监控已更新");
@@ -619,6 +658,71 @@ export default function SettingsPage() {
             </label>
           </div>
 
+          {/* Min File Size */}
+          <div className="space-y-2">
+            <Label>最小文件大小（MB）</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.1"
+              placeholder="留空或 0 表示不过滤"
+              value={minFileSizeMb}
+              onChange={(e) => {
+                setMinFileSizeMb(e.target.value);
+                const v = parseFloat(e.target.value);
+                setMinFileSize(Number.isFinite(v) && v > 0 ? Math.floor(v * 1024 * 1024) : 0);
+              }}
+              className="max-w-xs"
+            />
+            <p className="text-xs text-muted-foreground">
+              小于此阈值的文件跳过 STRM 生成（如封面、NFO 等小文件）。0 表示不过滤。
+            </p>
+          </div>
+
+          {/* First Pull Mode */}
+          <div className="space-y-2">
+            <Label>首次拉取模式</Label>
+            <Select
+              value={firstPullMode}
+              onValueChange={(v: "latest" | "all" | "last") => setFirstPullMode(v)}
+            >
+              <SelectTrigger className="w-full max-w-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="latest">从当前时间开始（推荐）</SelectItem>
+                <SelectItem value="all">拉取全部历史事件</SelectItem>
+                <SelectItem value="last">从上次断点继续</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              首次启动监控时的拉取范围。<strong>latest</strong>：只处理新事件，最轻量；
+              <strong>all</strong>：拉取所有历史事件（适合首次部署补历史，耗时较长）；
+              <strong>last</strong>：从上次保存的游标继续，无断点时退化为 latest。
+            </p>
+          </div>
+
+          {/* Move Media Mode */}
+          <div className="space-y-2">
+            <Label>移动事件处理模式</Label>
+            <Select
+              value={moveMediaMode}
+              onValueChange={(v: "recreate" | "local_move") => setMoveMediaMode(v)}
+            >
+              <SelectTrigger className="w-full max-w-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local_move">本地移动 STRM（推荐）</SelectItem>
+                <SelectItem value="recreate">删除旧 STRM 并重新生成</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              文件被移动时的处理策略。<strong>local_move</strong>：本地直接 rename STRM 文件，速度快；
+              <strong>recreate</strong>：删除旧 STRM 后用新 pickcode 重新生成，更可靠但需调用 115 API。
+            </p>
+          </div>
+
           {/* Path Mappings */}
           <div className="space-y-2">
             <Label>路径映射（115 网盘路径 → 本地保存路径）</Label>
@@ -736,6 +840,10 @@ export default function SettingsPage() {
           )}
         </div>
       </section>
+
+      <Separator />
+
+      <StrmCleanupCard />
 
       <div className="pt-2 flex gap-2">
         <Button disabled={saving} onClick={onSave}>

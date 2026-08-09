@@ -171,6 +171,9 @@ export interface PathMapping {
 }
 
 // 生活事件监控配置
+export type FirstPullMode = "latest" | "all" | "last";
+export type MoveMediaMode = "recreate" | "local_move";
+
 export interface LifeMonitorSettings {
   enabled: boolean;
   accounts: string[];
@@ -184,6 +187,14 @@ export interface LifeMonitorSettings {
     rename: boolean;
     move: boolean;
   };
+  strmPrefix?: string;
+  enablePathEncoding?: boolean;
+  /** 最小文件大小（字节），小于此值的文件跳过 STRM 生成。0 表示不过滤 */
+  minFileSize?: number;
+  /** 首次拉取模式：latest=从当前时间 / all=拉取全部历史 / last=从上次断点继续 */
+  firstPullMode?: FirstPullMode;
+  /** 移动事件处理模式：recreate=删除旧 STRM 并重新生成 / local_move=本地直接移动 STRM 文件 */
+  moveMediaMode?: MoveMediaMode;
 }
 
 // Settings helpers

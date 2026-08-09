@@ -22,6 +22,9 @@ import {
 
 // ==================== Types ====================
 
+export type FirstPullMode = "latest" | "all" | "last";
+export type MoveMediaMode = "recreate" | "local_move";
+
 export interface LifeMonitorConfig {
   enabled: boolean;
   accounts: string[];
@@ -40,6 +43,12 @@ export interface LifeMonitorConfig {
   };
   strmPrefix?: string;
   enablePathEncoding?: boolean;
+  /** 最小文件大小（字节），小于此值的文件跳过 STRM 生成。0 表示不过滤 */
+  minFileSize?: number;
+  /** 首次拉取模式：latest=从当前时间 / all=拉取全部历史 / last=从上次断点继续 */
+  firstPullMode?: FirstPullMode;
+  /** 移动事件处理模式：recreate=删除旧 STRM 并重新生成 / local_move=本地直接移动 STRM 文件 */
+  moveMediaMode?: MoveMediaMode;
 }
 
 export interface LifeMonitorState {
@@ -87,6 +96,9 @@ const DEFAULT_CONFIG: LifeMonitorConfig = {
   },
   strmPrefix: "",
   enablePathEncoding: false,
+  minFileSize: 0,
+  firstPullMode: "latest",
+  moveMediaMode: "local_move",
 };
 
 const CONFIG_DIR = path.join(process.cwd(), "../config");
@@ -755,6 +767,17 @@ async function handleFolderCreateEvent(
               continue;
             }
 
+            // 最小文件大小过滤
+            const folderMinSize = config.minFileSize || 0;
+            if (
+              folderMinSize > 0 &&
+              typeof item.s === "number" &&
+              item.s < folderMinSize
+            ) {
+              skippedCount++;
+              continue;
+            }
+
             // Get pickcode for this file
             try {
               const userAgent = readSettings()["user-agent"];
@@ -884,11 +907,52 @@ async function handleMoveEvent(
   // Look up old path from tracking database
   const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
   const isFolder = event.file_category === 0;
+  const moveMode = config.moveMediaMode || "local_move";
 
   if (oldEntry) {
     const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings);
 
     if (oldMapping) {
+      // recreate 模式：删除旧 STRM/目录后走 create 流程重新生成
+      // 适用场景：pickcode 可能变化、或本地 STRM 内容已损坏需要重建
+      if (moveMode === "recreate") {
+        if (isFolder) {
+          if (fs.existsSync(oldMapping.localPath)) {
+            try {
+              fs.rmSync(oldMapping.localPath, { recursive: true, force: true });
+            } catch (err) {
+              console.error(`[LifeMonitor] recreate 删除旧目录失败: ${oldMapping.localPath}`, err);
+            }
+          }
+        } else {
+          const oldStrmFileName = getStrmFileName(oldEntry.fileName);
+          const oldStrmPath = path.join(
+            path.dirname(oldMapping.localPath),
+            oldStrmFileName
+          );
+          if (fs.existsSync(oldStrmPath)) {
+            try {
+              fs.unlinkSync(oldStrmPath);
+            } catch (err) {
+              console.error(`[LifeMonitor] recreate 删除旧 STRM 失败: ${oldStrmPath}`, err);
+            }
+          }
+        }
+
+        // 清理旧空目录
+        if (config.removeEmptyDirs) {
+          const rootDirs = getRootDirs();
+          removeEmptyParentDirs(oldMapping.localPath, rootDirs);
+        }
+
+        // 走 create 流程在新路径重新生成
+        const createResult = await handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+        createResult.action = "move";
+        createResult.message = `[recreate] ${createResult.message || ""}`;
+        return createResult;
+      }
+
+      // local_move 模式：本地直接移动 STRM 文件
       if (isFolder) {
         // Folder move: move the entire local directory
         if (fs.existsSync(oldMapping.localPath)) {
@@ -896,9 +960,15 @@ async function handleMoveEvent(
           if (!fs.existsSync(newParentDir)) {
             fs.mkdirSync(newParentDir, { recursive: true });
           }
-          fs.renameSync(oldMapping.localPath, mapping.localPath);
-          result.success = true;
-          result.message = `文件夹已移动: ${oldMapping.localPath} -> ${mapping.localPath}`;
+          // 目标已存在时不覆盖，避免误删
+          if (fs.existsSync(mapping.localPath)) {
+            result.success = true;
+            result.message = `目标目录已存在，跳过移动: ${mapping.localPath}`;
+          } else {
+            fs.renameSync(oldMapping.localPath, mapping.localPath);
+            result.success = true;
+            result.message = `文件夹已移动: ${oldMapping.localPath} -> ${mapping.localPath}`;
+          }
         } else {
           result.success = true;
           result.message = `旧目录不存在，直接创建: ${mapping.localPath}`;
@@ -924,15 +994,34 @@ async function handleMoveEvent(
 
           // If old and new are in same directory, just rename
           if (path.dirname(oldStrmPath) === path.dirname(newStrmPath)) {
-            fs.renameSync(oldStrmPath, newStrmPath);
+            if (fs.existsSync(newStrmPath) && oldStrmPath !== newStrmPath) {
+              fs.unlinkSync(newStrmPath);
+            }
+            if (oldStrmPath !== newStrmPath) {
+              fs.renameSync(oldStrmPath, newStrmPath);
+            }
           } else {
             // Different directories: copy content, delete old
             const content = readStrmContent(oldStrmPath);
-            if (content) {
+            if (content !== null) {
               writeStrmContent(newStrmPath, content);
               fs.unlinkSync(oldStrmPath);
+            } else {
+              // 旧 STRM 内容读取失败，退化为 recreate
+              return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
             }
           }
+
+          // 若事件携带新 pickcode，更新 STRM 内容
+          if (isValidPickCode(event.pick_code)) {
+            const newContent = generateStrmContent(
+              event.pick_code,
+              event.file_name,
+              config
+            );
+            writeStrmContent(newStrmPath, newContent);
+          }
+
           result.success = true;
           result.message = `STRM 已移动: ${oldStrmPath} -> ${newStrmPath}`;
         } else {
@@ -1187,6 +1276,19 @@ async function processEvent(
       return result;
     }
 
+    // 最小文件大小过滤（对文件事件生效，文件夹不受限）
+    const minSize = config.minFileSize || 0;
+    if (
+      minSize > 0 &&
+      event.file_category === 1 &&
+      typeof event.file_size === "number" &&
+      event.file_size < minSize
+    ) {
+      result.action = "skip";
+      result.message = `文件小于最小阈值 (${event.file_size} < ${minSize} bytes): ${event.file_name}`;
+      return result;
+    }
+
     if (CREATE_EVENT_TYPES.has(eventType) && config.eventTypes.create) {
       return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
     } else if (DELETE_EVENT_TYPES.has(eventType) && config.eventTypes.remove) {
@@ -1236,8 +1338,26 @@ async function oncePoll(account: string): Promise<void> {
 
   const savedState = readState();
   const state = savedState[account];
-  const fromTime = state?.fromTime || Math.floor(Date.now() / 1000);
-  const fromId = state?.fromId || 0;
+  const hasSavedState = !!state?.fromTime;
+  const firstPullMode = config.firstPullMode || "latest";
+
+  // 首拉模式决定起始游标：
+  // - latest: 从当前时间开始（只处理新事件）
+  // - all: 从 0 开始拉取全部历史（首次部署补历史）
+  // - last: 从上次保存的断点继续；若无断点则退化为 latest
+  let fromTime: number;
+  let fromId: number;
+  if (firstPullMode === "all") {
+    fromTime = 0;
+    fromId = 0;
+  } else if (firstPullMode === "last" && hasSavedState) {
+    fromTime = state!.fromTime;
+    fromId = state!.fromId;
+  } else {
+    // latest 或 last 无断点
+    fromTime = Math.floor(Date.now() / 1000);
+    fromId = 0;
+  }
 
   updateState(account, {
     status: "running",
