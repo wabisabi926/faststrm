@@ -49,10 +49,16 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
-        const success = startMonitor(account);
+        const result = startMonitor(account);
+        if (!result.success) {
+          return NextResponse.json(
+            { error: result.message },
+            { status: 400 }
+          );
+        }
         return NextResponse.json({
-          success,
-          message: success ? `监控已启动: ${account}` : `启动失败: ${account}`,
+          success: true,
+          message: result.message,
         });
       }
 

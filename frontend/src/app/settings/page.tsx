@@ -97,7 +97,11 @@ export default function SettingsPage() {
   const [accounts, setAccounts] = useState<string[]>([]);
   const [monitorStates, setMonitorStates] = useState<MonitorState[]>([]);
   const [verifying, setVerifying] = useState(false);
-  const [verifyResult, setVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [verifyResult, setVerifyResult] = useState<{
+    success: boolean;
+    message: string;
+    perAccount: { account: string; success: boolean; message: string; details?: Record<string, unknown> }[];
+  } | null>(null);
 
   // Life monitor form state
   const [monitorEnabled, setMonitorEnabled] = useState(false);
@@ -300,26 +304,41 @@ export default function SettingsPage() {
     setVerifying(true);
     setVerifyResult(null);
     try {
-      const results = [];
+      const perAccount: { account: string; success: boolean; message: string; details?: Record<string, unknown> }[] = [];
       for (const account of selectedAccounts) {
-        const resp = await axiosInstance.post("/api/lifeMonitor", {
-          action: "verify",
-          account,
-        });
-        results.push(resp.data);
+        try {
+          const resp = await axiosInstance.post("/api/lifeMonitor", {
+            action: "verify",
+            account,
+          });
+          perAccount.push({ account, ...resp.data });
+        } catch (apiErr: unknown) {
+          const msg = apiErr instanceof Error ? apiErr.message : "请求失败";
+          perAccount.push({ account, success: false, message: msg });
+        }
       }
-      const allSuccess = results.every((r: { success: boolean }) => r.success);
+      const allSuccess = perAccount.every(r => r.success);
+      const successCount = perAccount.filter(r => r.success).length;
       setVerifyResult({
         success: allSuccess,
-        message: allSuccess ? "所有账号验证通过" : "部分账号验证失败",
+        message: allSuccess
+          ? `所有 ${perAccount.length} 个账号验证通过`
+          : `${successCount}/${perAccount.length} 个账号通过`,
+        perAccount,
       });
       if (allSuccess) {
         toast.success("账号验证通过，生活事件已开启");
       } else {
-        toast.error("部分账号验证失败");
+        toast.error(`${perAccount.length - successCount} 个账号验证失败`);
       }
     } catch (err) {
-      toast.error("验证失败");
+      const msg = err instanceof Error ? err.message : "验证失败";
+      toast.error(msg);
+      setVerifyResult({
+        success: false,
+        message: msg,
+        perAccount: [],
+      });
     } finally {
       setVerifying(false);
     }
@@ -347,11 +366,12 @@ export default function SettingsPage() {
         },
       });
       toast.success(resp.data?.message || "监控已更新");
-      // Refresh states
       const monitorResp = await axiosInstance.get("/api/lifeMonitor");
       setMonitorStates(monitorResp.data?.states || []);
     } catch (err) {
       toast.error("启动监控失败");
+      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
+      setMonitorStates(monitorResp.data?.states || []);
     }
   };
 
@@ -366,20 +386,25 @@ export default function SettingsPage() {
       setMonitorStates(monitorResp.data?.states || []);
     } catch (err) {
       toast.error("停止监控失败");
+      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
+      setMonitorStates(monitorResp.data?.states || []);
     }
   };
 
   const handleStartAccount = async (account: string) => {
     try {
-      await axiosInstance.post("/api/lifeMonitor", {
+      const resp = await axiosInstance.post("/api/lifeMonitor", {
         action: "start",
         account,
       });
-      toast.success(`监控已启动: ${account}`);
+      toast.success(resp.data?.message || `监控已启动: ${account}`);
       const monitorResp = await axiosInstance.get("/api/lifeMonitor");
       setMonitorStates(monitorResp.data?.states || []);
-    } catch (err) {
-      toast.error("启动监控失败");
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || "启动监控失败";
+      toast.error(msg);
+      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
+      setMonitorStates(monitorResp.data?.states || []);
     }
   };
 
@@ -821,18 +846,42 @@ export default function SettingsPage() {
           </div>
 
           {/* Verify Button */}
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={handleVerify}
-              disabled={verifying || selectedAccounts.length === 0}
-            >
-              {verifying ? "验证中..." : "验证账号的生活事件功能"}
-            </Button>
-            {verifyResult && (
-              <span className={`text-sm ${verifyResult.success ? "text-green-500" : "text-red-500"}`}>
-                {verifyResult.message}
-              </span>
+          <div className="space-y-2">
+            <div className="flex gap-2 items-center">
+              <Button
+                variant="outline"
+                onClick={handleVerify}
+                disabled={verifying || selectedAccounts.length === 0}
+              >
+                {verifying ? "验证中..." : "验证账号的生活事件功能"}
+              </Button>
+              {verifyResult && (
+                <span className={`text-sm font-medium ${verifyResult.success ? "text-green-500" : "text-red-500"}`}>
+                  {verifyResult.message}
+                </span>
+              )}
+            </div>
+            {verifyResult && verifyResult.perAccount.length > 0 && (
+              <div className="rounded-md border p-3 space-y-2 text-sm">
+                {verifyResult.perAccount.map(r => (
+                  <div key={r.account} className="flex items-start gap-2">
+                    <span className={r.success ? "text-green-500 mt-0.5" : "text-red-500 mt-0.5 shrink-0"}>
+                      {r.success ? "✓" : "✗"}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-medium">账号：{r.account}</div>
+                      <div className={r.success ? "text-green-600" : "text-red-600"}>
+                        {r.message}
+                      </div>
+                      {r.details && (
+                        <div className="text-muted-foreground text-xs mt-1 break-all">
+                          详情：{JSON.stringify(r.details)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 

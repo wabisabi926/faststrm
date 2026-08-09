@@ -1463,22 +1463,23 @@ async function oncePoll(account: string): Promise<void> {
 
 // ==================== Monitor Control ====================
 
-export function startMonitor(account: string): boolean {
+export function startMonitor(account: string): { success: boolean; message?: string } {
   const config = getLifeMonitorConfig();
 
   if (!config.enabled) {
-    console.log("[LifeMonitor] Monitoring is disabled in settings");
-    return false;
+    return { success: false, message: "请先勾选「启用监控」并保存配置" };
   }
 
   if (!config.accounts.includes(account)) {
-    console.log(`[LifeMonitor] Account ${account} not in monitor list`);
-    return false;
+    return { success: false, message: `账号 ${account} 不在监控列表中，请先添加并保存` };
   }
 
   if (monitorTimers.has(account)) {
-    console.log(`[LifeMonitor] Monitor already running for ${account}`);
-    return false;
+    const currentState = monitorStates.get(account);
+    if (!currentState?.running) {
+      updateState(account, { running: true, status: "running" });
+    }
+    return { success: false, message: `账号 ${account} 的监控已在运行中` };
   }
 
   updateState(account, {
@@ -1511,7 +1512,7 @@ export function startMonitor(account: string): boolean {
 
   monitorTimers.set(account, timer);
 
-  return true;
+  return { success: true, message: `监控已启动: ${account}` };
 }
 
 export function stopMonitor(account: string): void {
@@ -1534,7 +1535,8 @@ export function startAllMonitors(): string[] {
   const startedAccounts: string[] = [];
 
   for (const account of config.accounts) {
-    if (startMonitor(account)) {
+    const result = startMonitor(account);
+    if (result.success) {
       startedAccounts.push(account);
     }
   }
@@ -1557,18 +1559,33 @@ export function getMonitorStatus(): {
   states: Array<{ account: string; state: LifeMonitorState }>;
 } {
   const config = getLifeMonitorConfig();
-  const states = config.accounts.map((account) => ({
-    account,
-    state: monitorStates.get(account) || {
-      running: false,
+  const states = config.accounts.map((account) => {
+    const timerExists = monitorTimers.has(account);
+    const monitorState = monitorStates.get(account);
+
+    if (monitorState) {
+      return {
+        account,
+        state: {
+          ...monitorState,
+          running: timerExists,
+        },
+      };
+    }
+
+    return {
       account,
-      lastFromTime: 0,
-      lastFromId: 0,
-      lastCheckTime: 0,
-      eventsProcessed: 0,
-      status: "idle" as const,
-    },
-  }));
+      state: {
+        running: timerExists,
+        account,
+        lastFromTime: 0,
+        lastFromId: 0,
+        lastCheckTime: 0,
+        eventsProcessed: 0,
+        status: timerExists ? "running" as const : "idle" as const,
+      },
+    };
+  });
 
   return { config, states };
 }
@@ -1594,16 +1611,29 @@ export async function verifyAccount(account: string): Promise<{
   try {
     const status = await lifeShow(accountInfo as AccountInfo, "web");
     if (status.state) {
+      // 验证时用 from_time=0 拉取所有事件（不限时间范围）
       const { events } = await oncePullLifeEvents(
         accountInfo as AccountInfo,
-        Math.floor(Date.now() / 1000) - 86400,
         0,
-        "web"
+        0,
+        "ios"
       );
+
+      if (events.length === 0) {
+        return {
+          success: true,
+          message: `生活事件已开启，接口正常响应（最近 7 天暂无事件记录）`,
+          details: {
+            lifeEnabled: true,
+            recentEvents: 0,
+            note: "接口可用但最近无事件，属正常情况",
+          },
+        };
+      }
 
       return {
         success: true,
-        message: `生活事件已开启，最近24小时内有 ${events.length} 个事件`,
+        message: `生活事件已开启，最近 7 天内有 ${events.length} 个事件`,
         details: {
           lifeEnabled: true,
           recentEvents: events.length,
