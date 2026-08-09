@@ -1415,13 +1415,19 @@ async function oncePoll(account: string): Promise<void> {
     }
   } catch { /* tasks.json 可能不存在，忽略 */ }
 
-  // mediaExtensions 默认用 settings.strmExtensions（与全量统一）
+  // mediaExtensions 兜底：若用户未显式修改过（与 DEFAULT 一致），则用全局 strmExtensions 统一
+  // 若用户已在生活事件面板单独配置了 mediaExtensions，则尊重用户的显式选择，不覆盖
   try {
     const settings = readSettings();
     const strmExts = (settings.strmExtensions || []).map((e: string) =>
       e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase()
     );
-    if (strmExts.length > 0) {
+    const userMedia = (config.mediaExtensions || []).map((e) => e.toLowerCase());
+    const defaultMedia = DEFAULT_CONFIG.mediaExtensions.map((e) => e.toLowerCase());
+    const userCustomized =
+      userMedia.length !== defaultMedia.length ||
+      !userMedia.every((e) => defaultMedia.includes(e));
+    if (!userCustomized && strmExts.length > 0) {
       config = { ...config, mediaExtensions: strmExts };
     }
   } catch { /* settings 读取失败，保留默认 */ }
