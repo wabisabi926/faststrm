@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { readSettings, readAccounts, writeSettings, readTasks, notifyEmbyRefresh } from "./serverUtils";
 import { appendLifeEventLog } from "./lifeEventLogManager";
+import { tryPollMonitor } from "./accountRuntimeState";
 import {
   AccountInfo,
   getDownloadUrlWeb,
@@ -1390,6 +1391,14 @@ function scheduleEmbyRefresh(account: string) {
 // ==================== Polling ====================
 
 async function oncePoll(account: string): Promise<void> {
+  const pollStatus = tryPollMonitor(account);
+  if (!pollStatus.ok) {
+    console.log(
+      `[eventMonitor] monitor suspended for ${account} (fullscan active), skip this poll. resume @ ${new Date(pollStatus.suspendedUntil!).toISOString()}`
+    );
+    return;
+  }
+
   let config = getLifeMonitorConfig();
 
   // 从 task 配置覆盖 strmPrefix / enablePathEncoding（与全量生成保持一致）

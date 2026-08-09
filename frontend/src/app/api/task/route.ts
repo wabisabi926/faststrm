@@ -2,47 +2,53 @@ import { readTasks, saveTasks, readSettings, writeSettings } from "@/lib/serverU
 import { downloadTasks } from "@/lib/downloadTaskManager";
 import { NextRequest, NextResponse } from "next/server";
 import { exec } from "child_process";
+import {
+  initTaskScheduler,
+  registerTaskSchedule,
+  unregisterTaskSchedule,
+  computeNextRun,
+  TaskSchedule,
+} from "@/lib/taskScheduler";
+
+initTaskScheduler();
 
 export async function GET() {
   const tasks = readTasks();
-  
-  // 获取运行中的任务ID
   const runningTaskIds = new Set(Object.keys(downloadTasks));
-  
-  // 为任务添加状态信息
-  const tasksWithStatus = tasks.map((task: { id: string; [key: string]: unknown }) => ({
-    ...task,
-    status: runningTaskIds.has(task.id) ? "processing" : "pending"
-  }));
-  
+
+  const tasksWithStatus = tasks.map((task: any) => {
+    const base = {
+      ...task,
+      status: runningTaskIds.has(task.id) ? "processing" : "pending",
+    };
+
+    if (task.schedule?.enabled) {
+      const computedNext = computeNextRun(task.schedule as TaskSchedule);
+      base._computedNextRunAt = computedNext ?? task.schedule.nextRunAt ?? null;
+    }
+
+    return base;
+  });
+
   return NextResponse.json(tasksWithStatus);
 }
 
-// 辅助函数：当开启302时，把前缀路径添加到 mediaMountPath
 function updateMediaMountPathFor302(taskData: { enable302?: boolean; strmPrefix?: string; account?: string }) {
-  if (!taskData.enable302 || !taskData.strmPrefix) {
-    return;
-  }
-  
-  // strmPrefix 在前端提交时已经拼接了账户名，直接使用即可
+  if (!taskData.enable302 || !taskData.strmPrefix) return;
+
   const fullPath = (taskData.strmPrefix || "").replace(/\/+$/, "");
-  
-  // 读取当前设置
   const settings = readSettings();
-  const mediaMountPath: string[] = Array.isArray(settings.mediaMountPath) 
-    ? settings.mediaMountPath as string[] 
+  const mediaMountPath: string[] = Array.isArray(settings.mediaMountPath)
+    ? (settings.mediaMountPath as string[])
     : [];
-  
-  // 检查是否已经存在
+
   if (!mediaMountPath.includes(fullPath)) {
     mediaMountPath.push(fullPath);
     settings.mediaMountPath = mediaMountPath;
     writeSettings(settings);
-    
-    // 重载 nginx 使配置生效
-    exec('nginx -s reload', (err) => {
-      if (err) console.error('nginx reload failed:', err);
-      else console.log('nginx reloaded for mediaMountPath update');
+    exec("nginx -s reload", (err) => {
+      if (err) console.error("nginx reload failed:", err);
+      else console.log("nginx reloaded for mediaMountPath update");
     });
   }
 }
@@ -51,16 +57,12 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const tasks = readTasks();
 
-  // 自动生成 ID
-  const newTask = {
-    id: Date.now().toString(),
-    ...body,
-  };
+  const newTask = { id: Date.now().toString(), ...body };
   tasks.push(newTask);
   saveTasks(tasks);
-
-  // 如果开启了302，更新 mediaMountPath
   updateMediaMountPathFor302(newTask);
+
+  registerTaskSchedule(newTask.id);
 
   return NextResponse.json(newTask, { status: 201 });
 }
@@ -70,16 +72,16 @@ export async function PUT(req: NextRequest) {
   const { id, ...updateData } = body;
 
   const tasks = readTasks();
-  const index = tasks.findIndex((t: { id: string; }) => t.id === id);
+  const index = tasks.findIndex((t: { id: string }) => t.id === id);
   if (index === -1) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
   tasks[index] = { ...tasks[index], ...updateData };
   saveTasks(tasks);
-
-  // 如果开启了302，更新 mediaMountPath
   updateMediaMountPathFor302(tasks[index]);
+
+  registerTaskSchedule(id);
 
   return NextResponse.json(tasks[index]);
 }
@@ -93,11 +95,13 @@ export async function DELETE(req: NextRequest) {
   }
 
   const tasks = readTasks();
-  const filtered = tasks.filter((t: { id: string; }) => t.id !== id);
+  const filtered = tasks.filter((t: { id: string }) => t.id !== id);
   if (filtered.length === tasks.length) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
   saveTasks(filtered);
+  unregisterTaskSchedule(id);
+
   return NextResponse.json({ success: true });
 }
