@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
-import { readSettings, readAccounts, writeSettings } from "./serverUtils";
+import { readSettings, readAccounts, writeSettings, readTasks, notifyEmbyRefresh } from "./serverUtils";
+import { appendLifeEventLog } from "./lifeEventLogManager";
 import {
   AccountInfo,
   getDownloadUrlWeb,
@@ -119,6 +120,8 @@ const g = globalThis as unknown as {
   __lifeMonitorTimers?: Map<string, NodeJS.Timeout>;
   __lifeMonitorCallbacks?: Map<string, Set<LifeMonitorCallback>>;
   __lifeIdPathMemoryCache?: Map<string, string>;
+  __embyDebounceTimers?: Map<string, NodeJS.Timeout>;
+  __embyLastFireTime?: Map<string, number>;
 };
 
 if (!g.__lifeMonitorStates) {
@@ -133,10 +136,19 @@ if (!g.__lifeMonitorCallbacks) {
 if (!g.__lifeIdPathMemoryCache) {
   g.__lifeIdPathMemoryCache = new Map();
 }
+if (!g.__embyDebounceTimers) {
+  g.__embyDebounceTimers = new Map();
+}
+if (!g.__embyLastFireTime) {
+  g.__embyLastFireTime = new Map();
+}
 
 const monitorStates = g.__lifeMonitorStates;
 const monitorTimers = g.__lifeMonitorTimers;
 const monitorCallbacks = g.__lifeMonitorCallbacks;
+
+const embyDebounceTimers = g.__embyDebounceTimers;
+const embyLastFireTime = g.__embyLastFireTime;
 
 // In-memory ID→Path cache: key = "accountName:cid"
 const idPathMemoryCache = g.__lifeIdPathMemoryCache;
@@ -593,12 +605,12 @@ function isValidPickCode(pickCode: string): boolean {
 }
 
 function generateStrmContent(
-  pickCode: string,
-  fileName: string,
+  cloudPath: string,
   config: LifeMonitorConfig
 ): string {
   const strmPrefix = config.strmPrefix || "";
-  const format = `${strmPrefix}/${pickCode}`;
+  const normalized = cloudPath.startsWith("/") ? cloudPath : "/" + cloudPath;
+  const format = `${strmPrefix}${normalized}`;
   return config.enablePathEncoding ? encodeURI(format) : format;
 }
 
@@ -684,7 +696,7 @@ async function handleCreateEvent(
 
   const strmFileName = getStrmFileName(event.file_name);
   const strmPath = path.join(path.dirname(mapping.localPath), strmFileName);
-  const strmContent = generateStrmContent(event.pick_code, event.file_name, config);
+  const strmContent = generateStrmContent(cloudPath, config);
 
   if (writeStrmContent(strmPath, strmContent)) {
     upsertFilePathEntry(accountInfo.name, {
@@ -755,7 +767,7 @@ async function handleFolderCreateEvent(
           const itemName = item.n;
           const itemFid = item.fid;
           const itemCid = item.cid;
-          const isDirectory = !item.sha || item.sha === "" || item.sha === null;
+          const isDirectory = item.fc === 0;
 
           if (isDirectory) {
             const itemPath = cloudPath.endsWith("/")
@@ -825,7 +837,7 @@ async function handleFolderCreateEvent(
               if (isValidPickCode(pickCode)) {
                 const strmFileName = getStrmFileName(itemName);
                 const strmPath = path.join(localDir, strmFileName);
-                const strmContent = generateStrmContent(pickCode, itemName, config);
+                const strmContent = generateStrmContent(itemPath, config);
 
                 if (writeStrmContent(strmPath, strmContent)) {
                   strmCount++;
@@ -1048,8 +1060,7 @@ async function handleMoveEvent(
           // 若事件携带新 pickcode，更新 STRM 内容
           if (isValidPickCode(event.pick_code)) {
             const newContent = generateStrmContent(
-              event.pick_code,
-              event.file_name,
+              cloudPath,
               config
             );
             writeStrmContent(newStrmPath, newContent);
@@ -1149,11 +1160,10 @@ async function handleRenameEvent(
           if (path.dirname(oldStrmPath) === path.dirname(newStrmPath)) {
             // Same directory, simple rename
             fs.renameSync(oldStrmPath, newStrmPath);
-            // Update STRM content with new pick_code
+            // Update STRM content with new cloud path
             if (isValidPickCode(event.pick_code)) {
               const newContent = generateStrmContent(
-                event.pick_code,
-                event.file_name,
+                cloudPath,
                 config
               );
               writeStrmContent(newStrmPath, newContent);
@@ -1330,8 +1340,6 @@ async function processEvent(
       return handleMoveEvent(accountInfo, event, config, mapping, cloudPath);
     } else if (RENAME_EVENT_TYPES.has(eventType) && config.eventTypes.rename) {
       return handleRenameEvent(accountInfo, event, config, mapping, cloudPath);
-    } else if (NEW_FOLDER_EVENT_TYPES.has(eventType)) {
-      return handleNewFolderEvent(event, mapping, cloudPath);
     } else {
       result.action = "skip";
       result.message = `事件类型 ${eventType} 未启用处理`;
@@ -1344,10 +1352,71 @@ async function processEvent(
   }
 }
 
+// ==================== Emby Refresh (debounced) ====================
+
+const EMBY_DEBOUNCE_MS = 3000;
+const EMBY_MIN_INTERVAL_MS = 30000;
+
+function scheduleEmbyRefresh(account: string) {
+  const existing = embyDebounceTimers.get(account);
+  if (existing) clearTimeout(existing);
+
+  const timer = setTimeout(async () => {
+    embyDebounceTimers.delete(account);
+
+    const now = Date.now();
+    const lastFire = embyLastFireTime.get(account) || 0;
+    if (now - lastFire < EMBY_MIN_INTERVAL_MS) {
+      const waitMs = EMBY_MIN_INTERVAL_MS - (now - lastFire);
+      embyDebounceTimers.set(
+        account,
+        setTimeout(() => {
+          embyDebounceTimers.delete(account);
+          embyLastFireTime.set(account, Date.now());
+          notifyEmbyRefresh();
+        }, waitMs)
+      );
+      return;
+    }
+
+    embyLastFireTime.set(account, now);
+    console.log(`[LifeMonitor] 触发 Emby 刷新 (account=${account})`);
+    notifyEmbyRefresh();
+  }, EMBY_DEBOUNCE_MS);
+
+  embyDebounceTimers.set(account, timer);
+}
+
 // ==================== Polling ====================
 
 async function oncePoll(account: string): Promise<void> {
-  const config = getLifeMonitorConfig();
+  let config = getLifeMonitorConfig();
+
+  // 从 task 配置覆盖 strmPrefix / enablePathEncoding（与全量生成保持一致）
+  try {
+    const tasks = readTasks();
+    const matchedTask = tasks.find((t: { account: string }) => t.account === account);
+    if (matchedTask) {
+      if (matchedTask.strmPrefix) {
+        config = { ...config, strmPrefix: matchedTask.strmPrefix };
+      }
+      if (typeof matchedTask.enablePathEncoding === "boolean") {
+        config = { ...config, enablePathEncoding: matchedTask.enablePathEncoding };
+      }
+    }
+  } catch { /* tasks.json 可能不存在，忽略 */ }
+
+  // mediaExtensions 默认用 settings.strmExtensions（与全量统一）
+  try {
+    const settings = readSettings();
+    const strmExts = (settings.strmExtensions || []).map((e: string) =>
+      e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase()
+    );
+    if (strmExts.length > 0) {
+      config = { ...config, mediaExtensions: strmExts };
+    }
+  } catch { /* settings 读取失败，保留默认 */ }
+
   const accounts = readAccounts();
 
   const accountInfo = accounts.find(
@@ -1435,9 +1504,24 @@ async function oncePoll(account: string): Promise<void> {
 
       notifyCallbacks(account, "event", result);
 
-      if (!result.success || result.action === "error") {
+      if (result.action !== "skip") {
+        appendLifeEventLog(
+          account,
+          event.type,
+          result.success,
+          result.filePath,
+          result.localPath,
+          result.message || ""
+        );
+      }
+
+      if (result.action === "skip") {
+        // 跳过不在监控范围内的事件，不计入错误
+      } else if (!result.success || result.action === "error") {
         errorCount++;
         console.error(`[LifeMonitor] Event ${event.id} failed: ${result.message}`);
+      } else {
+        scheduleEmbyRefresh(account);
       }
     }
 
@@ -1474,6 +1558,19 @@ async function oncePoll(account: string): Promise<void> {
             const result = await processEvent(accountInfo as AccountInfo, events[i], config);
             processedCount++;
             notifyCallbacks(account, "event", result);
+            if (result.action !== "skip") {
+              appendLifeEventLog(
+                account,
+                events[i].type,
+                result.success,
+                result.filePath,
+                result.localPath,
+                result.message || ""
+              );
+            }
+            if (result.action !== "skip" && result.success) {
+              scheduleEmbyRefresh(account);
+            }
           }
 
           saveState(account, next_time, next_id);

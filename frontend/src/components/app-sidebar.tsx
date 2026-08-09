@@ -1,5 +1,5 @@
 "use client"
-import { Home, Inbox, Settings, Github, Bot, Users, History } from "lucide-react";
+import { ListChecks, Inbox, Settings, Github, Bot, Users, History, Activity } from "lucide-react";
 import Image from "next/image";
 
 import {
@@ -23,14 +23,14 @@ const appVersion = (frontendPkg as PackageJson).version ?? "";
 // Menu items.
 const items = [
   {
-    title: "首页",
-    url: "/home",
-    icon: Home,
-  },
-  {
     title: "账户",
     url: "/account",
     icon: Inbox,
+  },
+  {
+    title: "任务",
+    url: "/home",
+    icon: ListChecks,
   },
   {
     title: "设置",
@@ -38,9 +38,14 @@ const items = [
     icon: Settings,
   },
   {
-    title: "历史",
+    title: "任务历史",
     url: "/history",
     icon: History,
+  },
+  {
+    title: "生活事件",
+    url: "/life-events",
+    icon: Activity,
   },
 ];
 

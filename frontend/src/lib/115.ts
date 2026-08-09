@@ -17,7 +17,7 @@ export interface AccountInfo {
 
 // 创建缓存实例
 const dirIdCache = new SimpleCache<{ id: number }>(10 * 60 * 1000); // 目录ID缓存10分钟
-const filesListCache = new SimpleCache<{ data: Array<{ n: string; fid: number; cid: number; fc: number }> }>(5 * 60 * 1000); // 文件列表缓存5分钟
+const filesListCache = new SimpleCache<{ data: Array<{ n: string; fid: number; cid: number; fc: number; s?: number; sha?: string; pickcode?: string }> }>(5 * 60 * 1000); // 文件列表缓存5分钟
 const pickcodeCache = new SimpleCache<string>(30 * 60 * 1000); // pickcode缓存30分钟
 
 // 缓存管理函数
@@ -292,7 +292,7 @@ export async function fs_files(cid: number, { userAgent, limit = 1000, offset = 
     limit: String(limit),
     offset: String(offset),
   });
-  const data = await request115<{ data: Array<{ n: string; fid: number; cid: number; fc: number }> }>(url + '?' + params, {
+  const data = await request115<{ data: Array<{ n: string; fid: number; cid: number; fc: number; s?: number; sha?: string; pickcode?: string }> }>(url + '?' + params, {
     method: 'GET',
     userAgent,
     ensureOk: true,

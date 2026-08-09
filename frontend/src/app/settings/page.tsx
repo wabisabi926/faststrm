@@ -419,7 +419,7 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
+        <h1 className="text-2xl font-semibold">设置</h1>
         <p className="text-sm text-muted-foreground mt-1">
           配置全局选项与 Emby 通知
         </p>

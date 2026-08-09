@@ -56,8 +56,8 @@ export interface LifeEvent {
 // 可处理的事件类型（上传/新建/复制/接收/移动/重命名/删除）
 export const HANDLED_EVENT_TYPES = new Set([1, 2, 5, 6, 14, 17, 18, 20, 22, 23, 24]);
 
-// 生成 STRM 的事件类型
-export const CREATE_EVENT_TYPES = new Set([1, 2, 14, 18, 23]);
+// 生成 STRM 的事件类型（17=new_folder 也会触发递归遍历）
+export const CREATE_EVENT_TYPES = new Set([1, 2, 14, 17, 18, 23]);
 
 // 移动事件类型
 export const MOVE_EVENT_TYPES = new Set([5, 6]);
