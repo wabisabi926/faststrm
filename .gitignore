@@ -1,15 +1,15 @@
 **/node_modules
 .DS_Store
 *.log
-**/logs
-**/data
-**/account.json
-**/tasks.json
-**/config.json
-**/settings.json
-**/.salt
 **/.env
 **/.env.*
 **/.next
 *.fpk
 cache
+
+# Runtime directories
+config/
+.config/
+logs/
+data/
+strm-test/

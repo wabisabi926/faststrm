@@ -30,6 +30,7 @@ export interface LifeMonitorConfig {
   accounts: string[];
   pollInterval: number;
   pathMappings: Array<{
+    account?: string;
     cloudPath: string;
     localPath: string;
   }>;
@@ -111,14 +112,34 @@ const WEB_FALLBACK_DURATION = 24 * 60 * 60;
 const MAX_RECURSION_DEPTH = 10;
 const MAX_FOLDER_FILES = 1000;
 
-// ==================== Global State ====================
+// ==================== Global State (persist across Next.js HMR via globalThis) ====================
 
-const monitorStates = new Map<string, LifeMonitorState>();
-const monitorTimers = new Map<string, NodeJS.Timeout>();
-const monitorCallbacks = new Map<string, Set<LifeMonitorCallback>>();
+const g = globalThis as unknown as {
+  __lifeMonitorStates?: Map<string, LifeMonitorState>;
+  __lifeMonitorTimers?: Map<string, NodeJS.Timeout>;
+  __lifeMonitorCallbacks?: Map<string, Set<LifeMonitorCallback>>;
+  __lifeIdPathMemoryCache?: Map<string, string>;
+};
+
+if (!g.__lifeMonitorStates) {
+  g.__lifeMonitorStates = new Map();
+}
+if (!g.__lifeMonitorTimers) {
+  g.__lifeMonitorTimers = new Map();
+}
+if (!g.__lifeMonitorCallbacks) {
+  g.__lifeMonitorCallbacks = new Map();
+}
+if (!g.__lifeIdPathMemoryCache) {
+  g.__lifeIdPathMemoryCache = new Map();
+}
+
+const monitorStates = g.__lifeMonitorStates;
+const monitorTimers = g.__lifeMonitorTimers;
+const monitorCallbacks = g.__lifeMonitorCallbacks;
 
 // In-memory ID→Path cache: key = "accountName:cid"
-const idPathMemoryCache = new Map<string, string>();
+const idPathMemoryCache = g.__lifeIdPathMemoryCache;
 
 // Ensure config directory exists
 function ensureConfigDir() {
@@ -373,12 +394,13 @@ async function resolvePathByCid(
   // Check if this CID corresponds to one of our mapped paths
   const config = getLifeMonitorConfig();
   for (const mapping of config.pathMappings) {
+    if (mapping.account && mapping.account !== account) continue;
     try {
       const mappedCid = await fs_dir_getid(mapping.cloudPath, {
         userAgent: readSettings()["user-agent"],
-        accountInfo: accountInfo as AccountInfo,
+        accountInfo: accountInfo as unknown as AccountInfo,
       });
-      if (mappedCid === cid) {
+      if (mappedCid.id === cid) {
         setIdPath(account, cid, mapping.cloudPath);
         return mapping.cloudPath;
       }
@@ -517,9 +539,12 @@ async function resolveEventPath(
 
 function matchPathMapping(
   cloudPath: string,
-  pathMappings: LifeMonitorConfig["pathMappings"]
+  pathMappings: LifeMonitorConfig["pathMappings"],
+  account?: string
 ): { cloudPath: string; localPath: string; relativePath: string } | null {
   for (const mapping of pathMappings) {
+    if (mapping.account && account && mapping.account !== account) continue;
+
     const normalizedCloudPath = mapping.cloudPath.endsWith("/")
       ? mapping.cloudPath
       : mapping.cloudPath + "/";
@@ -730,10 +755,9 @@ async function handleFolderCreateEvent(
           const itemName = item.n;
           const itemFid = item.fid;
           const itemCid = item.cid;
-          const itemFc = item.fc; // 0=file, 1=folder
+          const isDirectory = !item.sha || item.sha === "" || item.sha === null;
 
-          if (itemFc === 1) {
-            // Folder - build path and recurse
+          if (isDirectory) {
             const itemPath = cloudPath.endsWith("/")
               ? cloudPath + itemName
               : cloudPath + "/" + itemName;
@@ -743,7 +767,6 @@ async function handleFolderCreateEvent(
               fs.mkdirSync(itemLocalPath, { recursive: true });
             }
 
-            // Cache the path mapping
             setIdPath(accountInfo.name, itemCid, itemPath);
             upsertFilePathEntry(accountInfo.name, {
               fileId: itemFid,
@@ -756,18 +779,15 @@ async function handleFolderCreateEvent(
 
             await processDirectory(itemCid, depth + 1);
           } else {
-            // File
             const itemPath = cloudPath.endsWith("/")
               ? cloudPath + itemName
               : cloudPath + "/" + itemName;
 
-            // Check if it's a media file
             if (!isMediaFile(itemName, config.mediaExtensions)) {
               skippedCount++;
               continue;
             }
 
-            // 最小文件大小过滤
             const folderMinSize = config.minFileSize || 0;
             if (
               folderMinSize > 0 &&
@@ -778,13 +798,26 @@ async function handleFolderCreateEvent(
               continue;
             }
 
-            // Get pickcode for this file
             try {
               const userAgent = readSettings()["user-agent"];
-              const fileInfo = await getFileInfoById(itemFid, {
-                userAgent,
-                accountInfo: accountInfo as AccountInfo,
-              });
+              let fileInfo: unknown = null;
+              let lastErr: unknown = null;
+              for (let attempt = 0; attempt < 3; attempt++) {
+                if (attempt > 0) {
+                  await new Promise((r) => setTimeout(r, 1000 * attempt));
+                }
+                try {
+                  fileInfo = await getFileInfoById(itemFid, {
+                    userAgent,
+                    accountInfo: accountInfo as AccountInfo,
+                  });
+                  lastErr = null;
+                  break;
+                } catch (e) {
+                  lastErr = e;
+                }
+              }
+              if (lastErr) throw lastErr;
 
               const info = fileInfo as Record<string, unknown> | null;
               const pickCode = (info?.pickcode || info?.pick_code || "") as string;
@@ -910,7 +943,7 @@ async function handleMoveEvent(
   const moveMode = config.moveMediaMode || "local_move";
 
   if (oldEntry) {
-    const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings);
+    const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings, accountInfo.name);
 
     if (oldMapping) {
       // recreate 模式：删除旧 STRM/目录后走 create 流程重新生成
@@ -1076,7 +1109,7 @@ async function handleRenameEvent(
   const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
 
   if (oldEntry) {
-    const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings);
+    const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings, accountInfo.name);
 
     if (oldMapping) {
       if (isFolder) {
@@ -1261,7 +1294,7 @@ async function processEvent(
       });
     }
 
-    const mapping = matchPathMapping(cloudPath, config.pathMappings);
+    const mapping = matchPathMapping(cloudPath, config.pathMappings, accountInfo.name);
     if (!mapping) {
       result.action = "skip";
       result.message = `路径不在监控范围内: ${cloudPath}`;
@@ -1350,11 +1383,12 @@ async function oncePoll(account: string): Promise<void> {
   if (firstPullMode === "all") {
     fromTime = 0;
     fromId = 0;
-  } else if (firstPullMode === "last" && hasSavedState) {
+  } else if (hasSavedState) {
+    // latest / last 均优先使用已保存的断点，避免 poll 间新事件被跳过
     fromTime = state!.fromTime;
     fromId = state!.fromId;
   } else {
-    // latest 或 last 无断点
+    // 首次 poll：latest 从当前时间开始（不拉历史），last 退化为 latest
     fromTime = Math.floor(Date.now() / 1000);
     fromId = 0;
   }
@@ -1378,6 +1412,8 @@ async function oncePoll(account: string): Promise<void> {
     reset405Count(account);
 
     if (events.length === 0) {
+      // 无新事件也要保存断点，下次 poll 从该时间继续，避免 poll 间事件丢失
+      saveState(account, fromTime, fromId);
       updateState(account, {
         status: "running",
         lastFromTime: fromTime,
@@ -1446,6 +1482,16 @@ async function oncePoll(account: string): Promise<void> {
             lastFromTime: next_time,
             lastFromId: next_id,
             eventsProcessed: (monitorStates.get(account)?.eventsProcessed || 0) + processedCount,
+          });
+          return;
+        } else {
+          // Fallback 成功但无新事件，保存当前断点
+          saveState(account, fromTime, fromId);
+          updateState(account, {
+            status: "running",
+            lastFromTime: fromTime,
+            lastFromId: fromId,
+            lastError: undefined,
           });
           return;
         }
@@ -1556,34 +1602,28 @@ export function getMonitorState(account: string): LifeMonitorState | undefined {
 
 export function getMonitorStatus(): {
   config: LifeMonitorConfig;
-  states: Array<{ account: string; state: LifeMonitorState }>;
+  states: LifeMonitorState[];
 } {
   const config = getLifeMonitorConfig();
-  const states = config.accounts.map((account) => {
+  const states = config.accounts.map((account): LifeMonitorState => {
     const timerExists = monitorTimers.has(account);
     const monitorState = monitorStates.get(account);
 
     if (monitorState) {
       return {
-        account,
-        state: {
-          ...monitorState,
-          running: timerExists,
-        },
+        ...monitorState,
+        running: timerExists,
       };
     }
 
     return {
+      running: timerExists,
       account,
-      state: {
-        running: timerExists,
-        account,
-        lastFromTime: 0,
-        lastFromId: 0,
-        lastCheckTime: 0,
-        eventsProcessed: 0,
-        status: timerExists ? "running" as const : "idle" as const,
-      },
+      lastFromTime: 0,
+      lastFromId: 0,
+      lastCheckTime: 0,
+      eventsProcessed: 0,
+      status: timerExists ? "running" as const : "idle" as const,
     };
   });
 

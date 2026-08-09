@@ -17,6 +17,7 @@ import axiosInstance from "@/lib/axios";
 import { StrmCleanupCard } from "./StrmCleanupCard";
 
 type PathMapping = {
+  account?: string;
   cloudPath: string;
   localPath: string;
 };
@@ -108,6 +109,7 @@ export default function SettingsPage() {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [pollInterval, setPollInterval] = useState(30);
   const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
+  const [newMappingAccount, setNewMappingAccount] = useState<string>("__all__");
   const [mediaExtensionsInput, setMediaExtensionsInput] = useState("");
   const [removeEmptyDirs, setRemoveEmptyDirs] = useState(true);
   const [eventTypes, setEventTypes] = useState({
@@ -287,7 +289,11 @@ export default function SettingsPage() {
       toast.error("请填写完整的路径映射");
       return;
     }
-    setPathMappings(prev => [...prev, { cloudPath: newCloudPath.trim(), localPath: newLocalPath.trim() }]);
+    setPathMappings(prev => [...prev, {
+      account: newMappingAccount !== "__all__" ? newMappingAccount : undefined,
+      cloudPath: newCloudPath.trim(),
+      localPath: newLocalPath.trim(),
+    }]);
     setNewCloudPath("");
     setNewLocalPath("");
   };
@@ -791,6 +797,24 @@ export default function SettingsPage() {
             <div className="space-y-2">
               {pathMappings.map((mapping, index) => (
                 <div key={index} className="flex gap-2 items-center">
+                  <Select
+                    value={mapping.account || "__all__"}
+                    onValueChange={(val) => {
+                      const updated = [...pathMappings];
+                      updated[index] = { ...updated[index], account: val === "__all__" ? undefined : val };
+                      setPathMappings(updated);
+                    }}
+                  >
+                    <SelectTrigger className="w-[140px]">
+                      <SelectValue placeholder="全部账号" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">全部账号</SelectItem>
+                      {accounts.map(acc => (
+                        <SelectItem key={acc} value={acc}>{acc}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Input
                     value={mapping.cloudPath}
                     onChange={(e) => {
@@ -823,6 +847,20 @@ export default function SettingsPage() {
               ))}
             </div>
             <div className="flex gap-2 items-center">
+              <Select
+                value={newMappingAccount}
+                onValueChange={setNewMappingAccount}
+              >
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue placeholder="全部账号" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">全部账号</SelectItem>
+                  {accounts.map(acc => (
+                    <SelectItem key={acc} value={acc}>{acc}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Input
                 value={newCloudPath}
                 onChange={(e) => setNewCloudPath(e.target.value)}
