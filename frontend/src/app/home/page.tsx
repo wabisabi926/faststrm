@@ -3,6 +3,7 @@
 import * as React from "react";
 import { DataTable } from "@/components/data-table";
 import { AddTaskDialog } from "./components/AddTaskDialog";
+import { TaskScheduleDialog, TaskSchedule } from "./components/TaskScheduleDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -31,7 +32,8 @@ import {
   AlertCircle,
   FolderX,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  Clock
 } from "lucide-react";
 
 // Task 类型
@@ -48,6 +50,8 @@ export type Task = {
   name: string;
   path: string;
   status: "pending" | "processing" | "success" | "failed";
+  schedule?: TaskSchedule;
+  _computedNextRunAt?: number | null;
 };
 
 // 状态图标和颜色映射
@@ -370,6 +374,61 @@ export default function Home() {
       }
     },
     {
+      id: "schedule",
+      header: "定时",
+      cell: ({ row }) => {
+        const task = row.original;
+        const sched = task.schedule;
+        const enabled = !!sched?.enabled;
+        const nextRun =
+          task._computedNextRunAt ?? sched?.nextRunAt ?? null;
+
+        if (!enabled) {
+          return (
+            <span className="text-xs text-slate-400">未配置</span>
+          );
+        }
+
+        const fmtNext = (() => {
+          if (!nextRun) return "计算中";
+          const d = new Date(nextRun);
+          const now = new Date();
+          const sameDay =
+            d.getFullYear() === now.getFullYear() &&
+            d.getMonth() === now.getMonth() &&
+            d.getDate() === now.getDate();
+          const tomorrow = new Date(now);
+          tomorrow.setDate(now.getDate() + 1);
+          const isTomorrow =
+            d.getFullYear() === tomorrow.getFullYear() &&
+            d.getMonth() === tomorrow.getMonth() &&
+            d.getDate() === tomorrow.getDate();
+          const pad = (n: number) => n.toString().padStart(2, "0");
+          const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          if (sameDay) return `今天 ${t}`;
+          if (isTomorrow) return `明天 ${t}`;
+          return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${t}`;
+        })();
+
+        const modeLabel =
+          sched.mode === "interval"
+            ? `每 ${sched.intervalMinutes} 分钟`
+            : sched.mode === "daily"
+              ? `每天 ${sched.time}`
+              : `每周 ${sched.time}`;
+
+        return (
+          <div className="flex flex-col gap-0.5">
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 bg-indigo-50 rounded-full px-2 py-0.5 w-fit">
+              <Clock className="w-3 h-3" />
+              {modeLabel}
+            </span>
+            <span className="text-xs text-slate-500">下次: {fmtNext}</span>
+          </div>
+        );
+      },
+    },
+    {
       id: "actions",
       header: "操作",
       cell: ({ row }) => {
@@ -428,6 +487,28 @@ export default function Home() {
             >
               <FileText className="w-4 h-4" />
             </Button>
+            <TaskScheduleDialog
+              task={task}
+              onSuccess={fetchTasks}
+              trigger={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`h-8 w-8 p-0 ${
+                    task.schedule?.enabled
+                      ? "text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50"
+                      : ""
+                  }`}
+                  title={
+                    task.schedule?.enabled
+                      ? "定时任务已启用，点击编辑"
+                      : "配置定时任务"
+                  }
+                >
+                  <Clock className="w-4 h-4" />
+                </Button>
+              }
+            />
             <AddTaskDialog
               task={task}
               accounts={accounts}
