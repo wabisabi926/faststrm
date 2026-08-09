@@ -4,7 +4,7 @@
 
 # Fast Strm
 
-**🎉 更新通知（v0.3.0）**：项目从 v0.3.0 开始支持 Emby 302 115 了，大家开始享用吧！
+**🎉 更新通知（v0.3.5）**：项目从 v0.3.5 开始加入 115 生活事件轮询
 
 > 推荐：如果使用 115 302 的话，建议将 115 账号命名和 OpenList 或 CD 内命名一致，这样可以保证找不到地址的时候可以正确回源。
 >
@@ -14,9 +14,7 @@
 
 ---
 
-**重要通知（必读）**：由于 Next.js 的重大漏洞 https://nextjs.org/blog/CVE-2025-66478 ，请务必将项目更新到最新版 v0.2.5。请立即停止使用 v0.2.4 及以下版本，以免造成安全风险。
-
-一个开源的 **Strm 生成工具**。不完全使用指南：[文档地址](https://www.yuque.com/aitiaodetuzi/ueexc2/ynkwg2flhsvf233c)
+一个开源的 **Strm 生成工具**。基于 open strm 项目魔改，加入 115 生活事件轮询。感谢原作者。
 
 ## ✨ 为什么做这个软件
 
@@ -132,12 +130,6 @@ docker-compose -f docker-compose.prod.yml up -d
 ## 📄 许可证
 
 本项目采用 [MIT License](LICENSE) 许可证。
-
-## 💬 交流群组
-
-欢迎加入我们的 Telegram 群组进行交流讨论：
-
-[![Telegram Group](https://img.shields.io/badge/Telegram-Fast Strm%20Group-blue?style=for-the-badge&logo=telegram)](https://t.me/Fast StrmGroup)
 
 ## 🤝 贡献
 
