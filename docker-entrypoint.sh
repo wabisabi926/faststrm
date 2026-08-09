@@ -49,7 +49,7 @@ echo "Internal API token configured"
 
 # 替换 nginx 配置中的默认 token
 if [ -f "$NGINX_MOUNT_CONFIG" ]; then
-  sed -i "s/openstrm-internal-token/$INTERNAL_TOKEN/g" "$NGINX_MOUNT_CONFIG"
+  sed -i "s/faststrm-internal-token/$INTERNAL_TOKEN/g" "$NGINX_MOUNT_CONFIG"
   echo "Nginx config token updated"
 fi
 

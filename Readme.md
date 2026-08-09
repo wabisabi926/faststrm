@@ -1,8 +1,8 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/indown/openStrm/refs/heads/main/frontend/public/logo.png" alt="OpenStrm Logo" width="200" height="200">
+  <img src="https://raw.githubusercontent.com/wabisabi926/faststrm/refs/heads/main/frontend/public/logo.png" alt="Fast Strm Logo" width="200" height="200">
 </div>
 
-# OpenStrm
+# Fast Strm
 
 **🎉 更新通知（v0.3.0）**：项目从 v0.3.0 开始支持 Emby 302 115 了，大家开始享用吧！
 
@@ -46,8 +46,8 @@
 
 ```bash
 # 使用 Docker Compose
-git clone https://github.com/indown/OpenStrm.git
-cd OpenStrm
+git clone https://github.com/wabisabi926/faststrm.git
+cd Fast Strm
 docker-compose up -d
 ```
 
@@ -55,8 +55,8 @@ docker-compose up -d
 
 ```bash
 # 克隆项目
-git clone https://github.com/indown/OpenStrm.git
-cd OpenStrm
+git clone https://github.com/wabisabi926/faststrm.git
+cd Fast Strm
 
 # 安装依赖
 cd frontend
@@ -72,17 +72,17 @@ npm run dev
 
 ```bash
 # 拉取最新镜像
-docker pull indown/openstrm:latest
+docker pull wabisabi926/faststrm:latest
 
 # 运行容器
 docker run -d \
-  --name openstrm \
+  --name Fast Strm \
   -p 3000:3000 \
   -p 8091:8091 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/emby2Alist/nginx/log:/var/log/nginx \
-  indown/openstrm:latest
+  wabisabi926/faststrm:latest
 ```
 
 **端口说明**：
@@ -137,7 +137,7 @@ docker-compose -f docker-compose.prod.yml up -d
 
 欢迎加入我们的 Telegram 群组进行交流讨论：
 
-[![Telegram Group](https://img.shields.io/badge/Telegram-OpenStrm%20Group-blue?style=for-the-badge&logo=telegram)](https://t.me/OpenStrmGroup)
+[![Telegram Group](https://img.shields.io/badge/Telegram-Fast Strm%20Group-blue?style=for-the-badge&logo=telegram)](https://t.me/Fast StrmGroup)
 
 ## 🤝 贡献
 

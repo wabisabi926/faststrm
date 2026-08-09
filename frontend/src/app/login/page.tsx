@@ -41,7 +41,7 @@ export default function LoginPage() {
         <div className="flex flex-col items-center mb-6">
           <Image
             src="/logo.svg"
-            alt="OpenStrm Logo"
+            alt="Fast Strm Logo"
             width={64}
             height={64}
             className="mb-4"
