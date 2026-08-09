@@ -27,7 +27,6 @@ type LifeMonitorConfig = {
   accounts: string[];
   pollInterval: number;
   pathMappings: PathMapping[];
-  mediaExtensions: string[];
   removeEmptyDirs: boolean;
   eventTypes: {
     create: boolean;
@@ -67,7 +66,6 @@ const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
   accounts: [],
   pollInterval: 30,
   pathMappings: [],
-  mediaExtensions: [".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm"],
   removeEmptyDirs: true,
   eventTypes: {
     create: true,
@@ -110,7 +108,6 @@ export default function SettingsPage() {
   const [pollInterval, setPollInterval] = useState(30);
   const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
   const [newMappingAccount, setNewMappingAccount] = useState<string>("__all__");
-  const [mediaExtensionsInput, setMediaExtensionsInput] = useState("");
   const [removeEmptyDirs, setRemoveEmptyDirs] = useState(true);
   const [eventTypes, setEventTypes] = useState({
     create: true,
@@ -143,7 +140,6 @@ export default function SettingsPage() {
         setSelectedAccounts(monitor.accounts || []);
         setPollInterval(monitor.pollInterval || 30);
         setPathMappings(monitor.pathMappings || []);
-        setMediaExtensionsInput((monitor.mediaExtensions || []).join(", "));
         setRemoveEmptyDirs(monitor.removeEmptyDirs ?? true);
         setEventTypes(monitor.eventTypes || DEFAULT_MONITOR_CONFIG.eventTypes);
         const loadedMinSize = typeof monitor.minFileSize === "number" ? monitor.minFileSize : 0;
@@ -223,13 +219,6 @@ export default function SettingsPage() {
         .map(p => p.trim())
         .filter(p => p.length > 0);
 
-      const mediaExtensions = mediaExtensionsInput
-        .split(",")
-        .map(ext => ext.trim())
-        .filter(ext => ext.length > 0)
-        .map(ext => ext.startsWith(".") ? ext : `.${ext}`)
-        .map(ext => ext.toLowerCase());
-
       // 解析 MB 输入为字节；空值或非法值视为 0（不过滤）
       const parsedMb = parseFloat(minFileSizeMb);
       const minBytes = Number.isFinite(parsedMb) && parsedMb > 0
@@ -246,7 +235,6 @@ export default function SettingsPage() {
           accounts: selectedAccounts,
           pollInterval,
           pathMappings,
-          mediaExtensions,
           removeEmptyDirs,
           eventTypes,
           minFileSize: minBytes,
@@ -363,7 +351,6 @@ export default function SettingsPage() {
           accounts: selectedAccounts,
           pollInterval,
           pathMappings,
-          mediaExtensions: mediaExtensionsInput.split(",").map(e => e.trim()).filter(Boolean),
           removeEmptyDirs,
           eventTypes,
           minFileSize: minBytes,
@@ -644,17 +631,6 @@ export default function SettingsPage() {
               />
               <p className="text-xs text-muted-foreground">
                 建议 30-60 秒，太频繁可能触发限流
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>媒体文件扩展名</Label>
-              <Input
-                value={mediaExtensionsInput}
-                onChange={(e) => setMediaExtensionsInput(e.target.value)}
-                placeholder=".mkv, .mp4, .avi"
-              />
-              <p className="text-xs text-muted-foreground">
-                只处理匹配扩展名的文件
               </p>
             </div>
           </div>

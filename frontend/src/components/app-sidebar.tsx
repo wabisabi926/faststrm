@@ -29,7 +29,7 @@ const items = [
   },
   {
     title: "任务",
-    url: "/home",
+    url: "/task",
     icon: ListChecks,
   },
   {

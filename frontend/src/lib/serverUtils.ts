@@ -181,7 +181,6 @@ export interface LifeMonitorSettings {
   accounts: string[];
   pollInterval: number;
   pathMappings: PathMapping[];
-  mediaExtensions: string[];
   removeEmptyDirs: boolean;
   eventTypes: {
     create: boolean;

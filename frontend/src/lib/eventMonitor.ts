@@ -36,7 +36,6 @@ export interface LifeMonitorConfig {
     cloudPath: string;
     localPath: string;
   }>;
-  mediaExtensions: string[];
   removeEmptyDirs: boolean;
   eventTypes: {
     create: boolean;
@@ -89,7 +88,6 @@ const DEFAULT_CONFIG: LifeMonitorConfig = {
   accounts: [],
   pollInterval: 30,
   pathMappings: [],
-  mediaExtensions: [".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm"],
   removeEmptyDirs: true,
   eventTypes: {
     create: true,
@@ -796,7 +794,7 @@ async function handleFolderCreateEvent(
               ? cloudPath + itemName
               : cloudPath + "/" + itemName;
 
-            if (!isMediaFile(itemName, config.mediaExtensions)) {
+            if (!isMediaFile(itemName, getStrmExtensions())) {
               skippedCount++;
               continue;
             }
@@ -1313,8 +1311,8 @@ async function processEvent(
     }
     result.localPath = mapping.localPath;
 
-    // For file events, check media extension
-    if (event.file_category === 1 && !isMediaFile(event.file_name, config.mediaExtensions)) {
+    // For file events, check media extension (统一使用全局 strmExtensions)
+    if (event.file_category === 1 && !isMediaFile(event.file_name, getStrmExtensions())) {
       result.action = "skip";
       result.message = `非媒体文件: ${event.file_name}`;
       return result;
@@ -1390,6 +1388,17 @@ function scheduleEmbyRefresh(account: string) {
 
 // ==================== Polling ====================
 
+function getStrmExtensions(): string[] {
+  try {
+    const settings = readSettings();
+    return (settings.strmExtensions || []).map((e: string) =>
+      e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase()
+    );
+  } catch {
+    return [".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm"];
+  }
+}
+
 async function oncePoll(account: string): Promise<void> {
   const pollStatus = tryPollMonitor(account);
   if (!pollStatus.ok) {
@@ -1414,23 +1423,6 @@ async function oncePoll(account: string): Promise<void> {
       }
     }
   } catch { /* tasks.json 可能不存在，忽略 */ }
-
-  // mediaExtensions 兜底：若用户未显式修改过（与 DEFAULT 一致），则用全局 strmExtensions 统一
-  // 若用户已在生活事件面板单独配置了 mediaExtensions，则尊重用户的显式选择，不覆盖
-  try {
-    const settings = readSettings();
-    const strmExts = (settings.strmExtensions || []).map((e: string) =>
-      e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase()
-    );
-    const userMedia = (config.mediaExtensions || []).map((e) => e.toLowerCase());
-    const defaultMedia = DEFAULT_CONFIG.mediaExtensions.map((e) => e.toLowerCase());
-    const userCustomized =
-      userMedia.length !== defaultMedia.length ||
-      !userMedia.every((e) => defaultMedia.includes(e));
-    if (!userCustomized && strmExts.length > 0) {
-      config = { ...config, mediaExtensions: strmExts };
-    }
-  } catch { /* settings 读取失败，保留默认 */ }
 
   const accounts = readAccounts();
 
