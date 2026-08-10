@@ -11,12 +11,12 @@ import {
   getLocalTree,
   readAccounts,
   readSettings,
-  removeExtraFiles,
 } from "./serverUtils";
 import { suspendMonitorForFullScan, clearMonitorSuspend } from "./accountRuntimeState";
 import {
   FilePathEntry,
   getEntriesByPathPrefix,
+  getFilePathEntryByPath,
   removeGhostRecords,
   upsertFilePathEntryBatch,
 } from "./filePathDb";
@@ -605,10 +605,26 @@ export function runExecute(req: ExecuteRequest): ExecuteResult {
               // 使用用户配置的 strmPrefix（替代原来硬编码的 "" 和 false）
               const resolvedStrm = resolveStrmSettings(account, null, settings);
               const cloudPath = cloudBase ? `${cloudBase}/${item.relPath}` : item.relPath;
+
+              // 302 模式下尝试从 filePathDb 反查 pickcode
+              let pickcode: string | undefined;
+              if (resolvedStrm.enable302 && account) {
+                try {
+                  const entry = getFilePathEntryByPath(account, cloudPath);
+                  if (entry?.pickCode) pickcode = entry.pickCode;
+                } catch {}
+              }
+
               const content = generateStrmContent(
                 cloudPath,
                 resolvedStrm.strmPrefix,
-                resolvedStrm.enablePathEncoding
+                resolvedStrm.enablePathEncoding,
+                {
+                  enable302: resolvedStrm.enable302,
+                  account,
+                  pickcode,
+                  fileName: path.basename(item.relPath),
+                }
               );
               if (!fs.existsSync(strmDir)) {
                 fs.mkdirSync(strmDir, { recursive: true });

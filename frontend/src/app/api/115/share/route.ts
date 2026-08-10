@@ -9,15 +9,27 @@ import {
 } from "@/lib/115share";
 import type { AccountInfo } from "@/lib/115";
 import { fs_files } from "@/lib/115";
+import { TaskSchedule } from "@/lib/taskScheduler";
 import * as path from "path";
 import * as fs from "fs";
+
+type Task = {
+  id: string;
+  account?: string;
+  accountType?: string;
+  originPath: string;
+  targetPath: string;
+  strmPrefix?: string;
+  enablePathEncoding?: boolean;
+  schedule?: TaskSchedule;
+};
 
 // 通过 cid 获取完整路径
 async function getPathByCid(cid: number, accountInfo: AccountInfo): Promise<string> {
   if (cid === 0) return "/";
   
   const pathParts: string[] = [];
-  let currentCid = cid;
+  const currentCid = cid;
   
   // 最多查询 20 层，防止无限循环
   for (let i = 0; i < 20 && currentCid !== 0; i++) {
@@ -146,10 +158,10 @@ export async function POST(req: NextRequest) {
             const targetPath = await getPathByCid(Number(toPid), accountInfo);
             
             // 读取任务配置
-            const tasks = readTasks();
+            const tasks = readTasks() as Task[];
             
             // 查找匹配的任务（必须是同一个账户）
-            const matchedTask = tasks.find((task: any) => {
+            const matchedTask = tasks.find((task: Task) => {
               if (task.accountType !== "115" || task.account !== accountName) return false;
               const originPath = task.originPath.startsWith("/") ? task.originPath : "/" + task.originPath;
               return targetPath === originPath || targetPath.startsWith(originPath + "/");

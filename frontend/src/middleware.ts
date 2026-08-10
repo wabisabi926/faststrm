@@ -16,6 +16,16 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // STRM 302 跳转接口放行（播放器无 token）
+  if (pathname.startsWith("/api/strm")) {
+    return NextResponse.next();
+  }
+
+  // Emby Webhook 回调放行（Emby 服务器无法携带登录 token）
+  if (pathname.startsWith("/api/emby/webhook")) {
+    return NextResponse.next();
+  }
+
   // alist 兼容接口使用内部 API Token 验证 (/api/fs/*)
   if (pathname.startsWith("/api/fs")) {
     const authHeader = req.headers.get('authorization') || '';

@@ -46,7 +46,6 @@ export const taskFormSchema = z.object({
   strmPrefix: z.string().optional(),
   removeExtraFiles: z.boolean().optional(),
   enable302: z.boolean().optional(),
-  enablePathEncoding: z.boolean().optional(),
 });
 
 export type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -74,7 +73,6 @@ export function AddTaskDialog({
     originPath: "",
     account: "",
     enable302: false,
-    enablePathEncoding: false,
   });
 
   // 获取选中账户的类型
@@ -88,13 +86,12 @@ export function AddTaskDialog({
 
   // 计算预览路径
   const getPreviewPath = () => {
-    const { strmPrefix, originPath, account, enable302, enablePathEncoding } = formValues;
+    const { strmPrefix, originPath, account, enable302 } = formValues;
     if (!strmPrefix && !originPath) {
       return "请输入 Strm Prefix 和 Origin Path";
     }
     const resolved = resolveStrmSettings(account, {
       strmPrefix,
-      enablePathEncoding,
       enable302: is115Account ? enable302 : false,
     });
     const origin = originPath || "";
@@ -124,7 +121,6 @@ export function AddTaskDialog({
       strmPrefix: "",
       removeExtraFiles: true,
       enable302: false,
-      enablePathEncoding: false,
     },
   });
 
@@ -136,7 +132,6 @@ export function AddTaskDialog({
         originPath: value.originPath || "",
         account: value.account || "",
         enable302: value.enable302 || false,
-        enablePathEncoding: value.enablePathEncoding || false,
       });
     });
     return () => subscription.unsubscribe();
@@ -155,7 +150,6 @@ export function AddTaskDialog({
         originPath: task.originPath || "",
         account: task.account || "",
         enable302: task.enable302 || false,
-        enablePathEncoding: task.enablePathEncoding || false,
       });
     }
   }, [task]);
@@ -413,41 +407,6 @@ export function AddTaskDialog({
                       />
                       <label htmlFor="removeExtraFiles" className="text-sm">
                         启用删除本地多余文件功能
-                      </label>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Enable Path Encoding */}
-            <FormField
-              control={form.control}
-              name="enablePathEncoding"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="flex items-center gap-1">
-                    路径编码
-                    <div className="group relative">
-                      <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" />
-                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 text-white text-sm rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
-                        开启后，strm 文件中的 URL 路径将进行编码
-                        <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
-                      </div>
-                    </div>
-                  </FormLabel>
-                  <FormControl>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="enablePathEncoding"
-                        checked={field.value || false}
-                        onChange={(e) => field.onChange(e.target.checked)}
-                        className="rounded border-gray-300"
-                      />
-                      <label htmlFor="enablePathEncoding" className="text-sm">
-                        启用 strm URL 路径编码
                       </label>
                     </div>
                   </FormControl>

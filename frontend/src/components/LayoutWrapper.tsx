@@ -83,9 +83,9 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
     <>
       <SidebarProvider>
           <AppSidebar />
-          <SidebarTrigger />
           <div className="flex flex-col w-full min-h-screen pl-0">
             <header className="w-full border-b flex items-center gap-3 p-2 flex-wrap">
+              <SidebarTrigger />
               <div className="flex items-center gap-2 flex-1 min-w-[200px] max-w-md">
                 <Share2 className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <Input

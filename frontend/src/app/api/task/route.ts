@@ -1,4 +1,4 @@
-import { readTasks, saveTasks, readSettings, writeSettings } from "@/lib/serverUtils";
+import { readTasks, saveTasks } from "@/lib/serverUtils";
 import { downloadTasks } from "@/lib/downloadTaskManager";
 import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs";
@@ -12,14 +12,24 @@ import {
   TaskSchedule,
 } from "@/lib/taskScheduler";
 
+type TaskRow = {
+  id: string;
+  account?: string;
+  accountType?: string;
+  originPath?: string;
+  targetPath?: string;
+  schedule?: TaskSchedule;
+  _computedNextRunAt?: number | null;
+};
+
 initTaskScheduler();
 
 export async function GET() {
-  const tasks = readTasks();
+  const tasks = readTasks() as TaskRow[];
   const runningTaskIds = new Set(Object.keys(downloadTasks));
 
-  const tasksWithStatus = tasks.map((task: any) => {
-    const base = {
+  const tasksWithStatus = tasks.map((task: TaskRow) => {
+    const base: TaskRow & { status: string } = {
       ...task,
       status: runningTaskIds.has(task.id) ? "processing" : "pending",
     };

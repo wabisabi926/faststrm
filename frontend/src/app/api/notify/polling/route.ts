@@ -14,7 +14,7 @@ export async function POST() {
     // 检查 Telegram 配置是否完整
     if (!telegram || !telegram.botToken) {
       console.log("Telegram not configured (missing botToken), cannot start polling");
-      return NextResponse.json({ error: "Telegram not configured" }, { status: 400 });
+      return NextResponse.json({ error: "Telegram 未配置" }, { status: 400 });
     }
 
     // 创建机器人实例
@@ -33,12 +33,12 @@ export async function POST() {
 
     return NextResponse.json({ 
       success: true, 
-      message: "Polling started successfully" 
+      message: "轮询已启动" 
     });
   } catch (error) {
     console.error("Telegram polling start error:", error);
     return NextResponse.json({ 
-      error: "Failed to start polling", 
+      error: "启动轮询失败", 
       details: error instanceof Error ? error.message : String(error) 
     }, { status: 500 });
   }
@@ -54,7 +54,7 @@ export async function DELETE() {
     // 检查 Telegram 配置是否完整
     if (!telegram || !telegram.botToken) {
       console.log("Telegram not configured (missing botToken), cannot stop polling");
-      return NextResponse.json({ error: "Telegram not configured" }, { status: 400 });
+      return NextResponse.json({ error: "Telegram 未配置" }, { status: 400 });
     }
 
     // 停止轮询
@@ -69,12 +69,12 @@ export async function DELETE() {
 
     return NextResponse.json({ 
       success: true, 
-      message: "Polling stopped successfully" 
+      message: "轮询已停止" 
     });
   } catch (error) {
     console.error("Telegram polling stop error:", error);
     return NextResponse.json({ 
-      error: "Failed to stop polling", 
+      error: "停止轮询失败", 
       details: error instanceof Error ? error.message : String(error) 
     }, { status: 500 });
   }
@@ -90,7 +90,7 @@ export async function GET() {
     // 检查 Telegram 配置是否完整
     if (!telegram || !telegram.botToken) {
       console.log("Telegram not configured (missing botToken), cannot get polling status");
-      return NextResponse.json({ error: "Telegram not configured" }, { status: 400 });
+      return NextResponse.json({ error: "Telegram 未配置" }, { status: 400 });
     }
 
     // 获取轮询状态
@@ -108,7 +108,7 @@ export async function GET() {
   } catch (error) {
     console.error("Telegram polling status error:", error);
     return NextResponse.json({ 
-      error: "Failed to get polling status", 
+      error: "获取轮询状态失败", 
       details: error instanceof Error ? error.message : String(error) 
     }, { status: 500 });
   }
@@ -122,17 +122,17 @@ export async function PUT() {
     if (success) {
       return NextResponse.json({ 
         success: true, 
-        message: "Force cleanup completed, polling will restart automatically" 
+        message: "强制清理完成，轮询将自动重启" 
       });
     } else {
       return NextResponse.json({ 
-        error: "Failed to perform force cleanup" 
+        error: "强制清理失败" 
       }, { status: 500 });
     }
   } catch (error) {
     console.error("Telegram force cleanup error:", error);
     return NextResponse.json({ 
-      error: "Failed to perform force cleanup", 
+      error: "强制清理失败", 
       details: error instanceof Error ? error.message : String(error) 
     }, { status: 500 });
   }

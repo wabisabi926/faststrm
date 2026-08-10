@@ -270,7 +270,7 @@ async function getRealDownloadLinkDirect(
 export function downloadOrCreateStrm(
   url: string,
   savePath: string,
-  opts?: { asStrm?: boolean; displayPath?: string; strmPrefix?: string; enablePathEncoding?: boolean }
+  opts?: { asStrm?: boolean; displayPath?: string; strmPrefix?: string; enablePathEncoding?: boolean; enable302?: boolean; account?: string; pickcode?: string; fileName?: string }
 ): Observable<Progress> {
   const asStrm = !!opts?.asStrm;
   const displayPath = opts?.displayPath ?? savePath;
@@ -286,7 +286,12 @@ export function downloadOrCreateStrm(
         const baseName = path.basename(savePath);
         const strmName = getStrmFileName(baseName);
         const strmPath = path.join(path.dirname(savePath), strmName);
-        const finalPath = generateStrmContent(url, strmPrefix, enablePathEncoding);
+        const finalPath = generateStrmContent(url, strmPrefix, enablePathEncoding, {
+          enable302: opts?.enable302,
+          account: opts?.account,
+          pickcode: opts?.pickcode,
+          fileName: opts?.fileName,
+        });
         fs.writeFileSync(strmPath, finalPath, "utf8");
         observer.next({ percent: 100, filePath: displayPath });
         observer.complete();

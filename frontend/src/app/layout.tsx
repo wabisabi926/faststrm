@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Fast Strm",
-  description: "更快、更强的 Strm 管理",
+  description: "更快、更强、更硬",
   icons: {
     icon: "/favicon.ico",
     shortcut: "/favicon.ico",

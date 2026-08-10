@@ -1,10 +1,57 @@
 // Telegram 轮询管理器
 import { createTelegramBot } from "./telegram";
-import { readSettings, isTelegramUserAllowed, readTasks } from "./serverUtils";
+import { readSettings, isTelegramUserAllowed, readTasks, addTelegramUser, getTelegramUsers, removeTelegramUser } from "./serverUtils";
 
 let pollingInterval: NodeJS.Timeout | null = null;
 let lastUpdateId = 0;
 let isPollingActive = false;
+let currentBotToken: string | null = null;
+let currentBot: ReturnType<typeof createTelegramBot> | null = null;
+let autoInitDone = false;
+
+function recreateBotIfNeeded(): ReturnType<typeof createTelegramBot> | null {
+  const settings = readSettings();
+  const token = settings.telegram?.botToken;
+  if (!token) return null;
+  if (token !== currentBotToken || !currentBot) {
+    currentBotToken = token;
+    currentBot = createTelegramBot(token);
+  }
+  return currentBot;
+}
+
+async function pollingTick() {
+  const settings = readSettings();
+  const telegram = settings.telegram;
+
+  if (!telegram?.botToken || telegram.enabled === false) {
+    stopPolling();
+    return;
+  }
+
+  const bot = recreateBotIfNeeded();
+  if (!bot) return;
+
+  try {
+    const updates = await bot.getUpdates(lastUpdateId + 1, 1, 30);
+    if (!updates || updates.length === 0) return;
+
+    for (const update of updates) {
+      lastUpdateId = update.update_id;
+      if (update.message) {
+        await handleMessage(bot, update.message);
+      }
+      if (update.callback_query) {
+        await handleCallbackQuery(bot, update.callback_query);
+      }
+    }
+  } catch (error: unknown) {
+    const axiosError = error as { response?: { status?: number }; message?: string };
+    if (axiosError.response?.status !== 409) {
+      console.warn("Polling error:", axiosError.message || error);
+    }
+  }
+}
 
 export async function startPolling(): Promise<boolean> {
   if (isPollingActive) {
@@ -12,86 +59,56 @@ export async function startPolling(): Promise<boolean> {
     return false;
   }
 
-  try {
-    const settings = readSettings();
-    const telegram = settings.telegram;
-    
-    if (!telegram || !telegram.botToken) {
-      console.error("Telegram not configured for polling");
-      return false;
-    }
+  const settings = readSettings();
+  const telegram = settings.telegram;
 
-    const bot = createTelegramBot(telegram.botToken);
-    
-    // 确保删除 webhook 以避免冲突
-    try {
-      await bot.deleteWebhook();
-      console.log("Deleted existing webhook for polling mode");
-      
-      // 等待一段时间确保 webhook 完全删除
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // 验证 webhook 是否已删除
-      const webhookInfo = await bot.getWebhookInfo();
-      if ((webhookInfo.result as { url?: string })?.url) {
-        console.log("Warning: Webhook still exists, trying to delete again...");
-        await bot.deleteWebhook();
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    } catch (error) {
-      console.log("No webhook to delete or error deleting webhook:", error);
-    }
-    
-    console.log("Starting Telegram polling...");
-    isPollingActive = true;
-    
-    // 延迟启动轮询，确保 webhook 完全清理
-    setTimeout(() => {
-      if (!isPollingActive) return; // 如果已经被停止，不启动
-      
-      pollingInterval = setInterval(async () => {
-      try {
-        // 使用更保守的参数：只获取1条消息，30秒超时
-        const updates = await bot.getUpdates(lastUpdateId + 1, 1, 30);
-        
-        // 如果没有新消息，直接返回，不处理
-        if (!updates || updates.length === 0) {
-          return;
-        }
-        
-        for (const update of updates) {
-          lastUpdateId = update.update_id;
-          
-          // 处理消息
-          if (update.message) {
-            await handleMessage(bot, update.message);
-          }
-          
-          // 处理回调查询
-          if (update.callback_query) {
-            await handleCallbackQuery(bot, update.callback_query);
-          }
-        }
-      } catch (error: unknown) {
-        const axiosError = error as { response?: { status?: number }; message?: string };
-        
-        // 如果是 409 错误，说明没有新消息，这是正常情况，不报错
-        if (axiosError.response?.status === 409) {
-          // 409 错误通常表示没有新消息，这是正常的，不需要处理
-          return;
-        } else {
-          // 其他错误（如网络错误、超时等）只记录，不停止轮询
-          console.warn("Polling error (non-409):", axiosError.message || error);
-        }
-      }
-      }, 5000); // 每5秒轮询一次
-    }, 3000); // 延迟 3 秒启动
-
-    return true;
-  } catch (error) {
-    console.error("Failed to start polling:", error);
-    isPollingActive = false;
+  if (!telegram?.botToken) {
+    console.error("Telegram not configured for polling");
     return false;
+  }
+
+  if (telegram.enabled === false) {
+    console.log("Telegram notifications disabled, skip polling start");
+    return false;
+  }
+
+  const bot = recreateBotIfNeeded();
+  if (!bot) return false;
+
+  try {
+    await bot.deleteWebhook();
+    console.log("Deleted existing webhook for polling mode");
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    const webhookInfo = await bot.getWebhookInfo();
+    if ((webhookInfo.result as { url?: string })?.url) {
+      console.log("Warning: Webhook still exists, trying again...");
+      await bot.deleteWebhook();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  } catch (error) {
+    console.log("No webhook to delete or error deleting webhook:", error);
+  }
+
+  console.log("Starting Telegram polling...");
+  isPollingActive = true;
+
+  setTimeout(() => {
+    if (!isPollingActive) return;
+    pollingInterval = setInterval(pollingTick, 5000);
+  }, 3000);
+
+  return true;
+}
+
+export async function initTelegramPolling(): Promise<void> {
+  if (autoInitDone) return;
+  autoInitDone = true;
+  const settings = readSettings();
+  const telegram = settings.telegram;
+  if (telegram?.botToken && telegram.enabled !== false && !telegram.webhookUrl) {
+    console.log("[Telegram] Auto-starting polling (enabled, no webhook)...");
+    await startPolling();
   }
 }
 
@@ -114,7 +131,7 @@ export function stopPolling(): boolean {
 export function getPollingStatus(): { active: boolean; message: string } {
   return {
     active: isPollingActive,
-    message: isPollingActive ? "Polling is active" : "Polling is not active"
+    message: isPollingActive ? "轮询中" : "轮询未启动"
   };
 }
 
@@ -227,7 +244,7 @@ async function handleMessage(bot: ReturnType<typeof createTelegramBot>, message:
 
 // 处理命令
 async function handleCommand(bot: ReturnType<typeof createTelegramBot>, chatId: string, command: string, username: string, userId: number) {
-  const [cmd] = command.split(' ');
+  const [cmd, ...args] = command.split(' ');
 
   // 检查用户权限
   if (!isTelegramUserAllowed(userId)) {
@@ -286,26 +303,23 @@ async function handleCommand(bot: ReturnType<typeof createTelegramBot>, chatId: 
       break;
 
     case '/tasks':
-      await bot.sendMessage({
-        chat_id: chatId,
-        text: `<b>📋 Current Tasks</b>\n\n` +
-              `No tasks available at the moment.\n\n` +
-              `<i>This feature will be implemented soon.</i>`,
-        parse_mode: 'HTML'
-      });
+      await handleTasksCommand(bot, chatId);
+      break;
+
+    case '/settings':
+      await handleSettingsCommand(bot, chatId);
       break;
 
     case '/users':
-      const settings = readSettings();
-      const users = settings.telegram?.allowedUsers || [];
-      
-      await bot.sendMessage({
-        chat_id: chatId,
-        text: `<b>👥 Authorized Users</b>\n\n` +
-              `Total users: ${users.length}\n` +
-              `Users: ${users.join(', ')}`,
-        parse_mode: 'HTML'
-      });
+      await handleUsersCommand(bot, chatId);
+      break;
+
+    case '/adduser':
+      await handleAddUserCommand(bot, chatId, args);
+      break;
+
+    case '/removeuser':
+      await handleRemoveUserCommand(bot, chatId, args);
       break;
 
     default:
@@ -314,6 +328,218 @@ async function handleCommand(bot: ReturnType<typeof createTelegramBot>, chatId: 
         text: `❓ Unknown command: ${cmd}\n\nUse /help to see available commands.`,
         parse_mode: 'HTML'
       });
+  }
+}
+
+// 处理任务命令（返回真实任务列表）
+async function handleTasksCommand(bot: ReturnType<typeof createTelegramBot>, chatId: string) {
+  try {
+    const tasks = readTasks();
+
+    if (tasks.length === 0) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `<b>📋 Current Tasks</b>\n\n` +
+              `No active tasks found.\n\n` +
+              `Use the web interface to start new download tasks.`,
+        parse_mode: 'HTML'
+      });
+      return;
+    }
+
+    let message = `<b>📋 Current Tasks (${tasks.length})</b>\n\n`;
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i] as { originPath?: string; targetPath?: string; account?: string; strmType?: string; id?: string };
+      const taskName = `${task.originPath ?? ''} → ${task.targetPath ?? ''}`;
+      message += `${i + 1}. <b>${taskName || 'Unnamed'}</b>\n` +
+                 `   Account: ${task.account ?? '-'}\n` +
+                 `   Type: ${task.strmType ?? '-'}\n` +
+                 `   ID: <code>${task.id ?? '-'}</code>\n\n`;
+    }
+
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'HTML'
+    });
+  } catch (error) {
+    console.error("Error handling tasks command (polling):", error);
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: `❌ Error retrieving tasks: ${error instanceof Error ? error.message : String(error)}`,
+      parse_mode: 'HTML'
+    });
+  }
+}
+
+// 处理设置命令
+async function handleSettingsCommand(bot: ReturnType<typeof createTelegramBot>, chatId: string) {
+  try {
+    const settings = readSettings();
+
+    let settingsText = `<b>⚙️ Current Settings</b>\n\n`;
+
+    if (settings.emby) {
+      settingsText += `<b>Emby:</b>\n`;
+      settingsText += `• URL: ${settings.emby.url || 'Not set'}\n`;
+      settingsText += `• API Key: ${settings.emby.apiKey ? '***' + settings.emby.apiKey.slice(-4) : 'Not set'}\n\n`;
+    }
+
+    if (settings.telegram) {
+      settingsText += `<b>Telegram:</b>\n`;
+      settingsText += `• Bot Token: ${settings.telegram.botToken ? '***' + settings.telegram.botToken.slice(-4) : 'Not set'}\n`;
+      settingsText += `• Chat ID: ${settings.telegram.chatId || 'Not set'}\n`;
+      settingsText += `• Enabled: ${settings.telegram.enabled === false ? '❌ Off' : '✅ On'}\n`;
+      settingsText += `• Allowed Users: ${settings.telegram.allowedUsers?.length || 0}\n\n`;
+    }
+
+    settingsText += `<b>User Agent:</b> ${settings['user-agent'] || 'Default'}`;
+
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: settingsText,
+      parse_mode: 'HTML'
+    });
+  } catch (error) {
+    console.error("Error handling settings command (polling):", error);
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: `❌ Error retrieving settings: ${error instanceof Error ? error.message : String(error)}`,
+      parse_mode: 'HTML'
+    });
+  }
+}
+
+// 处理用户列表命令
+async function handleUsersCommand(bot: ReturnType<typeof createTelegramBot>, chatId: string) {
+  try {
+    const users = getTelegramUsers();
+
+    if (users.length === 0) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `<b>👥 Authorized Users</b>\n\nNo authorized users found.`,
+        parse_mode: 'HTML'
+      });
+      return;
+    }
+
+    let usersText = `<b>👥 Authorized Users</b>\n\n`;
+    users.forEach((uId, index) => {
+      usersText += `<b>${index + 1}.</b> User ID: <code>${uId}</code>\n`;
+    });
+
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: usersText,
+      parse_mode: 'HTML'
+    });
+  } catch (error) {
+    console.error("Error handling users command (polling):", error);
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: `❌ Error retrieving users: ${error instanceof Error ? error.message : String(error)}`,
+      parse_mode: 'HTML'
+    });
+  }
+}
+
+// 处理添加用户命令
+async function handleAddUserCommand(bot: ReturnType<typeof createTelegramBot>, chatId: string, args: string[]) {
+  try {
+    if (args.length < 1) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `<b>❌ Usage:</b> /adduser &lt;user_id&gt;\n\n` +
+              `<b>Example:</b> /adduser 123456789`,
+        parse_mode: 'HTML'
+      });
+      return;
+    }
+
+    const userId = parseInt(args[0]);
+
+    if (isNaN(userId)) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `❌ Invalid user ID: ${args[0]}`,
+        parse_mode: 'HTML'
+      });
+      return;
+    }
+
+    const success = addTelegramUser(userId);
+
+    if (success) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `✅ User added successfully!\n\n` +
+              `User ID: <code>${userId}</code>`,
+        parse_mode: 'HTML'
+      });
+    } else {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `❌ Failed to add user. User might already exist.`,
+        parse_mode: 'HTML'
+      });
+    }
+  } catch (error) {
+    console.error("Error handling add user command (polling):", error);
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: `❌ Error adding user: ${error instanceof Error ? error.message : String(error)}`,
+      parse_mode: 'HTML'
+    });
+  }
+}
+
+// 处理删除用户命令
+async function handleRemoveUserCommand(bot: ReturnType<typeof createTelegramBot>, chatId: string, args: string[]) {
+  try {
+    if (args.length < 1) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `<b>❌ Usage:</b> /removeuser &lt;user_id&gt;\n\n` +
+              `<b>Example:</b> /removeuser 123456`,
+        parse_mode: 'HTML'
+      });
+      return;
+    }
+
+    const userId = parseInt(args[0]);
+
+    if (isNaN(userId)) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `❌ Invalid user ID: ${args[0]}`,
+        parse_mode: 'HTML'
+      });
+      return;
+    }
+
+    const success = removeTelegramUser(userId);
+
+    if (success) {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `✅ User removed successfully!\n\nID: ${userId}`,
+        parse_mode: 'HTML'
+      });
+    } else {
+      await bot.sendMessage({
+        chat_id: chatId,
+        text: `❌ User not found or failed to remove.`,
+        parse_mode: 'HTML'
+      });
+    }
+  } catch (error) {
+    console.error("Error handling remove user command (polling):", error);
+    await bot.sendMessage({
+      chat_id: chatId,
+      text: `❌ Error removing user: ${error instanceof Error ? error.message : String(error)}`,
+      parse_mode: 'HTML'
+    });
   }
 }
 

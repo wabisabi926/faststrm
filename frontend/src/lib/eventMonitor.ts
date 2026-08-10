@@ -5,7 +5,6 @@ import { appendLifeEventLog } from "./lifeEventLogManager";
 import { tryPollMonitor } from "./accountRuntimeState";
 import {
   AccountInfo,
-  getDownloadUrlWeb,
   fs_dir_getid,
   fs_files,
   getFileInfoById,
@@ -19,7 +18,6 @@ import {
   MOVE_EVENT_TYPES,
   RENAME_EVENT_TYPES,
   DELETE_EVENT_TYPES,
-  NEW_FOLDER_EVENT_TYPES,
   BEHAVIOR_TYPE_TO_NAME,
 } from "./115Life";
 import { getStrmFileName, generateStrmContent } from "./strmUtils";
@@ -28,7 +26,6 @@ import {
   upsertFilePathEntry as sqliteUpsertFilePathEntry,
   removeFilePathEntry as sqliteRemoveFilePathEntry,
   updatePathPrefixBatch,
-  type FilePathEntry,
 } from "./filePathDb";
 import {
   syncStrmText,
@@ -37,7 +34,6 @@ import {
   deleteStrmDir,
   findStrmRecursive,
   findDirRecursive,
-  cleanRelatedFiles,
   getRootDirsFromMappings,
 } from "./strmFileOps";
 import { waitFor115ApiToken } from "./rateLimiter";
@@ -314,7 +310,7 @@ function getPreferredApi(account: string): "ios" | "web" {
 
 function record405Error(account: string, app: "ios" | "web") {
   const state = readApiFallback();
-  let fallback = state[account] || { ios405Count: 0, webFallbackUntil: 0 };
+  const fallback = state[account] || { ios405Count: 0, webFallbackUntil: 0 };
 
   if (app === "ios") {
     fallback.ios405Count++;
@@ -474,7 +470,7 @@ async function resolvePathByCid(
 
     // Fallback: use webapi files listing to find the directory name
     // Then recursively resolve parent
-    const filesData = await fs_files(cid, {
+    await fs_files(cid, {
       userAgent,
       limit: 1,
       accountInfo: accountInfo as AccountInfo,
@@ -672,7 +668,12 @@ async function handleCreateEvent(
 
   const strmFileName = getStrmFileName(event.file_name);
   const strmPath = path.join(path.dirname(mapping.localPath), strmFileName);
-  const strmContent = generateStrmContent(cloudPath, config.strmPrefix || "", config.enablePathEncoding || false);
+  const strmContent = generateStrmContent(cloudPath, config.strmPrefix || "", config.enablePathEncoding || false, {
+    enable302: config.enable302,
+    account: accountInfo.name,
+    pickcode: event.pick_code,
+    fileName: event.file_name,
+  });
 
   if (syncStrmText(strmPath, strmContent, { tag: "LifeMonitor/create" }).ok) {
     upsertFilePathEntry(accountInfo.name, {
@@ -860,7 +861,12 @@ async function handleFolderCreateEvent(
             if (isValidPickCode(pickCode)) {
               const strmFileName = getStrmFileName(itemName);
               const strmPath = path.join(currentLocalDir, strmFileName);
-              const strmContent = generateStrmContent(itemCloudPath, config.strmPrefix || "", config.enablePathEncoding || false);
+              const strmContent = generateStrmContent(itemCloudPath, config.strmPrefix || "", config.enablePathEncoding || false, {
+                enable302: config.enable302,
+                account: accountInfo.name,
+                pickcode: pickCode,
+                fileName: itemName,
+              });
 
               if (syncStrmText(strmPath, strmContent, { tag: "LifeMonitor/create" }).ok) {
                 strmCount++;
@@ -941,39 +947,72 @@ async function handleDeleteEvent(
   const rootDirs = getRootDirsFromMappings(config.pathMappings);
   const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
 
-  // P3.2c: 在执行删除前 — 调用 115 API 二次确认文件/目录不存在
+  // P3.2c + 重试优化：二次验证文件/目录不存在，最多重试 3 次，404 直接判定已删除
   let cloudVerifiedGone = false;
-  try {
-    if (isFolder) {
-      // 文件夹：尝试获取其 cid — 如果获取失败/返回错误，视为已删除
-      try {
-        await fs_dir_getid(cloudPath, { accountInfo });
-        // fs_dir_getid 成功返回 = 目录仍存在 — 不验证通过
-        cloudVerifiedGone = false;
-        console.warn(`[LifeMonitor] 二次验证: 目录仍存在于网盘 ${cloudPath}，跳过删除避免误删`);
-      } catch {
-        // 获取失败 = 目录已删除
-        cloudVerifiedGone = true;
-      }
-    } else {
-      // 文件：尝试 getFileInfoById — 若返回不存在或报错，视为已删除
-      try {
-        const info = await getFileInfoById(event.file_id, { accountInfo });
-        if (!info || !(info as unknown as Record<string, unknown>).fileName) {
-          cloudVerifiedGone = true;
-        } else {
+  const MAX_VERIFY_RETRIES = 3;
+  let verifyRetries = MAX_VERIFY_RETRIES;
+
+  const isNotFound = (err: unknown): boolean => {
+    if (!err || typeof err !== "object") return false;
+    const obj = err as Record<string, unknown>;
+    const status = obj.status ?? (obj.response as Record<string, unknown> | undefined)?.status;
+    return Number(status) === 404;
+  };
+
+  verify: while (verifyRetries > 0) {
+    verifyRetries--;
+    try {
+      if (isFolder) {
+        try {
+          await fs_dir_getid(cloudPath, { accountInfo });
+          cloudVerifiedGone = false;
+          console.warn(`[LifeMonitor] 二次验证: 目录仍存在于网盘 ${cloudPath}，跳过删除避免误删`);
+          break verify;
+        } catch (e) {
+          if (isNotFound(e)) {
+            cloudVerifiedGone = true;
+            break verify;
+          }
+          if (verifyRetries === 0) {
+            console.warn(`[LifeMonitor] 二次验证: 目录存在性检查重试耗尽，保守信任删除事件: ${cloudPath}`);
+            cloudVerifiedGone = true;
+            break verify;
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+          continue verify;
+        }
+      } else {
+        try {
+          const info = await getFileInfoById(event.file_id, { accountInfo });
+          if (!info || !(info as unknown as Record<string, unknown>).fileName) {
+            cloudVerifiedGone = true;
+            break verify;
+          }
           cloudVerifiedGone = false;
           console.warn(`[LifeMonitor] 二次验证: 文件仍存在于网盘 file_id=${event.file_id}, name=${(info as unknown as Record<string, unknown>).fileName}，跳过删除避免误删`);
+          break verify;
+        } catch (e) {
+          if (isNotFound(e)) {
+            cloudVerifiedGone = true;
+            break verify;
+          }
+          if (verifyRetries === 0) {
+            console.warn(`[LifeMonitor] 二次验证: 文件存在性检查重试耗尽，保守信任删除事件: file_id=${event.file_id}`);
+            cloudVerifiedGone = true;
+            break verify;
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+          continue verify;
         }
-      } catch {
-        // API 失败（404/错误等）→ 视为已删除
-        cloudVerifiedGone = true;
       }
+    } catch {
+      if (verifyRetries === 0) {
+        console.warn(`[LifeMonitor] 二次验证: 整体验证链路异常重试耗尽，保守信任删除事件继续执行`);
+        cloudVerifiedGone = true;
+        break verify;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
     }
-  } catch {
-    // 整体验证链路失败，保守处理：信任删除事件（但记录告警）
-    console.warn(`[LifeMonitor] 二次验证: API调用失败，保守信任删除事件继续执行`);
-    cloudVerifiedGone = true;
   }
 
   if (!cloudVerifiedGone) {
@@ -1056,6 +1095,25 @@ async function handleDeleteEvent(
       }
       if (oldEntry) removeFilePathEntry(accountInfo.name, event.file_id);
     }
+  }
+
+  // 删除成功 → Telegram 通知（异步 fire-and-forget，避免阻塞事件主流程）
+  if (result.success && result.action !== "skip") {
+    (async () => {
+      try {
+        const { sendTelegramNotification } = await import("./telegram");
+        const kindLabel = isFolder ? "目录" : "文件";
+        const msg =
+          `🗑️ <b>STRM 已删除</b>\n` +
+          `<b>账号：</b>${accountInfo.name}\n` +
+          `<b>类型：</b>${kindLabel}\n` +
+          `<b>云端路径：</b>${cloudPath}\n` +
+          `<b>说明：</b>${result.message || ""}`;
+        await sendTelegramNotification(msg, "complete");
+      } catch (tgErr) {
+        console.error("[LifeMonitor] 删除事件 Telegram 通知失败:", tgErr instanceof Error ? tgErr.message : String(tgErr));
+      }
+    })();
   }
 
   return result;
@@ -1217,7 +1275,13 @@ async function handleMoveEvent(
             const newContent = generateStrmContent(
               cloudPath,
               config.strmPrefix || "",
-              config.enablePathEncoding || false
+              config.enablePathEncoding || false,
+              {
+                enable302: config.enable302,
+                account: accountInfo.name,
+                pickcode: event.pick_code,
+                fileName: event.file_name,
+              }
             );
             syncStrmText(newStrmPath, newContent, { tag: "LifeMonitor/move" });
           }
@@ -1452,7 +1516,13 @@ async function handleRenameEvent(
               const newContent = generateStrmContent(
                 cloudPath,
                 config.strmPrefix || "",
-                config.enablePathEncoding || false
+                config.enablePathEncoding || false,
+                {
+                  enable302: config.enable302,
+                  account: accountInfo.name,
+                  pickcode: event.pick_code,
+                  fileName: event.file_name,
+                }
               );
               syncStrmText(newStrmPath, newContent, { tag: "LifeMonitor/rename" });
             }
@@ -1536,7 +1606,7 @@ async function handleRenameEvent(
     // ========= 有 oldEntry 但 oldMapping 为 null（跨映射重命名，相当于改名+换路径移出老映射） =========
     // 用和 move-outside 相同强度的多层兜底
     console.info(`[LifeMonitor] rename-cross-mapping: fileId=${event.file_id}, fileName=${oldEntry.fileName}, oldEntry.path=${oldEntry.path}, newCloudPath=${cloudPath}, fileCategory=${event.file_category}`);
-    let cleanup = tryCleanupOldStrmByPath(
+    const cleanup = tryCleanupOldStrmByPath(
       accountInfo.name,
       oldEntry.path,
       oldEntry.fileName,
@@ -1722,32 +1792,6 @@ function handleRelatedFileRenames(
   }
 }
 
-function handleNewFolderEvent(
-  event: LifeEvent,
-  mapping: { localPath: string; relativePath: string },
-  cloudPath: string
-): EventProcessResult {
-  const result: EventProcessResult = {
-    eventId: event.id,
-    eventType: event.type,
-    eventTypeName: BEHAVIOR_TYPE_TO_NAME[event.type] || "unknown",
-    action: "create",
-    success: true,
-    timestamp: Date.now(),
-    filePath: cloudPath,
-    localPath: mapping.localPath,
-  };
-
-  if (!fs.existsSync(mapping.localPath)) {
-    fs.mkdirSync(mapping.localPath, { recursive: true });
-    result.message = `本地目录已创建: ${mapping.localPath}`;
-  } else {
-    result.message = `本地目录已存在: ${mapping.localPath}`;
-  }
-
-  return result;
-}
-
 async function processEvent(
   accountInfo: AccountInfo,
   event: LifeEvent,
@@ -1836,7 +1880,7 @@ async function processEvent(
         const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
         if (oldEntry) {
           console.info(`[LifeMonitor] move-outside: fileId=${event.file_id}, fileName=${oldEntry.fileName}, oldEntry.path=${oldEntry.path}, newCloudPath=${cloudPath}, fileCategory=${event.file_category}`);
-          let cleanup = tryCleanupOldStrmByPath(
+          const cleanup = tryCleanupOldStrmByPath(
             accountInfo.name,
             oldEntry.path,
             oldEntry.fileName,
@@ -2183,7 +2227,7 @@ function maybeRunConsistencyCheck(account: string, config: LifeMonitorConfig) {
                 fs.rmdirSync(dir);
               }
             } catch {}
-          } catch (e) {
+          } catch {
             stats.errors++;
           }
         };
@@ -2218,7 +2262,7 @@ async function oncePoll(account: string): Promise<void> {
 
   // 使用统一的 STRM 设置解析（全局默认 + 任务级覆盖 + 302 拼接）
   const resolvedStrm = resolveStrmSettings(account, null, settings);
-  config = { ...config, strmPrefix: resolvedStrm.strmPrefix, enablePathEncoding: resolvedStrm.enablePathEncoding };
+  config = { ...config, strmPrefix: resolvedStrm.strmPrefix, enablePathEncoding: resolvedStrm.enablePathEncoding, enable302: resolvedStrm.enable302 };
 
   const accounts = readAccounts() as unknown as AccountInfo[];
 

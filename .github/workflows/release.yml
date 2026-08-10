@@ -21,6 +21,14 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Update version from tag
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        echo "Tag: ${{ github.ref_name }} -> Version: $VERSION"
+        cd frontend
+        npm version --no-git-tag-version "$VERSION"
+        echo "Updated package.json version to $VERSION"
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 

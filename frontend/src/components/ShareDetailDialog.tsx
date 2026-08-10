@@ -68,7 +68,6 @@ export function ShareDetailDialog({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [showDirPicker, setShowDirPicker] = useState(false);
-  const [targetCid, setTargetCid] = useState(0);
 
   const shareInfoData = shareInfo?.share_info as Record<string, unknown> | undefined;
   const title = (shareInfoData?.name ?? shareInfoData?.share_name ?? "115 分享") as string;

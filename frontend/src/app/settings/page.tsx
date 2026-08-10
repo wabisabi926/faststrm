@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { Settings, LifeBuoy, Shield } from "lucide-react";
 import axiosInstance from "@/lib/axios";
 import { StrmCleanupCard } from "./StrmCleanupCard";
 
@@ -52,7 +53,17 @@ type Settings = {
   enablePathEncoding?: boolean;
   enable302?: boolean;
   removeExtraFiles?: boolean;
-  emby?: { url?: string; apiKey?: string };
+  emby?: {
+    url?: string;
+    apiKey?: string;
+    notifyMediaAdded?: boolean;
+    notifyMediaRemoved?: boolean;
+    notifyPlayback?: boolean;
+    playbackShowProgress?: boolean;
+    playbackShowOverview?: boolean;
+    webhookAuth?: string;
+    libraryId?: string;
+  };
   download?: {
     linkMaxPerSecond?: number;
     linkMaxConcurrent?: number;
@@ -87,6 +98,7 @@ const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
 };
 
 export default function SettingsPage() {
+  const [activeTab, setActiveTab] = useState<"basic" | "monitor" | "security">("basic");
   const [data, setData] = useState<Settings>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -155,7 +167,6 @@ export default function SettingsPage() {
     rename: true,
     move: true,
   });
-  const [minFileSize, setMinFileSize] = useState(0); // 字节
   const [minFileSizeMb, setMinFileSizeMb] = useState(""); // MB 输入框显示用
   const [firstPullMode, setFirstPullMode] = useState<"latest" | "all" | "last">("latest");
   const [moveMediaMode, setMoveMediaMode] = useState<"recreate" | "local_move">("local_move");
@@ -212,7 +223,6 @@ export default function SettingsPage() {
         setRemoveEmptyDirs(monitor.removeEmptyDirs ?? true);
         setEventTypes(monitor.eventTypes || DEFAULT_MONITOR_CONFIG.eventTypes);
         const loadedMinSize = typeof monitor.minFileSize === "number" ? monitor.minFileSize : 0;
-        setMinFileSize(loadedMinSize);
         setMinFileSizeMb(loadedMinSize > 0 ? (loadedMinSize / (1024 * 1024)).toString() : "");
         setFirstPullMode(monitor.firstPullMode || "latest");
         setMoveMediaMode(monitor.moveMediaMode || "local_move");
@@ -485,7 +495,7 @@ export default function SettingsPage() {
       toast.success(resp.data?.message || "监控已更新");
       const monitorResp = await axiosInstance.get("/api/lifeMonitor");
       setMonitorStates(monitorResp.data?.states || []);
-    } catch (err) {
+    } catch {
       toast.error("启动监控失败");
       const monitorResp = await axiosInstance.get("/api/lifeMonitor");
       setMonitorStates(monitorResp.data?.states || []);
@@ -501,7 +511,7 @@ export default function SettingsPage() {
       toast.success(`监控已停止: ${account}`);
       const monitorResp = await axiosInstance.get("/api/lifeMonitor");
       setMonitorStates(monitorResp.data?.states || []);
-    } catch (err) {
+    } catch {
       toast.error("停止监控失败");
       const monitorResp = await axiosInstance.get("/api/lifeMonitor");
       setMonitorStates(monitorResp.data?.states || []);
@@ -517,8 +527,9 @@ export default function SettingsPage() {
       toast.success(resp.data?.message || `监控已启动: ${account}`);
       const monitorResp = await axiosInstance.get("/api/lifeMonitor");
       setMonitorStates(monitorResp.data?.states || []);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || "启动监控失败";
+    } catch (err) {
+      const axiosErr = err as { response?: { data?: { error?: string }; message?: string } };
+      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "启动监控失败";
       toast.error(msg);
       const monitorResp = await axiosInstance.get("/api/lifeMonitor");
       setMonitorStates(monitorResp.data?.states || []);
@@ -528,597 +539,682 @@ export default function SettingsPage() {
   if (loading) return <div>Loading...</div>;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <div className="mx-auto max-w-3xl space-y-6">
+      {/* Page Title */}
       <div>
         <h1 className="text-2xl font-semibold">设置</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          配置全局选项与 Emby 通知
+          配置全局选项、生活事件监控及安全
         </p>
       </div>
 
-      <section className="space-y-4">
-        <h2 className="text-base font-medium">基础设置</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>User-Agent</Label>
-            <Input
-              value={data["user-agent"] || ""}
-              onChange={(e) =>
-                setData({ ...data, ["user-agent"]: e.target.value })
-              }
-              placeholder="Mozilla/5.0 ..."
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Strm文件扩展名</Label>
-            <Input
-              value={strmExtensionsInput}
-              onChange={(e) => setStrmExtensionsInput(e.target.value)}
-              placeholder="请输入 例如：.mkv, .mp4, .mp3"
-            />
-            <p className="text-xs text-muted-foreground">
-              用逗号分隔，自动添加点号前缀
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>下载文件扩展名</Label>
-            <Input
-              value={downloadExtensionsInput}
-              onChange={(e) => setDownloadExtensionsInput(e.target.value)}
-              placeholder="请输入 例如：.srt, .ass, .sub, .nfo"
-            />
-            <p className="text-xs text-muted-foreground">
-              用逗号分隔，自动添加点号前缀
-            </p>
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <div>
-                <Label>媒体挂载路径 (mediaMountPath)</Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  由系统自动计算并维护（唯一事实来源 SSOT）：根据<span className="font-medium">全局 302 × 账号集</span>、
-                  <span className="font-medium">每个任务的 STRM 设置</span>、
-                  <span className="font-medium">生活事件监控</span> 全量收敛得到。
-                  不建议手工修改 settings.json。
-                </p>
+      {/* Tab Bar */}
+      <div className="flex gap-1 border-b border-border">
+        <button
+          onClick={() => setActiveTab("basic")}
+          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+            activeTab === "basic"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Settings className="inline-block h-4 w-4 mr-1" />
+          基础设置
+          {activeTab === "basic" && (
+            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab("monitor")}
+          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+            activeTab === "monitor"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <LifeBuoy className="inline-block h-4 w-4 mr-1" />
+          生活事件
+          {activeTab === "monitor" && (
+            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab("security")}
+          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+            activeTab === "security"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Shield className="inline-block h-4 w-4 mr-1" />
+          清理与安全
+          {activeTab === "security" && (
+            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
+          )}
+        </button>
+      </div>
+
+      {/* Tab 1: 基础设置 */}
+      {activeTab === "basic" && (
+        <div className="space-y-6">
+          <section className="space-y-4">
+            <h2 className="text-base font-medium">基础设置</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>User-Agent</Label>
+                <Input
+                  value={data["user-agent"] || ""}
+                  onChange={(e) =>
+                    setData({ ...data, ["user-agent"]: e.target.value })
+                  }
+                  placeholder="Mozilla/5.0 ..."
+                />
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  onClick={fetchMountDryRun}
-                  disabled={mountDryRunLoading || mountSyncing}
-                >
-                  {mountDryRunLoading ? "计算中..." : "刷新视图"}
-                </Button>
-                <Button
-                  variant="default"
-                  size="sm"
-                  type="button"
-                  onClick={applyMountSync}
-                  disabled={mountSyncing}
-                >
-                  {mountSyncing ? "同步中..." : "立即同步并持久化"}
-                </Button>
+              <div className="space-y-2">
+                <Label>Strm文件扩展名</Label>
+                <Input
+                  value={strmExtensionsInput}
+                  onChange={(e) => setStrmExtensionsInput(e.target.value)}
+                  placeholder="请输入 例如：.mkv, .mp4, .mp3"
+                />
+                <p className="text-xs text-muted-foreground">
+                  用逗号分隔，自动添加点号前缀
+                </p>
               </div>
             </div>
-
-            <div className="rounded-md border p-3 space-y-3 bg-muted/30">
-              {mountDryRunLoading && !mountDryRun ? (
-                <p className="text-sm text-muted-foreground">正在计算期望集合...</p>
-              ) : mountDryRun && mountDryRun.computed.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  暂无项。请先在上方配置 STRM 前缀和 302 选项，或创建带自定义前缀的任务。
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>下载文件扩展名</Label>
+                <Input
+                  value={downloadExtensionsInput}
+                  onChange={(e) => setDownloadExtensionsInput(e.target.value)}
+                  placeholder="请输入 例如：.srt, .ass, .sub, .nfo"
+                />
+                <p className="text-xs text-muted-foreground">
+                  用逗号分隔，自动添加点号前缀
                 </p>
-              ) : mountDryRun ? (
-                <>
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    <span className="px-2 py-0.5 rounded bg-background border">
-                      共 <b>{mountDryRun.computed.length}</b> 条期望
-                    </span>
-                    {mountDryRun.diff.changed ? (
-                      <>
-                        {mountDryRun.diff.added.length > 0 && (
-                          <span className="px-2 py-0.5 rounded border bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                            +{mountDryRun.diff.added.length} 待新增
-                          </span>
-                        )}
-                        {mountDryRun.diff.removed.length > 0 && (
-                          <span className="px-2 py-0.5 rounded border bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400">
-                            -{mountDryRun.diff.removed.length} 待删除
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded border bg-background text-muted-foreground">
-                        与 settings.json 一致，无差异
-                      </span>
-                    )}
-                    <span className="px-2 py-0.5 rounded border bg-background text-muted-foreground">
-                      已持久化 {mountDryRun.persisted.length} 条
-                    </span>
-                  </div>
+              </div>
+            </div>
+          </section>
 
-                  {mountDryRun.diff.removed.length > 0 && (
-                    <details className="text-xs">
-                      <summary className="cursor-pointer text-red-600 dark:text-red-400">
-                        以下 {mountDryRun.diff.removed.length} 条在 settings.json 中存在，但已不再被任何引用方需要
-                      </summary>
-                      <ul className="mt-2 space-y-1 pl-4 list-disc font-mono break-all">
-                        {mountDryRun.diff.removed.map((p) => (
-                          <li key={`rm-${p}`}>{p}</li>
-                        ))}
+          <Separator />
+
+          <section className="space-y-4">
+            <h2 className="text-base font-medium">STRM 生成设置（全局默认）</h2>
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-2">
+                <Label>Strm 前缀</Label>
+                <Input
+                  value={data.strmPrefix || ""}
+                  onChange={(e) =>
+                    setData({ ...data, strmPrefix: e.target.value })
+                  }
+                  placeholder="http://localhost:3000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。302 模式下自动追加 <code>/api/strm</code>，无需手动添加。
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="global-enable-302"
+                  checked={!!data.enable302}
+                  onCheckedChange={(checked) =>
+                    setData({ ...data, enable302: checked === true })
+                  }
+                />
+                <label htmlFor="global-enable-302" className="text-sm cursor-pointer leading-tight">
+                  302 重定向<span className="text-xs text-muted-foreground">（生成带 pickcode 的 STRM）</span>
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="global-enable-path-encoding"
+                  checked={!!data.enablePathEncoding}
+                  onCheckedChange={(checked) =>
+                    setData({ ...data, enablePathEncoding: checked === true })
+                  }
+                />
+                <label htmlFor="global-enable-path-encoding" className="text-sm cursor-pointer">
+                  URL 路径编码
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="global-remove-extra"
+                  checked={!!data.removeExtraFiles}
+                  onCheckedChange={(checked) =>
+                    setData({ ...data, removeExtraFiles: checked === true })
+                  }
+                />
+                <label htmlFor="global-remove-extra" className="text-sm cursor-pointer">
+                  删除多余本地 STRM 文件
+                </label>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              以上为全局默认值，适用于所有账号的生活事件监控和全量扫描。任务级可单独覆盖 302 和前缀，路径编码统一受全局控制。
+            </p>
+          </section>
+
+          <Separator />
+
+          <section className="space-y-4">
+            <h2 className="text-base font-medium">下载限流配置</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>链接获取每秒请求数 (linkMaxPerSecond)</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={data.download?.linkMaxPerSecond || 2}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      download: { 
+                        ...(data.download || {}), 
+                        linkMaxPerSecond: parseInt(e.target.value) || 2 
+                      },
+                    })
+                  }
+                  placeholder="2"
+                />
+                <p className="text-xs text-muted-foreground">
+                  控制获取下载链接的每秒请求数
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>链接获取并发数 (linkMaxConcurrent)</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={data.download?.linkMaxConcurrent || 10}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      download: { 
+                        ...(data.download || {}), 
+                        linkMaxConcurrent: parseInt(e.target.value) || 10 
+                      },
+                    })
+                  }
+                  placeholder="10"
+                />
+                <p className="text-xs text-muted-foreground">
+                  控制同时获取下载链接的数量
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>文件下载并发数 (downloadMaxConcurrent)</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={data.download?.downloadMaxConcurrent || 2}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      download: { 
+                        ...(data.download || {}), 
+                        downloadMaxConcurrent: parseInt(e.target.value) || 2 
+                      },
+                    })
+                  }
+                  placeholder="2"
+                />
+                <p className="text-xs text-muted-foreground">
+                  控制同时下载文件的数量
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <Separator />
+
+          <section className="space-y-4">
+            <h2 className="text-base font-medium">媒体挂载路径</h2>
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-2 md:col-span-2">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <Label>媒体挂载路径 (mediaMountPath)</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      由系统自动计算并维护（唯一事实来源 SSOT）：根据<span className="font-medium">全局 302 × 账号集</span>、
+                      <span className="font-medium">每个任务的 STRM 设置</span>、
+                      <span className="font-medium">生活事件监控</span> 全量收敛得到。
+                      不建议手工修改 settings.json。
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      onClick={fetchMountDryRun}
+                      disabled={mountDryRunLoading || mountSyncing}
+                    >
+                      {mountDryRunLoading ? "计算中..." : "刷新视图"}
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      type="button"
+                      onClick={applyMountSync}
+                      disabled={mountSyncing || !mountDryRun?.diff.changed}
+                    >
+                      {mountSyncing ? "同步中..." : "立即同步并持久化"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="rounded-md border p-3 space-y-3 bg-muted/30">
+                  {mountDryRunLoading && !mountDryRun ? (
+                    <p className="text-sm text-muted-foreground">正在计算期望集合...</p>
+                  ) : mountDryRun && mountDryRun.computed.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      暂无项。请先在上方配置 STRM 前缀和 302 选项，或创建带自定义前缀的任务。
+                    </p>
+                  ) : mountDryRun ? (
+                    <>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <span className="px-2 py-0.5 rounded bg-background border">
+                          共 <b>{mountDryRun.computed.length}</b> 条期望
+                        </span>
+                        {mountDryRun.diff.changed ? (
+                          <>
+                            {mountDryRun.diff.added.length > 0 && (
+                              <span className="px-2 py-0.5 rounded border bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                +{mountDryRun.diff.added.length} 待新增
+                              </span>
+                            )}
+                            {mountDryRun.diff.removed.length > 0 && (
+                              <span className="px-2 py-0.5 rounded border bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                                -{mountDryRun.diff.removed.length} 待删除
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded border bg-background text-muted-foreground">
+                            与 settings.json 一致，无差异
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5 rounded border bg-background text-muted-foreground">
+                          已持久化 {mountDryRun.persisted.length} 条
+                        </span>
+                      </div>
+
+                      {mountDryRun.diff.removed.length > 0 && (
+                        <details className="text-xs">
+                          <summary className="cursor-pointer text-red-600 dark:text-red-400">
+                            以下 {mountDryRun.diff.removed.length} 条在 settings.json 中存在，但已不再被任何引用方需要
+                          </summary>
+                          <ul className="mt-2 space-y-1 pl-4 list-disc font-mono break-all">
+                            {mountDryRun.diff.removed.map((p) => (
+                              <li key={`rm-${p}`}>{p}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+
+                      <ul className="space-y-2 text-sm">
+                        {mountDryRun.computed.map((row) => {
+                          const added = mountDryRun.diff.added.includes(row.prefix);
+                          return (
+                            <li
+                              key={row.prefix}
+                              className="flex flex-wrap items-center gap-2 rounded border bg-background px-3 py-2"
+                            >
+                              <span className="font-mono break-all flex-1 min-w-0">{row.prefix}</span>
+                              <span
+                                className={
+                                  "px-1.5 py-0.5 rounded text-[11px] border " +
+                                  (row.source === "global_302"
+                                    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border-indigo-200"
+                                    : row.source === "task"
+                                      ? "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300 border-sky-200"
+                                      : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200")
+                                }
+                              >
+                                {row.sourceLabel}
+                              </span>
+                              {row.account && (
+                                <span className="text-xs text-muted-foreground">
+                                  账号：<b>{row.account}</b>
+                                </span>
+                              )}
+                              {row.taskId && (
+                                <span className="text-xs text-muted-foreground font-mono">
+                                  task #{row.taskId.slice(0, 8)}
+                                </span>
+                              )}
+                              {added && (
+                                <span className="text-[11px] px-1.5 py-0.5 rounded border bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300 border-green-200">
+                                  待新增
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
-                    </details>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">未加载数据</p>
                   )}
 
-                  <ul className="space-y-2 text-sm">
-                    {mountDryRun.computed.map((row) => {
-                      const added = mountDryRun.diff.added.includes(row.prefix);
-                      const removed = false;
-                      return (
-                        <li
-                          key={row.prefix}
-                          className="flex flex-wrap items-center gap-2 rounded border bg-background px-3 py-2"
-                        >
-                          <span className="font-mono break-all flex-1 min-w-0">{row.prefix}</span>
-                          <span
-                            className={
-                              "px-1.5 py-0.5 rounded text-[11px] border " +
-                              (row.source === "global_302"
-                                ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border-indigo-200"
-                                : row.source === "task"
-                                  ? "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300 border-sky-200"
-                                  : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200")
-                            }
-                          >
-                            {row.sourceLabel}
-                          </span>
-                          {row.account && (
-                            <span className="text-xs text-muted-foreground">
-                              账号：<b>{row.account}</b>
-                            </span>
-                          )}
-                          {row.taskId && (
-                            <span className="text-xs text-muted-foreground font-mono">
-                              task #{row.taskId.slice(0, 8)}
-                            </span>
-                          )}
-                          {added && (
-                            <span className="text-[11px] px-1.5 py-0.5 rounded border bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300 border-green-200">
-                              待新增
-                            </span>
-                          )}
-                          {removed && null}
+                  {lastSyncApply && (
+                    <div
+                      className={
+                        "rounded border px-3 py-2 text-xs " +
+                        (lastSyncApply.error || lastSyncApply.nginx?.ok === false
+                          ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+                          : "bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300")
+                      }
+                    >
+                      <div className="font-medium mb-1">最近一次同步结果</div>
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        <li>变更：{lastSyncApply.changed ? "已写入" : "无变化"}</li>
+                        {lastSyncApply.added.length > 0 && (
+                          <li>新增 {lastSyncApply.added.length} 条：<span className="font-mono">{lastSyncApply.added.join(", ")}</span></li>
+                        )}
+                        {lastSyncApply.removed.length > 0 && (
+                          <li>删除 {lastSyncApply.removed.length} 条：<span className="font-mono">{lastSyncApply.removed.join(", ")}</span></li>
+                        )}
+                        <li>
+                          nginx：
+                          {lastSyncApply.nginx.attempted
+                            ? lastSyncApply.nginx.ok
+                              ? "已成功 reload"
+                              : `reload 失败 - ${lastSyncApply.nginx.message}`
+                            : lastSyncApply.nginx.available
+                              ? "skipNginxReload=true（跳过）"
+                              : "系统未检测到 nginx"}
                         </li>
-                      );
-                    })}
-                  </ul>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">未加载数据</p>
-              )}
-
-              {lastSyncApply && (
-                <div
-                  className={
-                    "rounded border px-3 py-2 text-xs " +
-                    (lastSyncApply.error || lastSyncApply.nginx?.ok === false
-                      ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
-                      : "bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300")
-                  }
-                >
-                  <div className="font-medium mb-1">最近一次同步结果</div>
-                  <ul className="list-disc pl-4 space-y-0.5">
-                    <li>变更：{lastSyncApply.changed ? "已写入" : "无变化"}</li>
-                    {lastSyncApply.added.length > 0 && (
-                      <li>新增 {lastSyncApply.added.length} 条：<span className="font-mono">{lastSyncApply.added.join(", ")}</span></li>
-                    )}
-                    {lastSyncApply.removed.length > 0 && (
-                      <li>删除 {lastSyncApply.removed.length} 条：<span className="font-mono">{lastSyncApply.removed.join(", ")}</span></li>
-                    )}
-                    <li>
-                      nginx：
-                      {lastSyncApply.nginx.attempted
-                        ? lastSyncApply.nginx.ok
-                          ? "已成功 reload"
-                          : `reload 失败 - ${lastSyncApply.nginx.message}`
-                        : lastSyncApply.nginx.available
-                          ? "skipNginxReload=true（跳过）"
-                          : "系统未检测到 nginx"}
-                    </li>
-                    {lastSyncApply.error && <li>错误：{lastSyncApply.error}</li>}
-                  </ul>
+                        {lastSyncApply.error && <li>错误：{lastSyncApply.error}</li>}
+                      </ul>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
+          </section>
+
+          <div className="pt-2 flex gap-2 items-center">
+            <Button disabled={saving} onClick={onSave}>
+              {saving ? "保存中..." : "保存设置"}
+            </Button>
           </div>
         </div>
-      </section>
+      )}
 
-      <Separator />
-
-      <section className="space-y-4">
-        <h2 className="text-base font-medium">下载限流配置</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>链接获取每秒请求数 (linkMaxPerSecond)</Label>
-            <Input
-              type="number"
-              min="1"
-              max="100"
-              value={data.download?.linkMaxPerSecond || 2}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  download: { 
-                    ...(data.download || {}), 
-                    linkMaxPerSecond: parseInt(e.target.value) || 2 
-                  },
-                })
-              }
-              placeholder="2"
-            />
-            <p className="text-xs text-muted-foreground">
-              控制获取下载链接的每秒请求数
+      {/* Tab 2: 生活事件 */}
+      {activeTab === "monitor" && (
+        <div className="space-y-6">
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-medium">115 生活事件监控</h2>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="monitor-enabled"
+                  checked={monitorEnabled}
+                  onCheckedChange={(checked) => setMonitorEnabled(checked === true)}
+                />
+                <label htmlFor="monitor-enabled" className="text-sm cursor-pointer">
+                  启用监控
+                </label>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              监控 115 网盘的文件操作事件（上传、删除、移动、重命名），自动生成或删除本地 STRM 文件
             </p>
-          </div>
-          <div className="space-y-2">
-            <Label>链接获取并发数 (linkMaxConcurrent)</Label>
-            <Input
-              type="number"
-              min="1"
-              max="50"
-              value={data.download?.linkMaxConcurrent || 10}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  download: { 
-                    ...(data.download || {}), 
-                    linkMaxConcurrent: parseInt(e.target.value) || 10 
-                  },
-                })
-              }
-              placeholder="10"
-            />
-            <p className="text-xs text-muted-foreground">
-              控制同时获取下载链接的数量
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>文件下载并发数 (downloadMaxConcurrent)</Label>
-            <Input
-              type="number"
-              min="1"
-              max="50"
-              value={data.download?.downloadMaxConcurrent || 2}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  download: { 
-                    ...(data.download || {}), 
-                    downloadMaxConcurrent: parseInt(e.target.value) || 2 
-                  },
-                })
-              }
-              placeholder="2"
-            />
-            <p className="text-xs text-muted-foreground">
-              控制同时下载文件的数量
-            </p>
-          </div>
-        </div>
-      </section>
 
-      <Separator />
+            <div className={`space-y-4 ${!monitorEnabled ? "opacity-50 pointer-events-none" : ""}`}>
+              {/* Account Selection */}
+              <div className="space-y-2">
+                <Label>监控账号</Label>
+                <div className="flex flex-wrap gap-4 p-3 border rounded-md">
+                  {accounts.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">暂无可用账号，请先在账号管理中添加 115 账号</p>
+                  ) : (
+                    accounts.map(account => (
+                      <div key={account} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`acc-${account}`}
+                          checked={selectedAccounts.includes(account)}
+                          onCheckedChange={() => toggleAccount(account)}
+                        />
+                        <label htmlFor={`acc-${account}`} className="text-sm cursor-pointer">
+                          {account}
+                        </label>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
 
-      <section className="space-y-4">
-        <h2 className="text-base font-medium">Emby 通知入库</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Emby URL</Label>
-            <Input
-              value={data.emby?.url || ""}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  emby: { ...(data.emby || {}), url: e.target.value },
-                })
-              }
-              placeholder="http://host.docker.internal:8096"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Emby API Key</Label>
-            <Input
-              value={data.emby?.apiKey || ""}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  emby: { ...(data.emby || {}), apiKey: e.target.value },
-                })
-              }
-              placeholder="xxxxxxxxxxxxxxxx"
-            />
-          </div>
-        </div>
-      </section>
+              {/* Poll Interval */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>轮询间隔（秒）</Label>
+                  <Input
+                    type="number"
+                    min="5"
+                    max="300"
+                    value={pollInterval}
+                    onChange={(e) => setPollInterval(parseInt(e.target.value) || 30)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    建议 30-60 秒，太频繁可能触发限流
+                  </p>
+                </div>
+              </div>
 
-      <Separator />
-
-      {/* Global STRM Generation Settings */}
-      <section className="space-y-4">
-        <h2 className="text-base font-medium">STRM 生成设置（全局默认）</h2>
-        <div className="grid grid-cols-1 gap-4">
-          <div className="space-y-2">
-            <Label>Strm 前缀</Label>
-            <Input
-              value={data.strmPrefix || ""}
-              onChange={(e) =>
-                setData({ ...data, strmPrefix: e.target.value })
-              }
-              placeholder="http://localhost:3000"
-            />
-            <p className="text-xs text-muted-foreground">
-              STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。不含账号名。
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="global-enable-302"
-              checked={!!data.enable302}
-              onCheckedChange={(checked) =>
-                setData({ ...data, enable302: checked === true })
-              }
-            />
-            <label htmlFor="global-enable-302" className="text-sm cursor-pointer">
-              302 重定向（自动拼接账号名）
-            </label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="global-encoding"
-              checked={!!data.enablePathEncoding}
-              onCheckedChange={(checked) =>
-                setData({ ...data, enablePathEncoding: checked === true })
-              }
-            />
-            <label htmlFor="global-encoding" className="text-sm cursor-pointer">
-              URL 路径编码
-            </label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="global-remove-extra"
-              checked={!!data.removeExtraFiles}
-              onCheckedChange={(checked) =>
-                setData({ ...data, removeExtraFiles: checked === true })
-              }
-            />
-            <label htmlFor="global-remove-extra" className="text-sm cursor-pointer">
-              删除多余本地 STRM 文件
-            </label>
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          以上为全局默认值，适用于所有账号的生活事件监控和全量扫描。任务级可单独覆盖。修改后请保存设置以生效。
-        </p>
-      </section>
-
-      <Separator />
-
-      {/* Life Monitor Section */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-medium">115 生活事件监控</h2>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="monitor-enabled"
-              checked={monitorEnabled}
-              onCheckedChange={(checked) => setMonitorEnabled(checked === true)}
-            />
-            <label htmlFor="monitor-enabled" className="text-sm cursor-pointer">
-              启用监控
-            </label>
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          监控 115 网盘的文件操作事件（上传、删除、移动、重命名），自动生成或删除本地 STRM 文件
-        </p>
-
-        <div className={`space-y-4 ${!monitorEnabled ? "opacity-50 pointer-events-none" : ""}`}>
-          {/* Account Selection */}
-          <div className="space-y-2">
-            <Label>监控账号</Label>
-            <div className="flex flex-wrap gap-4 p-3 border rounded-md">
-              {accounts.length === 0 ? (
-                <p className="text-sm text-muted-foreground">暂无可用账号，请先在账号管理中添加 115 账号</p>
-              ) : (
-                accounts.map(account => (
-                  <div key={account} className="flex items-center gap-2">
+              {/* Event Types */}
+              <div className="space-y-2">
+                <Label>处理的事件类型</Label>
+                <div className="flex flex-wrap gap-4 p-3 border rounded-md">
+                  <div className="flex items-center gap-2">
                     <Checkbox
-                      id={`acc-${account}`}
-                      checked={selectedAccounts.includes(account)}
-                      onCheckedChange={() => toggleAccount(account)}
+                      id="evt-create"
+                      checked={eventTypes.create}
+                      onCheckedChange={(checked) =>
+                        setEventTypes(prev => ({ ...prev, create: checked === true }))
+                      }
                     />
-                    <label htmlFor={`acc-${account}`} className="text-sm cursor-pointer">
-                      {account}
+                    <label htmlFor="evt-create" className="text-sm cursor-pointer">
+                      新建/上传（生成 STRM）
                     </label>
                   </div>
-                ))
-              )}
-            </div>
-          </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="evt-remove"
+                      checked={eventTypes.remove}
+                      onCheckedChange={(checked) =>
+                        setEventTypes(prev => ({ ...prev, remove: checked === true }))
+                      }
+                    />
+                    <label htmlFor="evt-remove" className="text-sm cursor-pointer">
+                      删除（移除 STRM）
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="evt-rename"
+                      checked={eventTypes.rename}
+                      onCheckedChange={(checked) =>
+                        setEventTypes(prev => ({ ...prev, rename: checked === true }))
+                      }
+                    />
+                    <label htmlFor="evt-rename" className="text-sm cursor-pointer">
+                      重命名
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="evt-move"
+                      checked={eventTypes.move}
+                      onCheckedChange={(checked) =>
+                        setEventTypes(prev => ({ ...prev, move: checked === true }))
+                      }
+                    />
+                    <label htmlFor="evt-move" className="text-sm cursor-pointer">
+                      移动
+                    </label>
+                  </div>
+                </div>
+              </div>
 
-          {/* Poll Interval */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>轮询间隔（秒）</Label>
-              <Input
-                type="number"
-                min="5"
-                max="300"
-                value={pollInterval}
-                onChange={(e) => setPollInterval(parseInt(e.target.value) || 30)}
-              />
-              <p className="text-xs text-muted-foreground">
-                建议 30-60 秒，太频繁可能触发限流
-              </p>
-            </div>
-          </div>
-
-          {/* Event Types */}
-          <div className="space-y-2">
-            <Label>处理的事件类型</Label>
-            <div className="flex flex-wrap gap-4 p-3 border rounded-md">
+              {/* Remove Empty Dirs */}
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="evt-create"
-                  checked={eventTypes.create}
-                  onCheckedChange={(checked) =>
-                    setEventTypes(prev => ({ ...prev, create: checked === true }))
-                  }
+                  id="remove-empty"
+                  checked={removeEmptyDirs}
+                  onCheckedChange={(checked) => setRemoveEmptyDirs(checked === true)}
                 />
-                <label htmlFor="evt-create" className="text-sm cursor-pointer">
-                  新建/上传（生成 STRM）
+                <label htmlFor="remove-empty" className="text-sm cursor-pointer">
+                  删除文件后自动清理空父目录
                 </label>
               </div>
+
+              {/* 302 重定向 */}
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="evt-remove"
-                  checked={eventTypes.remove}
-                  onCheckedChange={(checked) =>
-                    setEventTypes(prev => ({ ...prev, remove: checked === true }))
-                  }
+                  id="life-enable-302"
+                  checked={!!lifeEnable302}
+                  onCheckedChange={(checked) => setLifeEnable302(checked === true)}
                 />
-                <label htmlFor="evt-remove" className="text-sm cursor-pointer">
-                  删除（移除 STRM）
+                <label htmlFor="life-enable-302" className="text-sm cursor-pointer leading-tight">
+                  302 重定向<span className="text-xs text-muted-foreground">（覆盖全局设置，生成带 pickcode 的 STRM）</span>
                 </label>
               </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="evt-rename"
-                  checked={eventTypes.rename}
-                  onCheckedChange={(checked) =>
-                    setEventTypes(prev => ({ ...prev, rename: checked === true }))
-                  }
+
+              {/* Min File Size */}
+              <div className="space-y-2">
+                <Label>最小文件大小（MB）</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  placeholder="留空或 0 表示不过滤"
+                  value={minFileSizeMb}
+                  onChange={(e) => {
+                    setMinFileSizeMb(e.target.value);
+                  }}
+                  className="max-w-xs"
                 />
-                <label htmlFor="evt-rename" className="text-sm cursor-pointer">
-                  重命名
-                </label>
+                <p className="text-xs text-muted-foreground">
+                  小于此阈值的文件跳过 STRM 生成（如封面、NFO 等小文件）。0 表示不过滤。
+                </p>
               </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="evt-move"
-                  checked={eventTypes.move}
-                  onCheckedChange={(checked) =>
-                    setEventTypes(prev => ({ ...prev, move: checked === true }))
-                  }
-                />
-                <label htmlFor="evt-move" className="text-sm cursor-pointer">
-                  移动
-                </label>
+
+              {/* First Pull Mode */}
+              <div className="space-y-2">
+                <Label>首次拉取模式</Label>
+                <Select
+                  value={firstPullMode}
+                  onValueChange={(v: "latest" | "all" | "last") => setFirstPullMode(v)}
+                >
+                  <SelectTrigger className="w-full max-w-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="latest">从当前时间开始（推荐）</SelectItem>
+                    <SelectItem value="all">拉取全部历史事件</SelectItem>
+                    <SelectItem value="last">从上次断点继续</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  首次启动监控时的拉取范围。<strong>latest</strong>：只处理新事件，最轻量；
+                  <strong>all</strong>：拉取所有历史事件（适合首次部署补历史，耗时较长）；
+                  <strong>last</strong>：从上次保存的游标继续，无断点时退化为 latest。
+                </p>
               </div>
-            </div>
-          </div>
 
-          {/* Remove Empty Dirs */}
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="remove-empty"
-              checked={removeEmptyDirs}
-              onCheckedChange={(checked) => setRemoveEmptyDirs(checked === true)}
-            />
-            <label htmlFor="remove-empty" className="text-sm cursor-pointer">
-              删除文件后自动清理空父目录
-            </label>
-          </div>
+              {/* Move Media Mode */}
+              <div className="space-y-2">
+                <Label>移动事件处理模式</Label>
+                <Select
+                  value={moveMediaMode}
+                  onValueChange={(v: "recreate" | "local_move") => setMoveMediaMode(v)}
+                >
+                  <SelectTrigger className="w-full max-w-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="local_move">本地移动 STRM（推荐）</SelectItem>
+                    <SelectItem value="recreate">删除旧 STRM 并重新生成</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  文件被移动时的处理策略。<strong>local_move</strong>：本地直接 rename STRM 文件，速度快；
+                  <strong>recreate</strong>：删除旧 STRM 后用新 pickcode 重新生成，更可靠但需调用 115 API。
+                </p>
+              </div>
 
-          {/* Min File Size */}
-          <div className="space-y-2">
-            <Label>最小文件大小（MB）</Label>
-            <Input
-              type="number"
-              min="0"
-              step="0.1"
-              placeholder="留空或 0 表示不过滤"
-              value={minFileSizeMb}
-              onChange={(e) => {
-                setMinFileSizeMb(e.target.value);
-                const v = parseFloat(e.target.value);
-                setMinFileSize(Number.isFinite(v) && v > 0 ? Math.floor(v * 1024 * 1024) : 0);
-              }}
-              className="max-w-xs"
-            />
-            <p className="text-xs text-muted-foreground">
-              小于此阈值的文件跳过 STRM 生成（如封面、NFO 等小文件）。0 表示不过滤。
-            </p>
-          </div>
-
-          {/* First Pull Mode */}
-          <div className="space-y-2">
-            <Label>首次拉取模式</Label>
-            <Select
-              value={firstPullMode}
-              onValueChange={(v: "latest" | "all" | "last") => setFirstPullMode(v)}
-            >
-              <SelectTrigger className="w-full max-w-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="latest">从当前时间开始（推荐）</SelectItem>
-                <SelectItem value="all">拉取全部历史事件</SelectItem>
-                <SelectItem value="last">从上次断点继续</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              首次启动监控时的拉取范围。<strong>latest</strong>：只处理新事件，最轻量；
-              <strong>all</strong>：拉取所有历史事件（适合首次部署补历史，耗时较长）；
-              <strong>last</strong>：从上次保存的游标继续，无断点时退化为 latest。
-            </p>
-          </div>
-
-          {/* Move Media Mode */}
-          <div className="space-y-2">
-            <Label>移动事件处理模式</Label>
-            <Select
-              value={moveMediaMode}
-              onValueChange={(v: "recreate" | "local_move") => setMoveMediaMode(v)}
-            >
-              <SelectTrigger className="w-full max-w-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="local_move">本地移动 STRM（推荐）</SelectItem>
-                <SelectItem value="recreate">删除旧 STRM 并重新生成</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              文件被移动时的处理策略。<strong>local_move</strong>：本地直接 rename STRM 文件，速度快；
-              <strong>recreate</strong>：删除旧 STRM 后用新 pickcode 重新生成，更可靠但需调用 115 API。
-            </p>
-          </div>
-
-          {/* Path Mappings */}
-          <div className="space-y-2">
-            <Label>路径映射（115 网盘路径 → 本地保存路径）</Label>
-            <div className="space-y-2">
-              {pathMappings.map((mapping, index) => (
-                <div key={index} className="flex gap-2 items-center">
+              {/* Path Mappings */}
+              <div className="space-y-2">
+                <Label>路径映射（115 网盘路径 → 本地保存路径）</Label>
+                <div className="space-y-2">
+                  {pathMappings.map((mapping, index) => (
+                    <div key={index} className="flex gap-2 items-center">
+                      <Select
+                        value={mapping.account || "__all__"}
+                        onValueChange={(val) => {
+                          const updated = [...pathMappings];
+                          updated[index] = { ...updated[index], account: val === "__all__" ? undefined : val };
+                          setPathMappings(updated);
+                        }}
+                      >
+                        <SelectTrigger className="w-[140px]">
+                          <SelectValue placeholder="全部账号" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">全部账号</SelectItem>
+                          {accounts.map(acc => (
+                            <SelectItem key={acc} value={acc}>{acc}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        value={mapping.cloudPath}
+                        onChange={(e) => {
+                          const updated = [...pathMappings];
+                          updated[index] = { ...updated[index], cloudPath: e.target.value };
+                          setPathMappings(updated);
+                        }}
+                        placeholder="115 网盘路径，如 /电影"
+                        className="flex-1"
+                      />
+                      <span className="text-muted-foreground">→</span>
+                      <Input
+                        value={mapping.localPath}
+                        onChange={(e) => {
+                          const updated = [...pathMappings];
+                          updated[index] = { ...updated[index], localPath: e.target.value };
+                          setPathMappings(updated);
+                        }}
+                        placeholder="本地路径，如/app/data/media/电影"
+                        className="flex-1"
+                      />
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => removePathMapping(index)}
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 items-center">
                   <Select
-                    value={mapping.account || "__all__"}
-                    onValueChange={(val) => {
-                      const updated = [...pathMappings];
-                      updated[index] = { ...updated[index], account: val === "__all__" ? undefined : val };
-                      setPathMappings(updated);
-                    }}
+                    value={newMappingAccount}
+                    onValueChange={setNewMappingAccount}
                   >
                     <SelectTrigger className="w-[140px]">
                       <SelectValue placeholder="全部账号" />
@@ -1131,227 +1227,189 @@ export default function SettingsPage() {
                     </SelectContent>
                   </Select>
                   <Input
-                    value={mapping.cloudPath}
-                    onChange={(e) => {
-                      const updated = [...pathMappings];
-                      updated[index] = { ...updated[index], cloudPath: e.target.value };
-                      setPathMappings(updated);
-                    }}
+                    value={newCloudPath}
+                    onChange={(e) => setNewCloudPath(e.target.value)}
                     placeholder="115 网盘路径，如 /电影"
                     className="flex-1"
                   />
                   <span className="text-muted-foreground">→</span>
                   <Input
-                    value={mapping.localPath}
-                    onChange={(e) => {
-                      const updated = [...pathMappings];
-                      updated[index] = { ...updated[index], localPath: e.target.value };
-                      setPathMappings(updated);
-                    }}
+                    value={newLocalPath}
+                    onChange={(e) => setNewLocalPath(e.target.value)}
                     placeholder="本地路径，如/app/data/media/电影"
                     className="flex-1"
                   />
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => removePathMapping(index)}
-                  >
-                    删除
+                  <Button size="sm" onClick={addPathMapping}>
+                    添加
                   </Button>
                 </div>
-              ))}
-            </div>
-            <div className="flex gap-2 items-center">
-              <Select
-                value={newMappingAccount}
-                onValueChange={setNewMappingAccount}
-              >
-                <SelectTrigger className="w-[140px]">
-                  <SelectValue placeholder="全部账号" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">全部账号</SelectItem>
-                  {accounts.map(acc => (
-                    <SelectItem key={acc} value={acc}>{acc}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input
-                value={newCloudPath}
-                onChange={(e) => setNewCloudPath(e.target.value)}
-                placeholder="115 网盘路径，如 /电影"
-                className="flex-1"
-              />
-              <span className="text-muted-foreground">→</span>
-              <Input
-                value={newLocalPath}
-                onChange={(e) => setNewLocalPath(e.target.value)}
-                placeholder="本地路径，如/app/data/media/电影"
-                className="flex-1"
-              />
-              <Button size="sm" onClick={addPathMapping}>
-                添加
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              只有匹配到网盘路径前缀的文件才会被处理。支持多个路径映射。
-            </p>
-          </div>
+                <p className="text-xs text-muted-foreground">
+                  只有匹配到网盘路径前缀的文件才会被处理。支持多个路径映射。
+                </p>
+              </div>
 
-          {/* Verify Button */}
-          <div className="space-y-2">
-            <div className="flex gap-2 items-center">
-              <Button
-                variant="outline"
-                onClick={handleVerify}
-                disabled={verifying || selectedAccounts.length === 0}
-              >
-                {verifying ? "验证中..." : "验证账号的生活事件功能"}
-              </Button>
-              {verifyResult && (
-                <span className={`text-sm font-medium ${verifyResult.success ? "text-green-500" : "text-red-500"}`}>
-                  {verifyResult.message}
-                </span>
+              {/* Verify Button */}
+              <div className="space-y-2">
+                <div className="flex gap-2 items-center">
+                  <Button
+                    variant="outline"
+                    onClick={handleVerify}
+                    disabled={verifying || selectedAccounts.length === 0}
+                  >
+                    {verifying ? "验证中..." : "验证账号的生活事件功能"}
+                  </Button>
+                  {verifyResult && (
+                    <span className={`text-sm font-medium ${verifyResult.success ? "text-green-500" : "text-red-500"}`}>
+                      {verifyResult.message}
+                    </span>
+                  )}
+                </div>
+                {verifyResult && verifyResult.perAccount.length > 0 && (
+                  <div className="rounded-md border p-3 space-y-2 text-sm">
+                    {verifyResult.perAccount.map(r => (
+                      <div key={r.account} className="flex items-start gap-2">
+                        <span className={r.success ? "text-green-500 mt-0.5" : "text-red-500 mt-0.5 shrink-0"}>
+                          {r.success ? "✓" : "✗"}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-medium">账号：{r.account}</div>
+                          <div className={r.success ? "text-green-600" : "text-red-600"}>
+                            {r.message}
+                          </div>
+                          {r.details && (
+                            <div className="text-muted-foreground text-xs mt-1 break-all">
+                              详情：{JSON.stringify(r.details)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Monitor Status */}
+              {displayMonitorStates.length > 0 && (
+                <div className="space-y-2">
+                  <Label>监控状态</Label>
+                  <div className="p-3 border rounded-md space-y-2">
+                    {displayMonitorStates.map((state) => (
+                      <div key={state.account} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium">{state.account}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            state.running
+                              ? "bg-green-100 text-green-800"
+                              : state.pending
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-gray-100 text-gray-800"
+                          }`}>
+                            {state.running ? "运行中" : state.pending ? "待保存配置" : "已停止"}
+                          </span>
+                          {state.eventsProcessed > 0 && (
+                            <span className="text-xs text-muted-foreground">
+                              已处理 {state.eventsProcessed} 个事件
+                            </span>
+                          )}
+                          {state.lastError && (
+                            <span className="text-xs text-red-500">
+                              错误: {state.lastError}
+                            </span>
+                          )}
+                          {state.pending && (
+                            <span className="text-xs text-muted-foreground">
+                              点击下方「保存并启动监控」以启用此账号
+                            </span>
+                          )}
+                        </div>
+                        <Button
+                          variant={state.running ? "destructive" : "outline"}
+                          size="sm"
+                          disabled={state.pending}
+                          onClick={() => state.running ? handleStopMonitor(state.account) : handleStartAccount(state.account)}
+                        >
+                          {state.pending ? "待保存" : state.running ? "停止" : "启动"}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
-            {verifyResult && verifyResult.perAccount.length > 0 && (
-              <div className="rounded-md border p-3 space-y-2 text-sm">
-                {verifyResult.perAccount.map(r => (
-                  <div key={r.account} className="flex items-start gap-2">
-                    <span className={r.success ? "text-green-500 mt-0.5" : "text-red-500 mt-0.5 shrink-0"}>
-                      {r.success ? "✓" : "✗"}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="font-medium">账号：{r.account}</div>
-                      <div className={r.success ? "text-green-600" : "text-red-600"}>
-                        {r.message}
-                      </div>
-                      {r.details && (
-                        <div className="text-muted-foreground text-xs mt-1 break-all">
-                          详情：{JSON.stringify(r.details)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+          </section>
+
+          <div className="pt-2 flex flex-wrap gap-2 items-center">
+            <Button disabled={saving} onClick={onSave}>
+              {saving ? "保存中..." : "保存设置"}
+            </Button>
+            <Button
+              onClick={handleStartMonitor}
+              disabled={
+                !monitorEnabled ||
+                selectedAccounts.length === 0 ||
+                pathMappings.length === 0
+              }
+            >
+              保存并启动监控
+            </Button>
+            {(!monitorEnabled || selectedAccounts.length === 0 || pathMappings.length === 0) && (
+              <p className="text-xs text-muted-foreground">
+                {!monitorEnabled && "请先勾选「启用监控」"}
+                {monitorEnabled && selectedAccounts.length === 0 && "请至少选择一个监控账号"}
+                {monitorEnabled && selectedAccounts.length > 0 && pathMappings.length === 0 && "请至少配置一条路径映射"}
+              </p>
             )}
           </div>
+        </div>
+      )}
 
-          {/* Monitor Status */}
-          {displayMonitorStates.length > 0 && (
-            <div className="space-y-2">
-              <Label>监控状态</Label>
-              <div className="p-3 border rounded-md space-y-2">
-                {displayMonitorStates.map((state) => (
-                  <div key={state.account} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium">{state.account}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded ${
-                        state.running
-                          ? "bg-green-100 text-green-800"
-                          : state.pending
-                            ? "bg-yellow-100 text-yellow-800"
-                            : "bg-gray-100 text-gray-800"
-                      }`}>
-                        {state.running ? "运行中" : state.pending ? "待保存配置" : "已停止"}
-                      </span>
-                      {state.eventsProcessed > 0 && (
-                        <span className="text-xs text-muted-foreground">
-                          已处理 {state.eventsProcessed} 个事件
-                        </span>
-                      )}
-                      {state.lastError && (
-                        <span className="text-xs text-red-500">
-                          错误: {state.lastError}
-                        </span>
-                      )}
-                      {state.pending && (
-                        <span className="text-xs text-muted-foreground">
-                          点击下方「保存并启动监控」以启用此账号
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      variant={state.running ? "destructive" : "outline"}
-                      size="sm"
-                      disabled={state.pending}
-                      onClick={() => state.running ? handleStopMonitor(state.account) : handleStartAccount(state.account)}
-                    >
-                      {state.pending ? "待保存" : state.running ? "停止" : "启动"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
+      {/* Tab 3: 清理与安全 */}
+      {activeTab === "security" && (
+        <div className="space-y-6">
+          <section className="space-y-4">
+            <h2 className="text-base font-medium">STRM 清理</h2>
+            <StrmCleanupCard />
+          </section>
+
+          <Separator />
+
+          <section className="space-y-4">
+            <h2 className="text-lg font-semibold">修改密码</h2>
+            <div className="grid gap-2 max-w-sm">
+              <Label htmlFor="currentPassword">当前密码</Label>
+              <Input
+                id="currentPassword"
+                type="password"
+                value={currentPwd}
+                onChange={(e) => setCurrentPwd(e.target.value)}
+                placeholder="输入当前密码"
+              />
+              <Label htmlFor="newPassword">新密码</Label>
+              <Input
+                id="newPassword"
+                type="password"
+                value={newPwd}
+                onChange={(e) => setNewPwd(e.target.value)}
+                placeholder="至少 6 位"
+              />
+              <Label htmlFor="confirmPassword">确认新密码</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={confirmPwd}
+                onChange={(e) => setConfirmPwd(e.target.value)}
+                placeholder="再次输入新密码"
+              />
+              <Button
+                disabled={changingPwd}
+                onClick={handleChangePassword}
+              >
+                {changingPwd ? "修改中..." : "修改密码"}
+              </Button>
             </div>
-          )}
+          </section>
         </div>
-      </section>
-
-      <Separator />
-
-      <StrmCleanupCard />
-
-      <Separator />
-
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">修改密码</h2>
-        <div className="grid gap-2 max-w-sm">
-          <Label htmlFor="currentPassword">当前密码</Label>
-          <Input
-            id="currentPassword"
-            type="password"
-            value={currentPwd}
-            onChange={(e) => setCurrentPwd(e.target.value)}
-            placeholder="输入当前密码"
-          />
-          <Label htmlFor="newPassword">新密码</Label>
-          <Input
-            id="newPassword"
-            type="password"
-            value={newPwd}
-            onChange={(e) => setNewPwd(e.target.value)}
-            placeholder="至少 6 位"
-          />
-          <Label htmlFor="confirmPassword">确认新密码</Label>
-          <Input
-            id="confirmPassword"
-            type="password"
-            value={confirmPwd}
-            onChange={(e) => setConfirmPwd(e.target.value)}
-            placeholder="再次输入新密码"
-          />
-          <Button
-            disabled={changingPwd}
-            onClick={handleChangePassword}
-          >
-            {changingPwd ? "修改中..." : "修改密码"}
-          </Button>
-        </div>
-      </section>
-
-      <div className="pt-2 flex flex-wrap gap-2 items-center">
-        <Button disabled={saving} onClick={onSave}>
-          {saving ? "Saving..." : "保存设置"}
-        </Button>
-        <Button
-          onClick={handleStartMonitor}
-          disabled={
-            !monitorEnabled ||
-            selectedAccounts.length === 0 ||
-            pathMappings.length === 0
-          }
-        >
-          保存并启动监控
-        </Button>
-        {(!monitorEnabled || selectedAccounts.length === 0 || pathMappings.length === 0) && (
-          <p className="text-xs text-muted-foreground">
-            {!monitorEnabled && "请先勾选「启用监控」"}
-            {monitorEnabled && selectedAccounts.length === 0 && "请至少选择一个监控账号"}
-            {monitorEnabled && selectedAccounts.length > 0 && pathMappings.length === 0 && "请至少配置一条路径映射"}
-          </p>
-        )}
-      </div>
+      )}
     </div>
   );
 }

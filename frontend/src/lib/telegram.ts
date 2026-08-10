@@ -178,6 +178,17 @@ class TelegramBot {
     }
   }
 
+  // 发送图片
+  async sendPhoto(message: TelegramMessage & { photo: string }): Promise<TelegramResponse> {
+    try {
+      const response = await axios.post(`${this.baseUrl}/sendPhoto`, message);
+      return response.data;
+    } catch (error) {
+      console.error('Telegram sendPhoto error:', error);
+      return { ok: false, error: `Telegram API error: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   // 发送带按钮的消息
   async sendMessageWithButtons(
     chatId: string, 
@@ -316,6 +327,18 @@ export async function sendTelegramNotification(message: string, type: 'start' | 
       console.log('Telegram not configured (missing botToken or chatId), skipping notification');
       return;
     }
+    if (telegram.enabled === false) {
+      return;
+    }
+
+    // 确保 Polling 已自恢复（不会循环，动态 import）
+    try {
+      const { initTelegramPolling } = await import("./telegramPolling");
+      await initTelegramPolling();
+    } catch {
+      // 忽略，Polling 不是必须的
+    }
+
     const bot = createTelegramBot(telegram.botToken);
     
     let emoji = 'ℹ️';
@@ -343,5 +366,36 @@ export async function sendTelegramNotification(message: string, type: 'start' | 
   } catch (error) {
     console.error('Failed to send Telegram notification:', error);
     // 不抛出错误，避免影响主流程
+  }
+}
+
+// 发送带图片的 Telegram 通知
+export async function sendTelegramPhoto(chatId: string, photoUrl: string, caption: string) {
+  try {
+    // 动态导入 readSettings 避免循环依赖
+    const { readSettings } = await import('./serverUtils');
+    const settings = readSettings();
+    const telegram = settings.telegram;
+    
+    // 检查 Telegram 配置是否完整
+    if (!telegram || !telegram.botToken) {
+      console.log('Telegram not configured (missing botToken), skipping photo send');
+      return;
+    }
+    if (telegram.enabled === false) {
+      return;
+    }
+
+    const bot = createTelegramBot(telegram.botToken);
+    
+    await bot.sendPhoto({
+      chat_id: chatId,
+      photo: photoUrl,
+      text: caption,
+      parse_mode: 'HTML'
+    });
+    console.log('Telegram photo sent');
+  } catch (error) {
+    console.error('Failed to send Telegram photo:', error);
   }
 }

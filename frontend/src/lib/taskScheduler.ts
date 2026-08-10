@@ -18,17 +18,17 @@ export interface TaskSchedule {
   lastRunDurationMs?: number;
 }
 
+type ScheduleTask = {
+  id: string;
+  schedule?: TaskSchedule;
+};
+
+function readScheduledTasks(): ScheduleTask[] {
+  return readTasks() as ScheduleTask[];
+}
+
 const TIMEZONE = "Asia/Shanghai";
 const MIN_INTERVAL_MINUTES = 5;
-const WEEKDAY_MAP: Record<string, number> = {
-  日: 0, Sun: 0, sun: 0, Sunday: 0, sunday: 0,
-  一: 1, Mon: 1, mon: 1, Monday: 1, monday: 1,
-  二: 2, Tue: 2, tue: 2, Tuesday: 2, tuesday: 2,
-  三: 3, Wed: 3, wed: 3, Wednesday: 3, wednesday: 3,
-  四: 4, Thu: 4, thu: 4, Thursday: 4, thursday: 4,
-  五: 5, Fri: 5, fri: 5, Friday: 5, friday: 5,
-  六: 6, Sat: 6, sat: 6, Saturday: 6, saturday: 6,
-};
 
 export function scheduleToCron(schedule: TaskSchedule): string {
   if (!schedule?.enabled) return "";
@@ -97,7 +97,7 @@ export async function initTaskScheduler(): Promise<void> {
 
   initAccountRuntimeState();
 
-  const tasks = (readTasks() as any[]).filter(
+  const tasks = readScheduledTasks().filter(
     (t) => t.schedule?.enabled && t.schedule.mode
   );
 
@@ -168,11 +168,11 @@ function _registerJob(taskId: string, schedule: TaskSchedule): void {
 
   const next = computeNextRun(schedule);
   if (next) {
-    const tasks = readTasks() as any[];
+    const tasks = readScheduledTasks();
     const idx = tasks.findIndex((t) => t.id === taskId);
     if (idx !== -1) {
       if (!tasks[idx].schedule) tasks[idx].schedule = {};
-      tasks[idx].schedule.nextRunAt = next;
+      tasks[idx].schedule!.nextRunAt = next;
       saveTasks(tasks);
     }
   }
@@ -200,14 +200,14 @@ async function fireTask(taskId: string, trigger: "schedule" | "catchup"): Promis
   executingIds.add(taskId);
 
   const startMs = Date.now();
-  const existing = (readTasks() as any[]).find((t) => t.id === taskId);
+  const existing = readScheduledTasks().find((t) => t.id === taskId);
   if (!existing?.schedule?.enabled) {
     executingIds.delete(taskId);
     return;
   }
 
   try {
-    const result = await executeTask(taskId, { trigger });
+    const result = await executeTask(taskId);
     const durationMs = Date.now() - startMs;
 
     const next = computeNextRun(existing.schedule);
@@ -256,7 +256,7 @@ async function fireTask(taskId: string, trigger: "schedule" | "catchup"): Promis
 
 export function registerTaskSchedule(taskId: string): void {
   if (!schedulerInitialized) return;
-  const tasks = (readTasks() as any[]).filter((t) => t.id === taskId);
+  const tasks = readScheduledTasks().filter((t) => t.id === taskId);
   if (tasks.length === 0) return;
   const task = tasks[0];
   if (!task.schedule?.enabled || !task.schedule.mode) {
@@ -274,7 +274,7 @@ export function unregisterTaskSchedule(taskId: string): void {
 export function refreshAllSchedules(): void {
   if (!schedulerInitialized) return;
   const jobs = getSchedulerMap();
-  const tasks = readTasks() as any[];
+  const tasks = readScheduledTasks();
 
   for (const [taskId] of jobs) {
     if (!tasks.find((t) => t.id === taskId && t.schedule?.enabled)) {

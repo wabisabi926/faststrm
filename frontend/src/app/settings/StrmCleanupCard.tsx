@@ -113,6 +113,23 @@ type LogEntry = {
   success: boolean;
 };
 
+type ReconcileItem = {
+  cloudFileCount: number;
+  localStrmCount: number;
+  dbRecordCount: number;
+  staleStrms: unknown[];
+  missingStrms: unknown[];
+};
+
+type ReconcileResponse = {
+  results?: ReconcileItem[];
+};
+
+type AxiosError = {
+  response?: { data?: { error?: string } };
+  message?: string;
+};
+
 export function StrmCleanupCard() {
   const [scanning, setScanning] = React.useState(false);
   const [scanResult, setScanResult] = React.useState<ScanSummary | null>(null);
@@ -153,19 +170,19 @@ export function StrmCleanupCard() {
       });
       const data = res.data as ScanSummary;
       const normalizedMappings: MappingResult[] = data.mappings.map(
-        (raw: any, idx: number) => ({
+        (raw: Omit<MappingResult, "mappingId">, idx: number) => ({
           mappingId: `mapping-${idx}`,
           account: raw.account,
           cloudPath: raw.cloudPath,
           localPath: raw.localPath,
           remoteFileCount: raw.remoteFileCount,
           localStrmCount: raw.localStrmCount,
-          staleStrms: (raw.staleStrms || []).map((s: any) => ({
+          staleStrms: (raw.staleStrms || []).map((s: Omit<StaleStrm, "localPath" | "mappingId">) => ({
             ...s,
             localPath: raw.localPath,
             mappingId: `mapping-${idx}`,
           })),
-          missingStrms: (raw.missingStrms || []).map((m: any) => ({
+          missingStrms: (raw.missingStrms || []).map((m: Omit<MissingStrm, "mappingId">) => ({
             ...m,
             mappingId: `mapping-${idx}`,
           })),
@@ -184,8 +201,9 @@ export function StrmCleanupCard() {
       toast.success(
         `扫描完成：发现 ${data.totalStale} 个失效 STRM，${data.totalMissing} 个漏生成`
       );
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err.message || "扫描失败";
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "扫描失败";
       appendLog("扫描", msg, false);
       toast.error(msg);
       console.error(err);
@@ -201,20 +219,21 @@ export function StrmCleanupCard() {
         action: "reconcile",
         useSettingsDefaults: true,
       });
-      const data = res.data;
+      const data = res.data as ReconcileResponse;
       // 汇总对账结果
-      const totalCloud = data.results?.reduce((s: number, r: any) => s + r.cloudFileCount, 0) || 0;
-      const totalLocal = data.results?.reduce((s: number, r: any) => s + r.localStrmCount, 0) || 0;
-      const totalDb = data.results?.reduce((s: number, r: any) => s + r.dbRecordCount, 0) || 0;
-      const totalStale = data.results?.reduce((s: number, r: any) => s + r.staleStrms.length, 0) || 0;
-      const totalMissing = data.results?.reduce((s: number, r: any) => s + r.missingStrms.length, 0) || 0;
+      const totalCloud = data.results?.reduce((s: number, r: ReconcileItem) => s + r.cloudFileCount, 0) || 0;
+      const totalLocal = data.results?.reduce((s: number, r: ReconcileItem) => s + r.localStrmCount, 0) || 0;
+      const totalDb = data.results?.reduce((s: number, r: ReconcileItem) => s + r.dbRecordCount, 0) || 0;
+      const totalStale = data.results?.reduce((s: number, r: ReconcileItem) => s + r.staleStrms.length, 0) || 0;
+      const totalMissing = data.results?.reduce((s: number, r: ReconcileItem) => s + r.missingStrms.length, 0) || 0;
       appendLog("全量对账", `云端:${totalCloud} 本地:${totalLocal} DB:${totalDb} 失效:${totalStale} 缺失:${totalMissing}`, true);
       toast.success(`全量对账完成`, {
         description: `云端: ${totalCloud} | 本地STRM: ${totalLocal} | DB记录: ${totalDb} | 失效: ${totalStale} | 缺失: ${totalMissing}`,
         duration: 10000,
       });
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || "对账失败";
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "对账失败";
       appendLog("全量对账", msg, false);
       toast.error("对账失败", { description: msg });
       console.error(err);
@@ -272,9 +291,10 @@ export function StrmCleanupCard() {
         action: "delete",
         dryRun: false,
       });
-      handleDeleteResult(res.data, "delete");
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err.message || "删除失败";
+      handleDeleteResult(res.data);
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "删除失败";
       appendLog("删除", msg, false);
       toast.error(msg);
       console.error(err);
@@ -293,9 +313,10 @@ export function StrmCleanupCard() {
         scanSummary: { mappings: scanResult!.mappings },
         dryRun: false,
       });
-      handleDeleteResult(res.data, "delete_all");
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err.message || "批量删除失败";
+      handleDeleteResult(res.data);
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "批量删除失败";
       appendLog("批量删除", msg, false);
       toast.error(msg);
     } finally {
@@ -321,8 +342,9 @@ export function StrmCleanupCard() {
         dryRun: false,
       });
       handleCombinedResult(res.data);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err.message || "组合操作失败";
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "组合操作失败";
       appendLog("清理+补生成", msg, false);
       toast.error(msg);
     } finally {
@@ -347,8 +369,9 @@ export function StrmCleanupCard() {
         dryRun: false,
       });
       handleRegenerateResult(res.data);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err.message || "补生成失败";
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "补生成失败";
       appendLog("补生成", msg, false);
       toast.error(msg);
     } finally {
@@ -356,7 +379,7 @@ export function StrmCleanupCard() {
     }
   };
 
-  const handleDeleteResult = (r: ExecuteResult, _action: string) => {
+  const handleDeleteResult = (r: ExecuteResult) => {
     appendLog("删除", `删除 ${r.deletedCount} 个失效 STRM，失败 ${r.failedCount} 个`, r.failedCount === 0);
     toast.success(
       `已删除 ${r.deletedCount} 个失效 STRM，清理了 ${r.removedEmptyDirs.length} 个空目录` +
@@ -420,18 +443,18 @@ export function StrmCleanupCard() {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-center justify-between gap-4 flex-wrap pt-2">
+          <div className="flex-1 min-w-0">
             <CardTitle className="flex items-center gap-2">
               <DatabaseZap className="size-5 text-indigo-500" />
               失效 STRM 清理
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="mt-2">
               扫描本地与 115 网盘文件树的一致性，找出网盘已删除但本地仍残留的
               STRM 文件（失效）以及网盘有但本地缺失的 STRM 文件（漏生成），使用生活事件监控配置中的路径映射作为扫描范围
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button onClick={handleScan} disabled={scanning}>
               {scanning ? (
                 <>

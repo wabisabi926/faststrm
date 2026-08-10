@@ -1,5 +1,5 @@
 "use client"
-import { ListChecks, Inbox, Settings, Github, Bot, Users, History, Activity } from "lucide-react";
+import { ListChecks, Inbox, Settings, Github, Bot, History, Activity, Bell } from "lucide-react";
 import Image from "next/image";
 
 import {
@@ -49,17 +49,16 @@ const items = [
   },
 ];
 
-// Telegram menu items.
-const telegramItems = [
+const notifyItems = [
   {
-    title: "Bot Config",
-    url: "/telegram",
+    title: "TG 通知",
+    url: "/tg-notify",
     icon: Bot,
   },
   {
-    title: "Users",
-    url: "/telegram/users",
-    icon: Users,
+    title: "Emby 通知",
+    url: "/emby-notify",
+    icon: Bell,
   },
 ];
 
@@ -79,7 +78,7 @@ export function AppSidebar() {
             />
             <div className="flex flex-col">
               <span className="text-xl font-bold text-foreground">Fast Strm</span>
-              <span className="text-xs text-muted-foreground">更快、更强的 Strm 管理</span>
+              <span className="text-xs text-muted-foreground">更快、更强、更硬</span>
             </div>
           </div>
         </div>
@@ -105,11 +104,11 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
         
-        {/* <SidebarGroup>
-          <SidebarGroupLabel>Telegram</SidebarGroupLabel>
+        <SidebarGroup>
+          <SidebarGroupLabel>通知</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {telegramItems.map((item) => {
+              {notifyItems.map((item) => {
                 const isActive = pathname === item.url;
                 return (
                   <SidebarMenuItem key={item.title} className={isActive ? "bg-muted" : ""}>
@@ -124,7 +123,7 @@ export function AppSidebar() {
               })}
             </SidebarMenu>
           </SidebarGroupContent>
-        </SidebarGroup> */}
+        </SidebarGroup>
       </SidebarContent>
       <SidebarSeparator className="ml-0 mr-2 w-auto group-data-[collapsible=icon]:mx-0" />
       <SidebarFooter>

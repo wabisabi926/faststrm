@@ -4,14 +4,24 @@ import * as path from "path";
 import { encryptAccounts } from "@/lib/passwordCrypto";
 import { readAccounts } from "@/lib/serverUtils";
 import { syncMediaMountPaths } from "@/lib/mediaMountSync";
+import type { AccountInfo } from "@/lib/115";
 
 const accountFile = path.resolve(process.cwd(), "../config/account.json");
 
-function writeAccounts(data: any) {
+function writeAccounts(data: AccountInfo[]) {
   // 写入前加密敏感字段
   const encrypted = encryptAccounts(JSON.parse(JSON.stringify(data)));
   fs.writeFileSync(accountFile, JSON.stringify(encrypted, null, 2), "utf-8");
 }
+
+type AccountPayload = Partial<AccountInfo> & {
+  accountType?: string;
+  name?: string;
+  cookie?: string;
+  account?: string;
+  password?: string;
+  url?: string;
+};
 
 // GET: 获取所有账号（返回解密后的数据）
 export async function GET() {
@@ -20,7 +30,7 @@ export async function GET() {
 
 // POST: 新建账号（基于 name 唯一）
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  const body = (await req.json()) as AccountPayload;
   const { accountType, name } = body;
 
   if (!accountType || !name) {
@@ -49,16 +59,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const accounts = readAccounts();
-  if (accounts.find((a: any) => a.name === name)) {
+  const accounts = readAccounts() as AccountInfo[];
+  if (accounts.find((a: AccountInfo) => a.name === name)) {
     return NextResponse.json({ error: "Account name already exists" }, { status: 400 });
   }
 
   // 创建新账户，只包含提供的字段
-  const newAccount = { accountType, name, ...body };
-  delete newAccount.accountType; // 避免重复
-  delete newAccount.name; // 避免重复
-  const finalAccount = { accountType, name, ...newAccount };
+  const newAccount: AccountInfo = { accountType, name, ...body } as AccountInfo;
+  delete (newAccount as unknown as AccountPayload).accountType; // 避免重复
+  delete (newAccount as unknown as AccountPayload).name; // 避免重复
+  const finalAccount: AccountInfo = { accountType, name, ...newAccount } as AccountInfo;
 
   accounts.push(finalAccount);
   writeAccounts(accounts);
@@ -69,7 +79,7 @@ export async function POST(req: NextRequest) {
 
 // PUT: 更新账号（基于 name）
 export async function PUT(req: NextRequest) {
-  const body = await req.json();
+  const body = (await req.json()) as AccountPayload;
   const { name, accountType } = body;
 
   if (!name) {
@@ -97,8 +107,8 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  const accounts = readAccounts();
-  const idx = accounts.findIndex((a: any) => a.name === name);
+  const accounts = readAccounts() as AccountInfo[];
+  const idx = accounts.findIndex((a: AccountInfo) => a.name === name);
 
   if (idx === -1) {
     return NextResponse.json({ error: "Account not found" }, { status: 404 });
@@ -120,8 +130,8 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Missing name" }, { status: 400 });
   }
 
-  const accounts = readAccounts();
-  const newAccounts = accounts.filter((a: any) => a.name !== name);
+  const accounts = readAccounts() as AccountInfo[];
+  const newAccounts = accounts.filter((a: AccountInfo) => a.name !== name);
 
   if (newAccounts.length === accounts.length) {
     return NextResponse.json({ error: "Account not found" }, { status: 404 });

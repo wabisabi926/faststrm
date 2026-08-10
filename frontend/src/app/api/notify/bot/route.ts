@@ -3,6 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { createTelegramBot } from "@/lib/telegram";
 import { readSettings, writeSettings } from "@/lib/serverUtils";
 
+function maskToken(token: string): string {
+  if (!token) return '';
+  if (token.length <= 8) return '***';
+  const separator = token.indexOf(':');
+  if (separator === -1) return '***';
+  const idPart = token.slice(0, separator);
+  const secretPart = token.slice(separator + 1);
+  return `${idPart}:${'*'.repeat(Math.max(secretPart.length - 4, 0))}${secretPart.slice(-4)}`;
+}
+
 // 获取机器人信息
 export async function GET() {
   try {
@@ -23,7 +33,8 @@ export async function GET() {
       webhook: webhookInfo,
       configured: true,
       chatId: telegram.chatId || '',
-      botToken: telegram.botToken || ''
+      enabled: telegram.enabled ?? true,
+      botToken: maskToken(telegram.botToken || '')
     });
   } catch (error) {
     console.error("Telegram bot info error:", error);
@@ -38,7 +49,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { botToken, chatId, webhookUrl } = body;
+    const { botToken, chatId, webhookUrl, enabled } = body;
 
     if (!botToken) {
       return NextResponse.json({ error: "Bot token is required" }, { status: 400 });
@@ -95,7 +106,8 @@ export async function POST(request: NextRequest) {
     settings.telegram = {
       botToken,
       chatId: chatId || settings.telegram?.chatId,
-      webhookUrl: webhookUrl || settings.telegram?.webhookUrl
+      webhookUrl: webhookUrl || settings.telegram?.webhookUrl,
+      enabled: enabled !== undefined ? enabled : (settings.telegram?.enabled ?? true)
     };
 
     // 保存设置
@@ -115,6 +127,7 @@ export async function POST(request: NextRequest) {
       success: true,
       bot: botInfo,
       chatId: chatId || '',
+      enabled: settings.telegram?.enabled ?? true,
       message: "Telegram bot configured successfully"
     });
   } catch (error) {

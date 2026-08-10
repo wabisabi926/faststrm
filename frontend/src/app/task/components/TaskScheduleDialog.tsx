@@ -1,9 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Clock, Play, X, CalendarDays, Repeat, Info } from "lucide-react";
+import { Clock, Play, CalendarDays, Repeat, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -15,13 +14,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "sonner";
 import axiosInstance from "@/lib/axios";
 
@@ -65,27 +57,6 @@ const WEEKDAY_OPTIONS = [
   { value: 6, label: "六" },
   { value: 0, label: "日" },
 ];
-
-function formatNextRun(ts?: number | null): string {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  const isTomorrow =
-    d.getFullYear() === tomorrow.getFullYear() &&
-    d.getMonth() === tomorrow.getMonth() &&
-    d.getDate() === tomorrow.getDate();
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  if (sameDay) return `今天 ${timeStr}`;
-  if (isTomorrow) return `明天 ${timeStr}`;
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${timeStr}`;
-}
 
 function formatLastRun(ts?: number): string {
   if (!ts) return "从未";
@@ -133,7 +104,7 @@ export function TaskScheduleDialog({
     setIntervalMinutes(task.schedule?.intervalMinutes ?? 30);
     setTime(task.schedule?.time ?? "03:00");
     setWeekdays(task.schedule?.weekdays ?? [1, 2, 3, 4, 5]);
-  }, [taskKey]);
+  }, [taskKey, task.schedule]);
 
   const previewPayload = React.useMemo<TaskSchedule>(() => {
     return {

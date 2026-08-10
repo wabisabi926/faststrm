@@ -154,6 +154,25 @@ export function getFilePathEntry(account: string, fileId: FileId): FilePathEntry
   };
 }
 
+/** 按路径查找记录（用于 302 模式下从路径反查 pickcode） */
+export function getFilePathEntryByPath(account: string, filePath: string): FilePathEntry | undefined {
+  const row = getDb().prepare(
+    "SELECT file_id, path, file_name, parent_id, pickcode, update_time FROM files WHERE account = ? AND path = ?"
+  ).get(account, filePath) as
+    | { file_id: number; path: string; file_name: string; parent_id: number; pickcode: string; update_time: number }
+    | undefined;
+
+  if (!row) return undefined;
+  return {
+    fileId: row.file_id,
+    path: row.path,
+    fileName: row.file_name,
+    parentId: row.parent_id,
+    pickCode: row.pickcode,
+    updateTime: row.update_time,
+  };
+}
+
 /** 插入或更新单条记录 */
 export function upsertFilePathEntry(account: string, entry: FilePathEntry): void {
   getDb().prepare(`

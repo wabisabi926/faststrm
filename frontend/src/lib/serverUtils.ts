@@ -1,7 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
 import axios from "axios";
-import { createTelegramBot, formatTaskStatusMessage, formatDownloadCompleteMessage } from "./telegram";
 import { decryptAccounts, decryptSettings, encryptSettings } from "./passwordCrypto";
 
 const accountFile = path.join(process.cwd(), "../config", "account.json");
@@ -230,12 +229,20 @@ export type AppSettings = {
   emby?: {
     url?: string;
     apiKey?: string;
+    notifyMediaAdded?: boolean;
+    notifyMediaRemoved?: boolean;
+    notifyPlayback?: boolean;
+    playbackShowProgress?: boolean;
+    playbackShowOverview?: boolean;
+    webhookAuth?: string;
+    libraryId?: string;
   };
   telegram?: {
     botToken?: string;
     chatId?: string;
     webhookUrl?: string;
-    allowedUsers?: number[];  // 简化为只存储用户ID列表
+    enabled?: boolean;
+    allowedUsers?: number[];
   };
   lifeMonitor?: LifeMonitorSettings;
 } & Record<string, unknown>;
@@ -322,7 +329,7 @@ export function getStrmExtensions(): string[] {
 }
 
 // 通知 Emby 刷新媒体库（如果在 settings.json 配置了 emby）
-export async function notifyEmbyRefresh() {
+export async function notifyEmbyRefresh(filePath?: string) {
   try {
     const settings = readSettings();
     const emby = settings.emby;
@@ -330,9 +337,21 @@ export async function notifyEmbyRefresh() {
 
     const base = String(emby.url).replace(/\/$/, "");
     const url = `${base}/Library/Refresh?api_key=${encodeURIComponent(emby.apiKey)}`;
+
+    let body: string | undefined = undefined;
+    if (filePath) {
+      // 路径级精准刷新：只刷新指定的文件或目录
+      body = JSON.stringify({
+        Path: filePath,
+        Recursive: false,
+      });
+    }
     // fire-and-forget
-    const res = await axios.post(url);
-    console.log("Emby 刷新结果", res.status);
+    const res = await axios.post(url, body ? {
+      data: body,
+      headers: { 'Content-Type': 'application/json' }
+    } : undefined);
+    console.log("Emby 刷新结果", res.status, filePath ? `(路径: ${filePath})` : "(全库)");
     console.log("Emby 刷新成功");
   } catch(err){
     console.log("Emby 刷新失败", err);
@@ -340,82 +359,7 @@ export async function notifyEmbyRefresh() {
   }
 }
 
-// Telegram 通知功能
-export async function notifyTelegram(message: string, type: 'info' | 'error' | 'success' = 'info') {
-  try {
-    const settings = readSettings();
-    const telegram = settings.telegram;
-    
-    if (!telegram || !telegram.botToken || !telegram.chatId) {
-      console.log("Telegram not configured, skipping notification");
-      return;
-    }
 
-    const bot = createTelegramBot(telegram.botToken);
-    
-    let emoji = 'ℹ️';
-    switch (type) {
-      case 'error':
-        emoji = '❌';
-        break;
-      case 'success':
-        emoji = '✅';
-        break;
-      case 'info':
-      default:
-        emoji = 'ℹ️';
-        break;
-    }
-
-    const formattedMessage = `${emoji} <b>FreeStrm Notification</b>\n\n${message}\n\n<b>Time:</b> ${new Date().toLocaleString()}`;
-    
-    await bot.sendNotification(formattedMessage, telegram.chatId);
-    console.log("Telegram notification sent successfully");
-  } catch (error) {
-    console.error("Failed to send Telegram notification:", error);
-    // 忽略通知失败，不影响主流程
-  }
-}
-
-// 发送任务状态通知
-export async function notifyTaskStatus(task: { name?: string; progress?: number; [key: string]: unknown }, status: string) {
-  try {
-    const settings = readSettings();
-    const telegram = settings.telegram;
-    
-    if (!telegram || !telegram.botToken || !telegram.chatId) {
-      return;
-    }
-
-    const bot = createTelegramBot(telegram.botToken);
-    const message = formatTaskStatusMessage({ ...task, status });
-    
-    await bot.sendNotification(message, telegram.chatId);
-    console.log(`Telegram task status notification sent: ${status}`);
-  } catch (error) {
-    console.error("Failed to send task status notification:", error);
-  }
-}
-
-// 发送下载完成通知
-export async function notifyDownloadComplete(task: { name?: string; size?: number; [key: string]: unknown }) {
-  try {
-    const settings = readSettings();
-    const telegram = settings.telegram;
-    
-    if (!telegram || !telegram.botToken || !telegram.chatId) {
-      return;
-    }
-
-    const bot = createTelegramBot(telegram.botToken);
-    const message = formatDownloadCompleteMessage(task);
-    
-    await bot.sendNotification(message, telegram.chatId);
-    console.log("Telegram download complete notification sent");
-  } catch (error) {
-    console.error("Failed to send download complete notification:", error);
-  }
-}
 
 // Telegram 简单权限管理
 export function isTelegramUserAllowed(userId: number): boolean {

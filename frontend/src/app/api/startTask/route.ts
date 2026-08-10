@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await executeTask(taskId, { trigger: "manual" });
+    const result = await executeTask(taskId);
 
     if (result.blocked) {
       const status =

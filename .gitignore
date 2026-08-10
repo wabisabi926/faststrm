@@ -9,6 +9,7 @@ cache
 
 # Runtime directories
 config/
+.config/
 logs/
 data/
 strm-test/

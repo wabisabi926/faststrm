@@ -56,8 +56,15 @@ export function saveTaskHistory(history: TaskExecutionHistory[]): void {
   }
 }
 
+type TaskInfoPayload = {
+  account: string;
+  originPath: string;
+  targetPath: string;
+  removeExtraFiles?: boolean;
+};
+
 // 创建新的任务执行记录
-export function createTaskExecution(taskId: string, taskInfo: any): TaskExecutionHistory {
+export function createTaskExecution(taskId: string, taskInfo: TaskInfoPayload): TaskExecutionHistory {
   const history: TaskExecutionHistory = {
     id: `${taskId}_${Date.now()}`,
     taskId,

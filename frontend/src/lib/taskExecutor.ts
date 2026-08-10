@@ -30,8 +30,10 @@ import {
 } from "@/lib/enqueueForAccount";
 import { exportDirParse, fs_dir_getid } from "@/lib/115";
 import type { AccountInfo } from "@/lib/115";
+import { getFilePathEntryByPath } from "@/lib/filePathDb";
 import { sendTelegramNotification } from "@/lib/telegram";
 import { encryptAccounts } from "@/lib/passwordCrypto";
+import { TaskSchedule } from "@/lib/taskScheduler";
 import {
   tryEnterFullScan,
   exitFullScan,
@@ -60,6 +62,30 @@ type TreeNode = {
   name: string;
   parent_key: number;
 };
+
+type TreeEntry = TreeNode & { children?: TreeEntry[] };
+
+type ExecTask = {
+  id: string;
+  account: string;
+  accountType?: string;
+  originPath: string;
+  targetPath: string;
+  strmPrefix?: string;
+  enablePathEncoding?: boolean;
+  enable302?: boolean;
+  removeExtraFiles?: boolean;
+  schedule?: TaskSchedule;
+};
+
+type ScheduleTask = {
+  id: string;
+  schedule?: TaskSchedule & Record<string, unknown>;
+};
+
+function readScheduledTasks(): ScheduleTask[] {
+  return readTasks() as ScheduleTask[];
+}
 
 async function getOpenlistTreeData(
   baseUrl: string,
@@ -194,6 +220,7 @@ function startDownloadTask({
   targetPath,
   removeExtraFiles,
   enablePathEncoding,
+  enable302,
 }: {
   filePaths: string[];
   saveDir: string;
@@ -204,6 +231,7 @@ function startDownloadTask({
   targetPath: string;
   removeExtraFiles?: boolean;
   enablePathEncoding?: boolean;
+  enable302?: boolean;
 }): string {
   suspendMonitorForFullScan(account);
   const total = filePaths.length;
@@ -282,11 +310,26 @@ function startDownloadTask({
   );
   strmFiles.forEach((filePath) => {
     const savePath = path.join(saveDir, filePath);
-    downloadOrCreateStrm(originPath + "/" + filePath, savePath, {
+    const cloudPath = originPath + "/" + filePath;
+
+    // 302 模式下尝试从 filePathDb 反查 pickcode
+    let pickcode: string | undefined;
+    if (enable302) {
+      try {
+        const entry = getFilePathEntryByPath(account, cloudPath);
+        if (entry?.pickCode) pickcode = entry.pickCode;
+      } catch {}
+    }
+
+    downloadOrCreateStrm(cloudPath, savePath, {
       asStrm: true,
       displayPath: filePath,
       strmPrefix,
       enablePathEncoding,
+      enable302,
+      account,
+      pickcode,
+      fileName: path.basename(filePath),
     }).subscribe({
       next: (p) => {
         perFile.set(p.filePath!, 100);
@@ -380,8 +423,6 @@ function startDownloadTask({
   return taskId;
 }
 
-export type ExecuteTrigger = "manual" | "schedule" | "catchup";
-
 export interface ExecuteResult {
   success: boolean;
   blocked: boolean;
@@ -395,13 +436,12 @@ export interface ExecuteResult {
 }
 
 export async function executeTask(
-  taskId: string,
-  opts: { trigger?: ExecuteTrigger } = {}
+  taskId: string
 ): Promise<ExecuteResult> {
-  let task: any = null;
+  let task: ExecTask | null = null;
   try {
-    const tasks = readTasks();
-    task = tasks.find((t: { id: string }) => t.id === taskId);
+    const tasks = readTasks() as ExecTask[];
+    task = tasks.find((t: ExecTask) => t.id === taskId) ?? null;
 
     if (!task) {
       return {
@@ -429,6 +469,7 @@ export async function executeTask(
     const resolvedStrm = resolveStrmSettings(account, task, settings);
     const strmPrefix = resolvedStrm.strmPrefix;
     const enablePathEncoding = resolvedStrm.enablePathEncoding;
+    const enable302 = resolvedStrm.enable302;
 
     const accounts = readAccounts() as unknown as AccountInfo[];
     const accountInfo = accounts.find(
@@ -440,7 +481,7 @@ export async function executeTask(
 
     const accountType = accountInfo.accountType;
 
-    let tree: any;
+    let tree: TreeEntry[] | undefined;
     if (accountType === "115") {
       if (!accountInfo.cookie) {
         throw new Error(`Missing cookie for 115 account: ${account}`);
@@ -459,7 +500,7 @@ export async function executeTask(
           accountInfo,
         });
         console.log("data: ", data);
-        tree = buildTree(data);
+        tree = buildTree(data) as TreeEntry[];
       } catch (error) {
         console.error("Failed to parse 115 directory: ", error);
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -531,14 +572,14 @@ export async function executeTask(
         token,
         originPath
       );
-      tree = buildTree(openlistTreeData);
+      tree = buildTree(openlistTreeData) as TreeEntry[];
     }
 
     const saveDir = path.resolve(process.cwd(), `../data/${targetPath}`);
     if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
 
     const remoteFiles: string[] = [];
-    for (const node of tree) {
+    for (const node of tree || []) {
       if (node.children && node.children.length > 0) {
         remoteFiles.push(...collectFilesAndTopEmptyDirs(node.children));
       } else if (/\.[a-z0-9]+$/i.test(node.name)) {
@@ -583,6 +624,7 @@ export async function executeTask(
       strmPrefix,
       removeExtraFiles: task.removeExtraFiles,
       enablePathEncoding,
+      enable302,
     });
 
     const deleteMessage = task.removeExtraFiles
@@ -623,7 +665,7 @@ export function updateTaskScheduleState(
     lastRunDurationMs?: number;
   }
 ) {
-  const tasks = readTasks() as any[];
+  const tasks = readScheduledTasks();
   const idx = tasks.findIndex((t) => t.id === taskId);
   if (idx === -1) return;
   if (!tasks[idx].schedule) tasks[idx].schedule = {};
