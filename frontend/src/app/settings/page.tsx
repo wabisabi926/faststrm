@@ -34,6 +34,9 @@ type LifeMonitorConfig = {
     rename: boolean;
     move: boolean;
   };
+  strmPrefix?: string;
+  enablePathEncoding?: boolean;
+  enable302?: boolean;
   minFileSize?: number;
   firstPullMode?: "latest" | "all" | "last";
   moveMediaMode?: "recreate" | "local_move";
@@ -44,6 +47,11 @@ type Settings = {
   strmExtensions?: string[];
   downloadExtensions?: string[];
   mediaMountPath?: string[];
+  // 全局 STRM 生成设置
+  strmPrefix?: string;
+  enablePathEncoding?: boolean;
+  enable302?: boolean;
+  removeExtraFiles?: boolean;
   emby?: { url?: string; apiKey?: string };
   download?: {
     linkMaxPerSecond?: number;
@@ -84,7 +92,39 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [strmExtensionsInput, setStrmExtensionsInput] = useState("");
   const [downloadExtensionsInput, setDownloadExtensionsInput] = useState("");
-  const [mediaMountPathInput, setMediaMountPathInput] = useState("");
+
+  // 媒体挂载路径：SSOT 管理，不再手动编辑
+  type MountSourceTag = "global_302" | "task" | "life_monitor";
+  type MountEntryRow = {
+    prefix: string;
+    source: MountSourceTag;
+    sourceLabel: string;
+    account?: string;
+    taskId?: string;
+  };
+  type MountDryRunData = {
+    persisted: string[];
+    computed: MountEntryRow[];
+    final: string[];
+    diff: {
+      added: string[];
+      removed: string[];
+      kept: string[];
+      changed: boolean;
+    };
+  } | null;
+  type MountSyncApplyData = {
+    changed: boolean;
+    added: string[];
+    removed: string[];
+    final: string[];
+    nginx: { attempted: boolean; available: boolean; ok: boolean; message: string };
+    error?: string;
+  } | null;
+  const [mountDryRun, setMountDryRun] = useState<MountDryRunData>(null);
+  const [mountDryRunLoading, setMountDryRunLoading] = useState(false);
+  const [mountSyncing, setMountSyncing] = useState(false);
+  const [lastSyncApply, setLastSyncApply] = useState<MountSyncApplyData>(null);
 
   // Change password states
   const [currentPwd, setCurrentPwd] = useState("");
@@ -119,10 +159,40 @@ export default function SettingsPage() {
   const [minFileSizeMb, setMinFileSizeMb] = useState(""); // MB 输入框显示用
   const [firstPullMode, setFirstPullMode] = useState<"latest" | "all" | "last">("latest");
   const [moveMediaMode, setMoveMediaMode] = useState<"recreate" | "local_move">("local_move");
+  const [lifeEnable302, setLifeEnable302] = useState<boolean | undefined>(undefined);
 
   // New path mapping input
   const [newCloudPath, setNewCloudPath] = useState("");
   const [newLocalPath, setNewLocalPath] = useState("");
+
+  // Merge saved monitor states + selected but not-yet-saved accounts for display
+  const displayMonitorStates: (MonitorState & { pending?: boolean })[] = (() => {
+    const byAccount = new Map<string, MonitorState>();
+    for (const s of monitorStates) byAccount.set(s.account, s);
+    const result: (MonitorState & { pending?: boolean })[] = [];
+    const seen = new Set<string>();
+    for (const acc of selectedAccounts) {
+      seen.add(acc);
+      const saved = byAccount.get(acc);
+      if (saved) {
+        result.push(saved);
+      } else {
+        result.push({
+          account: acc,
+          running: false,
+          status: "待保存配置",
+          eventsProcessed: 0,
+          pending: true,
+        });
+      }
+    }
+    for (const s of monitorStates) {
+      if (!seen.has(s.account)) {
+        result.push(s);
+      }
+    }
+    return result;
+  })();
 
   useEffect(() => {
     const loadData = async () => {
@@ -132,7 +202,6 @@ export default function SettingsPage() {
         setData(settings);
         setStrmExtensionsInput((settings.strmExtensions || []).join(", "));
         setDownloadExtensionsInput((settings.downloadExtensions || []).join(", "));
-        setMediaMountPathInput((settings.mediaMountPath || []).join(", "));
 
         // Load life monitor config
         const monitor = settings.lifeMonitor || DEFAULT_MONITOR_CONFIG;
@@ -147,6 +216,7 @@ export default function SettingsPage() {
         setMinFileSizeMb(loadedMinSize > 0 ? (loadedMinSize / (1024 * 1024)).toString() : "");
         setFirstPullMode(monitor.firstPullMode || "latest");
         setMoveMediaMode(monitor.moveMediaMode || "local_move");
+        setLifeEnable302(monitor.enable302);
 
         // Load accounts
         const accountsResp = await axiosInstance.get("/api/account");
@@ -155,6 +225,9 @@ export default function SettingsPage() {
         // Load monitor states
         const monitorResp = await axiosInstance.get("/api/lifeMonitor");
         setMonitorStates(monitorResp.data?.states || []);
+
+        // 加载媒体挂载路径 dry-run 快照
+        await fetchMountDryRun();
       } catch (err) {
         console.error("Failed to load settings:", err);
         toast.error("加载设置失败");
@@ -165,6 +238,50 @@ export default function SettingsPage() {
 
     loadData();
   }, []);
+
+  const fetchMountDryRun = async () => {
+    setMountDryRunLoading(true);
+    try {
+      const resp = await axiosInstance.get("/api/mediaMountSync");
+      setMountDryRun(resp.data || null);
+    } catch (e) {
+      console.error("Failed to fetch media mount dry-run:", e);
+    } finally {
+      setMountDryRunLoading(false);
+    }
+  };
+
+  const applyMountSync = async () => {
+    setMountSyncing(true);
+    setLastSyncApply(null);
+    try {
+      const resp = await axiosInstance.post("/api/mediaMountSync", {});
+      setLastSyncApply(resp.data || null);
+      // 同步成功后刷新 dry-run 视图 + 刷新 settings（因为 mediaMountPath 被写回了）
+      await Promise.all([
+        fetchMountDryRun(),
+        (async () => {
+          try {
+            const r = await axiosInstance.get("/api/settings");
+            setData(r.data || {});
+          } catch {
+            // ignore
+          }
+        })(),
+      ]);
+      const ok = resp.data && resp.data.nginx?.ok !== false;
+      toast.success(
+        ok
+          ? `媒体挂载路径已同步${resp.data?.changed ? "（有变更）" : "（无变化）"}`
+          : `同步完成但 nginx reload 失败：${String(resp.data?.nginx?.message || "未知错误")}`
+      );
+    } catch (e) {
+      toast.error("同步媒体挂载路径失败");
+      console.error("applyMountSync failed:", e);
+    } finally {
+      setMountSyncing(false);
+    }
+  };
 
   const handleChangePassword = async () => {
     if (!currentPwd || !newPwd || !confirmPwd) {
@@ -214,22 +331,18 @@ export default function SettingsPage() {
         .map(ext => ext.startsWith(".") ? ext : `.${ext}`)
         .map(ext => ext.toLowerCase());
 
-      const mediaMountPath = mediaMountPathInput
-        .split(",")
-        .map(p => p.trim())
-        .filter(p => p.length > 0);
-
       // 解析 MB 输入为字节；空值或非法值视为 0（不过滤）
       const parsedMb = parseFloat(minFileSizeMb);
       const minBytes = Number.isFinite(parsedMb) && parsedMb > 0
         ? Math.floor(parsedMb * 1024 * 1024)
         : 0;
 
+      // 注意：mediaMountPath 不在此处手工写入，由 SSOT 的 syncMediaMountPaths() 统一维护
+      //       （PUT /api/settings 内部会自动触发 sync，并返回同步详情）
       const saveData = {
         ...data,
         strmExtensions,
         downloadExtensions,
-        mediaMountPath,
         lifeMonitor: {
           enabled: monitorEnabled,
           accounts: selectedAccounts,
@@ -240,12 +353,23 @@ export default function SettingsPage() {
           minFileSize: minBytes,
           firstPullMode,
           moveMediaMode,
+          enable302: lifeEnable302,
         },
       };
 
-      await axiosInstance.put("/api/settings", saveData);
+      const saveResp = await axiosInstance.put("/api/settings", saveData);
       setData(saveData);
-      toast.success("保存成功");
+      // 保存后自动刷新 dry-run 视图（因为全局 strmPrefix/enable302/任务/生活事件 都可能影响）
+      await fetchMountDryRun();
+      const syncInfo = (saveResp.data as { mediaMountSync?: { changed?: boolean; nginx?: { attempted?: boolean; ok?: boolean; message?: string } } } | undefined)?.mediaMountSync;
+      const syncSummaries: string[] = [];
+      if (syncInfo) {
+        syncSummaries.push(syncInfo.changed ? "挂载路径：已更新" : "挂载路径：无变化");
+        if (syncInfo.nginx?.attempted) {
+          syncSummaries.push(syncInfo.nginx.ok ? "nginx：重载成功" : `nginx：重载失败 - ${syncInfo.nginx.message}`);
+        }
+      }
+      toast.success(syncSummaries.length ? `保存成功（${syncSummaries.join("；")}）` : "保存成功");
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'response' in error) {
         const apiError = error as { response?: { status?: number; data?: { message?: string } } };
@@ -449,16 +573,168 @@ export default function SettingsPage() {
               用逗号分隔，自动添加点号前缀
             </p>
           </div>
-          <div className="space-y-2">
-            <Label>媒体挂载路径 (mediaMountPath)</Label>
-            <Input
-              value={mediaMountPathInput}
-              onChange={(e) => setMediaMountPathInput(e.target.value)}
-              placeholder="/root/webdav/115, /mnt/media"
-            />
-            <p className="text-xs text-muted-foreground">
-              多个路径用逗号分隔，保存后自动重载 nginx
-            </p>
+          <div className="space-y-2 md:col-span-2">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <Label>媒体挂载路径 (mediaMountPath)</Label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  由系统自动计算并维护（唯一事实来源 SSOT）：根据<span className="font-medium">全局 302 × 账号集</span>、
+                  <span className="font-medium">每个任务的 STRM 设置</span>、
+                  <span className="font-medium">生活事件监控</span> 全量收敛得到。
+                  不建议手工修改 settings.json。
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  onClick={fetchMountDryRun}
+                  disabled={mountDryRunLoading || mountSyncing}
+                >
+                  {mountDryRunLoading ? "计算中..." : "刷新视图"}
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  type="button"
+                  onClick={applyMountSync}
+                  disabled={mountSyncing}
+                >
+                  {mountSyncing ? "同步中..." : "立即同步并持久化"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-md border p-3 space-y-3 bg-muted/30">
+              {mountDryRunLoading && !mountDryRun ? (
+                <p className="text-sm text-muted-foreground">正在计算期望集合...</p>
+              ) : mountDryRun && mountDryRun.computed.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  暂无项。请先在上方配置 STRM 前缀和 302 选项，或创建带自定义前缀的任务。
+                </p>
+              ) : mountDryRun ? (
+                <>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="px-2 py-0.5 rounded bg-background border">
+                      共 <b>{mountDryRun.computed.length}</b> 条期望
+                    </span>
+                    {mountDryRun.diff.changed ? (
+                      <>
+                        {mountDryRun.diff.added.length > 0 && (
+                          <span className="px-2 py-0.5 rounded border bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                            +{mountDryRun.diff.added.length} 待新增
+                          </span>
+                        )}
+                        {mountDryRun.diff.removed.length > 0 && (
+                          <span className="px-2 py-0.5 rounded border bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                            -{mountDryRun.diff.removed.length} 待删除
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded border bg-background text-muted-foreground">
+                        与 settings.json 一致，无差异
+                      </span>
+                    )}
+                    <span className="px-2 py-0.5 rounded border bg-background text-muted-foreground">
+                      已持久化 {mountDryRun.persisted.length} 条
+                    </span>
+                  </div>
+
+                  {mountDryRun.diff.removed.length > 0 && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-red-600 dark:text-red-400">
+                        以下 {mountDryRun.diff.removed.length} 条在 settings.json 中存在，但已不再被任何引用方需要
+                      </summary>
+                      <ul className="mt-2 space-y-1 pl-4 list-disc font-mono break-all">
+                        {mountDryRun.diff.removed.map((p) => (
+                          <li key={`rm-${p}`}>{p}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+
+                  <ul className="space-y-2 text-sm">
+                    {mountDryRun.computed.map((row) => {
+                      const added = mountDryRun.diff.added.includes(row.prefix);
+                      const removed = false;
+                      return (
+                        <li
+                          key={row.prefix}
+                          className="flex flex-wrap items-center gap-2 rounded border bg-background px-3 py-2"
+                        >
+                          <span className="font-mono break-all flex-1 min-w-0">{row.prefix}</span>
+                          <span
+                            className={
+                              "px-1.5 py-0.5 rounded text-[11px] border " +
+                              (row.source === "global_302"
+                                ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border-indigo-200"
+                                : row.source === "task"
+                                  ? "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300 border-sky-200"
+                                  : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200")
+                            }
+                          >
+                            {row.sourceLabel}
+                          </span>
+                          {row.account && (
+                            <span className="text-xs text-muted-foreground">
+                              账号：<b>{row.account}</b>
+                            </span>
+                          )}
+                          {row.taskId && (
+                            <span className="text-xs text-muted-foreground font-mono">
+                              task #{row.taskId.slice(0, 8)}
+                            </span>
+                          )}
+                          {added && (
+                            <span className="text-[11px] px-1.5 py-0.5 rounded border bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300 border-green-200">
+                              待新增
+                            </span>
+                          )}
+                          {removed && null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">未加载数据</p>
+              )}
+
+              {lastSyncApply && (
+                <div
+                  className={
+                    "rounded border px-3 py-2 text-xs " +
+                    (lastSyncApply.error || lastSyncApply.nginx?.ok === false
+                      ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+                      : "bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300")
+                  }
+                >
+                  <div className="font-medium mb-1">最近一次同步结果</div>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    <li>变更：{lastSyncApply.changed ? "已写入" : "无变化"}</li>
+                    {lastSyncApply.added.length > 0 && (
+                      <li>新增 {lastSyncApply.added.length} 条：<span className="font-mono">{lastSyncApply.added.join(", ")}</span></li>
+                    )}
+                    {lastSyncApply.removed.length > 0 && (
+                      <li>删除 {lastSyncApply.removed.length} 条：<span className="font-mono">{lastSyncApply.removed.join(", ")}</span></li>
+                    )}
+                    <li>
+                      nginx：
+                      {lastSyncApply.nginx.attempted
+                        ? lastSyncApply.nginx.ok
+                          ? "已成功 reload"
+                          : `reload 失败 - ${lastSyncApply.nginx.message}`
+                        : lastSyncApply.nginx.available
+                          ? "skipNginxReload=true（跳过）"
+                          : "系统未检测到 nginx"}
+                    </li>
+                    {lastSyncApply.error && <li>错误：{lastSyncApply.error}</li>}
+                  </ul>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -542,7 +818,7 @@ export default function SettingsPage() {
       <Separator />
 
       <section className="space-y-4">
-        <h2 className="text-base font-medium">Emby</h2>
+        <h2 className="text-base font-medium">Emby 通知入库</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label>Emby URL</Label>
@@ -571,6 +847,69 @@ export default function SettingsPage() {
             />
           </div>
         </div>
+      </section>
+
+      <Separator />
+
+      {/* Global STRM Generation Settings */}
+      <section className="space-y-4">
+        <h2 className="text-base font-medium">STRM 生成设置（全局默认）</h2>
+        <div className="grid grid-cols-1 gap-4">
+          <div className="space-y-2">
+            <Label>Strm 前缀</Label>
+            <Input
+              value={data.strmPrefix || ""}
+              onChange={(e) =>
+                setData({ ...data, strmPrefix: e.target.value })
+              }
+              placeholder="http://localhost:3000"
+            />
+            <p className="text-xs text-muted-foreground">
+              STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。不含账号名。
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="global-enable-302"
+              checked={!!data.enable302}
+              onCheckedChange={(checked) =>
+                setData({ ...data, enable302: checked === true })
+              }
+            />
+            <label htmlFor="global-enable-302" className="text-sm cursor-pointer">
+              302 重定向（自动拼接账号名）
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="global-encoding"
+              checked={!!data.enablePathEncoding}
+              onCheckedChange={(checked) =>
+                setData({ ...data, enablePathEncoding: checked === true })
+              }
+            />
+            <label htmlFor="global-encoding" className="text-sm cursor-pointer">
+              URL 路径编码
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="global-remove-extra"
+              checked={!!data.removeExtraFiles}
+              onCheckedChange={(checked) =>
+                setData({ ...data, removeExtraFiles: checked === true })
+              }
+            />
+            <label htmlFor="global-remove-extra" className="text-sm cursor-pointer">
+              删除多余本地 STRM 文件
+            </label>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          以上为全局默认值，适用于所有账号的生活事件监控和全量扫描。任务级可单独覆盖。修改后请保存设置以生效。
+        </p>
       </section>
 
       <Separator />
@@ -809,7 +1148,7 @@ export default function SettingsPage() {
                       updated[index] = { ...updated[index], localPath: e.target.value };
                       setPathMappings(updated);
                     }}
-                    placeholder="本地路径，如 /data/media/电影"
+                    placeholder="本地路径，如/app/data/media/电影"
                     className="flex-1"
                   />
                   <Button
@@ -847,7 +1186,7 @@ export default function SettingsPage() {
               <Input
                 value={newLocalPath}
                 onChange={(e) => setNewLocalPath(e.target.value)}
-                placeholder="本地路径，如 /data/media/电影"
+                placeholder="本地路径，如/app/data/media/电影"
                 className="flex-1"
               />
               <Button size="sm" onClick={addPathMapping}>
@@ -900,20 +1239,22 @@ export default function SettingsPage() {
           </div>
 
           {/* Monitor Status */}
-          {monitorStates.length > 0 && (
+          {displayMonitorStates.length > 0 && (
             <div className="space-y-2">
               <Label>监控状态</Label>
               <div className="p-3 border rounded-md space-y-2">
-                {monitorStates.map((state) => (
+                {displayMonitorStates.map((state) => (
                   <div key={state.account} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium">{state.account}</span>
                       <span className={`text-xs px-2 py-0.5 rounded ${
                         state.running
                           ? "bg-green-100 text-green-800"
-                          : "bg-gray-100 text-gray-800"
+                          : state.pending
+                            ? "bg-yellow-100 text-yellow-800"
+                            : "bg-gray-100 text-gray-800"
                       }`}>
-                        {state.running ? "运行中" : "已停止"}
+                        {state.running ? "运行中" : state.pending ? "待保存配置" : "已停止"}
                       </span>
                       {state.eventsProcessed > 0 && (
                         <span className="text-xs text-muted-foreground">
@@ -925,13 +1266,19 @@ export default function SettingsPage() {
                           错误: {state.lastError}
                         </span>
                       )}
+                      {state.pending && (
+                        <span className="text-xs text-muted-foreground">
+                          点击下方「保存并启动监控」以启用此账号
+                        </span>
+                      )}
                     </div>
                     <Button
                       variant={state.running ? "destructive" : "outline"}
                       size="sm"
+                      disabled={state.pending}
                       onClick={() => state.running ? handleStopMonitor(state.account) : handleStartAccount(state.account)}
                     >
-                      {state.running ? "停止" : "启动"}
+                      {state.pending ? "待保存" : state.running ? "停止" : "启动"}
                     </Button>
                   </div>
                 ))}
@@ -983,14 +1330,26 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <div className="pt-2 flex gap-2">
+      <div className="pt-2 flex flex-wrap gap-2 items-center">
         <Button disabled={saving} onClick={onSave}>
           {saving ? "Saving..." : "保存设置"}
         </Button>
-        {monitorEnabled && selectedAccounts.length > 0 && pathMappings.length > 0 && (
-          <Button onClick={handleStartMonitor}>
-            保存并启动监控
-          </Button>
+        <Button
+          onClick={handleStartMonitor}
+          disabled={
+            !monitorEnabled ||
+            selectedAccounts.length === 0 ||
+            pathMappings.length === 0
+          }
+        >
+          保存并启动监控
+        </Button>
+        {(!monitorEnabled || selectedAccounts.length === 0 || pathMappings.length === 0) && (
+          <p className="text-xs text-muted-foreground">
+            {!monitorEnabled && "请先勾选「启用监控」"}
+            {monitorEnabled && selectedAccounts.length === 0 && "请至少选择一个监控账号"}
+            {monitorEnabled && selectedAccounts.length > 0 && pathMappings.length === 0 && "请至少配置一条路径映射"}
+          </p>
         )}
       </div>
     </div>

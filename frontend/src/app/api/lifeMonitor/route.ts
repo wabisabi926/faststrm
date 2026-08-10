@@ -11,6 +11,7 @@ import {
   LifeMonitorConfig,
 } from "@/lib/eventMonitor";
 import { readAccounts } from "@/lib/serverUtils";
+import { syncMediaMountPaths } from "@/lib/mediaMountSync";
 
 // GET: 获取监控状态和配置
 export async function GET() {
@@ -106,9 +107,11 @@ export async function POST(req: NextRequest) {
           );
         }
         saveLifeMonitorConfig(newConfig);
+        const mediaMountSync0 = await syncMediaMountPaths();
         return NextResponse.json({
           success: true,
           message: "配置已保存",
+          mediaMountSync: mediaMountSync0,
         });
       }
 
@@ -134,27 +137,26 @@ export async function POST(req: NextRequest) {
         }
         const config = getLifeMonitorConfig();
         const newConfig: LifeMonitorConfig = { ...config, ...updates };
-        
+
         // 如果监控正在运行且配置变更，需要重启监控
-        // 先停止所有运行的监控
         stopAllMonitors();
-
-        // 保存新配置
         saveLifeMonitorConfig(newConfig);
+        const mediaMountSync = await syncMediaMountPaths();
 
-        // 如果新配置启用，自动重新启动
         if (newConfig.enabled && newConfig.accounts.length > 0) {
           const started = startAllMonitors();
           return NextResponse.json({
             success: true,
             message: "配置已更新，监控已重启",
             started,
+            mediaMountSync,
           });
         }
 
         return NextResponse.json({
           success: true,
           message: "配置已更新",
+          mediaMountSync,
         });
       }
 

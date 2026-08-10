@@ -36,6 +36,7 @@ import {
 import { FolderOpen } from "lucide-react";
 import { DirectoryTreeDialog } from "./DirectoryTreeDialog";
 import { LocalDirectoryTreeDialog } from "./LocalDirectoryTreeDialog";
+import { resolveStrmSettings } from "@/lib/strmUtils";
 
 export const taskFormSchema = z.object({
   account: z.string().min(1, "Account 不能为空"),
@@ -73,6 +74,7 @@ export function AddTaskDialog({
     originPath: "",
     account: "",
     enable302: false,
+    enablePathEncoding: false,
   });
 
   // 获取选中账户的类型
@@ -86,18 +88,17 @@ export function AddTaskDialog({
 
   // 计算预览路径
   const getPreviewPath = () => {
-    const { strmPrefix, originPath, account, enable302 } = formValues;
+    const { strmPrefix, originPath, account, enable302, enablePathEncoding } = formValues;
     if (!strmPrefix && !originPath) {
       return "请输入 Strm Prefix 和 Origin Path";
     }
-    let prefix = strmPrefix || "";
-    // 如果是 115 账户且开启了 302，在前缀后拼接账户名
-    if (is115Account && enable302 && account) {
-      prefix = prefix.replace(/\/+$/, "") + "/" + account;
-    }
+    const resolved = resolveStrmSettings(account, {
+      strmPrefix,
+      enablePathEncoding,
+      enable302: is115Account ? enable302 : false,
+    });
     const origin = originPath || "";
-    const combinedPath = prefix + "/" + origin;
-    return `${combinedPath}/....../abc.mkv`;
+    return `${resolved.strmPrefix}/${origin}/....../abc.mkv`;
   };
 
   // 编辑时，如果启用了302且strmPrefix以账号结尾，需要去掉账号后缀
@@ -135,6 +136,7 @@ export function AddTaskDialog({
         originPath: value.originPath || "",
         account: value.account || "",
         enable302: value.enable302 || false,
+        enablePathEncoding: value.enablePathEncoding || false,
       });
     });
     return () => subscription.unsubscribe();
@@ -153,6 +155,7 @@ export function AddTaskDialog({
         originPath: task.originPath || "",
         account: task.account || "",
         enable302: task.enable302 || false,
+        enablePathEncoding: task.enablePathEncoding || false,
       });
     }
   }, [task]);
@@ -163,15 +166,9 @@ export function AddTaskDialog({
       // 自动获取选中账户的类型
       const accountType = getAccountType(values.account);
       
-      // 如果是115账户且开启了302，在strmPrefix后拼接账户名
-      let finalStrmPrefix = values.strmPrefix || "";
-      if (accountType === "115" && values.enable302 && values.account) {
-        finalStrmPrefix = finalStrmPrefix.replace(/\/+$/, "") + "/" + values.account;
-      }
-      
+      // strmPrefix 存储为纯前缀（不含账号名），302 拼接由 resolveStrmSettings 在运行时处理
       const taskData = {
         ...values,
-        strmPrefix: finalStrmPrefix,
         accountType,
       };
 

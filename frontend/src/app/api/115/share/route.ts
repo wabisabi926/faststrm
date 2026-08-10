@@ -28,7 +28,8 @@ async function getPathByCid(cid: number, accountInfo: AccountInfo): Promise<stri
       
       const item = items[0];
       pathParts.unshift(item.n);
-      currentCid = Number(item.pid) || 0;
+      // fs_files 列表项不含父级 id（pid），无法继续向上反查，只能取到当前层
+      break;
     } catch (err) {
       console.error(`Failed to get path for cid ${currentCid}:`, err);
       break;
@@ -47,10 +48,10 @@ export async function POST(req: NextRequest) {
       url,
       shareCode,
       receiveCode = "",
-      cid = 0,
+      cid = "0",
       fileId,
       fileIds,
-      toPid = 0,
+      toPid = "0",
       limit = 32,
       offset = 0,
     } = body as {
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ code: 200, data: payload });
     }
 
-    const accounts = readAccounts() as AccountInfo[];
+    const accounts = readAccounts() as unknown as AccountInfo[];
     const accountName = account ?? (accounts.find((a) => a.accountType === "115")?.name);
     if (!accountName) {
       return NextResponse.json(

@@ -41,8 +41,10 @@ export interface LifeEvent {
   id: number;
   type: number;
   update_time: number;
-  file_id: number;
-  parent_id: number;
+  // 115 life API 返回的 file_id 是字符串（19位数字保留精度），但旧代码声明为 number 导致精度丢失
+  // 改为 number | string 兼容两种形态，调用方应使用字符串绑定到 SQLite
+  file_id: number | string;
+  parent_id: number | string;
   file_name: string;
   file_size: number;
   file_category: number; // 0=folder, 1=file

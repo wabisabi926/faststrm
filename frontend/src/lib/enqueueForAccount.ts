@@ -4,7 +4,9 @@ import path from "path";
 import fs from "fs";
 import { defer, firstValueFrom, Observable, retry, timer } from "rxjs";
 import { get_id_to_path, getDownloadUrlWeb } from "./115";
+import type { AccountInfo } from "./115";
 import { readSettings, readAccounts } from "./serverUtils";
+import { getStrmFileName, generateStrmContent } from "./strmUtils";
 
 interface Progress {
   filePath?: string;
@@ -106,11 +108,11 @@ export async function getRealDownloadLink(
   retryDelay = 2000
 ): Promise<string> {
   const settings = readSettings();
-  const accounts = readAccounts();
+  const accounts = readAccounts() as unknown as AccountInfo[];
 
   // 从 account.json 中查找账号
   const accountInfo = accounts.find(
-    (acc: { name: string; cookie: string }) => acc.name === account
+    (acc) => acc.name === account
   );
   if (!accountInfo) {
     throw new Error(`No cookie found for account: ${account}`);
@@ -281,10 +283,10 @@ export function downloadOrCreateStrm(
   return new Observable<Progress>((observer) => {
     if (asStrm) {
       try {
-        const ext = path.extname(savePath);
-        const strmPath = savePath.replace(ext, ".strm");
-        const fullPath = `${strmPrefix}/${url}`;
-        const finalPath = enablePathEncoding ? encodeURI(fullPath) : fullPath;
+        const baseName = path.basename(savePath);
+        const strmName = getStrmFileName(baseName);
+        const strmPath = path.join(path.dirname(savePath), strmName);
+        const finalPath = generateStrmContent(url, strmPrefix, enablePathEncoding);
         fs.writeFileSync(strmPath, finalPath, "utf8");
         observer.next({ percent: 100, filePath: displayPath });
         observer.complete();

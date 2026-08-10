@@ -14,6 +14,8 @@ import {
   notifyEmbyRefresh,
   readAccounts,
   readSettings,
+  resolveStrmSettings,
+  getStrmExtensions,
 } from "@/lib/serverUtils";
 import {
   createTaskExecution,
@@ -27,6 +29,7 @@ import {
   downloadOrCreateStrm,
 } from "@/lib/enqueueForAccount";
 import { exportDirParse, fs_dir_getid } from "@/lib/115";
+import type { AccountInfo } from "@/lib/115";
 import { sendTelegramNotification } from "@/lib/telegram";
 import { encryptAccounts } from "@/lib/passwordCrypto";
 import {
@@ -267,7 +270,7 @@ function startDownloadTask({
   };
 
   const settings = readSettings();
-  const strmExtensions = (settings.strmExtensions || []).map((ext) =>
+  const strmExtensions = getStrmExtensions().map((ext) =>
     ext.toLowerCase()
   );
   const downloadExtensions = (settings.downloadExtensions || []).map((ext) =>
@@ -419,20 +422,17 @@ export async function executeTask(
       };
     }
 
-    const { account, originPath, targetPath, strmPrefix } = task;
+    const { account, originPath, targetPath } = task;
 
-    const accounts = readAccounts();
+    // 使用统一的 STRM 设置解析（全局默认 + 任务级覆盖 + 302 拼接）
+    const settings = readSettings();
+    const resolvedStrm = resolveStrmSettings(account, task, settings);
+    const strmPrefix = resolvedStrm.strmPrefix;
+    const enablePathEncoding = resolvedStrm.enablePathEncoding;
+
+    const accounts = readAccounts() as unknown as AccountInfo[];
     const accountInfo = accounts.find(
-      (acc: {
-        name: string;
-        accountType?: string;
-        cookie?: string;
-        account?: string;
-        password?: string;
-        url?: string;
-        token?: string;
-        expiresAt?: number;
-      }) => acc.name === account
+      (acc) => acc.name === account
     );
     if (!accountInfo) {
       throw new Error(`No account found: ${account}`);
@@ -501,7 +501,7 @@ export async function executeTask(
             throw new Error(`Openlist login failed: ${loginData.message}`);
           }
 
-          token = loginData.data.token;
+          token = String(loginData.data.token);
         } catch (error) {
           if (axios.isAxiosError(error)) {
             throw new Error(
@@ -582,7 +582,7 @@ export async function executeTask(
       taskId: task.id,
       strmPrefix,
       removeExtraFiles: task.removeExtraFiles,
-      enablePathEncoding: task.enablePathEncoding,
+      enablePathEncoding,
     });
 
     const deleteMessage = task.removeExtraFiles

@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
       cid?: number;
     };
 
-    const accounts = readAccounts() as AccountInfo[];
+    const accounts = readAccounts() as unknown as AccountInfo[];
     const accountName = account ?? accounts.find((a) => a.accountType === "115")?.name;
     if (!accountName) {
       return NextResponse.json(

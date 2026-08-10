@@ -190,7 +190,7 @@ export class P115ShareFileSystem {
 
   /** 列目录，返回标准化条目数组 */
   async iterdir(cid: number, opts?: { limit?: number; offset?: number; userAgent?: string }): Promise<ShareAttr[]> {
-    return getShareDirList(this.accountInfo, this.shareCode, this.receiveCode, cid, opts);
+    return getShareDirList(this.accountInfo, this.shareCode, this.receiveCode, String(cid), opts);
   }
 
   /** 获取下载链接（fileId 为分享内的文件 id） */
@@ -204,6 +204,6 @@ export class P115ShareFileSystem {
     toPid = 0,
     opts?: { userAgent?: string }
   ): Promise<Record<string, unknown>> {
-    return receiveToMyDrive(this.accountInfo, this.shareCode, this.receiveCode, fileIds, toPid, opts);
+    return receiveToMyDrive(this.accountInfo, this.shareCode, this.receiveCode, fileIds, String(toPid), opts);
   }
 }

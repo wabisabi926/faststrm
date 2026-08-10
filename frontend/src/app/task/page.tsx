@@ -6,6 +6,7 @@ import { AddTaskDialog } from "./components/AddTaskDialog";
 import { TaskScheduleDialog, TaskSchedule } from "./components/TaskScheduleDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -91,6 +92,7 @@ export default function Home() {
   const [data, setData] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<string | null>(null);
+  const [deleteCleanStrm, setDeleteCleanStrm] = useState(false);
   const [clearDialogOpen, setClearDialogOpen] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Array<{name: string, accountType: string}>>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
@@ -162,10 +164,10 @@ export default function Home() {
 
 
   // 删除任务
-  const deleteTask = async (id: string) => {
+  const deleteTask = async (id: string, cleanStrm: boolean) => {
     try {
-      await axiosInstance.delete(`/api/task?id=${id}`);
-      toast.success("任务删除成功");
+      await axiosInstance.delete(`/api/task?id=${id}${cleanStrm ? "&cleanStrm=true" : ""}`);
+      toast.success(cleanStrm ? "任务删除成功，STRM 目录已清理" : "任务删除成功");
       fetchTasks();
     } catch {
       toast.error("删除失败");
@@ -548,19 +550,41 @@ export default function Home() {
                     <span className="text-sm text-gray-500 mt-2 block">
                       任务ID: {task.id.slice(0, 8)}...
                     </span>
+                    <span className="text-sm text-gray-500 mt-1 block">
+                      目标路径: {task.targetPath}
+                    </span>
                   </DialogDescription>
                 </DialogHeader>
+                <div className="flex items-center gap-2 py-2">
+                  <Checkbox
+                    id={`clean-strm-${task.id}`}
+                    checked={deleteCleanStrm}
+                    onCheckedChange={(checked) => setDeleteCleanStrm(checked === true)}
+                  />
+                  <label htmlFor={`clean-strm-${task.id}`} className="text-sm cursor-pointer">
+                    同时清理 STRM 目录（{task.targetPath}）
+                  </label>
+                </div>
+                {deleteCleanStrm && (
+                  <p className="text-xs text-red-600 font-medium">
+                    ⚠️ 将删除该目录下所有 STRM 文件和子目录！
+                  </p>
+                )}
                 <DialogFooter className="gap-2">
                   <Button 
                     variant="outline"
-                    onClick={() => setDeleteDialogOpen(null)}
+                    onClick={() => {
+                      setDeleteCleanStrm(false);
+                      setDeleteDialogOpen(null);
+                    }}
                   >
                     取消
                   </Button>
                   <Button
                     variant="destructive"
                     onClick={() => {
-                      deleteTask(task.id);
+                      deleteTask(task.id, deleteCleanStrm);
+                      setDeleteCleanStrm(false);
                       setDeleteDialogOpen(null);
                     }}
                   >

@@ -9,7 +9,11 @@ cache
 
 # Runtime directories
 config/
-.config/
 logs/
 data/
 strm-test/
+
+# Probe / debug scripts (local diagnostics)
+**/_*probe*.js
+**/_dbprobe*.js
+**/_rawprobe*.js

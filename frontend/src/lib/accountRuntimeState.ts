@@ -9,7 +9,7 @@ export interface AccountRuntimeState {
 }
 
 const RUNTIME_FILE = path.join(process.cwd(), "../config/runtime.json");
-const FULLSCAN_TIMEOUT_MS = 3600 * 1000;
+const FULLSCAN_TIMEOUT_MS = 10 * 60 * 1000; // 10 分钟（之前 1 小时太长，对账后异常会导致监控挂起过久）
 const MONITOR_RESUME_GRACE_MS = 5 * 60 * 1000;
 
 const MEM_STATE: Map<string, AccountRuntimeState> = new Map();

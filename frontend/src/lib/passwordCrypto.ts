@@ -63,8 +63,19 @@ export function isHashed(stored: string): boolean {
 
 /**
  * 读取 config.json
+ * 首次启动（文件不存在）时自动创建默认配置：admin/admin（密码已哈希）
  */
 export function readConfig(): { username: string; password: string } {
+  if (!fs.existsSync(CONFIG_FILE)) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    const defaultConfig = {
+      username: "admin",
+      password: hashPassword("admin"),
+    };
+    writeConfig(defaultConfig);
+    console.log("[Auth] 首次启动：已创建默认 config.json，默认账号密码 admin/admin，请及时修改密码");
+    return defaultConfig;
+  }
   const raw = fs.readFileSync(CONFIG_FILE, "utf-8");
   return JSON.parse(raw);
 }
@@ -252,7 +263,7 @@ export function decryptSettings<T extends Record<string, unknown>>(settings: T):
   const decrypted = { ...settings };
   const emby = (decrypted as Record<string, unknown>).emby as Record<string, unknown> | undefined;
   if (emby?.apiKey && typeof emby.apiKey === "string" && isEncrypted(emby.apiKey)) {
-    decrypted.emby = { ...emby, apiKey: decryptCredential(emby.apiKey) };
+    (decrypted as Record<string, unknown>).emby = { ...emby, apiKey: decryptCredential(emby.apiKey) };
   }
   return decrypted;
 }

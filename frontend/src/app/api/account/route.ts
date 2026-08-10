@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs";
 import * as path from "path";
-import { encryptAccounts, decryptAccounts } from "@/lib/passwordCrypto";
+import { encryptAccounts } from "@/lib/passwordCrypto";
+import { readAccounts } from "@/lib/serverUtils";
+import { syncMediaMountPaths } from "@/lib/mediaMountSync";
 
 const accountFile = path.resolve(process.cwd(), "../config/account.json");
-
-function readAccounts() {
-  if (!fs.existsSync(accountFile)) {
-    fs.writeFileSync(accountFile, "[]", "utf-8");
-  }
-  return JSON.parse(fs.readFileSync(accountFile, "utf-8"));
-}
 
 function writeAccounts(data: any) {
   // 写入前加密敏感字段
@@ -20,8 +15,7 @@ function writeAccounts(data: any) {
 
 // GET: 获取所有账号（返回解密后的数据）
 export async function GET() {
-  const accounts = readAccounts();
-  return NextResponse.json(decryptAccounts(accounts));
+  return NextResponse.json(readAccounts());
 }
 
 // POST: 新建账号（基于 name 唯一）
@@ -68,9 +62,9 @@ export async function POST(req: NextRequest) {
 
   accounts.push(finalAccount);
   writeAccounts(accounts);
+  const mediaMountSync = await syncMediaMountPaths();
 
-  // 返回明文（不返回加密后的）
-  return NextResponse.json(finalAccount, { status: 201 });
+  return NextResponse.json({ ...finalAccount, mediaMountSync }, { status: 201 });
 }
 
 // PUT: 更新账号（基于 name）
@@ -112,9 +106,9 @@ export async function PUT(req: NextRequest) {
 
   accounts[idx] = { ...accounts[idx], ...body };
   writeAccounts(accounts);
+  const mediaMountSync = await syncMediaMountPaths();
 
-  // 返回明文
-  return NextResponse.json({ ...accounts[idx] });
+  return NextResponse.json({ ...accounts[idx], mediaMountSync });
 }
 
 // DELETE: 删除账号（基于 name）
@@ -134,5 +128,6 @@ export async function DELETE(req: NextRequest) {
   }
 
   writeAccounts(newAccounts);
-  return NextResponse.json({ message: "Account deleted" });
+  const mediaMountSync = await syncMediaMountPaths();
+  return NextResponse.json({ message: "Account deleted", mediaMountSync });
 }

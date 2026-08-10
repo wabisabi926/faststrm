@@ -12,9 +12,39 @@ export interface LifeEventLog {
   filePath?: string;
   localPath?: string;
   message: string;
+  // ======== 新增：Undo 所需字段 ========
+  /** 文件 ID (115)，用于重新拉取 pickcode。115 返回 19 位字符串，用 number|string 保留精度 */
+  fileId?: number | string;
+  /** pickCode (若有) */
+  pickCode?: string;
+  /** STRM 文件内容 (URL)，用于 delete undo 重建 */
+  strmContent?: string;
+  /** 旧本地完整路径（move/rename 时） */
+  oldLocalFullPath?: string;
+  /** 新本地完整路径（move/rename 时） */
+  newLocalFullPath?: string;
+  /** 回收站路径（若移入回收站） */
+  trashPath?: string;
 }
 
-const LOG_DIR = path.join(process.cwd(), "../logs");
+function resolveProjectRoot(): string {
+  // lifeEventLogManager.ts 位于 frontend/src/lib/
+  // 向上 3 级：lib → src → frontend → 项目根（faststrm/）
+  const byModule = path.resolve(__dirname, "../../..");
+  // 兼容：若通过 frontend 目录启动，process.cwd()/.. 也是项目根
+  const byCwd = path.resolve(process.cwd(), "..");
+  // 优先使用 module 相对（不依赖启动 cwd），fallback 到 cwd 相对
+  try {
+    const viaModule = path.join(byModule, "config");
+    if (fs.existsSync(viaModule)) return byModule;
+  } catch {
+    // ignore
+  }
+  return byCwd;
+}
+
+const PROJECT_ROOT = resolveProjectRoot();
+const LOG_DIR = path.join(PROJECT_ROOT, "logs");
 const LOG_FILE = path.join(LOG_DIR, "life-events.json");
 
 const MAX_ENTRIES = 5000;
@@ -58,7 +88,8 @@ export function appendLifeEventLog(
   success: boolean,
   filePath: string | undefined,
   localPath: string | undefined,
-  message: string
+  message: string,
+  extra?: Partial<Pick<LifeEventLog, "fileId" | "pickCode" | "strmContent" | "oldLocalFullPath" | "newLocalFullPath" | "trashPath">>
 ) {
   ensureDir();
   const typeStr =
@@ -73,6 +104,7 @@ export function appendLifeEventLog(
     filePath,
     localPath,
     message,
+    ...extra,
   };
 
   const all = readAll();

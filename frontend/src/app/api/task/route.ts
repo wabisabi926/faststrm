@@ -1,7 +1,9 @@
 import { readTasks, saveTasks, readSettings, writeSettings } from "@/lib/serverUtils";
 import { downloadTasks } from "@/lib/downloadTaskManager";
 import { NextRequest, NextResponse } from "next/server";
-import { exec } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
+import { syncMediaMountPaths } from "@/lib/mediaMountSync";
 import {
   initTaskScheduler,
   registerTaskSchedule,
@@ -33,26 +35,6 @@ export async function GET() {
   return NextResponse.json(tasksWithStatus);
 }
 
-function updateMediaMountPathFor302(taskData: { enable302?: boolean; strmPrefix?: string; account?: string }) {
-  if (!taskData.enable302 || !taskData.strmPrefix) return;
-
-  const fullPath = (taskData.strmPrefix || "").replace(/\/+$/, "");
-  const settings = readSettings();
-  const mediaMountPath: string[] = Array.isArray(settings.mediaMountPath)
-    ? (settings.mediaMountPath as string[])
-    : [];
-
-  if (!mediaMountPath.includes(fullPath)) {
-    mediaMountPath.push(fullPath);
-    settings.mediaMountPath = mediaMountPath;
-    writeSettings(settings);
-    exec("nginx -s reload", (err) => {
-      if (err) console.error("nginx reload failed:", err);
-      else console.log("nginx reloaded for mediaMountPath update");
-    });
-  }
-}
-
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const tasks = readTasks();
@@ -60,11 +42,11 @@ export async function POST(req: NextRequest) {
   const newTask = { id: Date.now().toString(), ...body };
   tasks.push(newTask);
   saveTasks(tasks);
-  updateMediaMountPathFor302(newTask);
+  const syncResult = await syncMediaMountPaths();
 
   registerTaskSchedule(newTask.id);
 
-  return NextResponse.json(newTask, { status: 201 });
+  return NextResponse.json({ ...newTask, _mediaMountSync: syncResult }, { status: 201 });
 }
 
 export async function PUT(req: NextRequest) {
@@ -79,29 +61,51 @@ export async function PUT(req: NextRequest) {
 
   tasks[index] = { ...tasks[index], ...updateData };
   saveTasks(tasks);
-  updateMediaMountPathFor302(tasks[index]);
+  const syncResult = await syncMediaMountPaths();
 
   registerTaskSchedule(id);
 
-  return NextResponse.json(tasks[index]);
+  return NextResponse.json({ ...tasks[index], _mediaMountSync: syncResult });
 }
 
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id");
+  const cleanStrm = searchParams.get("cleanStrm") === "true";
 
   if (!id) {
     return NextResponse.json({ error: "Task ID required" }, { status: 400 });
   }
 
   const tasks = readTasks();
-  const filtered = tasks.filter((t: { id: string }) => t.id !== id);
-  if (filtered.length === tasks.length) {
+  const taskIndex = tasks.findIndex((t: { id: string }) => t.id === id);
+  if (taskIndex === -1) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
+  const task = tasks[taskIndex];
+
+  // 如果要求清理 STRM 目录
+  if (cleanStrm && task.targetPath) {
+    try {
+      const localPath = path.join(process.cwd(), "../data", task.targetPath);
+      if (fs.existsSync(localPath)) {
+        const stat = fs.statSync(localPath);
+        if (stat.isDirectory()) {
+          fs.rmSync(localPath, { recursive: true, force: true });
+          console.log(`[TaskDelete] 已清理 STRM 目录: ${localPath}`);
+        }
+      }
+    } catch (err) {
+      console.error("[TaskDelete] 清理 STRM 目录失败:", err);
+    }
+  }
+
+  const filtered = tasks.filter((t: { id: string }) => t.id !== id);
   saveTasks(filtered);
   unregisterTaskSchedule(id);
 
-  return NextResponse.json({ success: true });
+  const syncResult = await syncMediaMountPaths();
+
+  return NextResponse.json({ success: true, _mediaMountSync: syncResult });
 }

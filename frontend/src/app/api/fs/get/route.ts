@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { get_id_to_path, getDownloadUrlWeb } from "@/lib/115";
 import { readAccounts, readSettings } from "@/lib/serverUtils";
+import type { AccountInfo } from "@/lib/115";
 
 // 兼容 alist 的 /api/fs/get 接口
 export async function POST(req: NextRequest) {
@@ -19,9 +20,9 @@ export async function POST(req: NextRequest) {
     console.log("[alist-compat] Decoded path:", decodedPath);
 
     // 获取所有 115 账户
-    const accounts = readAccounts();
-    const accounts115 = accounts.filter((a: { accountType?: string }) => a.accountType === "115");
-    
+    const accounts = readAccounts() as unknown as AccountInfo[];
+    const accounts115 = accounts.filter((a) => a.accountType === "115");
+
     if (accounts115.length === 0) {
       console.log("[alist-compat] No 115 account found");
       return NextResponse.json({ code: 404, message: "no 115 account configured" }, { status: 404 });
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
 
     // 根据路径判断使用哪个账户（路径中包含账户名）
     // 例如路径：/root/webdav/115/my115/tv/xxx.mkv，匹配账户名 my115
-    let account = accounts115.find((a: { name?: string }) => {
+    let account = accounts115.find((a) => {
       if (!a.name) return false;
       // 检查路径中是否包含 /账户名/ 的格式
       return decodedPath.includes(`/${a.name}/`);

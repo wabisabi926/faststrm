@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 获取账户信息
-    const accounts = readAccounts() as AccountInfo[];
+    const accounts = readAccounts() as unknown as AccountInfo[];
     const accountInfo = accounts.find((a) => a.name === account);
 
     if (!accountInfo) {

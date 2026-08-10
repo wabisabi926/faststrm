@@ -21,7 +21,7 @@ export interface TaskSchedule {
 const TIMEZONE = "Asia/Shanghai";
 const MIN_INTERVAL_MINUTES = 5;
 const WEEKDAY_MAP: Record<string, number> = {
-  日: 0, 日: 0, Sun: 0, sun: 0, Sunday: 0, sunday: 0,
+  日: 0, Sun: 0, sun: 0, Sunday: 0, sunday: 0,
   一: 1, Mon: 1, mon: 1, Monday: 1, monday: 1,
   二: 2, Tue: 2, tue: 2, Tuesday: 2, tuesday: 2,
   三: 3, Wed: 3, wed: 3, Wednesday: 3, wednesday: 3,

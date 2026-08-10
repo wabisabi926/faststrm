@@ -13,11 +13,14 @@ export interface AccountInfo {
   accountType?: string;
   url?: string;
   token?: string;
+  account?: string;
+  password?: string;
+  expiresAt?: number;
 }
 
 // 创建缓存实例
 const dirIdCache = new SimpleCache<{ id: number }>(10 * 60 * 1000); // 目录ID缓存10分钟
-const filesListCache = new SimpleCache<{ data: Array<{ n: string; fid: number; cid: number; fc: number; s?: number; sha?: string; pickcode?: string }> }>(5 * 60 * 1000); // 文件列表缓存5分钟
+const filesListCache = new SimpleCache<{ data: Array<{ n: string; fid: number; cid: number; fc: number; s?: number; sha?: string; pc?: string; pickcode?: string }> }>(5 * 60 * 1000); // 文件列表缓存5分钟
 const pickcodeCache = new SimpleCache<string>(30 * 60 * 1000); // pickcode缓存30分钟
 
 // 缓存管理函数
@@ -266,7 +269,7 @@ export async function fs_dir_getid(path: string, { userAgent, accountInfo }: { u
 }
 
 // 获取目录中的文件列表
-export async function fs_files(cid: number, { userAgent, limit = 1000, offset = 0, accountInfo }: { 
+export async function fs_files(cid: number | string, { userAgent, limit = 1000, offset = 0, accountInfo }: { 
   userAgent?: string; 
   app?: string; 
   limit?: number; 
@@ -292,7 +295,7 @@ export async function fs_files(cid: number, { userAgent, limit = 1000, offset = 
     limit: String(limit),
     offset: String(offset),
   });
-  const data = await request115<{ data: Array<{ n: string; fid: number; cid: number; fc: number; s?: number; sha?: string; pickcode?: string }> }>(url + '?' + params, {
+  const data = await request115<{ data: Array<{ n: string; fid: number; cid: number; fc: number; s?: number; sha?: string; pc?: string; pickcode?: string }> }>(url + '?' + params, {
     method: 'GET',
     userAgent,
     ensureOk: true,
@@ -307,7 +310,7 @@ export async function fs_files(cid: number, { userAgent, limit = 1000, offset = 
 
 
 // 通过文件 ID 获取文件信息
-export async function getFileInfoById(fileId: number, { userAgent, accountInfo }: { userAgent?: string; accountInfo?: AccountInfo }) {
+export async function getFileInfoById(fileId: number | string, { userAgent, accountInfo }: { userAgent?: string; accountInfo?: AccountInfo }) {
   const url = `https://webapi.115.com/files/info?fid=${fileId}`;
   const data = await request115<{ errno?: unknown; state?: boolean; data: unknown }>(url, {
     method: 'GET',
@@ -463,7 +466,7 @@ export async function getDownloadUrlWeb(pickcode, { userAgent, accountInfo }) {
     return decryptedData.url;
 }
 
-export async function getPickcodeToId(id: number, { userAgent = defaultUA(), accountInfo }: { userAgent?: string; accountInfo?: AccountInfo }) {
+export async function getPickcodeToId(id: number | string, { userAgent = defaultUA(), accountInfo }: { userAgent?: string; accountInfo?: AccountInfo }) {
   if (!accountInfo?.cookie) throw new Error('accountInfo.cookie is required');
   
   // 生成缓存键

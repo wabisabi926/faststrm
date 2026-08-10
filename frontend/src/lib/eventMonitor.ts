@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { readSettings, readAccounts, writeSettings, readTasks, notifyEmbyRefresh } from "./serverUtils";
+import { readSettings, readAccounts, writeSettings, notifyEmbyRefresh, LifeMonitorSettings, resolveStrmSettings, getStrmExtensions } from "./serverUtils";
 import { appendLifeEventLog } from "./lifeEventLogManager";
 import { tryPollMonitor } from "./accountRuntimeState";
 import {
@@ -9,6 +9,7 @@ import {
   fs_dir_getid,
   fs_files,
   getFileInfoById,
+  getPickcodeToId,
 } from "./115";
 import {
   lifeShow,
@@ -21,37 +22,33 @@ import {
   NEW_FOLDER_EVENT_TYPES,
   BEHAVIOR_TYPE_TO_NAME,
 } from "./115Life";
+import { getStrmFileName, generateStrmContent } from "./strmUtils";
+import {
+  getFilePathEntry as sqliteGetFilePathEntry,
+  upsertFilePathEntry as sqliteUpsertFilePathEntry,
+  removeFilePathEntry as sqliteRemoveFilePathEntry,
+  updatePathPrefixBatch,
+  type FilePathEntry,
+} from "./filePathDb";
+import {
+  syncStrmText,
+  removeEmptyParents,
+  deleteStrmFile,
+  deleteStrmDir,
+  findStrmRecursive,
+  findDirRecursive,
+  cleanRelatedFiles,
+  getRootDirsFromMappings,
+} from "./strmFileOps";
+import { waitFor115ApiToken } from "./rateLimiter";
 
 // ==================== Types ====================
 
 export type FirstPullMode = "latest" | "all" | "last";
 export type MoveMediaMode = "recreate" | "local_move";
 
-export interface LifeMonitorConfig {
-  enabled: boolean;
-  accounts: string[];
-  pollInterval: number;
-  pathMappings: Array<{
-    account?: string;
-    cloudPath: string;
-    localPath: string;
-  }>;
-  removeEmptyDirs: boolean;
-  eventTypes: {
-    create: boolean;
-    remove: boolean;
-    rename: boolean;
-    move: boolean;
-  };
-  strmPrefix?: string;
-  enablePathEncoding?: boolean;
-  /** 最小文件大小（字节），小于此值的文件跳过 STRM 生成。0 表示不过滤 */
-  minFileSize?: number;
-  /** 首次拉取模式：latest=从当前时间 / all=拉取全部历史 / last=从上次断点继续 */
-  firstPullMode?: FirstPullMode;
-  /** 移动事件处理模式：recreate=删除旧 STRM 并重新生成 / local_move=本地直接移动 STRM 文件 */
-  moveMediaMode?: MoveMediaMode;
-}
+// LifeMonitorConfig 已统一为 serverUtils 中的 LifeMonitorSettings
+export type LifeMonitorConfig = LifeMonitorSettings;
 
 export interface LifeMonitorState {
   running: boolean;
@@ -105,12 +102,16 @@ const DEFAULT_CONFIG: LifeMonitorConfig = {
 const CONFIG_DIR = path.join(process.cwd(), "../config");
 const stateFile = path.join(CONFIG_DIR, "lifeMonitorState.json");
 const idPathCacheFile = path.join(CONFIG_DIR, "lifeIdPathCache.json");
-const filePathDbFile = path.join(CONFIG_DIR, "lifeFilePathDb.json");
+// filePathDb 已迁移到 SQLite (./filePathDb.ts)，旧 JSON 文件 lifeFilePathDb.json 自动迁移后备份
 const apiFallbackFile = path.join(CONFIG_DIR, "lifeApiFallback.json");
 
 const WEB_FALLBACK_DURATION = 24 * 60 * 60;
 const MAX_RECURSION_DEPTH = 10;
 const MAX_FOLDER_FILES = 1000;
+/** 单次 poll 允许处理的删除事件上限（超过则触发熔断并告警） */
+const MAX_DELETE_EVENTS_PER_POLL = 100;
+/** 删除事件占比阈值（超过此比例也触发熔断） */
+const DELETE_RATIO_THRESHOLD_PER_POLL = 0.5;
 
 // ==================== Global State (persist across Next.js HMR via globalThis) ====================
 
@@ -176,73 +177,103 @@ function writeIdPathCache(cache: Record<string, string>) {
   fs.writeFileSync(idPathCacheFile, JSON.stringify(cache, null, 2), "utf-8");
 }
 
-function getIdPath(account: string, cid: number): string | undefined {
+const MEDIA_EXT_SUFFIXES = [".mkv", ".mp4", ".avi", ".ts", ".mov", ".wmv", ".flv", ".m4v", ".rmvb", ".rm"];
+
+/**
+ * resolvePathByCid / setIdPath 处理的是「目录 cid → 云路径」映射，
+ * 一旦 tier 3 fallback（getFileInfoById / export_dir 等）返回了一个以媒体文件扩展名结尾的 path
+ * （例如把目录下某文件名当成了目录路径），后续 resolveEventPath 会再次拼接 fileName，
+ * 最终形成 X.mkv/X.mkv 的嵌套目录，污染本地结构。
+ * 此函数作为双重防卫：命中媒体扩展名时，强制向上回退到父目录，并打印告警。
+ */
+function sanitizeDirectoryPath(pathStr: string, tag?: string): string {
+  if (!pathStr) return pathStr;
+  const trimmed = pathStr.replace(/\/+$/, "");
+  const lastSlash = trimmed.lastIndexOf("/");
+  const lastSegment = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+  const dotAt = lastSegment.lastIndexOf(".");
+  const ext = dotAt > 0 ? lastSegment.slice(dotAt).toLowerCase() : "";
+  if (ext && MEDIA_EXT_SUFFIXES.includes(ext)) {
+    const parent = lastSlash > 0 ? trimmed.slice(0, lastSlash) : "/";
+    console.warn(
+      `[LifeMonitor] ${tag || "sanitizeDirectoryPath"}: 目录 path 意外含媒体扩展名，强制回退父目录: ${pathStr} -> ${parent}`
+    );
+    return parent;
+  }
+  return pathStr;
+}
+
+function getIdPath(account: string, cid: number | string): string | undefined {
   const cacheKey = `${account}:${cid}`;
   const memCached = idPathMemoryCache.get(cacheKey);
-  if (memCached) return memCached;
+  if (memCached) return sanitizeDirectoryPath(memCached, `getIdPath(mem ${account}:${cid})`);
 
   const diskCache = readIdPathCache();
   const diskCached = diskCache[cacheKey];
   if (diskCached) {
-    idPathMemoryCache.set(cacheKey, diskCached);
-    return diskCached;
+    const sane = sanitizeDirectoryPath(diskCached, `getIdPath(disk ${account}:${cid})`);
+    idPathMemoryCache.set(cacheKey, sane);
+    return sane;
   }
   return undefined;
 }
 
-function setIdPath(account: string, cid: number, pathStr: string) {
+function setIdPath(account: string, cid: number | string, pathStr: string) {
+  const sane = sanitizeDirectoryPath(pathStr, `setIdPath(${account}:${cid})`);
   const cacheKey = `${account}:${cid}`;
-  idPathMemoryCache.set(cacheKey, pathStr);
+  idPathMemoryCache.set(cacheKey, sane);
   const diskCache = readIdPathCache();
-  diskCache[cacheKey] = pathStr;
+  diskCache[cacheKey] = sane;
   writeIdPathCache(diskCache);
 }
 
-// ==================== File Path Database (for old path lookup) ====================
+// ==================== File Path Database (SQLite backend via ./filePathDb) ====================
+// 旧 JSON 版已废弃，改为直接调用 SQLite 版
+const getFilePathEntry = sqliteGetFilePathEntry;
+const upsertFilePathEntry = sqliteUpsertFilePathEntry;
+const removeFilePathEntry = sqliteRemoveFilePathEntry;
 
-interface FilePathEntry {
-  fileId: number;
-  path: string;
-  fileName: string;
-  parentId: number;
-  pickCode: string;
-  updateTime: number;
-}
+/**
+ * 兜底清理：根据旧云路径遍历所有路径映射，尝试定位并删除对应的旧 STRM。
+ * 用于 handleMoveEvent / handleRenameEvent 中 oldMapping 为 null 时的补救。
+ */
+function tryCleanupOldStrmByPath(
+  account: string,
+  oldCloudPath: string,
+  fileName: string,
+  fileCategory: number,
+  pathMappings: LifeMonitorConfig["pathMappings"]
+): { deleted: string[]; errors: string[] } {
+  const deleted: string[] = [];
+  const errors: string[] = [];
+  const seen = new Set<string>();
 
-function readFilePathDb(): Record<string, FilePathEntry> {
-  ensureConfigDir();
-  if (!fs.existsSync(filePathDbFile)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(filePathDbFile, "utf-8"));
-  } catch {
-    return {};
+  for (const mapping of pathMappings) {
+    if (mapping.account && mapping.account !== account) continue;
+    const oldMapping = matchPathMapping(oldCloudPath, [mapping], account);
+    if (!oldMapping) continue;
+    if (seen.has(oldMapping.localPath)) continue;
+    seen.add(oldMapping.localPath);
+
+    try {
+      if (fileCategory === 0) {
+        if (fs.existsSync(oldMapping.localPath)) {
+          const dirRes = deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/cleanupFallback" });
+          if (dirRes.deleted) deleted.push(`[folder] ${oldMapping.localPath}`);
+        }
+      } else {
+        const strmName = getStrmFileName(fileName);
+        const strmPath = path.join(path.dirname(oldMapping.localPath), strmName);
+        if (fs.existsSync(strmPath)) {
+          const fileRes = deleteStrmFile(strmPath, { tag: "LifeMonitor/cleanupFallback", cleanRelated: false });
+          if (fileRes.deleted) deleted.push(`[file] ${strmPath}`);
+        }
+      }
+    } catch (e) {
+      errors.push(`${oldMapping.localPath}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
-}
-
-function writeFilePathDb(db: Record<string, FilePathEntry>) {
-  ensureConfigDir();
-  fs.writeFileSync(filePathDbFile, JSON.stringify(db, null, 2), "utf-8");
-}
-
-function filePathDbKey(account: string, fileId: number): string {
-  return `${account}:${fileId}`;
-}
-
-function getFilePathEntry(account: string, fileId: number): FilePathEntry | undefined {
-  const db = readFilePathDb();
-  return db[filePathDbKey(account, fileId)];
-}
-
-function upsertFilePathEntry(account: string, entry: FilePathEntry) {
-  const db = readFilePathDb();
-  db[filePathDbKey(account, entry.fileId)] = entry;
-  writeFilePathDb(db);
-}
-
-function removeFilePathEntry(account: string, fileId: number) {
-  const db = readFilePathDb();
-  delete db[filePathDbKey(account, fileId)];
-  writeFilePathDb(db);
+  return { deleted, errors };
 }
 
 // ==================== API Fallback State ====================
@@ -391,9 +422,9 @@ function updateState(account: string, partial: Partial<LifeMonitorState>) {
 
 async function resolvePathByCid(
   accountInfo: AccountInfo,
-  cid: number
+  cid: number | string
 ): Promise<string> {
-  if (cid === 0) return "/";
+  if (Number(cid) === 0) return "/";
 
   const account = accountInfo.name;
 
@@ -409,11 +440,11 @@ async function resolvePathByCid(
     try {
       const mappedCid = await fs_dir_getid(mapping.cloudPath, {
         userAgent: readSettings()["user-agent"],
-        accountInfo: accountInfo as unknown as AccountInfo,
+        accountInfo: accountInfo as AccountInfo,
       });
       if (mappedCid.id === cid) {
         setIdPath(account, cid, mapping.cloudPath);
-        return mapping.cloudPath;
+        return sanitizeDirectoryPath(mapping.cloudPath, `resolvePathByCid(tier2 ${account}:${cid})`);
       }
     } catch {
       // Ignore errors for individual mappings
@@ -437,7 +468,7 @@ async function resolvePathByCid(
       const pathVal = info.path as string | undefined;
       if (pathVal) {
         setIdPath(account, cid, pathVal);
-        return pathVal;
+        return sanitizeDirectoryPath(pathVal, `resolvePathByCid(tier3-fileInfo ${account}:${cid})`);
       }
     }
 
@@ -483,7 +514,7 @@ async function resolvePathByCid(
           const pathStr = extractPathFromExportData(exportData, cid);
           if (pathStr) {
             setIdPath(account, cid, pathStr);
-            return pathStr;
+            return sanitizeDirectoryPath(pathStr, `resolvePathByCid(tier3-exportDir ${account}:${cid})`);
           }
         }
       }
@@ -497,16 +528,18 @@ async function resolvePathByCid(
   }
 }
 
-function extractPathFromExportData(data: unknown, targetCid: number): string {
+function extractPathFromExportData(data: unknown, targetCid: number | string): string {
   if (!data || typeof data !== "object") return "";
   const obj = data as Record<string, unknown>;
+  // 归一化比较基准为字符串，避免 19 位 file_id 因 JS Number 精度丢失导致比较失败
+  const targetStr = String(targetCid);
 
   const innerData = obj.data as Record<string, unknown> | undefined;
   if (innerData) {
     const list = innerData.list as Array<Record<string, unknown>> | undefined;
     if (Array.isArray(list)) {
       for (const item of list) {
-        if (item.cid === targetCid || item.id === targetCid) {
+        if (String(item.cid) === targetStr || String(item.id) === targetStr) {
           return (item.path || item.file_path || "") as string;
         }
         if (item.children) {
@@ -519,7 +552,7 @@ function extractPathFromExportData(data: unknown, targetCid: number): string {
 
   if (Array.isArray(obj.list)) {
     for (const item of obj.list as Array<Record<string, unknown>>) {
-      if (item.cid === targetCid || item.id === targetCid) {
+      if (String(item.cid) === targetStr || String(item.id) === targetStr) {
         return (item.path || item.file_path || "") as string;
       }
     }
@@ -530,16 +563,19 @@ function extractPathFromExportData(data: unknown, targetCid: number): string {
 
 async function resolveEventPath(
   accountInfo: AccountInfo,
-  event: LifeEvent
+  event: LifeEvent,
+  nameOverride?: string
 ): Promise<string> {
   let parentPath = "";
-  if (event.parent_id > 0) {
+  if (Number(event.parent_id) > 0) {
     parentPath = await resolvePathByCid(accountInfo, event.parent_id);
   } else {
     parentPath = "/";
   }
 
-  const fileName = event.file_name || "";
+  // 对于 rename 事件，115 API 的 file_name 存的是旧名，新名在 new_name 字段
+  // nameOverride 用于传入 new_name 以解析新路径
+  const fileName = nameOverride || event.file_name || "";
   if (parentPath === "/" || parentPath === "") {
     return "/" + fileName;
   }
@@ -556,12 +592,13 @@ function matchPathMapping(
   for (const mapping of pathMappings) {
     if (mapping.account && account && mapping.account !== account) continue;
 
-    const normalizedCloudPath = mapping.cloudPath.endsWith("/")
-      ? mapping.cloudPath
-      : mapping.cloudPath + "/";
+    // Normalize: strip trailing slashes for consistent matching
+    const key = mapping.cloudPath.replace(/\/+$/, "");
+    const normalizedKey = key + "/";
 
-    if (cloudPath === mapping.cloudPath || cloudPath.startsWith(normalizedCloudPath)) {
-      const relativePath = cloudPath.slice(mapping.cloudPath.length).replace(/^\//, "");
+    if (cloudPath === mapping.cloudPath || cloudPath === key || cloudPath.startsWith(normalizedKey)) {
+      const sliceLen = Math.min(mapping.cloudPath.length, key.length + 1);
+      const relativePath = cloudPath.slice(sliceLen).replace(/^\//, "");
       const localPath = path.join(mapping.localPath, relativePath);
       return {
         cloudPath: mapping.cloudPath,
@@ -591,26 +628,8 @@ function isMediaFile(fileName: string, mediaExtensions: string[]): boolean {
   return mediaExtensions.some((me) => me.toLowerCase() === ext);
 }
 
-function getStrmFileName(fileName: string): string {
-  const ext = path.extname(fileName);
-  if (!ext) return fileName + ".strm";
-  const lowerExt = ext.toLowerCase();
-  if (lowerExt === ".iso") return fileName; // .iso files keep original name
-  return fileName.replace(new RegExp(ext + "$", "i"), ".strm");
-}
-
 function isValidPickCode(pickCode: string): boolean {
   return !!pickCode && pickCode.length === 17 && /^[a-zA-Z0-9]+$/.test(pickCode);
-}
-
-function generateStrmContent(
-  cloudPath: string,
-  config: LifeMonitorConfig
-): string {
-  const strmPrefix = config.strmPrefix || "";
-  const normalized = cloudPath.startsWith("/") ? cloudPath : "/" + cloudPath;
-  const format = `${strmPrefix}${normalized}`;
-  return config.enablePathEncoding ? encodeURI(format) : format;
 }
 
 function readStrmContent(strmPath: string): string | null {
@@ -620,48 +639,6 @@ function readStrmContent(strmPath: string): string | null {
   } catch {
     return null;
   }
-}
-
-function writeStrmContent(strmPath: string, content: string): boolean {
-  try {
-    const dir = path.dirname(strmPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    const existing = readStrmContent(strmPath);
-    if (existing === content) return true; // No change
-    fs.writeFileSync(strmPath, content, "utf-8");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function removeEmptyParentDirs(startPath: string, rootDirs: Set<string>) {
-  let currentDir = path.dirname(startPath);
-  while (currentDir && !rootDirs.has(currentDir)) {
-    try {
-      const files = fs.readdirSync(currentDir);
-      if (files.length === 0) {
-        fs.rmdirSync(currentDir);
-        console.log(`[LifeMonitor] Removed empty directory: ${currentDir}`);
-        currentDir = path.dirname(currentDir);
-      } else {
-        break;
-      }
-    } catch {
-      break;
-    }
-  }
-}
-
-function getRootDirs(): Set<string> {
-  const config = getLifeMonitorConfig();
-  const roots = new Set<string>();
-  for (const mapping of config.pathMappings) {
-    roots.add(path.resolve(mapping.localPath));
-  }
-  return roots;
 }
 
 // ==================== Event Processing ====================
@@ -695,9 +672,9 @@ async function handleCreateEvent(
 
   const strmFileName = getStrmFileName(event.file_name);
   const strmPath = path.join(path.dirname(mapping.localPath), strmFileName);
-  const strmContent = generateStrmContent(cloudPath, config);
+  const strmContent = generateStrmContent(cloudPath, config.strmPrefix || "", config.enablePathEncoding || false);
 
-  if (writeStrmContent(strmPath, strmContent)) {
+  if (syncStrmText(strmPath, strmContent, { tag: "LifeMonitor/create" }).ok) {
     upsertFilePathEntry(accountInfo.name, {
       fileId: event.file_id,
       path: cloudPath,
@@ -742,14 +719,39 @@ async function handleFolderCreateEvent(
   // Recursively process folder contents
   let strmCount = 0;
   let skippedCount = 0;
+  let skipByExt = 0;      // 扩展名不匹配
+  let skipBySize = 0;     // 小于最小文件阈值
+  let skipByPickcode = 0; // pickcode 缺失/无效（含兜底接口失败）
+  let skipByWrite = 0;    // 写入磁盘失败
 
-  async function processDirectory(cid: number, depth: number) {
+  function anyPickCode(item: Record<string, unknown>): string {
+    const direct = (item.pc || item.pickcode || item.PickCode || item.pickCode || item.pick_code) as string | undefined;
+    if (direct && typeof direct === "string" && isValidPickCode(direct)) return direct;
+    // 兜底：遍历所有字段，找任意 17 位字母数字（防止 115 再改字段名）
+    for (const key of Object.keys(item)) {
+      const val = item[key];
+      if (typeof val === "string" && isValidPickCode(val)) return val;
+    }
+    return typeof direct === "string" ? direct : "";
+  }
+
+  // 115 web API /files 返回的 pickcode 字段名是 `pc`（参见 p115client.normalize_attr_web）
+  // 之前的实现错误地调用 /files/info（getFileInfoById）来取 pickcode，但该接口不返回 pickcode，
+  // 导致转存带文件夹的内容时只能创建空目录，无法生成 STRM。
+  // 修复策略：优先使用 fs_files 返回的 item.pc；缺失时调用 /files/file（getPickcodeToId）兜底。
+  async function processDirectory(
+    cid: number | string,
+    depth: number,
+    currentLocalDir: string,
+    currentCloudPath: string
+  ) {
     if (depth > MAX_RECURSION_DEPTH) return;
 
     try {
       const userAgent = readSettings()["user-agent"];
       let offset = 0;
       const limit = 1000;
+      let debugFsLogged = false;
 
       while (true) {
         const data = await fs_files(cid, {
@@ -762,39 +764,59 @@ async function handleFolderCreateEvent(
         const items = data?.data || [];
         if (items.length === 0) break;
 
-        for (const item of items) {
-          const itemName = item.n;
-          const itemFid = item.fid;
-          const itemCid = item.cid;
+        // 调试日志：该目录下有媒体文件但前 3 条都拿不到 pc 时，打一次字段名集合方便排查
+        const mediaItems = (items as Array<Record<string, unknown>>).filter(
+          (it) => it.fc !== 0 && typeof it.n === "string" && isMediaFile(it.n, getStrmExtensions())
+        );
+        if (!debugFsLogged && mediaItems.length > 0) {
+          const sampleKeys = new Set<string>();
+          const missingSamples: Array<{ name: string; keys: string[] }> = [];
+          for (const it of mediaItems.slice(0, 3)) {
+            Object.keys(it).forEach((k) => sampleKeys.add(k));
+            if (!isValidPickCode(anyPickCode(it))) {
+              missingSamples.push({ name: String(it.n || ""), keys: Object.keys(it) });
+            }
+          }
+          if (missingSamples.length > 0) {
+            console.warn(
+              `[LifeMonitor] fs_files 媒体文件缺失 pickcode (cid=${cid}, cloudPath=${currentCloudPath}). ` +
+                `所有字段名=[${[...sampleKeys].sort().join(", ")}]； ` +
+                `缺失样例=${JSON.stringify(missingSamples)}`
+            );
+          }
+          debugFsLogged = true;
+        }
+
+        for (const item of items as Array<Record<string, unknown>>) {
+          const itemName = item.n as string;
+          const itemFid = item.fid as number;
+          const itemCid = item.cid as number;
           const isDirectory = item.fc === 0;
+          const itemCloudPath = currentCloudPath.endsWith("/")
+            ? currentCloudPath + itemName
+            : currentCloudPath + "/" + itemName;
 
           if (isDirectory) {
-            const itemPath = cloudPath.endsWith("/")
-              ? cloudPath + itemName
-              : cloudPath + "/" + itemName;
-            const itemLocalPath = path.join(localDir, sanitizePathParts(itemName));
+            const itemLocalPath = path.join(currentLocalDir, sanitizePathParts(itemName));
 
             if (!fs.existsSync(itemLocalPath)) {
               fs.mkdirSync(itemLocalPath, { recursive: true });
             }
 
-            setIdPath(accountInfo.name, itemCid, itemPath);
+            setIdPath(accountInfo.name, itemCid, itemCloudPath);
             upsertFilePathEntry(accountInfo.name, {
               fileId: itemFid,
-              path: itemPath,
+              path: itemCloudPath,
               fileName: itemName,
               parentId: cid,
               pickCode: "",
               updateTime: Math.floor(Date.now() / 1000),
             });
 
-            await processDirectory(itemCid, depth + 1);
+            await processDirectory(itemCid, depth + 1, itemLocalPath, itemCloudPath);
           } else {
-            const itemPath = cloudPath.endsWith("/")
-              ? cloudPath + itemName
-              : cloudPath + "/" + itemName;
-
             if (!isMediaFile(itemName, getStrmExtensions())) {
+              skipByExt++;
               skippedCount++;
               continue;
             }
@@ -805,55 +827,61 @@ async function handleFolderCreateEvent(
               typeof item.s === "number" &&
               item.s < folderMinSize
             ) {
+              skipBySize++;
               skippedCount++;
               continue;
             }
 
-            try {
-              const userAgent = readSettings()["user-agent"];
-              let fileInfo: unknown = null;
-              let lastErr: unknown = null;
-              for (let attempt = 0; attempt < 3; attempt++) {
-                if (attempt > 0) {
-                  await new Promise((r) => setTimeout(r, 1000 * attempt));
-                }
-                try {
-                  fileInfo = await getFileInfoById(itemFid, {
-                    userAgent,
-                    accountInfo: accountInfo as AccountInfo,
-                  });
-                  lastErr = null;
-                  break;
-                } catch (e) {
-                  lastErr = e;
-                }
+            // 优先使用 fs_files 直接返回的 pc 字段（无需额外请求）
+            // 缺失时用 getPickcodeToId 兜底（/files/file 专门用于反查 pickcode）
+            let pickCode = anyPickCode(item);
+
+            if (!isValidPickCode(pickCode)) {
+              try {
+                const userAgent = readSettings()["user-agent"];
+                pickCode = await getPickcodeToId(itemFid, {
+                  userAgent,
+                  accountInfo: accountInfo as AccountInfo,
+                });
+              } catch (err) {
+                const detail =
+                  err && typeof err === "object"
+                    ? JSON.stringify({
+                        message: (err as Error).message,
+                        ...(err as Record<string, unknown>),
+                      })
+                    : String(err);
+                console.warn(
+                  `[LifeMonitor] getPickcodeToId 失败 fid=${itemFid} name=${itemName} response=${detail}`
+                );
               }
-              if (lastErr) throw lastErr;
+            }
 
-              const info = fileInfo as Record<string, unknown> | null;
-              const pickCode = (info?.pickcode || info?.pick_code || "") as string;
+            if (isValidPickCode(pickCode)) {
+              const strmFileName = getStrmFileName(itemName);
+              const strmPath = path.join(currentLocalDir, strmFileName);
+              const strmContent = generateStrmContent(itemCloudPath, config.strmPrefix || "", config.enablePathEncoding || false);
 
-              if (isValidPickCode(pickCode)) {
-                const strmFileName = getStrmFileName(itemName);
-                const strmPath = path.join(localDir, strmFileName);
-                const strmContent = generateStrmContent(itemPath, config);
-
-                if (writeStrmContent(strmPath, strmContent)) {
-                  strmCount++;
-                  setIdPath(accountInfo.name, itemCid, itemPath);
-                  upsertFilePathEntry(accountInfo.name, {
-                    fileId: itemFid,
-                    path: itemPath,
-                    fileName: itemName,
-                    parentId: cid,
-                    pickCode,
-                    updateTime: Math.floor(Date.now() / 1000),
-                  });
-                }
+              if (syncStrmText(strmPath, strmContent, { tag: "LifeMonitor/create" }).ok) {
+                strmCount++;
+                // 注意：文件分支不能 setIdPath(itemCid, ...) —— itemCid 是父目录的 cid，
+                // 若写入 itemCloudPath（含文件名）会污染父目录 cid→path 缓存，
+                // 导致后续同目录其他文件 resolve 成 X.mkv/X.mkv 的嵌套路径。
+                // 目录分支（fc===0）上方 L791 的 setIdPath 仍然保留，因为那里 itemCid 是目录自身 cid。
+                upsertFilePathEntry(accountInfo.name, {
+                  fileId: itemFid,
+                  path: itemCloudPath,
+                  fileName: itemName,
+                  parentId: cid,
+                  pickCode,
+                  updateTime: Math.floor(Date.now() / 1000),
+                });
               } else {
+                skipByWrite++;
                 skippedCount++;
               }
-            } catch {
+            } else {
+              skipByPickcode++;
               skippedCount++;
             }
           }
@@ -869,10 +897,25 @@ async function handleFolderCreateEvent(
     }
   }
 
-  await processDirectory(event.file_id, 0);
+  // 关键修复：文件夹本身也要写入 DB，否则后续 move/rename 事件来时
+  // getFilePathEntry(account, event.file_id) 查不到 oldEntry → move-outside-miss → 跳过清理
+  upsertFilePathEntry(accountInfo.name, {
+    fileId: event.file_id,
+    path: cloudPath,
+    fileName: event.file_name,
+    parentId: event.parent_id || 0,
+    pickCode: event.pick_code || "",
+    updateTime: event.update_time || Math.floor(Date.now() / 1000),
+  });
+  // 文件夹 cid → 云路径缓存也写入，供后续子文件事件 resolvePathByCid 命中
+  setIdPath(accountInfo.name, event.file_id, cloudPath);
+
+  await processDirectory(event.file_id, 0, localDir, cloudPath);
 
   result.action = "create";
-  result.message = `文件夹同步完成: 创建 ${strmCount} 个 STRM，跳过 ${skippedCount} 个非媒体文件`;
+  result.message =
+    `文件夹同步完成: 创建 ${strmCount} 个 STRM；` +
+    `跳过明细 — 扩展名不匹配:${skipByExt} / 体积过小:${skipBySize} / pickcode 无效:${skipByPickcode} / 写入失败:${skipByWrite} / 总:${skippedCount}`;
   return result;
 }
 
@@ -894,36 +937,124 @@ async function handleDeleteEvent(
     localPath: mapping.localPath,
   };
 
-  const rootDirs = getRootDirs();
+  const isFolder = event.file_category === 0;
+  const rootDirs = getRootDirsFromMappings(config.pathMappings);
+  const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
 
-  if (event.file_category === 0) {
-    if (fs.existsSync(mapping.localPath)) {
-      fs.rmSync(mapping.localPath, { recursive: true, force: true });
-      result.success = true;
-      result.message = `文件夹已删除: ${mapping.localPath}`;
-      removeFilePathEntry(accountInfo.name, event.file_id);
-      if (config.removeEmptyDirs) {
-        removeEmptyParentDirs(mapping.localPath, rootDirs);
+  // P3.2c: 在执行删除前 — 调用 115 API 二次确认文件/目录不存在
+  let cloudVerifiedGone = false;
+  try {
+    if (isFolder) {
+      // 文件夹：尝试获取其 cid — 如果获取失败/返回错误，视为已删除
+      try {
+        await fs_dir_getid(cloudPath, { accountInfo });
+        // fs_dir_getid 成功返回 = 目录仍存在 — 不验证通过
+        cloudVerifiedGone = false;
+        console.warn(`[LifeMonitor] 二次验证: 目录仍存在于网盘 ${cloudPath}，跳过删除避免误删`);
+      } catch {
+        // 获取失败 = 目录已删除
+        cloudVerifiedGone = true;
       }
     } else {
+      // 文件：尝试 getFileInfoById — 若返回不存在或报错，视为已删除
+      try {
+        const info = await getFileInfoById(event.file_id, { accountInfo });
+        if (!info || !(info as unknown as Record<string, unknown>).fileName) {
+          cloudVerifiedGone = true;
+        } else {
+          cloudVerifiedGone = false;
+          console.warn(`[LifeMonitor] 二次验证: 文件仍存在于网盘 file_id=${event.file_id}, name=${(info as unknown as Record<string, unknown>).fileName}，跳过删除避免误删`);
+        }
+      } catch {
+        // API 失败（404/错误等）→ 视为已删除
+        cloudVerifiedGone = true;
+      }
+    }
+  } catch {
+    // 整体验证链路失败，保守处理：信任删除事件（但记录告警）
+    console.warn(`[LifeMonitor] 二次验证: API调用失败，保守信任删除事件继续执行`);
+    cloudVerifiedGone = true;
+  }
+
+  if (!cloudVerifiedGone) {
+    result.success = false;
+    result.action = "skip";
+    result.message = `网盘二次验证: ${isFolder ? "目录" : "文件"}仍存在，跳过删除`;
+    return result;
+  }
+
+  if (isFolder) {
+    if (fs.existsSync(mapping.localPath)) {
+      deleteStrmDir(mapping.localPath, { tag: "LifeMonitor/delete" });
       result.success = true;
-      result.message = `本地文件夹不存在，跳过: ${mapping.localPath}`;
+      result.message = `文件夹已删除: ${mapping.localPath}`;
+      if (oldEntry) removeFilePathEntry(accountInfo.name, event.file_id);
+      if (config.removeEmptyDirs) {
+        removeEmptyParents(mapping.localPath, { rootDirs, tag: "LifeMonitor/delete" });
+      }
+    } else {
+      // 文件不存在时，用兜底查找旧 STRM（可能已被移动但未清理）
+      const cleanup = tryCleanupOldStrmByPath(
+        accountInfo.name,
+        cloudPath,
+        event.file_name || "",
+        0,
+        config.pathMappings
+      );
+      if (cleanup.deleted.length > 0) {
+        result.success = true;
+        result.message = `路径不存在但清理了 ${cleanup.deleted.length} 个残留目录`;
+      } else {
+        result.success = true;
+        result.message = `本地文件夹不存在，跳过: ${mapping.localPath}`;
+      }
+      if (oldEntry) removeFilePathEntry(accountInfo.name, event.file_id);
     }
   } else {
     const strmFileName = getStrmFileName(event.file_name);
     const strmPath = path.join(path.dirname(mapping.localPath), strmFileName);
 
     if (fs.existsSync(strmPath)) {
-      fs.unlinkSync(strmPath);
+      const delRes = deleteStrmFile(strmPath, { rootDirs, cleanRelated: true, tag: "LifeMonitor/delete" });
       result.success = true;
       result.message = `STRM 文件已删除: ${strmPath}`;
-      removeFilePathEntry(accountInfo.name, event.file_id);
+      // P3.2g: 记录带 fileId + trashPath 的扩展日志（方便后续 Undo）
+      if (result.action !== "skip") {
+        appendLifeEventLog(
+          accountInfo.name,
+          event.type,
+          true,
+          cloudPath,
+          mapping.localPath,
+          `STRM 文件已删除: ${strmPath}`,
+          {
+            fileId: event.file_id,
+            pickCode: event.pick_code || undefined,
+            trashPath: delRes.trashPath,
+          }
+        );
+      }
+      if (oldEntry) removeFilePathEntry(accountInfo.name, event.file_id);
       if (config.removeEmptyDirs) {
-        removeEmptyParentDirs(strmPath, rootDirs);
+        removeEmptyParents(strmPath, { rootDirs, tag: "LifeMonitor/delete" });
       }
     } else {
-      result.success = true;
-      result.message = `本地 STRM 文件不存在，跳过: ${strmPath}`;
+      // 兜底：fileId 关联查不到但路径上可能有残留 STRM
+      const cleanup = tryCleanupOldStrmByPath(
+        accountInfo.name,
+        cloudPath,
+        event.file_name || "",
+        1,
+        config.pathMappings
+      );
+      if (cleanup.deleted.length > 0) {
+        result.success = true;
+        result.message = `STRM 不存在但清理了 ${cleanup.deleted.length} 个残留文件`;
+      } else {
+        result.success = true;
+        result.message = `本地 STRM 文件不存在，跳过: ${strmPath}`;
+      }
+      if (oldEntry) removeFilePathEntry(accountInfo.name, event.file_id);
     }
   }
 
@@ -948,7 +1079,6 @@ async function handleMoveEvent(
     localPath: mapping.localPath,
   };
 
-  // Look up old path from tracking database
   const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
   const isFolder = event.file_category === 0;
   const moveMode = config.moveMediaMode || "local_move";
@@ -957,71 +1087,101 @@ async function handleMoveEvent(
     const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings, accountInfo.name);
 
     if (oldMapping) {
-      // recreate 模式：删除旧 STRM/目录后走 create 流程重新生成
-      // 适用场景：pickcode 可能变化、或本地 STRM 内容已损坏需要重建
+      // ========= 有 oldMapping 的正常路径 =========
       if (moveMode === "recreate") {
+        // P3.2e: recreate 模式先建后删 — 先创建新位置 STRM，成功后再删除旧文件
+        // 批量更新子记录的路径前缀（在创建/删除前同步 DB）
         if (isFolder) {
-          if (fs.existsSync(oldMapping.localPath)) {
-            try {
-              fs.rmSync(oldMapping.localPath, { recursive: true, force: true });
-            } catch (err) {
-              console.error(`[LifeMonitor] recreate 删除旧目录失败: ${oldMapping.localPath}`, err);
-            }
-          }
-        } else {
-          const oldStrmFileName = getStrmFileName(oldEntry.fileName);
-          const oldStrmPath = path.join(
-            path.dirname(oldMapping.localPath),
-            oldStrmFileName
-          );
-          if (fs.existsSync(oldStrmPath)) {
-            try {
-              fs.unlinkSync(oldStrmPath);
-            } catch (err) {
-              console.error(`[LifeMonitor] recreate 删除旧 STRM 失败: ${oldStrmPath}`, err);
+          if (oldEntry?.path) {
+            const updatedCount = updatePathPrefixBatch(accountInfo.name, oldEntry.path, cloudPath);
+            if (updatedCount > 0) {
+              console.log(`[LifeMonitor] move: 批量更新 ${updatedCount} 条子记录路径前缀: ${oldEntry.path} -> ${cloudPath}`);
             }
           }
         }
 
-        // 清理旧空目录
-        if (config.removeEmptyDirs) {
-          const rootDirs = getRootDirs();
-          removeEmptyParentDirs(oldMapping.localPath, rootDirs);
-        }
-
-        // 走 create 流程在新路径重新生成
+        // STEP 1: 先创建新位置的 STRM（保留旧文件作为备份）
         const createResult = await handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
-        createResult.action = "move";
-        createResult.message = `[recreate] ${createResult.message || ""}`;
-        return createResult;
+
+        // STEP 2: 验证新文件创建成功后，再删除旧位置的 STRM
+        if (createResult && createResult.success) {
+          if (isFolder) {
+            if (fs.existsSync(oldMapping.localPath)) {
+              try {
+                deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/move-recreate" });
+              } catch (err) {
+                console.error(`[LifeMonitor] recreate 删除旧目录失败: ${oldMapping.localPath}`, err);
+              }
+            }
+          } else {
+            const oldStrmFileName = getStrmFileName(oldEntry.fileName);
+            const oldStrmPath = path.join(
+              path.dirname(oldMapping.localPath),
+              oldStrmFileName
+            );
+            if (fs.existsSync(oldStrmPath)) {
+              try {
+                deleteStrmFile(oldStrmPath, { rootDirs: getRootDirsFromMappings(config.pathMappings), cleanRelated: false, tag: "LifeMonitor/move-recreate" });
+              } catch (err) {
+                console.error(`[LifeMonitor] recreate 删除旧 STRM 失败: ${oldStrmPath}`, err);
+              }
+            }
+          }
+
+          // 清理空父目录
+          if (config.removeEmptyDirs) {
+            const rootDirs = getRootDirsFromMappings(config.pathMappings);
+            removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move-recreate" });
+          }
+
+          createResult.action = "move";
+          createResult.success = true;
+          createResult.message = `文件已移动(recreate先建后删): ${oldMapping.localPath} -> ${mapping.localPath}`;
+          return createResult;
+        } else {
+          // 创建失败，保留旧文件不删除，告警
+          createResult.action = "error";
+          createResult.success = false;
+          createResult.message = `recreate 模式创建新 STRM 失败，已保留旧文件不删除: ${createResult?.message || "未知错误"}`;
+          console.error(`[LifeMonitor] recreate 创建失败，保留旧文件: ${oldMapping.localPath}`);
+          return createResult;
+        }
       }
 
-      // local_move 模式：本地直接移动 STRM 文件
+      // local_move 模式
       if (isFolder) {
-        // Folder move: move the entire local directory
         if (fs.existsSync(oldMapping.localPath)) {
           const newParentDir = path.dirname(mapping.localPath);
           if (!fs.existsSync(newParentDir)) {
             fs.mkdirSync(newParentDir, { recursive: true });
           }
-          // 目标已存在时不覆盖，避免误删
           if (fs.existsSync(mapping.localPath)) {
-            result.success = true;
-            result.message = `目标目录已存在，跳过移动: ${mapping.localPath}`;
+            const hasStrm = fs.readdirSync(mapping.localPath).some((f) => f.endsWith(".strm"));
+            if (hasStrm) {
+              // 目标含 STRM → 兜底清理旧目录残留后继续
+              const cleanedResidual = await cleanupResidualStrmsInOldFolder(oldMapping.localPath, mapping.localPath, config);
+              result.success = true;
+              result.message = `目标目录已存在且含 STRM，兜底清理残留 ${cleanedResidual.length} 条后跳过移动`;
+              // 注意：不 return，继续执行后面的 upsertFilePathEntry 更新 path 记录！
+            } else {
+              return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+            }
           } else {
             fs.renameSync(oldMapping.localPath, mapping.localPath);
+            // 批量更新子记录的路径前缀
+            if (oldEntry?.path) {
+              const updatedCount = updatePathPrefixBatch(accountInfo.name, oldEntry.path, cloudPath);
+              if (updatedCount > 0) {
+                console.log(`[LifeMonitor] move: 批量更新 ${updatedCount} 条子记录路径前缀: ${oldEntry.path} -> ${cloudPath}`);
+              }
+            }
             result.success = true;
             result.message = `文件夹已移动: ${oldMapping.localPath} -> ${mapping.localPath}`;
           }
         } else {
-          result.success = true;
-          result.message = `旧目录不存在，直接创建: ${mapping.localPath}`;
-          if (!fs.existsSync(mapping.localPath)) {
-            fs.mkdirSync(mapping.localPath, { recursive: true });
-          }
+          return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
         }
       } else {
-        // File move: move the STRM file
         const oldStrmFileName = getStrmFileName(oldEntry.fileName);
         const oldStrmPath = path.join(
           path.dirname(oldMapping.localPath),
@@ -1036,39 +1196,35 @@ async function handleMoveEvent(
             fs.mkdirSync(newDir, { recursive: true });
           }
 
-          // If old and new are in same directory, just rename
           if (path.dirname(oldStrmPath) === path.dirname(newStrmPath)) {
             if (fs.existsSync(newStrmPath) && oldStrmPath !== newStrmPath) {
-              fs.unlinkSync(newStrmPath);
+              deleteStrmFile(newStrmPath, { tag: "LifeMonitor/move", cleanRelated: false });
             }
             if (oldStrmPath !== newStrmPath) {
               fs.renameSync(oldStrmPath, newStrmPath);
             }
           } else {
-            // Different directories: copy content, delete old
             const content = readStrmContent(oldStrmPath);
             if (content !== null) {
-              writeStrmContent(newStrmPath, content);
-              fs.unlinkSync(oldStrmPath);
+              syncStrmText(newStrmPath, content, { tag: "LifeMonitor/move" });
+              deleteStrmFile(oldStrmPath, { tag: "LifeMonitor/move", cleanRelated: false });
             } else {
-              // 旧 STRM 内容读取失败，退化为 recreate
               return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
             }
           }
 
-          // 若事件携带新 pickcode，更新 STRM 内容
           if (isValidPickCode(event.pick_code)) {
             const newContent = generateStrmContent(
               cloudPath,
-              config
+              config.strmPrefix || "",
+              config.enablePathEncoding || false
             );
-            writeStrmContent(newStrmPath, newContent);
+            syncStrmText(newStrmPath, newContent, { tag: "LifeMonitor/move" });
           }
 
           result.success = true;
           result.message = `STRM 已移动: ${oldStrmPath} -> ${newStrmPath}`;
         } else {
-          // Old STRM doesn't exist, create new one
           return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
         }
       }
@@ -1083,18 +1239,75 @@ async function handleMoveEvent(
         updateTime: event.update_time,
       });
 
-      // Clean up old empty directories
       if (config.removeEmptyDirs) {
-        const rootDirs = getRootDirs();
-        removeEmptyParentDirs(oldMapping.localPath, rootDirs);
+        const rootDirs = getRootDirsFromMappings(config.pathMappings);
+        removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move" });
       }
 
       return result;
     }
+
+    // ========= 有 oldEntry 但 oldMapping 为 null =========
+    // 文件从映射 A 移动到映射 B：用兜底函数清理旧路径的 STRM
+    const cleanup = tryCleanupOldStrmByPath(
+      accountInfo.name,
+      oldEntry.path,
+      oldEntry.fileName,
+      event.file_category,
+      config.pathMappings
+    );
+    if (cleanup.deleted.length > 0) {
+      console.info(`[LifeMonitor] move 兜底清理旧 STRM: ${cleanup.deleted.join(", ")}`);
+    }
+    if (cleanup.errors.length > 0) {
+      console.warn(`[LifeMonitor] move 兜底清理出错: ${cleanup.errors.join("; ")}`);
+    }
+    // 继续走 create 流程在新路径生成
+    const createResult = await handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+    createResult.action = "move";
+    createResult.message = `[fallback-cleanup:${cleanup.deleted.length}] ${createResult.message || ""}`;
+    return createResult;
   }
 
-  // No old entry or old path not in our mappings - create new
+  // 无 oldEntry — 首次在此路径出现，直接创建
   return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+}
+
+/**
+ * 清理旧目录中的残留 STRM（local_move 模式下目标已存在时使用）
+ */
+async function cleanupResidualStrmsInOldFolder(
+  oldDir: string,
+  newDir: string,
+  config: LifeMonitorConfig
+): Promise<string[]> {
+  const deleted: string[] = [];
+  try {
+    if (!fs.existsSync(oldDir)) return deleted;
+    if (!fs.existsSync(newDir)) return deleted;
+
+    const oldStrms = fs.readdirSync(oldDir).filter((f) => f.endsWith(".strm"));
+    for (const strmFile of oldStrms) {
+      const oldPath = path.join(oldDir, strmFile);
+      const newPath = path.join(newDir, strmFile);
+      if (!fs.existsSync(newPath)) {
+        const fileRes = deleteStrmFile(oldPath, { tag: "LifeMonitor/move", cleanRelated: false });
+        if (fileRes.deleted) {
+          deleted.push(oldPath);
+          console.info(`[LifeMonitor] 清理残留 STRM: ${oldPath}`);
+        }
+      }
+    }
+
+    // 清理旧空目录
+    if (config.removeEmptyDirs) {
+      const rootDirs = getRootDirsFromMappings(config.pathMappings);
+      removeEmptyParents(oldDir, { rootDirs, tag: "LifeMonitor/move" });
+    }
+  } catch (e) {
+    console.error(`[LifeMonitor] cleanupResidualStrmsInOldFolder 出错: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return deleted;
 }
 
 async function handleRenameEvent(
@@ -1118,6 +1331,16 @@ async function handleRenameEvent(
   const isFolder = event.file_category === 0;
   const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
 
+  // ====== 关键修复：rename 事件 file_name 是旧名，new_name 是新名 ======
+  // 115 生活事件 API 对 rename 事件：file_name = 旧名, new_name = 新名
+  const rawEv = event as Record<string, unknown>;
+  const newName = String(
+    rawEv["new_name"] || rawEv["new_file_name"] || rawEv["to_name"] || rawEv["to_file_name"] || ""
+  );
+  // 如果 new_name 为空（某些 API 版本可能不返回），回退到 file_name
+  // 注意：此时 file_name 可能是新名也可能是旧名，需要结合 oldEntry 判断
+  const effectiveNewName = newName || event.file_name;
+
   if (oldEntry) {
     const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings, accountInfo.name);
 
@@ -1126,19 +1349,78 @@ async function handleRenameEvent(
         // Folder rename
         if (fs.existsSync(oldMapping.localPath)) {
           if (fs.existsSync(mapping.localPath)) {
+            const hasStrm = fs.readdirSync(mapping.localPath).some((f) => f.endsWith(".strm"));
+            if (hasStrm) {
+              // 目标含 STRM → 兜底清理旧目录残留后继续（不 return，保持 filePathDb 更新）
+              const cleanedResidual = await cleanupResidualStrmsInOldFolder(oldMapping.localPath, mapping.localPath, config);
+              result.success = true;
+              result.message = `目标目录已存在且含 STRM，兜底清理残留 ${cleanedResidual.length} 条后跳过重命名`;
+              // 注意：不 return，继续执行后面的 upsertFilePathEntry 更新 path 记录！
+            } else {
+              // 目标存在但无 STRM：先清理/搬迁旧目录中所有内容后再创建新的
+              // 否则 oldMapping.localPath 及里面的 STRM 会完整遗留
+              try {
+                if (fs.existsSync(oldMapping.localPath)) {
+                  // 批量更新子记录的路径前缀（在删除旧目录前同步 DB）
+                  if (oldEntry?.path) {
+                    const updatedCount = updatePathPrefixBatch(accountInfo.name, oldEntry.path, cloudPath);
+                    if (updatedCount > 0) {
+                      console.log(`[LifeMonitor] rename: 批量更新 ${updatedCount} 条子记录路径前缀: ${oldEntry.path} -> ${cloudPath}`);
+                    }
+                  }
+                  // 1) 先把旧目录下所有 STRM 搬过去（避免重扫生成缺失 pickcode）
+                  const oldStrms = fs.readdirSync(oldMapping.localPath).filter((f) => f.endsWith(".strm"));
+                  for (const f of oldStrms) {
+                    const src = path.join(oldMapping.localPath, f);
+                    const dst = path.join(mapping.localPath, f);
+                    if (!fs.existsSync(dst)) {
+                      const content = readStrmContent(src);
+                      if (content) syncStrmText(dst, content, { tag: "LifeMonitor/rename" });
+                    }
+                    try { deleteStrmFile(src, { tag: "LifeMonitor/rename", cleanRelated: false }); } catch {}
+                  }
+                  // 2) 搬相关文件（字幕/nfo/图片等）
+                  try {
+                    const siblings = fs.readdirSync(oldMapping.localPath);
+                    for (const sib of siblings) {
+                      if (sib.endsWith(".strm")) continue;
+                      const src = path.join(oldMapping.localPath, sib);
+                      const dst = path.join(mapping.localPath, sib);
+                      const st = fs.statSync(src);
+                      if (st.isFile() && !fs.existsSync(dst)) {
+                        try { fs.renameSync(src, dst); } catch {}
+                      }
+                    }
+                  } catch {}
+                  // 3) 删除旧目录本身
+                  try {
+                    deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/rename" });
+                  } catch {
+                    if (config.removeEmptyDirs) {
+                      removeEmptyParents(oldMapping.localPath, { rootDirs: getRootDirsFromMappings(config.pathMappings), tag: "LifeMonitor/rename" });
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn(`[LifeMonitor] rename 目标存在时搬迁旧目录失败: ${e instanceof Error ? e.message : String(e)}`);
+              }
+              return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+            }
+          } else {
+            fs.renameSync(oldMapping.localPath, mapping.localPath);
+            // 批量更新子记录的路径前缀
+            if (oldEntry?.path) {
+              const updatedCount = updatePathPrefixBatch(accountInfo.name, oldEntry.path, cloudPath);
+              if (updatedCount > 0) {
+                console.log(`[LifeMonitor] rename: 批量更新 ${updatedCount} 条子记录路径前缀: ${oldEntry.path} -> ${cloudPath}`);
+              }
+            }
             result.success = true;
-            result.message = `目标目录已存在，跳过重命名: ${mapping.localPath}`;
-            return result;
+            result.message = `文件夹已重命名: ${oldMapping.localPath} -> ${mapping.localPath}`;
           }
-          fs.renameSync(oldMapping.localPath, mapping.localPath);
-          result.success = true;
-          result.message = `文件夹已重命名: ${oldMapping.localPath} -> ${mapping.localPath}`;
         } else {
-          result.success = true;
-          result.message = `旧目录不存在，创建新目录: ${mapping.localPath}`;
-          if (!fs.existsSync(mapping.localPath)) {
-            fs.mkdirSync(mapping.localPath, { recursive: true });
-          }
+          // Old directory doesn't exist, create new folder and generate STRM files
+          return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
         }
       } else {
         // File rename: rename the STRM file
@@ -1147,7 +1429,8 @@ async function handleRenameEvent(
           path.dirname(oldMapping.localPath),
           oldStrmFileName
         );
-        const newStrmFileName = getStrmFileName(event.file_name);
+        // 修复：用 effectiveNewName（new_name 字段）而非 event.file_name（旧名）
+        const newStrmFileName = getStrmFileName(effectiveNewName);
         const newStrmPath = path.join(path.dirname(mapping.localPath), newStrmFileName);
 
         if (fs.existsSync(oldStrmPath)) {
@@ -1158,32 +1441,76 @@ async function handleRenameEvent(
 
           if (path.dirname(oldStrmPath) === path.dirname(newStrmPath)) {
             // Same directory, simple rename
-            fs.renameSync(oldStrmPath, newStrmPath);
+            if (fs.existsSync(newStrmPath) && oldStrmPath !== newStrmPath) {
+              deleteStrmFile(newStrmPath, { tag: "LifeMonitor/rename", cleanRelated: false });
+            }
+            if (oldStrmPath !== newStrmPath) {
+              fs.renameSync(oldStrmPath, newStrmPath);
+            }
             // Update STRM content with new cloud path
             if (isValidPickCode(event.pick_code)) {
               const newContent = generateStrmContent(
                 cloudPath,
-                config
+                config.strmPrefix || "",
+                config.enablePathEncoding || false
               );
-              writeStrmContent(newStrmPath, newContent);
+              syncStrmText(newStrmPath, newContent, { tag: "LifeMonitor/rename" });
             }
           } else {
             // Different directories
             const content = readStrmContent(oldStrmPath);
             if (content) {
-              writeStrmContent(newStrmPath, content);
-              fs.unlinkSync(oldStrmPath);
+              syncStrmText(newStrmPath, content, { tag: "LifeMonitor/rename" });
+              deleteStrmFile(oldStrmPath, { tag: "LifeMonitor/rename", cleanRelated: false });
             } else {
+              // 兜底：先递归搜索旧 STRM 再创建
+              const foundOldStrms = findStrmRecursive(
+                path.dirname(oldMapping.localPath),
+                oldStrmFileName
+              );
+              for (const p of foundOldStrms) {
+                try { deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false }); console.info(`[LifeMonitor] rename 兜底清理旧 STRM: ${p}`); } catch {}
+              }
               return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
             }
           }
 
           // Handle related files (subtitles, nfo, etc.)
-          handleRelatedFileRenames(oldStrmPath, newStrmPath, oldEntry.fileName, event.file_name);
+          handleRelatedFileRenames(oldStrmPath, newStrmPath, oldEntry.fileName, effectiveNewName);
 
           result.success = true;
           result.message = `STRM 已重命名: ${oldStrmPath} -> ${newStrmPath}`;
         } else {
+          // 兜底：oldStrmPath 不在预期位置，可能在其他子目录，递归按文件名搜索并清理
+          console.info(`[LifeMonitor] rename: expected oldStrmPath=${oldStrmPath} 不存在，启动递归兜底搜索`);
+          let cleanedCount = 0;
+          for (const m of config.pathMappings) {
+            if (m.account && m.account !== accountInfo.name) continue;
+            if (!fs.existsSync(m.localPath)) continue;
+            const found = findStrmRecursive(m.localPath, oldStrmFileName);
+            for (const p of found) {
+              try {
+                const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false });
+                if (delRes.deleted) {
+                  cleanedCount++;
+                  console.info(`[LifeMonitor] rename 递归搜索清理旧 STRM: ${p}`);
+                }
+              } catch (e) {
+                console.warn(`[LifeMonitor] rename 递归搜索删除失败 ${p}: ${e instanceof Error ? e.message : String(e)}`);
+              }
+            }
+          }
+          if (cleanedCount === 0 && oldEntry.fileName !== effectiveNewName) {
+            // 也按新文件名检查一遍，防止之前已经有重名的残留
+            for (const m of config.pathMappings) {
+              if (m.account && m.account !== accountInfo.name) continue;
+              if (!fs.existsSync(m.localPath)) continue;
+              const found = findStrmRecursive(m.localPath, newStrmFileName);
+              for (const p of found) {
+                try { const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false }); if (delRes.deleted) { cleanedCount++; console.info(`[LifeMonitor] rename 兜底清理新文件名冲突 STRM: ${p}`); } } catch {}
+              }
+            }
+          }
           return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
         }
       }
@@ -1192,23 +1519,176 @@ async function handleRenameEvent(
       upsertFilePathEntry(accountInfo.name, {
         fileId: event.file_id,
         path: cloudPath,
-        fileName: event.file_name,
+        fileName: effectiveNewName,
         parentId: event.parent_id,
         pickCode: event.pick_code || oldEntry.pickCode,
         updateTime: event.update_time,
       });
 
       if (config.removeEmptyDirs) {
-        const rootDirs = getRootDirs();
-        removeEmptyParentDirs(oldMapping.localPath, rootDirs);
+        const rootDirs = getRootDirsFromMappings(config.pathMappings);
+        removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/rename" });
       }
 
       return result;
     }
+
+    // ========= 有 oldEntry 但 oldMapping 为 null（跨映射重命名，相当于改名+换路径移出老映射） =========
+    // 用和 move-outside 相同强度的多层兜底
+    console.info(`[LifeMonitor] rename-cross-mapping: fileId=${event.file_id}, fileName=${oldEntry.fileName}, oldEntry.path=${oldEntry.path}, newCloudPath=${cloudPath}, fileCategory=${event.file_category}`);
+    let cleanup = tryCleanupOldStrmByPath(
+      accountInfo.name,
+      oldEntry.path,
+      oldEntry.fileName,
+      event.file_category,
+      config.pathMappings
+    );
+    // 兜底 1：guessed path
+    if (cleanup.deleted.length === 0) {
+      for (const m of config.pathMappings) {
+        if (m.account && m.account !== accountInfo.name) continue;
+        const guessedPath = (m.cloudPath.endsWith("/") ? m.cloudPath : (m.cloudPath + "/")) + oldEntry.fileName;
+        const deeper = tryCleanupOldStrmByPath(
+          accountInfo.name,
+          guessedPath,
+          oldEntry.fileName,
+          event.file_category,
+          [m]
+        );
+        cleanup.deleted.push(...deeper.deleted);
+        cleanup.errors.push(...deeper.errors);
+      }
+    }
+    // 兜底 2：文件事件按文件名递归搜索所有映射本地路径
+    if (cleanup.deleted.length === 0 && event.file_category === 1) {
+      const strmName = getStrmFileName(oldEntry.fileName);
+      for (const m of config.pathMappings) {
+        if (m.account && m.account !== accountInfo.name) continue;
+        if (!fs.existsSync(m.localPath)) continue;
+        try {
+          const found = findStrmRecursive(m.localPath, strmName);
+          for (const p of found) {
+            const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false });
+            if (delRes.deleted) {
+              cleanup.deleted.push(`[file-search] ${p}`);
+              console.info(`[LifeMonitor] rename 跨映射递归清理 STRM: ${p}`);
+            }
+          }
+        } catch (e) {
+          cleanup.errors.push(`${m.localPath} 搜索 ${strmName} 失败: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+    // 兜底 2b：文件夹事件按目录名递归搜索所有映射本地路径
+    if (cleanup.deleted.length === 0 && event.file_category === 0) {
+      const rootDirs = getRootDirsFromMappings(config.pathMappings);
+      const newLocalResolved = path.resolve(mapping.localPath);
+      for (const m of config.pathMappings) {
+        if (m.account && m.account !== accountInfo.name) continue;
+        if (!fs.existsSync(m.localPath)) continue;
+        try {
+          const foundDirs = findDirRecursive(m.localPath, oldEntry.fileName);
+          for (const d of foundDirs) {
+            const resolved = path.resolve(d);
+            // 保护新路径本身及其直接父目录
+            if (resolved === newLocalResolved || resolved === path.dirname(newLocalResolved)) continue;
+            if (rootDirs.has(resolved)) continue;
+            const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/rename-cross-mapping" });
+            if (dirRes.deleted) {
+              cleanup.deleted.push(`[dir-search] ${d}`);
+              console.info(`[LifeMonitor] rename 跨映射递归清理文件夹: ${d}`);
+              removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/rename-cross-mapping" });
+            }
+          }
+        } catch (e) {
+          cleanup.errors.push(`${m.localPath} 搜索目录 ${oldEntry.fileName} 失败: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+    if (cleanup.deleted.length > 0) {
+      console.info(`[LifeMonitor] rename 兜底清理旧 STRM: ${cleanup.deleted.join(", ")}`);
+    }
+    // 无条件空目录清理
+    if (config.removeEmptyDirs) {
+      const rootDirs = getRootDirsFromMappings(config.pathMappings);
+      const oldMatched = matchPathMapping(oldEntry.path, config.pathMappings, accountInfo.name);
+      if (oldMatched) removeEmptyParents(oldMatched.localPath, { rootDirs, tag: "LifeMonitor/rename" });
+      for (const m of config.pathMappings) {
+        removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/rename" });
+      }
+    }
+    const createResult = await handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+    createResult.action = "rename";
+    createResult.message = `[fallback-cleanup:${cleanup.deleted.length}] ${createResult.message || ""}`;
+    return createResult;
   }
 
-  // No old entry - create new STRM
-  return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+  // ====== No old entry：DB 无记录但本地可能仍有旧 STRM/文件夹（rename 前未跟踪） ======
+  // rename 事件中 event.file_name 是旧名，effectiveNewName 是新名。
+  // 按旧名递归搜索所有映射本地路径，清理旧 STRM 文件 / 旧目录树后再创建新内容。
+  console.info(
+    `[LifeMonitor] rename-no-entry: fileId=${event.file_id}, oldName="${event.file_name}", newName="${effectiveNewName}", fileCategory=${event.file_category}, newCloudPath=${cloudPath}`
+  );
+  const rootDirs = getRootDirsFromMappings(config.pathMappings);
+  const newLocalResolved = path.resolve(mapping.localPath);
+  let noEntryCleaned = 0;
+
+  if (event.file_category === 0) {
+    // 文件夹 rename：递归查找旧名目录并删除整棵树
+    for (const m of config.pathMappings) {
+      if (m.account && m.account !== accountInfo.name) continue;
+      if (!fs.existsSync(m.localPath)) continue;
+      try {
+        const foundDirs = findDirRecursive(m.localPath, event.file_name);
+        for (const d of foundDirs) {
+          const resolved = path.resolve(d);
+          // 保护新路径本身及其祖先：不能删掉新目录或它的父目录
+          if (resolved === newLocalResolved || resolved === path.dirname(newLocalResolved)) continue;
+          if (rootDirs.has(resolved)) continue;
+          const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/rename-no-entry" });
+          if (dirRes.deleted) {
+            noEntryCleaned++;
+            console.info(`[LifeMonitor] rename-no-entry: 清理旧文件夹 ${d}`);
+            removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/rename-no-entry" });
+          }
+        }
+      } catch (e) {
+        console.warn(`[LifeMonitor] rename-no-entry 目录搜索失败 ${m.localPath}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  } else {
+    // 文件 rename：递归查找旧名 STRM 并删除（排除新路径）
+    const oldStrmName = getStrmFileName(event.file_name);
+    for (const m of config.pathMappings) {
+      if (m.account && m.account !== accountInfo.name) continue;
+      if (!fs.existsSync(m.localPath)) continue;
+      try {
+        const found = findStrmRecursive(m.localPath, oldStrmName);
+        for (const p of found) {
+          if (path.resolve(p) === newLocalResolved) continue; // 不删新文件
+          const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename-no-entry", cleanRelated: false });
+          if (delRes.deleted) {
+            noEntryCleaned++;
+            console.info(`[LifeMonitor] rename-no-entry: 清理旧 STRM ${p}`);
+          }
+        }
+      } catch (e) {
+        console.warn(`[LifeMonitor] rename-no-entry STRM 搜索失败 ${m.localPath}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  // 无条件空目录清理（兜底）
+  if (config.removeEmptyDirs) {
+    for (const m of config.pathMappings) {
+      removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/rename-no-entry" });
+    }
+  }
+
+  const createResult = await handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+  createResult.action = "rename";
+  createResult.message = `[no-entry-cleanup:${noEntryCleaned}] ${createResult.message || ""}`;
+  return createResult;
 }
 
 function handleRelatedFileRenames(
@@ -1284,15 +1764,60 @@ async function processEvent(
   };
 
   try {
-    const cloudPath = await resolveEventPath(accountInfo, event);
+    // P5.A: 限流 — 每个事件处理前等待 115 API 令牌，避免高频调用触发封控
+    await waitFor115ApiToken();
+    // ====== 关键修复：rename 事件的 file_name 是旧名，新名在 new_name 字段 ======
+    // 115 生活事件 API 对 rename 事件（type 20/24）：
+    //   file_name = 旧名字, new_name = 新名字
+    // 如果用 file_name 构造路径，会得到旧路径 → 匹配到旧映射 → handler 收到的 mapping 和 oldMapping 相同 → no-op
+    // 修复：对 rename 事件提取 new_name，用它来构造新路径
+    const isRenameEvent = RENAME_EVENT_TYPES.has(eventType);
+    let renameNewName = "";
+    if (isRenameEvent) {
+      // 115 API 可能用 new_name 或其他字段名
+      const rawEvent = event as Record<string, unknown>;
+      renameNewName = String(
+        rawEvent["new_name"] || rawEvent["new_file_name"] || rawEvent["to_name"] || rawEvent["to_file_name"] || ""
+      );
+      // 诊断日志：打印 rename 事件的全部字段，帮助确认 API 返回格式
+      console.info(
+        `[LifeMonitor] rename-event-raw: type=${eventType}, fileId=${event.file_id}, file_name="${event.file_name}", new_name="${renameNewName}", file_category=${event.file_category}, parent_id=${event.parent_id}, pick_code="${event.pick_code}", allKeys=${Object.keys(rawEvent).join(",")}`
+      );
+    }
+
+    // 对 rename 事件用 new_name 构造新路径；其他事件用 file_name（即当前路径）
+    const cloudPath = await resolveEventPath(
+      accountInfo,
+      event,
+      isRenameEvent && renameNewName ? renameNewName : undefined
+    );
     if (!cloudPath) {
       result.message = "无法解析文件路径";
       return result;
     }
     result.filePath = cloudPath;
 
-    // Record the path in tracking DB regardless of event type
-    if (isValidPickCode(event.pick_code) || event.file_category === 0) {
+    // 对 rename 事件，如果 new_name 为空，说明 API 可能没返回该字段
+    // 此时 cloudPath 是用旧名构造的旧路径，后续 handler 仍需正确处理
+    if (isRenameEvent && !renameNewName) {
+      console.warn(
+        `[LifeMonitor] rename 事件未找到 new_name 字段! fileId=${event.file_id}, file_name="${event.file_name}", cloudPath="${cloudPath}". 尝试通过 filePathDb 旧记录推断新路径。`
+      );
+    }
+
+    // For move/delete/rename events: 不提前更新 filePathDb，交给具体 handler 在处理完成后更新
+    // （双写保护：防止事件处理过程中 oldEntry 被提前覆盖导致兜底查找失败）
+    const isMutationEvent = MOVE_EVENT_TYPES.has(eventType) || RENAME_EVENT_TYPES.has(eventType) || DELETE_EVENT_TYPES.has(eventType);
+
+    // 诊断日志：对 move/delete 事件也打印关键字段
+    if (isMutationEvent && !isRenameEvent) {
+      const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
+      console.info(
+        `[LifeMonitor] ${BEHAVIOR_TYPE_TO_NAME[eventType] || "event"}-raw: type=${eventType}, fileId=${event.file_id}, file_name="${event.file_name}", file_category=${event.file_category}, parent_id=${event.parent_id}, cloudPath="${cloudPath}", oldEntry.path="${oldEntry?.path || "(none)"}", oldEntry.fileName="${oldEntry?.fileName || "(none)"}"`
+      );
+    }
+
+    if (!isMutationEvent && (isValidPickCode(event.pick_code) || event.file_category === 0)) {
       upsertFilePathEntry(accountInfo.name, {
         fileId: event.file_id,
         path: cloudPath,
@@ -1305,6 +1830,189 @@ async function processEvent(
 
     const mapping = matchPathMapping(cloudPath, config.pathMappings, accountInfo.name);
     if (!mapping) {
+      // ====== 关键修复：move/rename/delete 事件在新路径不匹配时，
+      // 将其视为"从监控区域移出"来清理旧 STRM ======
+      if (MOVE_EVENT_TYPES.has(eventType) || RENAME_EVENT_TYPES.has(eventType)) {
+        const oldEntry = getFilePathEntry(accountInfo.name, event.file_id);
+        if (oldEntry) {
+          console.info(`[LifeMonitor] move-outside: fileId=${event.file_id}, fileName=${oldEntry.fileName}, oldEntry.path=${oldEntry.path}, newCloudPath=${cloudPath}, fileCategory=${event.file_category}`);
+          let cleanup = tryCleanupOldStrmByPath(
+            accountInfo.name,
+            oldEntry.path,
+            oldEntry.fileName,
+            event.file_category,
+            config.pathMappings
+          );
+          // 兜底 1：如果 oldEntry.path 过期，尝试用每个 mapping.cloudPath + fileName 组合猜测
+          if (cleanup.deleted.length === 0) {
+            for (const m of config.pathMappings) {
+              if (m.account && m.account !== accountInfo.name) continue;
+              const guessedPath = (m.cloudPath.endsWith("/") ? m.cloudPath : (m.cloudPath + "/")) + oldEntry.fileName;
+              const deeper = tryCleanupOldStrmByPath(
+                accountInfo.name,
+                guessedPath,
+                oldEntry.fileName,
+                event.file_category,
+                [m]
+              );
+              cleanup.deleted.push(...deeper.deleted);
+              cleanup.errors.push(...deeper.errors);
+            }
+          }
+          // 兜底 2：文件事件（非文件夹）按文件名在所有映射本地路径中搜索 STRM 并删除
+          if (cleanup.deleted.length === 0 && event.file_category === 1) {
+            const strmName = getStrmFileName(oldEntry.fileName);
+            for (const m of config.pathMappings) {
+              if (m.account && m.account !== accountInfo.name) continue;
+              if (!fs.existsSync(m.localPath)) continue;
+              try {
+                const found = findStrmRecursive(m.localPath, strmName);
+                for (const p of found) {
+                  const delRes = deleteStrmFile(p, { tag: "LifeMonitor/move", cleanRelated: false });
+                  if (delRes.deleted) {
+                    cleanup.deleted.push(`[file-search] ${p}`);
+                    console.info(`[LifeMonitor] 文件名递归搜索清理 STRM: ${p}`);
+                  }
+                }
+              } catch (e) {
+                cleanup.errors.push(`${m.localPath} 搜索 ${strmName} 失败: ${e instanceof Error ? e.message : String(e)}`);
+              }
+            }
+          }
+          // 兜底 2b：文件夹事件按目录名在所有映射本地路径中递归搜索并删除
+          // （oldEntry.path 过期或嵌套较深时，guessed path 可能也命中失败）
+          if (cleanup.deleted.length === 0 && event.file_category === 0) {
+            const rootDirs = getRootDirsFromMappings(config.pathMappings);
+            for (const m of config.pathMappings) {
+              if (m.account && m.account !== accountInfo.name) continue;
+              if (!fs.existsSync(m.localPath)) continue;
+              try {
+                const foundDirs = findDirRecursive(m.localPath, oldEntry.fileName);
+                for (const d of foundDirs) {
+                  // 保护根目录边界，避免误删映射根本身
+                  if (rootDirs.has(path.resolve(d))) continue;
+                  const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/move-dir-search" });
+                  if (dirRes.deleted) {
+                    cleanup.deleted.push(`[dir-search] ${d}`);
+                    console.info(`[LifeMonitor] 目录名递归搜索清理文件夹: ${d}`);
+                    removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/move-dir-search" });
+                  }
+                }
+              } catch (e) {
+                cleanup.errors.push(`${m.localPath} 搜索目录 ${oldEntry.fileName} 失败: ${e instanceof Error ? e.message : String(e)}`);
+              }
+            }
+          }
+          // 无论 deleted 是否有值，都从 filePathDb 移除该记录（它已不在监控范围内）
+          removeFilePathEntry(accountInfo.name, event.file_id);
+
+          // 无论 cleanup.deleted 是否有值，只要启用了 removeEmptyDirs，就做一次空目录清理
+          // （避免 oldEntry.path 虽然匹配但目录为空无 STRM 可删、或 guessed 清理后仍残留空父目录的情况）
+          if (config.removeEmptyDirs) {
+            const rootDirs = getRootDirsFromMappings(config.pathMappings);
+            const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings, accountInfo.name);
+            if (oldMapping) removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move" });
+            // 也在所有 mapping 的 localPath 下扫一遍（安全，只删真正空的）
+            for (const m of config.pathMappings) {
+              removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/move" });
+            }
+          }
+
+          if (cleanup.deleted.length > 0) {
+            result.action = "remove";
+            result.success = true;
+            result.message = `移出监控范围，清理 ${cleanup.deleted.length} 个旧 STRM/目录`;
+            logEventTrace("move-outside", event, null, result);
+            return result;
+          }
+
+          result.action = "skip";
+          result.message = `路径不在监控范围内（oldEntry.path=${oldEntry.path}，已尝试 guessed 路径及空目录清理，仍无残留 STRM）: ${cloudPath}`;
+          logEventTrace("move-outside-skip", event, null, result);
+          return result;
+        }
+        result.action = "skip";
+        result.message = `路径不在监控范围内（无 filePathDb 记录）: ${cloudPath}`;
+        // 兜底 3：即使 DB 无记录，也应按 fileName 在本地递归搜索并清理 STRM 和文件夹
+        // （旧数据中文件夹本身可能从未写入 DB，但本地 STRM 文件确实存在）
+        if (config.removeEmptyDirs || event.file_category === 0) {
+          const rootDirs = getRootDirsFromMappings(config.pathMappings);
+          let localDeletedCount = 0;
+          for (const m of config.pathMappings) {
+            if (m.account && m.account !== accountInfo.name) continue;
+            if (!fs.existsSync(m.localPath)) continue;
+            try {
+              if (event.file_category === 0) {
+                // 文件夹事件：递归搜索同名目录（不局限于映射根直接子级，
+                // 文件夹可能嵌套在映射的子目录如 /电影/分类/小王子）
+                const candidateDirs = findDirRecursive(m.localPath, event.file_name);
+                for (const candidateDir of candidateDirs) {
+                  // 保护根目录边界，避免误删映射根本身
+                  if (rootDirs.has(path.resolve(candidateDir))) continue;
+                  if (fs.existsSync(candidateDir) && fs.statSync(candidateDir).isDirectory()) {
+                    deleteStrmDir(candidateDir, { tag: "LifeMonitor/move-outside-nodb" });
+                    localDeletedCount++;
+                    console.info(`[LifeMonitor] move-outside-nodb: 清理文件夹(无DB记录) ${candidateDir}`);
+                    // 清理空父目录
+                    removeEmptyParents(candidateDir, { rootDirs, tag: "LifeMonitor/move-outside-nodb" });
+                  }
+                }
+              } else {
+                // 文件事件：按文件名搜索 STRM
+                const strmName = getStrmFileName(event.file_name);
+                const found = findStrmRecursive(m.localPath, strmName);
+                for (const p of found) {
+                  const delRes = deleteStrmFile(p, { tag: "LifeMonitor/move-outside-nodb", cleanRelated: false });
+                  if (delRes.deleted) {
+                    localDeletedCount++;
+                    console.info(`[LifeMonitor] move-outside-nodb: 清理STRM(无DB记录) ${p}`);
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn(`[LifeMonitor] move-outside-nodb 搜索失败 ${m.localPath}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+          if (localDeletedCount > 0) {
+            result.action = "remove";
+            result.success = true;
+            result.message = `移出监控范围(无DB记录)，本地清理 ${localDeletedCount} 个 STRM/文件夹`;
+            logEventTrace("move-outside-nodb", event, null, result);
+            return result;
+          }
+        }
+        logEventTrace("move-outside-miss", event, null, result);
+        return result;
+      }
+
+      if (DELETE_EVENT_TYPES.has(eventType)) {
+        // delete 事件也兜底清理
+        const cleanup = tryCleanupOldStrmByPath(
+          accountInfo.name,
+          cloudPath,
+          event.file_name || "",
+          event.file_category,
+          config.pathMappings
+        );
+        if (config.removeEmptyDirs) {
+          const rootDirs = getRootDirsFromMappings(config.pathMappings);
+          for (const m of config.pathMappings) {
+            removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/delete" });
+          }
+        }
+        if (cleanup.deleted.length > 0) {
+          result.action = "remove";
+          result.success = true;
+          result.message = `删除事件移出监控范围，清理 ${cleanup.deleted.length} 个残留`;
+          logEventTrace("delete-outside", event, null, result);
+          return result;
+        }
+        result.action = "skip";
+        result.message = `删除路径不在监控范围内: ${cloudPath}`;
+        logEventTrace("delete-outside-skip", event, null, result);
+        return result;
+      }
+
       result.action = "skip";
       result.message = `路径不在监控范围内: ${cloudPath}`;
       return result;
@@ -1332,13 +2040,21 @@ async function processEvent(
     }
 
     if (CREATE_EVENT_TYPES.has(eventType) && config.eventTypes.create) {
-      return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+      const r = await handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
+      logEventTrace("create", event, mapping, r);
+      return r;
     } else if (DELETE_EVENT_TYPES.has(eventType) && config.eventTypes.remove) {
-      return handleDeleteEvent(accountInfo, event, config, mapping, cloudPath);
+      const r = await handleDeleteEvent(accountInfo, event, config, mapping, cloudPath);
+      logEventTrace("delete", event, mapping, r);
+      return r;
     } else if (MOVE_EVENT_TYPES.has(eventType) && config.eventTypes.move) {
-      return handleMoveEvent(accountInfo, event, config, mapping, cloudPath);
+      const r = await handleMoveEvent(accountInfo, event, config, mapping, cloudPath);
+      logEventTrace("move", event, mapping, r);
+      return r;
     } else if (RENAME_EVENT_TYPES.has(eventType) && config.eventTypes.rename) {
-      return handleRenameEvent(accountInfo, event, config, mapping, cloudPath);
+      const r = await handleRenameEvent(accountInfo, event, config, mapping, cloudPath);
+      logEventTrace("rename", event, mapping, r);
+      return r;
     } else {
       result.action = "skip";
       result.message = `事件类型 ${eventType} 未启用处理`;
@@ -1347,8 +2063,30 @@ async function processEvent(
   } catch (err) {
     result.action = "error";
     result.message = err instanceof Error ? err.message : String(err);
+    console.error(`[LifeMonitor] processEvent error type=${eventType} file_id=${event.file_id}: ${result.message}`);
     return result;
   }
+}
+
+/**
+ * 结构化事件日志追踪 — 为每个事件处理结果输出一行可追溯日志
+ */
+function logEventTrace(
+  action: string,
+  event: LifeEvent,
+  mapping: { localPath: string; relativePath: string } | null,
+  result: EventProcessResult
+) {
+  const tag = result.success ? "info" : "warn";
+  const isFolder = event.file_category === 0 ? "folder" : "file";
+  const extra =
+    result.action === "skip" ? ` reason=${result.message?.slice(0, 60)}` : "";
+  console[tag === "info" ? "info" : "warn"](
+    `[STRM-SYNC] ${action} ${isFolder} file_id=${event.file_id} ` +
+    `path=${mapping?.relativePath || "-"} → local=${mapping?.localPath || "-"} ` +
+    `status=${result.success ? "ok" : "fail"} action=${result.action} ` +
+    `${result.message ? `msg=${result.message.slice(0, 100)}` : ""}${extra}`
+  );
 }
 
 // ==================== Emby Refresh (debounced) ====================
@@ -1386,18 +2124,84 @@ function scheduleEmbyRefresh(account: string) {
   embyDebounceTimers.set(account, timer);
 }
 
-// ==================== Polling ====================
+// ==================== Consistency Check (lightweight) ====================
 
-function getStrmExtensions(): string[] {
-  try {
-    const settings = readSettings();
-    return (settings.strmExtensions || []).map((e: string) =>
-      e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase()
-    );
-  } catch {
-    return [".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm"];
-  }
+const CONSISTENCY_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const consistencyCheckTimers = new Map<string, number>();
+
+/**
+ * 轻量级一致性检查：定期遍历本地 STRM 文件，
+ * 清理可能因事件丢失而残留的失效 STRM（如源文件已被删除但未收到事件）。
+ * 每 10 分钟最多执行一次，且只在事件处理成功后触发。
+ */
+function maybeRunConsistencyCheck(account: string, config: LifeMonitorConfig) {
+  const now = Date.now();
+  const last = consistencyCheckTimers.get(account) || 0;
+  if (now - last < CONSISTENCY_CHECK_INTERVAL_MS) return;
+  consistencyCheckTimers.set(account, now);
+
+  // 异步执行，不阻塞主循环
+  setTimeout(async () => {
+    try {
+      const stats = { scanned: 0, cleaned: 0, errors: 0 };
+      for (const mapping of config.pathMappings || []) {
+        const accountFilter = mapping.account;
+        if (accountFilter && accountFilter !== account) continue;
+
+        const localDir = path.resolve(process.cwd(), `../data/${mapping.localPath}`);
+        if (!fs.existsSync(localDir)) continue;
+
+        const cleanDir = (dir: string) => {
+          try {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                cleanDir(fullPath);
+              } else if (entry.isFile() && entry.name.endsWith(".strm")) {
+                stats.scanned++;
+                // 检查 STRM 内容指向的源文件是否仍存在
+                try {
+                  const content = fs.readFileSync(fullPath, "utf-8");
+                  const url = content.trim();
+                  // 简单检查：如果 URL 格式异常或为空，清理它
+                  if (!url || (!url.startsWith("http") && !url.startsWith("/"))) {
+                    const delRes = deleteStrmFile(fullPath, { tag: "LifeMonitor/consistencyCheck", cleanRelated: false });
+                    if (delRes.deleted) stats.cleaned++;
+                    console.info(`[ConsistencyCheck] 清理无效 STRM: ${fullPath}`);
+                  }
+                } catch {
+                  // 读取失败的 STRM 也清理
+                  try { const delRes = deleteStrmFile(fullPath, { tag: "LifeMonitor/consistencyCheck", cleanRelated: false }); if (delRes.deleted) stats.cleaned++; } catch {}
+                }
+              }
+            }
+            // 清理空目录
+            try {
+              const remaining = fs.readdirSync(dir);
+              if (remaining.length === 0 && dir !== localDir) {
+                fs.rmdirSync(dir);
+              }
+            } catch {}
+          } catch (e) {
+            stats.errors++;
+          }
+        };
+        cleanDir(localDir);
+      }
+
+      if (stats.scanned > 0) {
+        console.info(
+          `[ConsistencyCheck] ${account}: 扫描 ${stats.scanned} STRM, 清理 ${stats.cleaned}, 错误 ${stats.errors}`
+        );
+      }
+    } catch (e) {
+      console.error(`[ConsistencyCheck] ${account} 异常:`, e);
+    }
+  }, 0);
 }
+
+// ==================== Polling ====================
 
 async function oncePoll(account: string): Promise<void> {
   const pollStatus = tryPollMonitor(account);
@@ -1408,26 +2212,18 @@ async function oncePoll(account: string): Promise<void> {
     return;
   }
 
+  // 读取一次 settings，后续所有函数共用
+  const settings = readSettings();
   let config = getLifeMonitorConfig();
 
-  // 从 task 配置覆盖 strmPrefix / enablePathEncoding（与全量生成保持一致）
-  try {
-    const tasks = readTasks();
-    const matchedTask = tasks.find((t: { account: string }) => t.account === account);
-    if (matchedTask) {
-      if (matchedTask.strmPrefix) {
-        config = { ...config, strmPrefix: matchedTask.strmPrefix };
-      }
-      if (typeof matchedTask.enablePathEncoding === "boolean") {
-        config = { ...config, enablePathEncoding: matchedTask.enablePathEncoding };
-      }
-    }
-  } catch { /* tasks.json 可能不存在，忽略 */ }
+  // 使用统一的 STRM 设置解析（全局默认 + 任务级覆盖 + 302 拼接）
+  const resolvedStrm = resolveStrmSettings(account, null, settings);
+  config = { ...config, strmPrefix: resolvedStrm.strmPrefix, enablePathEncoding: resolvedStrm.enablePathEncoding };
 
-  const accounts = readAccounts();
+  const accounts = readAccounts() as unknown as AccountInfo[];
 
   const accountInfo = accounts.find(
-    (acc: { name: string }) => acc.name === account
+    (acc) => acc.name === account
   );
   if (!accountInfo) {
     updateState(account, {
@@ -1452,15 +2248,16 @@ async function oncePoll(account: string): Promise<void> {
 
   // 首拉模式决定起始游标：
   // - latest: 从当前时间开始（只处理新事件）
-  // - all: 从 0 开始拉取全部历史（首次部署补历史）
+  // - all: **首次（无断点）** 从 0 开始拉取全部历史；**后续 poll（已有断点）** 从保存的断点继续
   // - last: 从上次保存的断点继续；若无断点则退化为 latest
   let fromTime: number;
   let fromId: number;
-  if (firstPullMode === "all") {
+  if (firstPullMode === "all" && !hasSavedState) {
+    // 仅首次（lifeMonitorState.json 中无此账号记录）拉取全部历史
     fromTime = 0;
     fromId = 0;
   } else if (hasSavedState) {
-    // latest / last 均优先使用已保存的断点，避免 poll 间新事件被跳过
+    // latest / last / all-非首次 均优先使用已保存的断点，避免 poll 间新事件被跳过或重复处理历史
     fromTime = state!.fromTime;
     fromId = state!.fromId;
   } else {
@@ -1500,12 +2297,40 @@ async function oncePoll(account: string): Promise<void> {
 
     console.log(`[LifeMonitor] Pulled ${events.length} events for ${account}`);
 
+    // P3.2b: 单 poll 删除事件熔断 — 统计删除类事件数量
+    const deleteEventTypes = new Set(DELETE_EVENT_TYPES);
+    const deleteEvents = events.filter(e => deleteEventTypes.has(e.type));
+    const deleteCount = deleteEvents.length;
+    const totalCount = events.length;
+    const deleteRatio = totalCount > 0 ? deleteCount / totalCount : 0;
+
+    let effectiveEvents = events;
+
+    if (deleteCount > 0 && (deleteCount > MAX_DELETE_EVENTS_PER_POLL || deleteRatio > DELETE_RATIO_THRESHOLD_PER_POLL)) {
+      // 触发删除熔断：只保留非删除事件
+      effectiveEvents = events.filter(e => !deleteEventTypes.has(e.type));
+      console.error(
+        `[LifeMonitor] ⚠️ 删除事件熔断触发! 删除事件数=${deleteCount}/${totalCount} (比例=${(deleteRatio*100).toFixed(1)}%), ` +
+        `阈值: count>${MAX_DELETE_EVENTS_PER_POLL} 或 ratio>${DELETE_RATIO_THRESHOLD_PER_POLL*100}%。` +
+        `已跳过本次 poll 的所有删除事件，请手动前往 settings 页面执行全量扫描确认后再清理。`
+      );
+      // 追加到生命周期日志让用户看到
+      appendLifeEventLog(
+        account,
+        "delete",
+        false,
+        undefined,
+        undefined,
+        `⚠️ 删除事件熔断: 删除数=${deleteCount}/${totalCount}, 已跳过。请执行全量扫描确认`
+      );
+    }
+
     let processedCount = 0;
     let errorCount = 0;
 
     // Process events in reverse order (newest first)
-    for (let i = events.length - 1; i >= 0; i--) {
-      const event = events[i];
+    for (let i = effectiveEvents.length - 1; i >= 0; i--) {
+      const event = effectiveEvents[i];
       const result = await processEvent(accountInfo as AccountInfo, event, config);
       processedCount++;
 
@@ -1540,6 +2365,9 @@ async function oncePoll(account: string): Promise<void> {
       eventsProcessed: (monitorStates.get(account)?.eventsProcessed || 0) + processedCount,
       lastError: errorCount > 0 ? `${errorCount} events failed` : undefined,
     });
+
+    // 轻量级一致性检查：每 10 分钟在事件处理成功后自动运行
+    maybeRunConsistencyCheck(account, config);
 
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
@@ -1753,11 +2581,11 @@ export async function verifyAccount(account: string): Promise<{
   }
 
   try {
-    const status = await lifeShow(accountInfo as AccountInfo, "web");
+    const status = await lifeShow(accountInfo as unknown as AccountInfo, "web");
     if (status.state) {
       // 验证时用 from_time=0 拉取所有事件（不限时间范围）
       const { events } = await oncePullLifeEvents(
-        accountInfo as AccountInfo,
+        accountInfo as unknown as AccountInfo,
         0,
         0,
         "ios"
@@ -1803,6 +2631,8 @@ export async function verifyAccount(account: string): Promise<{
 export function _readIdPathCacheForTest() {
   return readIdPathCache();
 }
-export function _readFilePathDbForTest() {
-  return readFilePathDb();
+export async function _readFilePathDbForTest() {
+  // SQLite 版通过 filePathDb.ts 导出的函数访问
+  const { getEntryCount } = await import("./filePathDb");
+  return { totalEntries: getEntryCount() };
 }

@@ -7,6 +7,7 @@ import { decryptAccounts, decryptSettings, encryptSettings } from "./passwordCry
 const accountFile = path.join(process.cwd(), "../config", "account.json");
 
 export function readAccounts() {
+  if (!fs.existsSync(accountFile)) return [];
   const accounts = JSON.parse(fs.readFileSync(accountFile, "utf-8"));
   return decryptAccounts(accounts);
 }
@@ -168,6 +169,7 @@ export function normalizeToStrm(path: string): string {
 
 // 监控路径映射
 export interface PathMapping {
+  account?: string;
   cloudPath: string;
   localPath: string;
 }
@@ -190,6 +192,8 @@ export interface LifeMonitorSettings {
   };
   strmPrefix?: string;
   enablePathEncoding?: boolean;
+  /** STRM 前缀是否在末尾拼账号名（与全局 enable302 语义一致；留空时 fallback 到全局 AppSettings.enable302） */
+  enable302?: boolean;
   /** 最小文件大小（字节），小于此值的文件跳过 STRM 生成。0 表示不过滤 */
   minFileSize?: number;
   /** 首次拉取模式：latest=从当前时间 / all=拉取全部历史 / last=从上次断点继续 */
@@ -204,7 +208,20 @@ export type AppSettings = {
   internalToken?: string;  // 内部 API 验证 token，首次启动时自动生成
   strmExtensions?: string[];  // strm文件扩展名配置
   downloadExtensions?: string[];  // 需要下载的文件扩展名配置
-  mediaMountPath?: string[];  // 媒体挂载路径
+  /**
+   * 媒体挂载路径列表（STRM 生成后 nginx 转发到本地的 URL 前缀集合）。
+   * 不建议手工修改，应由 SSOT 函数 syncMediaMountPaths() 基于以下数据源自动同步：
+   *   1) 全局 enable302 × 所有账号
+   *   2) 每个任务的自定义 strmPrefix / enable302
+   *   3) 生活事件监控 × 其账号集
+   * 每项格式：https?://host[:port][/account]，末尾不含斜杠。
+   */
+  mediaMountPath?: string[];
+  // 全局 STRM 生成设置
+  strmPrefix?: string;  // STRM 前缀（如 http://localhost:3000），不含账号名
+  enablePathEncoding?: boolean;  // 是否启用 URL 路径编码
+  enable302?: boolean;  // 是否在 strmPrefix 后自动拼接账号名（用于 Emby 302 重定向）
+  removeExtraFiles?: boolean;  // 是否自动删除远程已不存在的本地 STRM 文件
   download?: {
     linkMaxPerSecond?: number;
     linkMaxConcurrent?: number;
@@ -223,22 +240,85 @@ export type AppSettings = {
   lifeMonitor?: LifeMonitorSettings;
 } & Record<string, unknown>;
 
+/**
+ * 类型清洗：防御 settings.json 被手工改成非 string[] / 混入字符串等情况。
+ * 同时对 mediaMountPath 每项去空白 + 去尾斜杠，过滤掉非 http(s) 前缀。
+ */
+function sanitizeAppSettings(raw: unknown): AppSettings {
+  if (!raw || typeof raw !== "object") return {} as AppSettings;
+  const s = { ...(raw as Record<string, unknown>) };
+
+  const normalize = (p: string) => (p || "").trim().replace(/\/+$/, "");
+  const isValidHttp = (p: string) => /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(p);
+
+  if (!Array.isArray(s.mediaMountPath)) {
+    if (typeof s.mediaMountPath === "string" && s.mediaMountPath.length > 0) {
+      // 兼容：用户手工写成单字符串 → 按逗号/分号/空格拆分
+      s.mediaMountPath = String(s.mediaMountPath)
+        .split(/[,;\s]+/)
+        .map(normalize)
+        .filter(isValidHttp);
+    } else {
+      s.mediaMountPath = [];
+    }
+  } else {
+    s.mediaMountPath = (s.mediaMountPath as unknown[])
+      .map((x) => (typeof x === "string" ? normalize(x) : ""))
+      .filter(isValidHttp);
+  }
+
+  // 简单数组字段兜底（防御手工改成字符串）
+  for (const key of ["strmExtensions", "downloadExtensions"] as const) {
+    if (!Array.isArray(s[key])) {
+      if (typeof s[key] === "string" && s[key]!.length > 0) {
+        s[key] = String(s[key])
+          .split(/[,;\s]+/)
+          .filter(Boolean);
+      } else {
+        s[key] = undefined;
+      }
+    }
+  }
+
+  return s as AppSettings;
+}
+
 export function readSettings(): AppSettings {
   if (!fs.existsSync(settingsFile)) return {} as AppSettings;
   const raw = fs.readFileSync(settingsFile, "utf-8");
   try {
-    const settings = JSON.parse(raw || "{}");
-    return decryptSettings(settings) as AppSettings;
+    const parsed = JSON.parse(raw || "{}");
+    const decrypted = decryptSettings(parsed);
+    return sanitizeAppSettings(decrypted);
   } catch {
     return {} as AppSettings;
   }
 }
 
 export function writeSettings(next: AppSettings) {
-  // 写入前加密敏感字段（深拷贝避免修改入参）
-  const encrypted = encryptSettings(JSON.parse(JSON.stringify(next ?? {})));
+  // 写入前加密敏感字段（深拷贝避免修改入参）+ 类型清洗
+  const sanitized = sanitizeAppSettings(next ?? {});
+  const encrypted = encryptSettings(JSON.parse(JSON.stringify(sanitized)));
   const pretty = JSON.stringify(encrypted, null, 2);
   fs.writeFileSync(settingsFile, pretty, "utf-8");
+}
+
+// ==================== STRM Settings Resolution ====================
+// resolveStrmSettings / ResolvedStrmSettings 已移至 strmUtils.ts（避免客户端拉入 fs 依赖）
+export { resolveStrmSettings, type ResolvedStrmSettings } from "./strmUtils";
+
+/**
+ * 获取 STRM 扩展名列表（统一入口）
+ */
+export function getStrmExtensions(): string[] {
+  try {
+    const settings = readSettings();
+    return (settings.strmExtensions || []).map((e: string) =>
+      e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase()
+    );
+  } catch {
+    return [".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm"];
+  }
 }
 
 // 通知 Emby 刷新媒体库（如果在 settings.json 配置了 emby）
