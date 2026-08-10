@@ -170,7 +170,6 @@ export default function SettingsPage() {
   const [minFileSizeMb, setMinFileSizeMb] = useState(""); // MB 输入框显示用
   const [firstPullMode, setFirstPullMode] = useState<"latest" | "all" | "last">("latest");
   const [moveMediaMode, setMoveMediaMode] = useState<"recreate" | "local_move">("local_move");
-  const [lifeEnable302, setLifeEnable302] = useState<boolean | undefined>(undefined);
 
   // New path mapping input
   const [newCloudPath, setNewCloudPath] = useState("");
@@ -363,7 +362,6 @@ export default function SettingsPage() {
           minFileSize: minBytes,
           firstPullMode,
           moveMediaMode,
-          enable302: lifeEnable302,
         },
       };
 
@@ -1078,18 +1076,6 @@ export default function SettingsPage() {
                 />
                 <label htmlFor="remove-empty" className="text-sm cursor-pointer">
                   删除文件后自动清理空父目录
-                </label>
-              </div>
-
-              {/* 302 重定向 */}
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="life-enable-302"
-                  checked={!!lifeEnable302}
-                  onCheckedChange={(checked) => setLifeEnable302(checked === true)}
-                />
-                <label htmlFor="life-enable-302" className="text-sm cursor-pointer leading-tight">
-                  302 重定向<span className="text-xs text-muted-foreground">（覆盖全局设置，生成带 pickcode 的 STRM）</span>
                 </label>
               </div>
 
