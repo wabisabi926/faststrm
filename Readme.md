@@ -4,7 +4,7 @@
 
 # Fast Strm
 
-**🎉 更新通知（v0.3.5）**：项目从 v0.3.5 开始加入 115 生活事件轮询
+**🎉 更新通知（v0.5.0）**：filePathDb 迁移至 SQLite（better-sqlite3），新增统一文件操作工具层、mediaMountPath 全量同步、令牌桶限流，生活事件监控与 STRM 清理逻辑全面重构。
 
 > 推荐：如果使用 115 302 的话，建议将 115 账号命名和 OpenList 或 CD 内命名一致，这样可以保证找不到地址的时候可以正确回源。
 >
@@ -28,6 +28,8 @@
 - [Openlist](https://github.com/OpenListTeam/OpenList)  
 - [embyExternalUrl](https://github.com/bpking1/embyExternalUrl)  
 - [rclone](https://github.com/rclone/rclone)  
+- [MoviePilot-Plugins](https://github.com/DDSRem-Dev/MoviePilot-Plugins)  
+- [openStrm](https://github.com/indown/openStrm)  
 
 ## 🚀 特性
 
@@ -35,8 +37,14 @@
 - 支持批量生成 `.strm` 文件
 - 支持自定义前缀（方便配合媒体服务器使用）
 - 基于115目录树生成
-- 支持账号级限流和重试逻辑
-- 轻量，无额外依赖，易于二次开发
+- 支持 115 生活事件实时监控（增量同步 + 全量同步）
+- filePathDb 基于 SQLite 持久化，file_id 字符串绑定避免精度丢失
+- 支持账号级令牌桶限流和重试逻辑
+- 支持定时任务调度
+- 支持 STRM 清理与对账（扫描孤儿文件、自动恢复监控）
+- 支持 Telegram Bot 通知与交互
+- 登录密码 SHA-256 哈希存储，115 cookie / Emby API Key 等凭据 AES-256-GCM 加密
+- 轻量，易于二次开发
 
 ## 📦 安装 & 使用
 
@@ -45,7 +53,7 @@
 ```bash
 # 使用 Docker Compose
 git clone https://github.com/wabisabi926/faststrm.git
-cd Fast Strm
+cd faststrm
 docker-compose up -d
 ```
 
@@ -54,7 +62,7 @@ docker-compose up -d
 ```bash
 # 克隆项目
 git clone https://github.com/wabisabi926/faststrm.git
-cd Fast Strm
+cd faststrm
 
 # 安装依赖
 cd frontend
@@ -74,7 +82,7 @@ docker pull wabisabi926/faststrm:latest
 
 # 运行容器
 docker run -d \
-  --name Fast Strm \
+  --name faststrm \
   -p 3000:3000 \
   -p 8091:8091 \
   -v $(pwd)/data:/app/data \
@@ -101,6 +109,17 @@ docker-compose -f docker-compose.prod.yml up -d
 
 ## 🔧 配置说明
 
+容器启动后，配置文件位于 `./config/` 目录下，首次启动会从内置默认模板自动生成。
+
+### 配置文件结构
+
+| 文件 | 说明 |
+|------|------|
+| `config.json` | 登录凭据（`username` / `password`） |
+| `settings.json` | 应用配置（Emby、Telegram、扩展名、下载限流等） |
+| `account.json` | 115 / OpenList 账号信息（cookie 等敏感字段已加密） |
+| `tasks.json` | 同步任务定义 |
+
 ### 默认登录信息
 
 首次启动后，使用以下默认账号登录：
@@ -113,19 +132,29 @@ docker-compose -f docker-compose.prod.yml up -d
 ```
 
 ⚠️ **安全提示**: 请在生产环境中及时修改默认密码！  
-📝 **修改方法**: 编辑 `config/config.json` 文件中的 `username` 和 `password` 字段。
+📝 **修改方法**: 登录后在管理界面修改密码，或编辑 `config/config.json` 文件中的 `username` 和 `password` 字段（密码支持明文与 SHA-256 哈希两种格式，修改后重启生效）。
 
-### 数据目录
+### 应用配置项（settings.json）
 
-- `./data/`: 存储应用数据
-- `./config/`: 存储配置文件
+以下配置均可在管理界面「设置」页面修改，也可直接编辑 `config/settings.json`：
 
-**配置项说明**:
-- `user-agent`: 用于115 API请求的User-Agent字符串，可以根据需要修改
-- `strmExtensions`: 需要转换为.strm文件的扩展名数组，默认为[".mp4", ".mkv", ".avi", ".iso", ".mov", ".rmvb", ".webm", ".flv", ".m3u8", ".mp3", ".flac", ".ogg", ".m4a", ".wav", ".opus", ".wma"]，会自动转换为小写
-- `downloadExtensions`: 需要直接下载的文件扩展名数组，默认为[".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"]，会自动转换为小写
-- `emby.url`: Emby媒体服务器地址
-- `emby.apiKey`: Emby API密钥
+- `user-agent`: 用于 115 API 请求的 User-Agent 字符串
+- `strmExtensions`: 需要转换为 `.strm` 文件的扩展名数组，默认为 `[".mp4", ".mkv", ".avi", ".iso", ".mov", ".rmvb", ".webm", ".flv", ".m3u8", ".mp3", ".flac", ".ogg", ".m4a", ".wav", ".opus", ".wma"]`，会自动转换为小写
+- `downloadExtensions`: 需要直接下载的文件扩展名数组，默认为 `[".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"]`，会自动转换为小写
+- `strmPrefix`: STRM 前缀（如 `http://localhost:3000`），不含账号名
+- `enable302`: 是否在 strmPrefix 后自动拼接账号名（用于 Emby 302 重定向）
+- `enablePathEncoding`: 是否启用 URL 路径编码
+- `removeExtraFiles`: 是否自动删除远程已不存在的本地 STRM 文件
+- `emby.url`: Emby 媒体服务器地址
+- `emby.apiKey`: Emby API 密钥
+- `telegram.botToken`: Telegram Bot Token
+- `telegram.chatId`: Telegram 通知 Chat ID
+- `telegram.allowedUsers`: 允许交互的 Telegram 用户 ID 列表
+- `download.linkMaxPerSecond`: 每秒最大链接数
+- `download.linkMaxConcurrent`: 最大并发链接数
+- `download.downloadMaxConcurrent`: 最大并发下载数
+
+> `mediaMountPath` 由系统根据账号与任务配置自动同步（SSOT），不建议手动修改。
 
 ## 📄 许可证
 
