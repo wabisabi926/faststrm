@@ -26,8 +26,9 @@ jobs:
         VERSION="${GITHUB_REF_NAME#v}"
         echo "Tag: ${{ github.ref_name }} -> Version: $VERSION"
         cd frontend
-        npm version --no-git-tag-version "$VERSION"
+        node -e "const fs=require('fs'); const p='./package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.version='$VERSION'; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\n');"
         echo "Updated package.json version to $VERSION"
+        node -e "console.log('current version:', require('./package.json').version)"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
