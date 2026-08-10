@@ -4,10 +4,55 @@
 
 # Fast Strm
 
-**🎉 更新通知（v0.5.0）**：filePathDb 迁移至 SQLite（better-sqlite3），新增统一文件操作工具层、mediaMountPath 全量同步、令牌桶限流，生活事件监控与 STRM 清理逻辑全面重构。
+**🎉 更新通知（v0.6.0）**：新增 Emby Webhook 通知与 Emby 通知设置页面，Telegram 轮询控制全面中文汉化，通知 API 路由重构统一至 `/api/notify/*`，优化设置页面头部对齐、STRM 清理卡片布局、Sidebar 切换按钮居中对齐，版本号正式升级为 v0.6.0。
+
+**📌 上一版本（v0.5.0）**：filePathDb 迁移至 SQLite（better-sqlite3），新增统一文件操作工具层、mediaMountPath 全量同步、令牌桶限流，生活事件监控与 STRM 清理逻辑全面重构。
 
 > 推荐：如果使用 115 302 的话，建议将 115 账号命名和 OpenList 或 CD 内命名一致，这样可以保证找不到地址的时候可以正确回源。
->
+
+---
+
+## 📝 版本更新日志
+
+### v0.6.0
+
+- **Emby 通知接入**
+  - 新增 `/api/emby/webhook` 接口，可接收 Emby 播放/停止/测试等事件并转发至 Telegram
+  - 新增「Emby 通知」页面，引导用户配置 Webhook URL 及事件选择（播放、停止、播放进度、用户操作等）
+  - 新增 `src/lib/emby/` 模块：`client`（系统/会话查询）、`notifier`（播放状态/测试事件格式化）、`types`（事件类型）
+
+- **TG 通知页面全中文**
+  - 轮询状态「Polling is active / not active」→「轮询中 / 轮询未启动」
+  - 启动轮询、停止轮询、刷新状态等 API 响应消息全部汉化
+  - 强制清理失败等错误消息改为中文提示
+
+- **路由与页面重构**
+  - 原 `/api/telegram/*` 全部重命名迁移至 `/api/notify/*`（`bot` / `polling` / `send` / `users` / `webhook`）
+  - 原 `/telegram` 页面迁移至 `/notify` 主页面 + `/notify/users` 用户管理页
+  - 新增 `/tg-notify` 独立的 TG 通知配置页
+
+- **UI / 布局优化**
+  - 顶部导航栏：将 SidebarTrigger 移入 header 内部，与分享链接输入框、GitHub/设置图标在同一行自动垂直居中对齐
+  - STRM 清理卡片：标题与描述间距加大，描述文字下移，两个操作按钮（扫描路径映射、全量对账）与左侧文字块垂直居中
+  - 清理卡片状态提示、按钮加载文案统一为中文
+  - 分享详情对话框、任务对话框等细节中文微调
+
+- **安全性与忽略配置**
+  - `.gitignore` 新增 `.config/` 目录（原项目配置存储路径），避免本地账号/任务 JSON 被误提交
+  - 保留 `config/`、`logs/`、`data/` 等运行时目录忽略规则
+
+- **版本一致性**
+  - 左下角版本号由 `package.json` 统一驱动，升级为 `v0.6.0`
+  - GitHub Release workflow 版本写入从 `npm version` 改为直接 JSON 写回，避免「Version not changed」导致构建失败
+
+### v0.5.0
+
+- filePathDb 迁移至 SQLite（better-sqlite3）
+- 新增统一文件操作工具层
+- 新增 mediaMountPath 全量同步
+- 新增账号级令牌桶限流与重试逻辑
+- 生活事件监控与 STRM 清理逻辑全面重构
+
 > **前置配置**：
 > 1. 请在项目内配置好 Emby 的地址以及 API Key
 > 2. 新建同步任务时开启 302 开关
