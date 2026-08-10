@@ -45,6 +45,14 @@
   - 左下角版本号由 `package.json` 统一驱动，升级为 `v0.6.0`
   - GitHub Release workflow 版本写入从 `npm version` 改为直接 JSON 写回，避免「Version not changed」导致构建失败
 
+- **STRM 路由策略（方案 B）**
+  - `/api/strm?account=...&pickcode=...` 不再是「强制代理」或「强制 302」二选一，而是**规则引擎自动决策 + 预检降级**
+  - 规则优先级：① 手动 `?mode=` > ② Infuse/VidHub/SenPlayer 等 seek 坑客户端（强制代理） > ③ 局域网访问（强制代理，稳定优先） > ④ 文件名命中 ≥20GB 大文件标识（`*.20GB.* / *.45.3G.* / *.12000MB.*`，优先 302 省服务器上行） > ⑤ 其他默认代理（开箱即用不出错）
+  - 302 之前后端先做 `redirectCheck`：后端自己 HEAD 一次 115 CDN 直链（带正确 UA/Cookie/Referer/Origin，5s 超时），返回 2xx/3xx 才真正 302 给客户端；否则**静默降级为代理**（用户无感，不会看到「无法访问此页面」）
+  - 两层 LRU 缓存：URL 解析 512 条 / 5min，HEAD 可达性 256 条 / 4min，避免重复请求 115 接口
+  - 统一日志格式 `[STRM] pickcode=xxxx…xxx decision=proxy|redirect reason=<规则命中原因> redirect_check=200|403|skipped elapsed=xxxms`，方便排障
+  - 调试参数：追加 `?mode=proxy` 或 `?mode=redirect` 可手动强制模式，绕过规则引擎
+
 ### v0.5.0
 
 - filePathDb 迁移至 SQLite（better-sqlite3）
@@ -200,6 +208,52 @@ docker-compose -f docker-compose.prod.yml up -d
 - `download.downloadMaxConcurrent`: 最大并发下载数
 
 > `mediaMountPath` 由系统根据账号与任务配置自动同步（SSOT），不建议手动修改。
+
+## ⚡ STRM 路由策略（方案 B，默认启用）
+
+**核心思路**：不在「纯 302」和「纯代理」二选一，而是按**客户端 / 网络 / 文件大小**自动选择，302 走不通就**静默降级代理**，保证「浏览器直接打开 STRM 不报错 & 大文件不吃服务器上行」。
+
+接口路径：`/api/strm?account=<账号名>&pickcode=<17位pickcode>&file_name=<可选文件名>`
+
+### 规则优先级（从高到低，命中即停）
+
+| # | 条件 | 决策 | 说明 |
+|---|------|------|------|
+| ① | 手动指定 `?mode=proxy` 或 `?mode=redirect` | 按参数执行 | 调试用，优先级最高 |
+| ② | UA 命中 `Infuse / VidHub / SenPlayer` 等 seek 坑客户端 | **强制代理** | 这些客户端 302 + Range 配合会出现拖动进度条失败 |
+| ③ | 客户端 IP 属于局域网（`192.168.*` / `10.*` / `172.16-31.*` / 回环） | **强制代理** | 家里上行够用，稳定性优先，不冒险走 115 防盗链 |
+| ④ | `file_name` 命中 ≥20GB 大小标记（如 `.20GB.` `.45.3G.` `.12000MB.`） | **redirect + 预检** | 大文件优先省服务器上行，预检失败再回退 |
+| ⑤ | 其他所有情况 | **默认代理** | 浏览器直接打开 / 未知客户端，保证开箱即用 |
+
+### 302 预检（redirectCheck）
+
+当决策命中 redirect 时，后端不会直接把 115 cdnfhnfile URL 甩给客户端，而是先自己做一次**本地 HEAD 校验**：
+
+1. 以**申请该 URL 时相同的 UA + Cookie + Referer=https://115.com/ + Origin=https://115.com** 发起 `HEAD <cdnUrl>`
+2. 超时 5 秒；HTTP 2xx/3xx（在 `redirect: follow` 下会落到最终 200）视为**可达**
+3. 可达 → 才真正返回 `302 Location: <cdnUrl>` 给客户端
+4. 不可达（403 / 超时 / 网络错误）→ **静默降级到代理模式**，追加日志 reason `... -> redirect_check_failed(<status>) fallback_proxy`
+
+> 这一步解决了「浏览器直接打开 115 CDN 链接被防盗链拦 → 无法访问此页面」的根因：当 115 临时改签名或 token 过期时，用户看到的依然是成功播放，只是流量从服务器中转一次。
+
+### 缓存策略（内存 LRU，无外部依赖）
+
+| 缓存 | 容量 | TTL | 用途 |
+|------|------|-----|------|
+| URL 解析 | 512 条 | 5 分钟 | 缓存 `getDownloadUrlWeb()`（115 android/ufile/download）结果，避免重复申请 |
+| HEAD 可达性 | 256 条 | 4 分钟 | 缓存 `redirectCheck` 成功结果，失败不缓存，下次立即重试 |
+| LRU 规则 | get 命中重排 | 超容量删最老条目 | 防止长时间运行内存膨胀 |
+
+### 排障日志格式
+
+```
+[STRM] pickcode=cscm…mhv decision=proxy  reason=private_network_prefers_proxy           redirect_check=skipped elapsed=112ms
+[STRM] pickcode=abcd…xyz decision=redirect reason=large_file_ge_20GB(25GB)               redirect_check=200     elapsed=214ms
+[STRM] pickcode=wxyz…999 decision=proxy  reason=large_file_ge_20GB(22GB) -> redirect_check_failed(403) fallback_proxy  redirect_check=403 elapsed=780ms
+[STRM] pickcode=xxxx…xxx decision=proxy  reason=force_proxy_ua:Infuse                    redirect_check=skipped elapsed=97ms
+```
+
+对应代码见：[`frontend/src/app/api/strm/route.ts`](file:///d:/Downloads/ai/faststrm/frontend/src/app/api/strm/route.ts)
 
 ## 📄 许可证
 
