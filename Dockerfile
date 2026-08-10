@@ -8,6 +8,9 @@
 FROM node:22-alpine AS builder
 WORKDIR /app/frontend
 
+# 安装原生模块编译依赖 (better-sqlite3 需要 python3/make/g++)
+RUN apk add --no-cache python3 make g++
+
 # 安装构建依赖
 COPY frontend/package*.json ./
 COPY frontend/yarn.lock ./
