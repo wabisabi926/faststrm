@@ -64,18 +64,21 @@ export default function TelegramNotifyPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<number | null>(null);
 
-  // 加载数据
+  // 页面挂载时仅一次加载 Bot 配置 + 轮询状态（静默回填，不影响 UI 响应）
   useEffect(() => {
-    loadBotInfo();
-    checkPollingStatus();
+    void loadBotInfo();
+    void checkPollingStatus();
+  }, []);
+
+  // 切换到用户管理 Tab 时加载用户列表
+  useEffect(() => {
     if (activeTab === "users") {
-      loadUsers();
+      void loadUsers();
     }
   }, [activeTab]);
 
   const loadBotInfo = async () => {
     try {
-      setLoading(true);
       const response = await axiosInstance.get("/api/notify/bot");
       if (response.data.configured) {
         setBotInfo(response.data.bot.result);
@@ -89,8 +92,6 @@ export default function TelegramNotifyPage() {
       }
     } catch (error) {
       console.error("加载 Bot 信息失败:", error);
-    } finally {
-      setLoading(false);
     }
   };
 
