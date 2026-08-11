@@ -18,11 +18,12 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.8.0 已发布**
+> **🎉 v0.8.1 已发布**
 >
-> - ✅ **全量扫描与增量监控融合修复（P0/P1）**：监控暂停时序窗口、removeExtraFiles 安全阈值、localPath 路径解析统一、recreate 模式 DB 顺序、clearScanState finally 兜底、删除事件日志去重
-> - ✅ **低风险问题修复（P2）**：runScan 监控恢复、Emby 刷新补全、fileId 负值标记、全量扫描写回 DB、deleteStrmDir 空目录清理
-> - ✅ **任务日志查询修复**：已执行未运行的任务也能查看历史日志
+> - ✅ **Emby 通知修复**：设置无法保存和测试连接失败，新增局部更新接口和 9 种错误分类
+> - ✅ **TG 通知优化**：回填毫秒级、隐藏空卡片、明确轮询 vs Webhook 推荐方案
+> - ✅ **路径映射增强**：本地/云盘目录选择器、账号下拉选择
+> - ✅ **文档重构**：精简 Readme，详细内容迁移至 GitHub Wiki
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---

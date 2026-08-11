@@ -18,3 +18,9 @@ strm-test/
 **/_*probe*.js
 **/_dbprobe*.js
 **/_rawprobe*.js
+
+# Smoke test scripts (local testing)
+**/__smoke_*.mjs
+
+# Generated Wiki HTML export
+wiki_drafts/*.html

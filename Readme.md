@@ -4,311 +4,67 @@
 
 # Fast Strm
 
-**🎉 FastStrm 是开源 STRM 生成工具，基于 openStrm、MoviePilot‑Plugins 魔改开发。新增 115 生活事件轮询能力，实时监听网盘文件新增、删除变动，自动同步生成 / 清理 STRM 文件，适配 Emby、Jellyfin、Kodi，支持通知推送，可 Docker 快速部署，实现网盘资源和本地媒体库实时联动。
-
-> 推荐：如果使用 115 302 的话，建议将 115 账号命名和 OpenList 或 CD 内命名一致，这样可以保证找不到地址的时候可以正确回源。
+**🎉 FastStrm 是开源 STRM 生成工具，基于 openStrm、MoviePilot‑Plugins 魔改开发。新增 115 生活事件轮询能力，实时监听网盘文件新增、删除变动，自动同步生成 / 清理 STRM 文件，适配 Emby、Jellyfin、Kodi，支持通知推送，可 Docker 快速部署，实现网盘资源和本地媒体库实时联动。**
 
 ---
-## 🚀 特性
 
-- 开源自由
-- 支持批量生成 `.strm` 文件
-- 支持自定义前缀（方便配合媒体服务器使用）
-- 基于115目录树生成
-- 支持 115 生活事件实时监控（增量同步 + 全量同步）
-- **STRM 智能路由**：默认 302 直连 115 CDN，Infuse/VidHub/SenPlayer 自动强制代理，115 单账号并发限流，HEAD 预检降级
-- **Emby 删除同步**：监听 Emby `library.deleted` 事件自动清理 STRM + 关联文件，三道防误删保护
-- filePathDb 基于 SQLite 持久化，file_id 字符串绑定避免精度丢失
-- 支持账号级令牌桶限流和重试逻辑
-- 支持定时任务调度
-- 支持 STRM 清理与三方对账（扫描孤儿文件、自动恢复监控）
+## 🚀 核心特性
+
+- 开源自由，支持批量生成 `.strm` 文件
+- 基于 115 目录树生成，支持自定义前缀配合媒体服务器使用
+- 115 生活事件实时监控（增量同步 + 全量同步）
+- **STRM 智能路由**：302 直连优先 + 静默降级代理，Infuse/VidHub/SenPlayer 自动强制代理
+- **Emby 删除同步**：监听 `library.deleted` 事件自动清理 STRM，三道防误删保护
 - 支持 Telegram Bot 通知与交互
-- 登录密码 SHA-256 哈希存储，115 cookie / Emby API Key 等凭据 AES-256-GCM 加密
 - 轻量，易于二次开发
 
-## 📝 版本更新日志
-
-### v0.8.0
-
-- **全量扫描与增量监控融合修复（P0/P1）**
-  - `suspendMonitorForFullScan` 提前到 `tryEnterFullScan` 之后，消除监控与 `removeExtraFiles` 的竞态窗口
-  - `removeExtraFiles` 增加三层安全阈值（空数据 / 绝对数 >100 / 比例 >10% 跳过），防止 API 异常时误删
-  - `localPath` 统一 `path.resolve` 解析，移除 `../data/` 硬编码
-  - recreate 模式 DB 路径前缀更新移到创建成功之后，避免失败时 DB 与文件系统不一致
-  - `clearScanState` 移入 `finally` 块，避免扫描中断后状态残留
-  - 删除事件去重日志，避免 `appendLifeEventLog` 重复记录
-
-- **低风险问题修复（P2）**
-  - `runScan` finally 块补 `clearMonitorSuspend`，避免扫描异常时监控永久挂起
-  - `executeTask` 无下载但清理了多余文件时也刷新 Emby
-  - `buildFilePathEntriesFromTree` 用负值标记 `fileId`，避免与真实 115 file_id 冲突
-  - `taskExecutor` 全量扫描后写回 `filePathDb`，确保 302 模式反查 pickcode
-  - `deleteStrmDir` 新增 `rootDirs` 选项，删除后自动清理空父目录
-
-- **任务日志查询修复**
-  - `/api/taskLog/[taskId]` 增加历史记录回退查找，已执行但未运行的任务也能查看日志
-  - 前端 `goToLog` 支持 `executionId` 参数跳转历史模式
-
-### v0.7.0
-
-- **STRM 路由策略优化**
-  - 默认策略从「代理优先」改为「302 优先」：faststrm 与 Emby Server 同机部署时避免双重中转（115 → faststrm → Emby → 客户端），让 Emby/Kodi/浏览器直连 115 CDN，部署设备零中转
-  - 仅对 Infuse/VidHub/SenPlayer 等 seek 兼容性差的客户端强制代理（参考 emby2Alist 的 clientSelfAlistRule）
-  - 新增 115 单账号并发代理限流（阈值 8，留 2 个余量给其他客户端），超限自动切 302，避免触发 115 约 10 进程上限
-  - 新增真实文件大小识别：调用 115 download API 解析 `file_size` 字段，替代不可靠的文件名估算
-  - 移除局域网强制代理与大文件阈值规则（默认 302 后无需区分）
-  - `urlCache` key 去掉 UA 维度（115 直链解析不依赖 UA），提升缓存命中率
-  - `hopByHop` 头列表提为模块顶层常量，避免每次请求重建
-  - 错误日志补 account 上下文，便于多账号排障
-  - `?mode=redirect|proxy` 调试参数仅私网生效，防止公网绕过 force-proxy UA 保护
-
-- **Emby 删除同步（移植自 samediasyncdel）**
-  - 监听 Emby `library.deleted` 事件，自动删除本地 STRM + 关联字幕/nfo/图片 + 清理空目录 + 更新 filePathDb
-  - 路径映射：Emby 路径 → 115 网盘路径（路径段感知，非 str.replace）
-  - 三道防误删保护：① STRM 不存在则跳过 ② Movie/Episode 标题校验 ③ 整季/整剧目录文件数 ≤100 才删
-  - 去重机制：60 秒窗口防止生活监控与 Emby webhook 重复处理同一路径
-  - Dry-run 模式：首次配置时只记日志不删除，验证路径映射正确性
-  - 白名单：只有配置的 Emby 路径前缀才被处理，缩小爆炸半径
-  - 回收站：STRM 文件和目录都走 7 天回收站（strmFileOps 已有机制）
-  - 删除历史持久化：`data/syncDelHistory.json`，最多保留 200 条
-  - TG 通知：删除时发送通知（可选，替代原有删除通知）
-  - 新增 `emby-notify` 页面"删除同步"配置卡片：启用开关、Dry-run 开关、通知开关、路径映射编辑器
-  - filePathDb 新增 `deleteByPath` 和 `deleteByPathPrefix` 接口
-
-### v0.6.0
-
-- **Emby 通知接入**
-  - 新增 `/api/emby/webhook` 接口，可接收 Emby 播放/停止/测试等事件并转发至 Telegram
-  - 新增「Emby 通知」页面，引导用户配置 Webhook URL 及事件选择（播放、停止、播放进度、用户操作等）
-  - 新增 `src/lib/emby/` 模块：`client`（系统/会话查询）、`notifier`（播放状态/测试事件格式化）、`types`（事件类型）
-
-- **TG 通知页面全中文**
-  - 轮询状态「Polling is active / not active」→「轮询中 / 轮询未启动」
-  - 启动轮询、停止轮询、刷新状态等 API 响应消息全部汉化
-  - 强制清理失败等错误消息改为中文提示
-
-- **路由与页面重构**
-  - 原 `/api/telegram/*` 全部重命名迁移至 `/api/notify/*`（`bot` / `polling` / `send` / `users` / `webhook`）
-  - 原 `/telegram` 页面迁移至 `/notify` 主页面 + `/notify/users` 用户管理页
-  - 新增 `/tg-notify` 独立的 TG 通知配置页
-
-- **UI / 布局优化**
-  - 顶部导航栏：将 SidebarTrigger 移入 header 内部，与分享链接输入框、GitHub/设置图标在同一行自动垂直居中对齐
-  - STRM 清理卡片：标题与描述间距加大，描述文字下移，两个操作按钮（扫描路径映射、全量对账）与左侧文字块垂直居中
-  - 清理卡片状态提示、按钮加载文案统一为中文
-  - 分享详情对话框、任务对话框等细节中文微调
-
-- **安全性与忽略配置**
-  - `.gitignore` 新增 `.config/` 目录（原项目配置存储路径），避免本地账号/任务 JSON 被误提交
-  - 保留 `config/`、`logs/`、`data/` 等运行时目录忽略规则
-
-- **版本一致性**
-  - 左下角版本号由 `package.json` 统一驱动，升级为 `v0.6.0`
-  - GitHub Release workflow 版本写入从 `npm version` 改为直接 JSON 写回，避免「Version not changed」导致构建失败
-
-- **STRM 路由策略（方案 B）**
-  - `/api/strm?account=...&pickcode=...` 不再是「强制代理」或「强制 302」二选一，而是**规则引擎自动决策 + 预检降级**
-  - 规则优先级：① 手动 `?mode=` > ② Infuse/VidHub/SenPlayer 等 seek 坑客户端（强制代理） > ③ 局域网访问（强制代理，稳定优先） > ④ 文件名命中 ≥20GB 大文件标识（`*.20GB.* / *.45.3G.* / *.12000MB.*`，优先 302 省服务器上行） > ⑤ 其他默认代理（开箱即用不出错）
-  - 302 之前后端先做 `redirectCheck`：后端自己 HEAD 一次 115 CDN 直链（带正确 UA/Cookie/Referer/Origin，5s 超时），返回 2xx/3xx 才真正 302 给客户端；否则**静默降级为代理**（用户无感，不会看到「无法访问此页面」）
-  - 两层 LRU 缓存：URL 解析 512 条 / 5min，HEAD 可达性 256 条 / 4min，避免重复请求 115 接口
-  - 统一日志格式 `[STRM] pickcode=xxxx…xxx decision=proxy|redirect reason=<规则命中原因> redirect_check=200|403|skipped elapsed=xxxms`，方便排障
-  - 调试参数：追加 `?mode=proxy` 或 `?mode=redirect` 可手动强制模式，绕过规则引擎
-
-### v0.5.0
-
-- filePathDb 迁移至 SQLite（better-sqlite3）
-- 新增统一文件操作工具层
-- 新增 mediaMountPath 全量同步
-- 新增账号级令牌桶限流与重试逻辑
-- 生活事件监控与 STRM 清理逻辑全面重构
-
-> **前置配置**：
-> 1. 请在项目内配置好 Emby 的地址以及 API Key
-> 2. 新建同步任务时开启 302 开关
-
----
-
-一个开源的 **Strm 生成工具**。基于 open strm + MoviePilot-Plugins 项目魔改，加入 115 生活事件轮询。感谢原作者。
-
-## ✨ 为什么做这个软件
-
-希望此项目能帮助大家更简单创建的自己strm库。  
-
-该项目的目标是：**开放、简洁、可改造**。  
-
-本项目参考或依赖以下项目： 
-- [p115client](https://github.com/ChenyangGao/p115client/)
-- [Alist](https://github.com/alist-org/alist)  
-- [Openlist](https://github.com/OpenListTeam/OpenList)  
-- [embyExternalUrl](https://github.com/bpking1/embyExternalUrl)  
-- [rclone](https://github.com/rclone/rclone)  
-- [MoviePilot-Plugins](https://github.com/DDSRem-Dev/MoviePilot-Plugins)  
-- [openStrm](https://github.com/indown/openStrm)  
-
-
-## 📦 安装 & 使用
-
-### 使用 Docker (推荐)
+## 📦 快速开始
 
 ```bash
-# 使用 Docker Compose
+# 克隆并启动
 git clone https://github.com/wabisabi926/faststrm.git
 cd faststrm
 docker-compose up -d
-```
 
-### 手动构建
-
-```bash
-# 克隆项目
-git clone https://github.com/wabisabi926/faststrm.git
-cd faststrm
-
-# 安装依赖
-cd frontend
-npm install
-
-# 启动服务
-npm run dev
-```
-
-### Docker 镜像
-
-项目支持多架构构建 (linux/amd64, linux/arm64)：
-
-```bash
-# 拉取最新镜像
+# 或使用 Docker 镜像
 docker pull wabisabi926/faststrm:latest
-
-# 运行容器
-docker run -d \
-  --name faststrm \
-  -p 3000:3000 \
-  -p 8091:8091 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/config:/app/config \
-  -v $(pwd)/emby2Alist/nginx/log:/var/log/nginx \
-  wabisabi926/faststrm:latest
+docker run -d -p 3000:3000 -v ./data:/app/data wabisabi926/faststrm:latest
 ```
 
-**端口说明**：
-- `3000`: 前端管理界面
-- `8091`: Emby 302 代理端口（Emby 客户端使用此端口连接）
+启动后访问 `http://localhost:3000`，默认账号密码：**admin / admin**
 
-**目录挂载说明**：
-- `./data`: 存储应用数据
-- `./config`: 存储配置文件
-- `./emby2Alist/nginx/log`: Nginx 日志目录
+> ⚠️ 首次登录请立即修改默认密码！
 
-### 生产环境部署
+---
 
-```bash
-# 使用生产环境配置
-docker-compose -f docker-compose.prod.yml up -d
-```
+## 🔗 详细文档
 
-## 🔧 配置说明
+> **完整配置说明、功能详解、路由策略、排错指南请查看 [GitHub Wiki](https://github.com/wabisabi926/faststrm/wiki)**
 
-容器启动后，配置文件位于 `./config/` 目录下，首次启动会从内置默认模板自动生成。
-
-### 配置文件结构
-
-| 文件 | 说明 |
+| 主题 | 说明 |
 |------|------|
-| `config.json` | 登录凭据（`username` / `password`） |
-| `settings.json` | 应用配置（Emby、Telegram、扩展名、下载限流等） |
-| `account.json` | 115 / OpenList 账号信息（cookie 等敏感字段已加密） |
-| `tasks.json` | 同步任务定义 |
+| [🚀 快速开始](https://github.com/wabisabi926/faststrm/wiki/快速开始) | 首次使用全流程 |
+| [⚙️ 配置说明](https://github.com/wabisabi926/faststrm/wiki/配置说明) | settings.json 全字段参考 |
+| [🔀 STRM 路由策略](https://github.com/wabisabi926/faststrm/wiki/STRM-路由策略) | 302 vs 代理决策逻辑 |
+| [🗑️ 删除同步](https://github.com/wabisabi926/faststrm/wiki/删除同步) | Emby 删除事件自动清理 |
+| [📝 版本日志](https://github.com/wabisabi926/faststrm/wiki/版本更新日志) | 历史版本更新记录 |
 
-### 默认登录信息
+---
 
-首次启动后，使用以下默认账号登录：
+## 📝 最新版本 (v0.8.1)
 
-```json
-{
-    "username": "admin",
-    "password": "admin"
-}
-```
+- **Emby 通知修复**：修复设置无法保存和测试连接失败，新增局部更新接口和 9 种错误分类
+- **TG 通知优化**：回填从秒级到毫秒级，隐藏空卡片，明确轮询 vs Webhook 推荐方案
+- **路径映射增强**：Emby 路径增加本地选择器，115 网盘路径增加云盘目录选择器，账号改为下拉
+- **文档重构**：精简 Readme，详细内容迁移至 GitHub Wiki（16 个页面）
 
-⚠️ **安全提示**: 请在生产环境中及时修改默认密码！  
-📝 **修改方法**: 登录后在管理界面修改密码，或编辑 `config/config.json` 文件中的 `username` 和 `password` 字段（密码支持明文与 SHA-256 哈希两种格式，修改后重启生效）。
+查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
-### 应用配置项（settings.json）
-
-以下配置均可在管理界面「设置」页面修改，也可直接编辑 `config/settings.json`：
-
-- `user-agent`: 用于 115 API 请求的 User-Agent 字符串
-- `strmExtensions`: 需要转换为 `.strm` 文件的扩展名数组，默认为 `[".mp4", ".mkv", ".avi", ".iso", ".mov", ".rmvb", ".webm", ".flv", ".m3u8", ".mp3", ".flac", ".ogg", ".m4a", ".wav", ".opus", ".wma"]`，会自动转换为小写
-- `downloadExtensions`: 需要直接下载的文件扩展名数组，默认为 `[".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"]`，会自动转换为小写
-- `strmPrefix`: STRM 前缀（如 `http://localhost:3000`），不含账号名
-- `enable302`: 是否在 strmPrefix 后自动拼接账号名（用于 Emby 302 重定向）
-- `enablePathEncoding`: 是否启用 URL 路径编码
-- `removeExtraFiles`: 是否自动删除远程已不存在的本地 STRM 文件
-- `emby.url`: Emby 媒体服务器地址
-- `emby.apiKey`: Emby API 密钥
-- `telegram.botToken`: Telegram Bot Token
-- `telegram.chatId`: Telegram 通知 Chat ID
-- `telegram.allowedUsers`: 允许交互的 Telegram 用户 ID 列表
-- `download.linkMaxPerSecond`: 每秒最大链接数
-- `download.linkMaxConcurrent`: 最大并发链接数
-- `download.downloadMaxConcurrent`: 最大并发下载数
-
-> `mediaMountPath` 由系统根据账号与任务配置自动同步（SSOT），不建议手动修改。
-
-## ⚡ STRM 路由策略（方案 B，默认启用）
-
-**核心思路**：不在「纯 302」和「纯代理」二选一，而是按**客户端 / 网络 / 文件大小**自动选择，302 走不通就**静默降级代理**，保证「浏览器直接打开 STRM 不报错 & 大文件不吃服务器上行」。
-
-接口路径：`/api/strm?account=<账号名>&pickcode=<17位pickcode>&file_name=<可选文件名>`
-
-### 规则优先级（从高到低，命中即停）
-
-| # | 条件 | 决策 | 说明 |
-|---|------|------|------|
-| ① | 手动指定 `?mode=proxy` 或 `?mode=redirect` | 按参数执行 | 调试用，优先级最高 |
-| ② | UA 命中 `Infuse / VidHub / SenPlayer` 等 seek 坑客户端 | **强制代理** | 这些客户端 302 + Range 配合会出现拖动进度条失败 |
-| ③ | 客户端 IP 属于局域网（`192.168.*` / `10.*` / `172.16-31.*` / 回环） | **强制代理** | 家里上行够用，稳定性优先，不冒险走 115 防盗链 |
-| ④ | `file_name` 命中 ≥20GB 大小标记（如 `.20GB.` `.45.3G.` `.12000MB.`） | **redirect + 预检** | 大文件优先省服务器上行，预检失败再回退 |
-| ⑤ | 其他所有情况 | **默认代理** | 浏览器直接打开 / 未知客户端，保证开箱即用 |
-
-### 302 预检（redirectCheck）
-
-当决策命中 redirect 时，后端不会直接把 115 cdnfhnfile URL 甩给客户端，而是先自己做一次**本地 HEAD 校验**：
-
-1. 以**申请该 URL 时相同的 UA + Cookie + Referer=https://115.com/ + Origin=https://115.com** 发起 `HEAD <cdnUrl>`
-2. 超时 5 秒；HTTP 2xx/3xx（在 `redirect: follow` 下会落到最终 200）视为**可达**
-3. 可达 → 才真正返回 `302 Location: <cdnUrl>` 给客户端
-4. 不可达（403 / 超时 / 网络错误）→ **静默降级到代理模式**，追加日志 reason `... -> redirect_check_failed(<status>) fallback_proxy`
-
-> 这一步解决了「浏览器直接打开 115 CDN 链接被防盗链拦 → 无法访问此页面」的根因：当 115 临时改签名或 token 过期时，用户看到的依然是成功播放，只是流量从服务器中转一次。
-
-### 缓存策略（内存 LRU，无外部依赖）
-
-| 缓存 | 容量 | TTL | 用途 |
-|------|------|-----|------|
-| URL 解析 | 512 条 | 5 分钟 | 缓存 `getDownloadUrlWeb()`（115 android/ufile/download）结果，避免重复申请 |
-| HEAD 可达性 | 256 条 | 4 分钟 | 缓存 `redirectCheck` 成功结果，失败不缓存，下次立即重试 |
-| LRU 规则 | get 命中重排 | 超容量删最老条目 | 防止长时间运行内存膨胀 |
-
-### 排障日志格式
-
-```
-[STRM] pickcode=cscm…mhv decision=proxy  reason=private_network_prefers_proxy           redirect_check=skipped elapsed=112ms
-[STRM] pickcode=abcd…xyz decision=redirect reason=large_file_ge_20GB(25GB)               redirect_check=200     elapsed=214ms
-[STRM] pickcode=wxyz…999 decision=proxy  reason=large_file_ge_20GB(22GB) -> redirect_check_failed(403) fallback_proxy  redirect_check=403 elapsed=780ms
-[STRM] pickcode=xxxx…xxx decision=proxy  reason=force_proxy_ua:Infuse                    redirect_check=skipped elapsed=97ms
-```
-
-对应代码见：[`frontend/src/app/api/strm/route.ts`](file:///d:/Downloads/ai/faststrm/frontend/src/app/api/strm/route.ts)
+---
 
 ## 📄 许可证
 
 本项目采用 [MIT License](LICENSE) 许可证。
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request 来改进这个项目。
 
 ## ⚠️ 免责声明
 
