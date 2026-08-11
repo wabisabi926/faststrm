@@ -15,62 +15,6 @@
 import * as fs from "fs";
 import * as path from "path";
 
-// ==================== 回收站支持 ====================
-
-const TRASH_DIR = path.join(process.cwd(), "../data/.trash");
-const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 天保留
-
-function ensureTrashDir(): string {
-  if (!fs.existsSync(TRASH_DIR)) {
-    fs.mkdirSync(TRASH_DIR, { recursive: true });
-  }
-  // 清理超过保留期的文件（懒清理，每次调用最多清理 20 个避免卡顿）
-  try {
-    const now = Date.now();
-    const entries = fs.readdirSync(TRASH_DIR, { withFileTypes: true });
-    let cleaned = 0;
-    for (const entry of entries) {
-      if (entry.isFile()) {
-        const p = path.join(TRASH_DIR, entry.name);
-        try {
-          const stat = fs.statSync(p);
-          if (now - stat.mtimeMs > TRASH_RETENTION_MS) {
-            fs.unlinkSync(p);
-            cleaned++;
-            if (cleaned >= 20) break;
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-  return TRASH_DIR;
-}
-
-/**
- * 将文件移动到回收站（保留目录结构和文件名），返回回收站中的新路径；若移动失败则 fallback 到永久删除。
- */
-function moveToTrash(filePath: string, tag: string): string | null {
-  try {
-    const trashDir = ensureTrashDir();
-    // 生成唯一回收站文件名：时间戳_原路径hash_文件名
-    const timestamp = Date.now();
-    const pathHash = Buffer.from(filePath).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
-    const trashName = `${timestamp}_${pathHash}_${path.basename(filePath)}`;
-    const trashPath = path.join(trashDir, trashName);
-    fs.renameSync(filePath, trashPath);
-    console.log(`[${tag}] 已移入回收站: ${filePath} -> ${trashPath}`);
-    return trashPath;
-  } catch (e) {
-    console.warn(`[${tag}] 移入回收站失败，降级为永久删除: ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
-    try {
-      fs.unlinkSync(filePath);
-      return null;
-    } catch {
-      return null;
-    }
-  }
-}
-
 // ==================== 类型 ====================
 
 export interface RemoveEmptyParentsOptions {
@@ -87,8 +31,6 @@ export interface DeleteStrmFileOptions {
   cleanRelated?: boolean;
   /** 调用方标签 */
   tag?: string;
-  /** 是否启用回收站（默认 true） */
-  enableTrash?: boolean;
 }
 
 export interface SyncStrmTextResult {
@@ -150,27 +92,17 @@ export function removeEmptyParents(
 export function deleteStrmFile(
   strmPath: string,
   opts?: DeleteStrmFileOptions
-): { deleted: boolean; removedDirs: string[]; relatedDeleted: string[]; trashPath?: string } {
+): { deleted: boolean; removedDirs: string[]; relatedDeleted: string[] } {
   const tag = opts?.tag || "strmFileOps";
-  const enableTrash = opts?.enableTrash ?? true;
   const removedDirs: string[] = [];
   const relatedDeleted: string[] = [];
   let deleted = false;
-  let trashPath: string | undefined;
 
   try {
     if (fs.existsSync(strmPath)) {
-      if (enableTrash) {
-        const moved = moveToTrash(strmPath, tag);
-        if (moved) {
-          trashPath = moved;
-        }
-        deleted = true;
-      } else {
-        fs.unlinkSync(strmPath);
-        deleted = true;
-        console.log(`[${tag}] 删除 STRM: ${strmPath}`);
-      }
+      fs.unlinkSync(strmPath);
+      deleted = true;
+      console.log(`[${tag}] 删除 STRM: ${strmPath}`);
     }
   } catch (e) {
     console.error(`[${tag}] 删除 STRM 失败 ${strmPath}: ${e instanceof Error ? e.message : String(e)}`);
@@ -189,7 +121,7 @@ export function deleteStrmFile(
     removedDirs.push(...dirs);
   }
 
-  return { deleted, removedDirs, relatedDeleted, trashPath };
+  return { deleted, removedDirs, relatedDeleted };
 }
 
 // ==================== 3. 目录递归删除 ====================
@@ -202,54 +134,23 @@ export function deleteStrmFile(
  */
 export function deleteStrmDir(
   dirPath: string,
-  opts?: { tag?: string; enableTrash?: boolean }
+  opts?: { tag?: string }
 ): { deleted: boolean; error?: string } {
   const tag = opts?.tag || "strmFileOps";
-  const enableTrash = opts?.enableTrash ?? true;
 
   try {
     if (!fs.existsSync(dirPath)) {
       return { deleted: false };
     }
 
-    if (enableTrash) {
-      // 启用回收站：遍历目录树，每个文件逐个 moveToTrash，然后尝试 rmdir 空目录
-      try {
-        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-        for (const entry of entries) {
-          const full = path.join(dirPath, entry.name);
-          if (entry.isDirectory()) {
-            // 递归处理子目录
-            deleteStrmDir(full, { ...opts, tag: `${tag}/sub` });
-          } else {
-            // 文件：移入回收站（若是关联文件也回收）
-            moveToTrash(full, tag);
-          }
-        }
-        // 清理空目录（子目录已被递归清理，此处应为空）
-        try {
-          fs.rmdirSync(dirPath);
-        } catch {
-          // 若仍非空，fallback 到递归强制删除
-          fs.rmSync(dirPath, { recursive: true, force: true });
-        }
-        console.log(`[${tag}] 删除目录(已回收): ${dirPath}`);
-        return { deleted: true };
-      } catch (e) {
-        console.warn(`[${tag}] 目录回收失败，降级为强制删除: ${e instanceof Error ? e.message : String(e)}`);
-        fs.rmSync(dirPath, { recursive: true, force: true });
-        return { deleted: true };
-      }
-    } else {
-      fs.rmSync(dirPath, { recursive: true, force: true });
-      console.log(`[${tag}] 删除目录: ${dirPath}`);
-      return { deleted: true };
-    }
+    fs.rmSync(dirPath, { recursive: true, force: true });
+    console.log(`[${tag}] 删除目录: ${dirPath}`);
+    return { deleted: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[${tag}] 删除目录失败 ${dirPath}: ${msg}`);
 
-    // 尝试逐个清理（参考项目 mixed 模式思路）
+    // 尝试逐个清理
     try {
       const entries = fs.readdirSync(dirPath);
       for (const entry of entries) {
@@ -258,11 +159,7 @@ export function deleteStrmDir(
         if (stat.isDirectory()) {
           fs.rmSync(full, { recursive: true, force: true });
         } else {
-          if (enableTrash) {
-            moveToTrash(full, tag);
-          } else {
-            fs.unlinkSync(full);
-          }
+          fs.unlinkSync(full);
         }
       }
       fs.rmdirSync(dirPath);

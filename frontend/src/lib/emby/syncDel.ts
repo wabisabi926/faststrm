@@ -242,7 +242,6 @@ function deleteByItemType(
       rootDirs,
       cleanRelated: true,
       tag: TAG,
-      enableTrash: true,
     });
     return {
       deletedFiles: (result.deleted ? 1 : 0) + result.relatedDeleted.length,
@@ -281,8 +280,8 @@ function deleteByItemType(
       return { deletedFiles: 0, deletedDirs: 0 };
     }
 
-    // 目录级回收站删除
-    const result = deleteStrmDir(dirPath, { tag: TAG, enableTrash: true });
+    // 目录级删除
+    const result = deleteStrmDir(dirPath, { tag: TAG });
     if (!result.deleted) {
       console.error(`[${TAG}] 目录删除失败: ${dirPath} error=${result.error}`);
       return { deletedFiles: 0, deletedDirs: 0 };

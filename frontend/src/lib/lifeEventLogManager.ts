@@ -23,8 +23,6 @@ export interface LifeEventLog {
   oldLocalFullPath?: string;
   /** 新本地完整路径（move/rename 时） */
   newLocalFullPath?: string;
-  /** 回收站路径（若移入回收站） */
-  trashPath?: string;
 }
 
 function resolveProjectRoot(): string {
@@ -89,7 +87,7 @@ export function appendLifeEventLog(
   filePath: string | undefined,
   localPath: string | undefined,
   message: string,
-  extra?: Partial<Pick<LifeEventLog, "fileId" | "pickCode" | "strmContent" | "oldLocalFullPath" | "newLocalFullPath" | "trashPath">>
+  extra?: Partial<Pick<LifeEventLog, "fileId" | "pickCode" | "strmContent" | "oldLocalFullPath" | "newLocalFullPath">>
 ) {
   ensureDir();
   const typeStr =

@@ -1057,7 +1057,6 @@ async function handleDeleteEvent(
       const delRes = deleteStrmFile(strmPath, { rootDirs, cleanRelated: true, tag: "LifeMonitor/delete" });
       result.success = true;
       result.message = `STRM 文件已删除: ${strmPath}`;
-      // P3.2g: 记录带 fileId + trashPath 的扩展日志（方便后续 Undo）
       if (result.action !== "skip") {
         appendLifeEventLog(
           accountInfo.name,
@@ -1069,7 +1068,6 @@ async function handleDeleteEvent(
           {
             fileId: event.file_id,
             pickCode: event.pick_code || undefined,
-            trashPath: delRes.trashPath,
           }
         );
       }
