@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Server, Bell, Play, Eye, Copy, Check, RefreshCw, XCircle } from "lucide-react";
+import { Server, Bell, Play, Eye, Copy, Check, RefreshCw, XCircle, FolderOpen } from "lucide-react";
 import axiosInstance from "@/lib/axios";
+import { LocalDirectoryTreeDialog } from "@/app/task/components/LocalDirectoryTreeDialog";
 
 interface EmbySettings {
   url?: string;
@@ -144,6 +145,32 @@ export default function EmbyNotifyPage() {
   const [newMappingEmbyPath, setNewMappingEmbyPath] = useState("");
   const [newMappingCloudPath, setNewMappingCloudPath] = useState("");
   const [newMappingAccount, setNewMappingAccount] = useState("");
+
+  // 本地文件夹选择器
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  // 指定选择后写入哪个映射行：number=已有映射行索引，"new"=新增行
+  const [folderPickerTarget, setFolderPickerTarget] = useState<number | "new" | null>(null);
+
+  const handleFolderSelected = (path: string) => {
+    if (folderPickerTarget === null) return;
+    if (folderPickerTarget === "new") {
+      setNewMappingEmbyPath(path);
+    } else {
+      updatePathMapping(folderPickerTarget, "embyPath", path);
+    }
+    setFolderPickerOpen(false);
+    setFolderPickerTarget(null);
+  };
+
+  const openFolderPickerForNew = () => {
+    setFolderPickerTarget("new");
+    setFolderPickerOpen(true);
+  };
+
+  const openFolderPickerForMapping = (index: number) => {
+    setFolderPickerTarget(index);
+    setFolderPickerOpen(true);
+  };
 
   const updatePathMapping = (index: number, field: "embyPath" | "cloudPath" | "account", value: string) => {
     const mappings = [...(settings.syncDeletePathMappings || [])];
@@ -509,12 +536,24 @@ export default function EmbyNotifyPage() {
             <Label>路径映射（Emby 路径 → 115 网盘路径）</Label>
             {(settings.syncDeletePathMappings || []).map((mapping, index) => (
               <div key={index} className="flex gap-2 items-center">
-                <Input
-                  className="flex-1"
-                  placeholder="Emby 路径前缀，如 /app/data/strm/电影"
-                  value={mapping.embyPath}
-                  onChange={(e) => updatePathMapping(index, "embyPath", e.target.value)}
-                />
+                <div className="flex-1 flex gap-1 items-center">
+                  <Input
+                    className="flex-1"
+                    placeholder="Emby 路径前缀，如 /app/data/strm/电影"
+                    value={mapping.embyPath}
+                    onChange={(e) => updatePathMapping(index, "embyPath", e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => openFolderPickerForMapping(index)}
+                    title="选择本地文件夹"
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                  </Button>
+                </div>
                 <span className="text-muted-foreground">→</span>
                 <Input
                   className="flex-1"
@@ -538,12 +577,24 @@ export default function EmbyNotifyPage() {
               </div>
             ))}
             <div className="flex gap-2 items-center">
-              <Input
-                className="flex-1"
-                placeholder="Emby 路径前缀"
-                value={newMappingEmbyPath}
-                onChange={(e) => setNewMappingEmbyPath(e.target.value)}
-              />
+              <div className="flex-1 flex gap-1 items-center">
+                <Input
+                  className="flex-1"
+                  placeholder="Emby 路径前缀"
+                  value={newMappingEmbyPath}
+                  onChange={(e) => setNewMappingEmbyPath(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  onClick={openFolderPickerForNew}
+                  title="选择本地文件夹"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+              </div>
               <span className="text-muted-foreground">→</span>
               <Input
                 className="flex-1"
@@ -588,6 +639,16 @@ export default function EmbyNotifyPage() {
           <strong>注意：</strong>本页面需要配置正确的 Emby URL 和 API Key。如果使用 Docker 部署，请确保 Emby 容器可以访问到 faststrm 服务。
         </AlertDescription>
       </Alert>
+
+      {/* 本地文件夹选择器：用于 Emby 路径前缀的快速选择 */}
+      <LocalDirectoryTreeDialog
+        open={folderPickerOpen}
+        onOpenChange={(open) => {
+          setFolderPickerOpen(open);
+          if (!open) setFolderPickerTarget(null);
+        }}
+        onSelect={handleFolderSelected}
+      />
     </div>
   );
 }
