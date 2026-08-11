@@ -13,8 +13,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Settings, LifeBuoy, Shield } from "lucide-react";
-import axiosInstance from "@/lib/axios";
+import { Settings, LifeBuoy, Shield, User } from "lucide-react";
+import axiosInstance, { getUsername, setUsername, clearToken, clearUsername } from "@/lib/axios";
 import { StrmCleanupCard } from "./StrmCleanupCard";
 
 type PathMapping = {
@@ -144,6 +144,13 @@ export default function SettingsPage() {
   const [confirmPwd, setConfirmPwd] = useState("");
   const [changingPwd, setChangingPwd] = useState(false);
 
+  // Change username states
+  const [usernameCurrentPwd, setUsernameCurrentPwd] = useState("");
+  const [newUsername, setNewUsername] = useState("");
+  const [confirmUsername, setConfirmUsername] = useState("");
+  const [changingUsername, setChangingUsername] = useState(false);
+  const [currentUsername, setCurrentUsername] = useState("admin");
+
   // Life monitor states
   const [accounts, setAccounts] = useState<string[]>([]);
   const [monitorStates, setMonitorStates] = useState<MonitorState[]>([]);
@@ -234,6 +241,12 @@ export default function SettingsPage() {
         const monitorResp = await axiosInstance.get("/api/lifeMonitor");
         setMonitorStates(monitorResp.data?.states || []);
 
+        // 加载当前用户名
+        const savedUsername = getUsername();
+        if (savedUsername) {
+          setCurrentUsername(savedUsername);
+        }
+
         // 加载媒体挂载路径 dry-run 快照
         await fetchMountDryRun();
       } catch (err) {
@@ -319,6 +332,52 @@ export default function SettingsPage() {
       toast.error(msg);
     } finally {
       setChangingPwd(false);
+    }
+  };
+
+  const handleChangeUsername = async () => {
+    const trimmedUsername = newUsername.trim();
+    if (!usernameCurrentPwd || !trimmedUsername || !confirmUsername) {
+      toast.error("请填写所有字段");
+      return;
+    }
+    if (trimmedUsername !== confirmUsername.trim()) {
+      toast.error("两次输入的新用户名不一致");
+      return;
+    }
+    if (trimmedUsername.length < 3 || trimmedUsername.length > 32) {
+      toast.error("用户名长度需在 3-32 位之间");
+      return;
+    }
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedUsername)) {
+      toast.error("用户名只能包含字母、数字和下划线，且以字母或下划线开头");
+      return;
+    }
+    if (/^\d+$/.test(trimmedUsername)) {
+      toast.error("用户名不能为纯数字");
+      return;
+    }
+    if (trimmedUsername === currentUsername) {
+      toast.error("新用户名不能与当前用户名相同");
+      return;
+    }
+    setChangingUsername(true);
+    try {
+      await axiosInstance.post("/api/auth/change-username", {
+        currentPassword: usernameCurrentPwd,
+        newUsername: trimmedUsername,
+      });
+      toast.success("用户名修改成功，请重新登录");
+      setUsername(trimmedUsername);
+      clearToken();
+      clearUsername();
+      window.location.href = "/login";
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string } } } | undefined;
+      const msg = axiosErr?.response?.data?.error || "用户名修改失败";
+      toast.error(msg);
+    } finally {
+      setChangingUsername(false);
     }
   };
 
@@ -1354,6 +1413,57 @@ export default function SettingsPage() {
           <section className="space-y-4">
             <h2 className="text-base font-medium">STRM 清理</h2>
             <StrmCleanupCard />
+          </section>
+
+          <Separator />
+
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <User className="h-5 w-5" />
+              <h2 className="text-lg font-semibold">当前用户</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              登录用户名：<span className="font-medium text-foreground">{currentUsername}</span>
+            </p>
+          </section>
+
+          <Separator />
+
+          <section className="space-y-4">
+            <h2 className="text-lg font-semibold">修改用户名</h2>
+            <p className="text-sm text-muted-foreground">
+              修改后需使用新用户名重新登录。规则：3-32 位，字母/数字/下划线，以字母或下划线开头，不能为纯数字。
+            </p>
+            <div className="grid gap-2 max-w-sm">
+              <Label htmlFor="usernameCurrentPassword">当前密码</Label>
+              <Input
+                id="usernameCurrentPassword"
+                type="password"
+                value={usernameCurrentPwd}
+                onChange={(e) => setUsernameCurrentPwd(e.target.value)}
+                placeholder="输入当前密码"
+              />
+              <Label htmlFor="newUsername">新用户名</Label>
+              <Input
+                id="newUsername"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                placeholder="3-32 位，字母/数字/下划线"
+              />
+              <Label htmlFor="confirmUsername">确认新用户名</Label>
+              <Input
+                id="confirmUsername"
+                value={confirmUsername}
+                onChange={(e) => setConfirmUsername(e.target.value)}
+                placeholder="再次输入新用户名"
+              />
+              <Button
+                disabled={changingUsername}
+                onClick={handleChangeUsername}
+              >
+                {changingUsername ? "修改中..." : "修改用户名"}
+              </Button>
+            </div>
           </section>
 
           <Separator />

@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Settings, BookOpen, Share2 } from "lucide-react";
-import axiosInstance, { clearToken } from "@/lib/axios";
+import axiosInstance, { clearToken, clearUsername } from "@/lib/axios";
 import {
   Menubar,
   MenubarContent,
@@ -38,7 +38,8 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
     } catch {
       // 即使API调用失败也要清除token
     }
-    clearToken(); // 清除本地token
+    clearToken();
+    clearUsername();
     router.push("/login"); // 退出后跳转到登录页
   };
 

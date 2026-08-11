@@ -18,6 +18,24 @@ export function clearToken(): void {
   localStorage.removeItem('auth-token');
 }
 
+// 存储用户名
+export function setUsername(username: string): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('auth-username', username);
+}
+
+// 获取当前用户名
+export function getUsername(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('auth-username');
+}
+
+// 清除用户名
+export function clearUsername(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('auth-username');
+}
+
 // 创建axios实例
 export const axiosInstance = axios.create({
   timeout: 30000,
@@ -42,9 +60,8 @@ axiosInstance.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // 清除无效token
       clearToken();
-      // 跳转到登录页
+      clearUsername();
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }
