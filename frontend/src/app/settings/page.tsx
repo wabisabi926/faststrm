@@ -139,17 +139,12 @@ export default function SettingsPage() {
   const [mountSyncing, setMountSyncing] = useState(false);
   const [lastSyncApply, setLastSyncApply] = useState<MountSyncApplyData>(null);
 
-  // Change password states
+  // Change credentials states (merged username + password)
   const [currentPwd, setCurrentPwd] = useState("");
+  const [newUsername, setNewUsername] = useState("");
   const [newPwd, setNewPwd] = useState("");
   const [confirmPwd, setConfirmPwd] = useState("");
-  const [changingPwd, setChangingPwd] = useState(false);
-
-  // Change username states
-  const [usernameCurrentPwd, setUsernameCurrentPwd] = useState("");
-  const [newUsername, setNewUsername] = useState("");
-  const [confirmUsername, setConfirmUsername] = useState("");
-  const [changingUsername, setChangingUsername] = useState(false);
+  const [savingCredentials, setSavingCredentials] = useState(false);
   const [currentUsername, setCurrentUsername] = useState("admin");
 
   // Life monitor states
@@ -305,80 +300,88 @@ export default function SettingsPage() {
     }
   };
 
-  const handleChangePassword = async () => {
-    if (!currentPwd || !newPwd || !confirmPwd) {
-      toast.error("请填写所有密码字段");
+  const handleSaveCredentials = async () => {
+    const trimmedUsername = newUsername.trim();
+    const trimmedPwd = newPwd.trim();
+    const trimmedConfirm = confirmPwd.trim();
+
+    if (!currentPwd) {
+      toast.error("请输入当前密码");
       return;
     }
-    if (newPwd !== confirmPwd) {
-      toast.error("两次输入的新密码不一致");
+
+    const hasUsernameChange = trimmedUsername.length > 0;
+    const hasPasswordChange = trimmedPwd.length > 0;
+
+    if (!hasUsernameChange && !hasPasswordChange) {
+      toast.error("请至少填写一项修改");
       return;
     }
-    if (newPwd.length < 6) {
-      toast.error("新密码至少 6 位");
-      return;
+
+    if (hasUsernameChange) {
+      if (
+        trimmedUsername.length < 3 ||
+        trimmedUsername.length > 32
+      ) {
+        toast.error("用户名长度需在 3-32 位之间");
+        return;
+      }
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedUsername)) {
+        toast.error("用户名只能包含字母、数字和下划线，且以字母或下划线开头");
+        return;
+      }
+      if (/^\d+$/.test(trimmedUsername)) {
+        toast.error("用户名不能为纯数字");
+        return;
+      }
+      if (trimmedUsername === currentUsername) {
+        toast.error("新用户名不能与当前用户名相同");
+        return;
+      }
     }
-    setChangingPwd(true);
+
+    if (hasPasswordChange) {
+      if (trimmedPwd.length < 6) {
+        toast.error("密码至少 6 位");
+        return;
+      }
+      if (trimmedPwd !== trimmedConfirm) {
+        toast.error("两次输入的新密码不一致");
+        return;
+      }
+    }
+
+    setSavingCredentials(true);
     try {
-      await axiosInstance.post("/api/auth/change-password", {
+      await axiosInstance.post("/api/auth/change-credentials", {
         currentPassword: currentPwd,
-        newPassword: newPwd,
+        newUsername: trimmedUsername || undefined,
+        newPassword: trimmedPwd || undefined,
+        confirmPassword: trimmedConfirm || undefined,
       });
-      toast.success("密码修改成功");
+
+      toast.success("保存成功");
+
+      if (hasUsernameChange) {
+        setUsername(trimmedUsername);
+        clearToken();
+        clearUsername();
+        window.location.href = "/login";
+        return;
+      }
+
       setCurrentPwd("");
+      setNewUsername("");
       setNewPwd("");
       setConfirmPwd("");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "密码修改失败";
+      const axiosErr = err as
+        | { response?: { data?: { error?: string } } }
+        | undefined;
+      const msg = axiosErr?.response?.data?.error || "保存失败";
       toast.error(msg);
     } finally {
-      setChangingPwd(false);
-    }
-  };
-
-  const handleChangeUsername = async () => {
-    const trimmedUsername = newUsername.trim();
-    if (!usernameCurrentPwd || !trimmedUsername || !confirmUsername) {
-      toast.error("请填写所有字段");
-      return;
-    }
-    if (trimmedUsername !== confirmUsername.trim()) {
-      toast.error("两次输入的新用户名不一致");
-      return;
-    }
-    if (trimmedUsername.length < 3 || trimmedUsername.length > 32) {
-      toast.error("用户名长度需在 3-32 位之间");
-      return;
-    }
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedUsername)) {
-      toast.error("用户名只能包含字母、数字和下划线，且以字母或下划线开头");
-      return;
-    }
-    if (/^\d+$/.test(trimmedUsername)) {
-      toast.error("用户名不能为纯数字");
-      return;
-    }
-    if (trimmedUsername === currentUsername) {
-      toast.error("新用户名不能与当前用户名相同");
-      return;
-    }
-    setChangingUsername(true);
-    try {
-      await axiosInstance.post("/api/auth/change-username", {
-        currentPassword: usernameCurrentPwd,
-        newUsername: trimmedUsername,
-      });
-      toast.success("用户名修改成功，请重新登录");
-      setUsername(trimmedUsername);
-      clearToken();
-      clearUsername();
-      window.location.href = "/login";
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } } | undefined;
-      const msg = axiosErr?.response?.data?.error || "用户名修改失败";
-      toast.error(msg);
-    } finally {
-      setChangingUsername(false);
+      setSavingCredentials(false);
     }
   };
 
@@ -1426,93 +1429,51 @@ export default function SettingsPage() {
                 当前用户：<span className="font-medium text-foreground">{currentUsername}</span>
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {/* 修改用户名 */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <User className="h-4 w-4" />
-                  修改用户名
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  修改后需使用新用户名重新登录。规则：3-32 位，字母/数字/下划线，以字母或下划线开头，不能为纯数字。
-                </p>
-                <div className="grid gap-2 max-w-sm">
-                  <Label htmlFor="usernameCurrentPassword">当前密码</Label>
-                  <Input
-                    id="usernameCurrentPassword"
-                    type="password"
-                    value={usernameCurrentPwd}
-                    onChange={(e) => setUsernameCurrentPwd(e.target.value)}
-                    placeholder="输入当前密码"
-                  />
-                  <Label htmlFor="newUsername">新用户名</Label>
-                  <Input
-                    id="newUsername"
-                    value={newUsername}
-                    onChange={(e) => setNewUsername(e.target.value)}
-                    placeholder="3-32 位，字母/数字/下划线"
-                  />
-                  <Label htmlFor="confirmUsername">确认新用户名</Label>
-                  <Input
-                    id="confirmUsername"
-                    value={confirmUsername}
-                    onChange={(e) => setConfirmUsername(e.target.value)}
-                    placeholder="再次输入新用户名"
-                  />
-                  <Button
-                    disabled={changingUsername}
-                    onClick={handleChangeUsername}
-                    className="mt-1"
-                  >
-                    {changingUsername ? "修改中..." : "修改用户名"}
-                  </Button>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* 修改密码 */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Lock className="h-4 w-4" />
-                  修改密码
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  定期修改密码有助于提升账户安全性。
-                </p>
-                <div className="grid gap-2 max-w-sm">
-                  <Label htmlFor="currentPassword">当前密码</Label>
-                  <Input
-                    id="currentPassword"
-                    type="password"
-                    value={currentPwd}
-                    onChange={(e) => setCurrentPwd(e.target.value)}
-                    placeholder="输入当前密码"
-                  />
-                  <Label htmlFor="newPassword">新密码</Label>
-                  <Input
-                    id="newPassword"
-                    type="password"
-                    value={newPwd}
-                    onChange={(e) => setNewPwd(e.target.value)}
-                    placeholder="至少 6 位"
-                  />
-                  <Label htmlFor="confirmPassword">确认新密码</Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={confirmPwd}
-                    onChange={(e) => setConfirmPwd(e.target.value)}
-                    placeholder="再次输入新密码"
-                  />
-                  <Button
-                    disabled={changingPwd}
-                    onClick={handleChangePassword}
-                    className="mt-1"
-                  >
-                    {changingPwd ? "修改中..." : "修改密码"}
-                  </Button>
-                </div>
+            <CardContent>
+              <div className="grid gap-3 max-w-sm">
+                <Label htmlFor="currentPassword">当前密码</Label>
+                <Input
+                  id="currentPassword"
+                  type="password"
+                  value={currentPwd}
+                  onChange={(e) => setCurrentPwd(e.target.value)}
+                  placeholder="输入当前密码"
+                />
+                <Label htmlFor="newUsername">
+                  新用户名 <span className="text-muted-foreground font-normal">（如不修改请留空）</span>
+                </Label>
+                <Input
+                  id="newUsername"
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  placeholder="3-32 位，字母/数字/下划线"
+                />
+                <Label htmlFor="newPassword">
+                  新密码 <span className="text-muted-foreground font-normal">（如不修改请留空）</span>
+                </Label>
+                <Input
+                  id="newPassword"
+                  type="password"
+                  value={newPwd}
+                  onChange={(e) => setNewPwd(e.target.value)}
+                  placeholder="至少 6 位"
+                />
+                <Label htmlFor="confirmPassword">确认新密码</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  value={confirmPwd}
+                  onChange={(e) => setConfirmPwd(e.target.value)}
+                  placeholder="再次输入新密码"
+                  disabled={!newPwd.trim()}
+                />
+                <Button
+                  disabled={savingCredentials}
+                  onClick={handleSaveCredentials}
+                  className="mt-2"
+                >
+                  {savingCredentials ? "保存中..." : "保存"}
+                </Button>
               </div>
             </CardContent>
           </Card>
