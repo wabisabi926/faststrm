@@ -49,6 +49,15 @@ export interface DeleteStrmFileOptions {
   account?: string;
 }
 
+export interface DeleteStrmDirOptions {
+  /** 调用方标签 */
+  tag?: string;
+  /** 账号名，用于日志上下文 */
+  account?: string;
+  /** 删除后清理空父目录的根目录集合（提供则启用空目录清理） */
+  rootDirs?: Set<string>;
+}
+
 export interface SyncStrmTextResult {
   /** 操作是否成功 */
   ok: boolean;
@@ -158,7 +167,7 @@ export function deleteStrmFile(
  */
 export function deleteStrmDir(
   dirPath: string,
-  opts?: { tag?: string; account?: string }
+  opts?: DeleteStrmDirOptions
 ): { deleted: boolean; error?: string } {
   const prefix = buildLogPrefix(opts?.tag, opts?.account);
 
@@ -169,6 +178,23 @@ export function deleteStrmDir(
 
     fs.rmSync(dirPath, { recursive: true, force: true });
     console.log(`${prefix} 删除目录: ${dirPath}`);
+
+    // P2-12: 删除后清理空父目录（如果提供了 rootDirs）
+    if (opts?.rootDirs && opts.rootDirs.size > 0) {
+      try {
+        const removed = removeEmptyParents(dirPath, {
+          rootDirs: opts.rootDirs,
+          tag: opts.tag,
+          account: opts.account,
+        });
+        if (removed.length > 0) {
+          console.log(`${prefix} deleteStrmDir 清理空父目录: ${removed.join(", ")}`);
+        }
+      } catch (e) {
+        console.warn(`${prefix} deleteStrmDir 清理空父目录失败: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     return { deleted: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

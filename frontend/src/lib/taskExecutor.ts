@@ -30,7 +30,8 @@ import {
 } from "@/lib/enqueueForAccount";
 import { exportDirParse, fs_dir_getid } from "@/lib/115";
 import type { AccountInfo } from "@/lib/115";
-import { getFilePathEntryByPath } from "@/lib/filePathDb";
+import { getFilePathEntryByPath, upsertFilePathEntryBatch } from "@/lib/filePathDb";
+import { buildFilePathEntriesFromTree } from "@/lib/strmCleanup";
 import { sendTelegramNotification } from "@/lib/telegram";
 import { encryptAccounts } from "@/lib/passwordCrypto";
 import { TaskSchedule } from "@/lib/taskScheduler";
@@ -505,6 +506,23 @@ export async function executeTask(
         });
         console.log("data: ", data);
         tree = buildTree(data) as TreeEntry[];
+
+        // P2-11: 全量扫描后将文件列表写回 filePathDb，确保 302 模式下能反查 pickcode
+        try {
+          const entries = buildFilePathEntriesFromTree(
+            account,
+            originPath,
+            data as Array<{ key: number; name: string; parent_key: number; depth: number; children?: unknown }>
+          );
+          if (entries.length > 0) {
+            upsertFilePathEntryBatch(account, entries);
+            console.log(
+              `[executeTask] 全量扫描: 写回 ${entries.length} 条记录到 DB (account=${account}, cloudPath=${originPath})`
+            );
+          }
+        } catch (e) {
+          console.warn(`[executeTask] 写回 filePathDb 失败: ${e instanceof Error ? e.message : String(e)}`);
+        }
       } catch (error) {
         console.error("Failed to parse 115 directory: ", error);
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -623,6 +641,10 @@ export async function executeTask(
 
     if (missingLocally.length === 0) {
       exitFullScan(task.account);
+      // P2-5: 若 removeExtraFiles 清理了多余文件，即使无下载也刷新 Emby
+      if (task.removeExtraFiles && extraLocally.length > 0) {
+        notifyEmbyRefresh();
+      }
       return {
         success: true,
         blocked: false,

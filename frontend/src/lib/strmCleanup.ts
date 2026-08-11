@@ -117,7 +117,7 @@ function isMediaExtension(filePath: string): boolean {
  * 从 exportDirParse 返回的树数据构建 FilePathEntry 列表（含完整云路径）。
  * 用于全量对账时将扫描到的文件写回 DB。
  */
-function buildFilePathEntriesFromTree(
+export function buildFilePathEntriesFromTree(
   account: string,
   cloudPath: string,
   data: Array<{ key: number; name: string; parent_key: number; depth: number; children?: unknown }>
@@ -144,13 +144,15 @@ function buildFilePathEntriesFromTree(
   }
 
   const now = Math.floor(Date.now() / 1000);
+  // P2-10: exportDirParse 返回的 key 是本地自增计数器而非真实 115 file_id，
+  // 使用负值标记避免与真实 file_id（正整数）冲突，life event 到来时会以真实 ID 覆盖
   for (const node of data) {
     const cloudFilePath = getPath(node.key);
     entries.push({
-      fileId: node.key,
+      fileId: -(node.key + 1),
       path: cloudFilePath,
       fileName: node.name,
-      parentId: node.parent_key,
+      parentId: node.parent_key > 0 ? -(node.parent_key + 1) : 0,
       pickCode: "", // exportDirParse 不返回 pickcode
       updateTime: now,
     });
@@ -430,6 +432,10 @@ export async function runScan(reqs: MappingScanRequest[]): Promise<ScanResult> {
     // P1-E: clearScanState 必须在 finally 中执行，避免扫描中断后 scanState 残留导致
     // 下次调用时已完成的映射被跳过（mappingSetMatches 仍为 true 时）
     clearScanState();
+    // P2-4: 恢复增量监控，避免扫描异常时监控永久挂起
+    for (const account of uniqueAccounts) {
+      clearMonitorSuspend(account);
+    }
   }
 
   const totalRemoteFiles = results.reduce((s, r) => s + r.remoteFileCount, 0);
