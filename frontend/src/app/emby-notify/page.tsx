@@ -7,6 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Server, Bell, Play, Eye, Copy, Check, RefreshCw, XCircle, FolderOpen } from "lucide-react";
 import axiosInstance from "@/lib/axios";
 import { LocalDirectoryTreeDialog } from "@/app/task/components/LocalDirectoryTreeDialog";
@@ -40,10 +47,24 @@ export default function EmbyNotifyPage() {
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [webhookCopied, setWebhookCopied] = useState(false);
 
+  // 115 账号列表（用于路径映射的账号下拉选择）
+  const [accounts, setAccounts] = useState<string[]>([]);
+
   // 加载当前设置
   useEffect(() => {
     loadSettings();
+    void loadAccounts();
   }, []);
+
+  const loadAccounts = async () => {
+    try {
+      const response = await axiosInstance.get("/api/account");
+      const list: Array<{ accountType?: string; name: string }> = response.data || [];
+      setAccounts(list.filter((a) => a.accountType === "115").map((a) => a.name));
+    } catch (err) {
+      console.error("加载账号列表失败:", err);
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -561,12 +582,22 @@ export default function EmbyNotifyPage() {
                   value={mapping.cloudPath}
                   onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
                 />
-                <Input
-                  className="w-[120px]"
-                  placeholder="账号（可选）"
-                  value={mapping.account || ""}
-                  onChange={(e) => updatePathMapping(index, "account", e.target.value)}
-                />
+                <Select
+                  value={mapping.account || "__all__"}
+                  onValueChange={(v) => updatePathMapping(index, "account", v === "__all__" ? "" : v)}
+                >
+                  <SelectTrigger className="w-[130px] h-10">
+                    <SelectValue placeholder="账号（可选）" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">遍历全部账号</SelectItem>
+                    {accounts.map((acc) => (
+                      <SelectItem key={acc} value={acc}>
+                        {acc}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <Button
                   variant="destructive"
                   size="sm"
@@ -602,12 +633,22 @@ export default function EmbyNotifyPage() {
                 value={newMappingCloudPath}
                 onChange={(e) => setNewMappingCloudPath(e.target.value)}
               />
-              <Input
-                className="w-[120px]"
-                placeholder="账号（可选）"
-                value={newMappingAccount}
-                onChange={(e) => setNewMappingAccount(e.target.value)}
-              />
+              <Select
+                value={newMappingAccount || "__all__"}
+                onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
+              >
+                <SelectTrigger className="w-[130px] h-10">
+                  <SelectValue placeholder="账号（可选）" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">遍历全部账号</SelectItem>
+                  {accounts.map((acc) => (
+                    <SelectItem key={acc} value={acc}>
+                      {acc}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button size="sm" onClick={addPathMapping}>
                 添加
               </Button>
