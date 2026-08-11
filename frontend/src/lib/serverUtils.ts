@@ -338,7 +338,7 @@ export function getStrmExtensions(): string[] {
 }
 
 // 通知 Emby 刷新媒体库（如果在 settings.json 配置了 emby）
-export async function notifyEmbyRefresh(filePath?: string) {
+export async function notifyEmbyRefresh(filePath?: string, account?: string) {
   try {
     const settings = readSettings();
     const emby = settings.emby;
@@ -360,10 +360,11 @@ export async function notifyEmbyRefresh(filePath?: string) {
       data: body,
       headers: { 'Content-Type': 'application/json' }
     } : undefined);
-    console.log("Emby 刷新结果", res.status, filePath ? `(路径: ${filePath})` : "(全库)");
-    console.log("Emby 刷新成功");
+    const acctCtx = account ? `account=${account} ` : "";
+    console.log(`[Emby] ${acctCtx}刷新结果 ${res.status} ${filePath ? `(路径: ${filePath})` : "(全库)"}`);
   } catch(err){
-    console.log("Emby 刷新失败", err);
+    const acctCtx = account ? `account=${account} ` : "";
+    console.log(`[Emby] ${acctCtx}刷新失败:`, err);
     // 忽略通知失败
   }
 }

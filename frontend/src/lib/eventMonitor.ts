@@ -146,6 +146,8 @@ const embyDebounceTimers = g.__embyDebounceTimers;
 const embyLastFireTime = g.__embyLastFireTime;
 
 // In-memory ID→Path cache: key = "accountName:cid"
+// 加 LRU 上限，防止长期运行后缓存无限增长
+const ID_PATH_MEM_CACHE_MAX = 5000;
 const idPathMemoryCache = g.__lifeIdPathMemoryCache;
 
 // Ensure config directory exists
@@ -201,12 +203,19 @@ function sanitizeDirectoryPath(pathStr: string, tag?: string): string {
 function getIdPath(account: string, cid: number | string): string | undefined {
   const cacheKey = `${account}:${cid}`;
   const memCached = idPathMemoryCache.get(cacheKey);
-  if (memCached) return sanitizeDirectoryPath(memCached, `getIdPath(mem ${account}:${cid})`);
+  if (memCached) {
+    // LRU touch：删除后重新插入，移到 Map 末尾（最新）
+    idPathMemoryCache.delete(cacheKey);
+    idPathMemoryCache.set(cacheKey, memCached);
+    return sanitizeDirectoryPath(memCached, `getIdPath(mem ${account}:${cid})`);
+  }
 
   const diskCache = readIdPathCache();
   const diskCached = diskCache[cacheKey];
   if (diskCached) {
     const sane = sanitizeDirectoryPath(diskCached, `getIdPath(disk ${account}:${cid})`);
+    // 写入内存缓存前先淘汰
+    evictIdPathCacheIfNeeded();
     idPathMemoryCache.set(cacheKey, sane);
     return sane;
   }
@@ -216,10 +225,22 @@ function getIdPath(account: string, cid: number | string): string | undefined {
 function setIdPath(account: string, cid: number | string, pathStr: string) {
   const sane = sanitizeDirectoryPath(pathStr, `setIdPath(${account}:${cid})`);
   const cacheKey = `${account}:${cid}`;
+  // 已存在则先删除，保证 set 后位于 Map 末尾（最新）
+  if (idPathMemoryCache.has(cacheKey)) idPathMemoryCache.delete(cacheKey);
+  evictIdPathCacheIfNeeded();
   idPathMemoryCache.set(cacheKey, sane);
   const diskCache = readIdPathCache();
   diskCache[cacheKey] = sane;
   writeIdPathCache(diskCache);
+}
+
+/** LRU 淘汰：当缓存达到上限时删除最旧（Map 第一个）条目 */
+function evictIdPathCacheIfNeeded(): void {
+  while (idPathMemoryCache.size >= ID_PATH_MEM_CACHE_MAX) {
+    const oldestKey = idPathMemoryCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    idPathMemoryCache.delete(oldestKey);
+  }
 }
 
 // ==================== File Path Database (SQLite backend via ./filePathDb) ====================
@@ -253,14 +274,14 @@ function tryCleanupOldStrmByPath(
     try {
       if (fileCategory === 0) {
         if (fs.existsSync(oldMapping.localPath)) {
-          const dirRes = deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/cleanupFallback" });
+          const dirRes = deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/cleanupFallback", account });
           if (dirRes.deleted) deleted.push(`[folder] ${oldMapping.localPath}`);
         }
       } else {
         const strmName = getStrmFileName(fileName);
         const strmPath = path.join(path.dirname(oldMapping.localPath), strmName);
         if (fs.existsSync(strmPath)) {
-          const fileRes = deleteStrmFile(strmPath, { tag: "LifeMonitor/cleanupFallback", cleanRelated: false });
+          const fileRes = deleteStrmFile(strmPath, { tag: "LifeMonitor/cleanupFallback", cleanRelated: false, account });
           if (fileRes.deleted) deleted.push(`[file] ${strmPath}`);
         }
       }
@@ -433,6 +454,8 @@ async function resolvePathByCid(
   for (const mapping of config.pathMappings) {
     if (mapping.account && mapping.account !== account) continue;
     try {
+      // 每个映射的 fs_dir_getid 都是独立 API 调用，需限流
+      await waitFor115ApiToken();
       const mappedCid = await fs_dir_getid(mapping.cloudPath, {
         userAgent: readSettings()["user-agent"],
         accountInfo: accountInfo as AccountInfo,
@@ -452,6 +475,8 @@ async function resolvePathByCid(
     const userAgent = readSettings()["user-agent"] || "Mozilla/5.0";
 
     // Try webapi.115.com/files to get file info including parent path
+    // Tier 3 的 API 调用需限流
+    await waitFor115ApiToken();
     const fileInfo = await getFileInfoById(cid, {
       userAgent,
       accountInfo: accountInfo as AccountInfo,
@@ -469,6 +494,7 @@ async function resolvePathByCid(
 
     // Fallback: use webapi files listing to find the directory name
     // Then recursively resolve parent
+    await waitFor115ApiToken();
     await fs_files(cid, {
       userAgent,
       limit: 1,
@@ -674,7 +700,7 @@ async function handleCreateEvent(
     fileName: event.file_name,
   });
 
-  if (syncStrmText(strmPath, strmContent, { tag: "LifeMonitor/create" }).ok) {
+  if (syncStrmText(strmPath, strmContent, { tag: "LifeMonitor/create", account: accountInfo.name }).ok) {
     upsertFilePathEntry(accountInfo.name, {
       fileId: event.file_id,
       path: cloudPath,
@@ -754,6 +780,8 @@ async function handleFolderCreateEvent(
       let debugFsLogged = false;
 
       while (true) {
+        // 分页拉取文件列表前限流，避免大文件夹一次性消耗大量 API 配额
+        await waitFor115ApiToken();
         const data = await fs_files(cid, {
           userAgent,
           limit,
@@ -839,6 +867,8 @@ async function handleFolderCreateEvent(
             if (!isValidPickCode(pickCode)) {
               try {
                 const userAgent = readSettings()["user-agent"];
+                // 反查 pickcode 是独立 API 调用，需单独限流
+                await waitFor115ApiToken();
                 pickCode = await getPickcodeToId(itemFid, {
                   userAgent,
                   accountInfo: accountInfo as AccountInfo,
@@ -867,7 +897,7 @@ async function handleFolderCreateEvent(
                 fileName: itemName,
               });
 
-              if (syncStrmText(strmPath, strmContent, { tag: "LifeMonitor/create" }).ok) {
+              if (syncStrmText(strmPath, strmContent, { tag: "LifeMonitor/create", account: accountInfo.name }).ok) {
                 strmCount++;
                 // 注意：文件分支不能 setIdPath(itemCid, ...) —— itemCid 是父目录的 cid，
                 // 若写入 itemCloudPath（含文件名）会污染父目录 cid→path 缓存，
@@ -963,6 +993,8 @@ async function handleDeleteEvent(
     try {
       if (isFolder) {
         try {
+          // 删除二次验证的 API 调用需限流
+          await waitFor115ApiToken();
           await fs_dir_getid(cloudPath, { accountInfo });
           cloudVerifiedGone = false;
           console.warn(`[LifeMonitor] 二次验证: 目录仍存在于网盘 ${cloudPath}，跳过删除避免误删`);
@@ -982,6 +1014,8 @@ async function handleDeleteEvent(
         }
       } else {
         try {
+          // 删除二次验证的 API 调用需限流
+          await waitFor115ApiToken();
           const info = await getFileInfoById(event.file_id, { accountInfo });
           if (!info || !(info as unknown as Record<string, unknown>).fileName) {
             cloudVerifiedGone = true;
@@ -1023,12 +1057,12 @@ async function handleDeleteEvent(
 
   if (isFolder) {
     if (fs.existsSync(mapping.localPath)) {
-      deleteStrmDir(mapping.localPath, { tag: "LifeMonitor/delete" });
+      deleteStrmDir(mapping.localPath, { tag: "LifeMonitor/delete", account: accountInfo.name });
       result.success = true;
       result.message = `文件夹已删除: ${mapping.localPath}`;
       if (oldEntry) removeFilePathEntry(accountInfo.name, event.file_id);
       if (config.removeEmptyDirs) {
-        removeEmptyParents(mapping.localPath, { rootDirs, tag: "LifeMonitor/delete" });
+        removeEmptyParents(mapping.localPath, { rootDirs, tag: "LifeMonitor/delete", account: accountInfo.name });
       }
     } else {
       // 文件不存在时，用兜底查找旧 STRM（可能已被移动但未清理）
@@ -1053,7 +1087,7 @@ async function handleDeleteEvent(
     const strmPath = path.join(path.dirname(mapping.localPath), strmFileName);
 
     if (fs.existsSync(strmPath)) {
-      const delRes = deleteStrmFile(strmPath, { rootDirs, cleanRelated: true, tag: "LifeMonitor/delete" });
+      const delRes = deleteStrmFile(strmPath, { rootDirs, cleanRelated: true, tag: "LifeMonitor/delete", account: accountInfo.name });
       result.success = true;
       result.message = `STRM 文件已删除: ${strmPath}`;
       if (result.action !== "skip") {
@@ -1072,7 +1106,7 @@ async function handleDeleteEvent(
       }
       if (oldEntry) removeFilePathEntry(accountInfo.name, event.file_id);
       if (config.removeEmptyDirs) {
-        removeEmptyParents(strmPath, { rootDirs, tag: "LifeMonitor/delete" });
+        removeEmptyParents(strmPath, { rootDirs, tag: "LifeMonitor/delete", account: accountInfo.name });
       }
     } else {
       // 兜底：fileId 关联查不到但路径上可能有残留 STRM
@@ -1163,7 +1197,7 @@ async function handleMoveEvent(
           if (isFolder) {
             if (fs.existsSync(oldMapping.localPath)) {
               try {
-                deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/move-recreate" });
+                deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/move-recreate", account: accountInfo.name });
               } catch (err) {
                 console.error(`[LifeMonitor] recreate 删除旧目录失败: ${oldMapping.localPath}`, err);
               }
@@ -1176,7 +1210,7 @@ async function handleMoveEvent(
             );
             if (fs.existsSync(oldStrmPath)) {
               try {
-                deleteStrmFile(oldStrmPath, { rootDirs: getRootDirsFromMappings(config.pathMappings), cleanRelated: false, tag: "LifeMonitor/move-recreate" });
+                deleteStrmFile(oldStrmPath, { rootDirs: getRootDirsFromMappings(config.pathMappings), cleanRelated: false, tag: "LifeMonitor/move-recreate", account: accountInfo.name });
               } catch (err) {
                 console.error(`[LifeMonitor] recreate 删除旧 STRM 失败: ${oldStrmPath}`, err);
               }
@@ -1186,7 +1220,7 @@ async function handleMoveEvent(
           // 清理空父目录
           if (config.removeEmptyDirs) {
             const rootDirs = getRootDirsFromMappings(config.pathMappings);
-            removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move-recreate" });
+            removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move-recreate", account: accountInfo.name });
           }
 
           createResult.action = "move";
@@ -1214,7 +1248,7 @@ async function handleMoveEvent(
             const hasStrm = fs.readdirSync(mapping.localPath).some((f) => f.endsWith(".strm"));
             if (hasStrm) {
               // 目标含 STRM → 兜底清理旧目录残留后继续
-              const cleanedResidual = await cleanupResidualStrmsInOldFolder(oldMapping.localPath, mapping.localPath, config);
+              const cleanedResidual = await cleanupResidualStrmsInOldFolder(oldMapping.localPath, mapping.localPath, config, accountInfo.name);
               result.success = true;
               result.message = `目标目录已存在且含 STRM，兜底清理残留 ${cleanedResidual.length} 条后跳过移动`;
               // 注意：不 return，继续执行后面的 upsertFilePathEntry 更新 path 记录！
@@ -1253,7 +1287,7 @@ async function handleMoveEvent(
 
           if (path.dirname(oldStrmPath) === path.dirname(newStrmPath)) {
             if (fs.existsSync(newStrmPath) && oldStrmPath !== newStrmPath) {
-              deleteStrmFile(newStrmPath, { tag: "LifeMonitor/move", cleanRelated: false });
+              deleteStrmFile(newStrmPath, { tag: "LifeMonitor/move", cleanRelated: false, account: accountInfo.name });
             }
             if (oldStrmPath !== newStrmPath) {
               fs.renameSync(oldStrmPath, newStrmPath);
@@ -1261,8 +1295,8 @@ async function handleMoveEvent(
           } else {
             const content = readStrmContent(oldStrmPath);
             if (content !== null) {
-              syncStrmText(newStrmPath, content, { tag: "LifeMonitor/move" });
-              deleteStrmFile(oldStrmPath, { tag: "LifeMonitor/move", cleanRelated: false });
+              syncStrmText(newStrmPath, content, { tag: "LifeMonitor/move", account: accountInfo.name });
+              deleteStrmFile(oldStrmPath, { tag: "LifeMonitor/move", cleanRelated: false, account: accountInfo.name });
             } else {
               return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
             }
@@ -1280,7 +1314,7 @@ async function handleMoveEvent(
                 fileName: event.file_name,
               }
             );
-            syncStrmText(newStrmPath, newContent, { tag: "LifeMonitor/move" });
+            syncStrmText(newStrmPath, newContent, { tag: "LifeMonitor/move", account: accountInfo.name });
           }
 
           result.success = true;
@@ -1302,7 +1336,7 @@ async function handleMoveEvent(
 
       if (config.removeEmptyDirs) {
         const rootDirs = getRootDirsFromMappings(config.pathMappings);
-        removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move" });
+        removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move", account: accountInfo.name });
       }
 
       return result;
@@ -1340,7 +1374,8 @@ async function handleMoveEvent(
 async function cleanupResidualStrmsInOldFolder(
   oldDir: string,
   newDir: string,
-  config: LifeMonitorConfig
+  config: LifeMonitorConfig,
+  account: string
 ): Promise<string[]> {
   const deleted: string[] = [];
   try {
@@ -1352,7 +1387,7 @@ async function cleanupResidualStrmsInOldFolder(
       const oldPath = path.join(oldDir, strmFile);
       const newPath = path.join(newDir, strmFile);
       if (!fs.existsSync(newPath)) {
-        const fileRes = deleteStrmFile(oldPath, { tag: "LifeMonitor/move", cleanRelated: false });
+        const fileRes = deleteStrmFile(oldPath, { tag: "LifeMonitor/move", cleanRelated: false, account });
         if (fileRes.deleted) {
           deleted.push(oldPath);
           console.info(`[LifeMonitor] 清理残留 STRM: ${oldPath}`);
@@ -1363,7 +1398,7 @@ async function cleanupResidualStrmsInOldFolder(
     // 清理旧空目录
     if (config.removeEmptyDirs) {
       const rootDirs = getRootDirsFromMappings(config.pathMappings);
-      removeEmptyParents(oldDir, { rootDirs, tag: "LifeMonitor/move" });
+      removeEmptyParents(oldDir, { rootDirs, tag: "LifeMonitor/move", account });
     }
   } catch (e) {
     console.error(`[LifeMonitor] cleanupResidualStrmsInOldFolder 出错: ${e instanceof Error ? e.message : String(e)}`);
@@ -1413,7 +1448,7 @@ async function handleRenameEvent(
             const hasStrm = fs.readdirSync(mapping.localPath).some((f) => f.endsWith(".strm"));
             if (hasStrm) {
               // 目标含 STRM → 兜底清理旧目录残留后继续（不 return，保持 filePathDb 更新）
-              const cleanedResidual = await cleanupResidualStrmsInOldFolder(oldMapping.localPath, mapping.localPath, config);
+              const cleanedResidual = await cleanupResidualStrmsInOldFolder(oldMapping.localPath, mapping.localPath, config, accountInfo.name);
               result.success = true;
               result.message = `目标目录已存在且含 STRM，兜底清理残留 ${cleanedResidual.length} 条后跳过重命名`;
               // 注意：不 return，继续执行后面的 upsertFilePathEntry 更新 path 记录！
@@ -1436,9 +1471,9 @@ async function handleRenameEvent(
                     const dst = path.join(mapping.localPath, f);
                     if (!fs.existsSync(dst)) {
                       const content = readStrmContent(src);
-                      if (content) syncStrmText(dst, content, { tag: "LifeMonitor/rename" });
+                      if (content) syncStrmText(dst, content, { tag: "LifeMonitor/rename", account: accountInfo.name });
                     }
-                    try { deleteStrmFile(src, { tag: "LifeMonitor/rename", cleanRelated: false }); } catch {}
+                    try { deleteStrmFile(src, { tag: "LifeMonitor/rename", cleanRelated: false, account: accountInfo.name }); } catch {}
                   }
                   // 2) 搬相关文件（字幕/nfo/图片等）
                   try {
@@ -1455,10 +1490,10 @@ async function handleRenameEvent(
                   } catch {}
                   // 3) 删除旧目录本身
                   try {
-                    deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/rename" });
+                    deleteStrmDir(oldMapping.localPath, { tag: "LifeMonitor/rename", account: accountInfo.name });
                   } catch {
                     if (config.removeEmptyDirs) {
-                      removeEmptyParents(oldMapping.localPath, { rootDirs: getRootDirsFromMappings(config.pathMappings), tag: "LifeMonitor/rename" });
+                      removeEmptyParents(oldMapping.localPath, { rootDirs: getRootDirsFromMappings(config.pathMappings), tag: "LifeMonitor/rename", account: accountInfo.name });
                     }
                   }
                 }
@@ -1503,7 +1538,7 @@ async function handleRenameEvent(
           if (path.dirname(oldStrmPath) === path.dirname(newStrmPath)) {
             // Same directory, simple rename
             if (fs.existsSync(newStrmPath) && oldStrmPath !== newStrmPath) {
-              deleteStrmFile(newStrmPath, { tag: "LifeMonitor/rename", cleanRelated: false });
+              deleteStrmFile(newStrmPath, { tag: "LifeMonitor/rename", cleanRelated: false, account: accountInfo.name });
             }
             if (oldStrmPath !== newStrmPath) {
               fs.renameSync(oldStrmPath, newStrmPath);
@@ -1521,14 +1556,14 @@ async function handleRenameEvent(
                   fileName: event.file_name,
                 }
               );
-              syncStrmText(newStrmPath, newContent, { tag: "LifeMonitor/rename" });
+              syncStrmText(newStrmPath, newContent, { tag: "LifeMonitor/rename", account: accountInfo.name });
             }
           } else {
             // Different directories
             const content = readStrmContent(oldStrmPath);
             if (content) {
-              syncStrmText(newStrmPath, content, { tag: "LifeMonitor/rename" });
-              deleteStrmFile(oldStrmPath, { tag: "LifeMonitor/rename", cleanRelated: false });
+              syncStrmText(newStrmPath, content, { tag: "LifeMonitor/rename", account: accountInfo.name });
+              deleteStrmFile(oldStrmPath, { tag: "LifeMonitor/rename", cleanRelated: false, account: accountInfo.name });
             } else {
               // 兜底：先递归搜索旧 STRM 再创建
               const foundOldStrms = findStrmRecursive(
@@ -1536,7 +1571,7 @@ async function handleRenameEvent(
                 oldStrmFileName
               );
               for (const p of foundOldStrms) {
-                try { deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false }); console.info(`[LifeMonitor] rename 兜底清理旧 STRM: ${p}`); } catch {}
+                try { deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false, account: accountInfo.name }); console.info(`[LifeMonitor] rename 兜底清理旧 STRM: ${p}`); } catch {}
               }
               return handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
             }
@@ -1557,7 +1592,7 @@ async function handleRenameEvent(
             const found = findStrmRecursive(m.localPath, oldStrmFileName);
             for (const p of found) {
               try {
-                const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false });
+                const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false, account: accountInfo.name });
                 if (delRes.deleted) {
                   cleanedCount++;
                   console.info(`[LifeMonitor] rename 递归搜索清理旧 STRM: ${p}`);
@@ -1574,7 +1609,7 @@ async function handleRenameEvent(
               if (!fs.existsSync(m.localPath)) continue;
               const found = findStrmRecursive(m.localPath, newStrmFileName);
               for (const p of found) {
-                try { const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false }); if (delRes.deleted) { cleanedCount++; console.info(`[LifeMonitor] rename 兜底清理新文件名冲突 STRM: ${p}`); } } catch {}
+                try { const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false, account: accountInfo.name }); if (delRes.deleted) { cleanedCount++; console.info(`[LifeMonitor] rename 兜底清理新文件名冲突 STRM: ${p}`); } } catch {}
               }
             }
           }
@@ -1594,7 +1629,7 @@ async function handleRenameEvent(
 
       if (config.removeEmptyDirs) {
         const rootDirs = getRootDirsFromMappings(config.pathMappings);
-        removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/rename" });
+        removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/rename", account: accountInfo.name });
       }
 
       return result;
@@ -1635,7 +1670,7 @@ async function handleRenameEvent(
         try {
           const found = findStrmRecursive(m.localPath, strmName);
           for (const p of found) {
-            const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false });
+            const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename", cleanRelated: false, account: accountInfo.name });
             if (delRes.deleted) {
               cleanup.deleted.push(`[file-search] ${p}`);
               console.info(`[LifeMonitor] rename 跨映射递归清理 STRM: ${p}`);
@@ -1660,11 +1695,11 @@ async function handleRenameEvent(
             // 保护新路径本身及其直接父目录
             if (resolved === newLocalResolved || resolved === path.dirname(newLocalResolved)) continue;
             if (rootDirs.has(resolved)) continue;
-            const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/rename-cross-mapping" });
+            const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/rename-cross-mapping", account: accountInfo.name });
             if (dirRes.deleted) {
               cleanup.deleted.push(`[dir-search] ${d}`);
               console.info(`[LifeMonitor] rename 跨映射递归清理文件夹: ${d}`);
-              removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/rename-cross-mapping" });
+              removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/rename-cross-mapping", account: accountInfo.name });
             }
           }
         } catch (e) {
@@ -1679,9 +1714,9 @@ async function handleRenameEvent(
     if (config.removeEmptyDirs) {
       const rootDirs = getRootDirsFromMappings(config.pathMappings);
       const oldMatched = matchPathMapping(oldEntry.path, config.pathMappings, accountInfo.name);
-      if (oldMatched) removeEmptyParents(oldMatched.localPath, { rootDirs, tag: "LifeMonitor/rename" });
+      if (oldMatched) removeEmptyParents(oldMatched.localPath, { rootDirs, tag: "LifeMonitor/rename", account: accountInfo.name });
       for (const m of config.pathMappings) {
-        removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/rename" });
+        removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/rename", account: accountInfo.name });
       }
     }
     const createResult = await handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
@@ -1712,11 +1747,11 @@ async function handleRenameEvent(
           // 保护新路径本身及其祖先：不能删掉新目录或它的父目录
           if (resolved === newLocalResolved || resolved === path.dirname(newLocalResolved)) continue;
           if (rootDirs.has(resolved)) continue;
-          const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/rename-no-entry" });
+          const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/rename-no-entry", account: accountInfo.name });
           if (dirRes.deleted) {
             noEntryCleaned++;
             console.info(`[LifeMonitor] rename-no-entry: 清理旧文件夹 ${d}`);
-            removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/rename-no-entry" });
+            removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/rename-no-entry", account: accountInfo.name });
           }
         }
       } catch (e) {
@@ -1733,7 +1768,7 @@ async function handleRenameEvent(
         const found = findStrmRecursive(m.localPath, oldStrmName);
         for (const p of found) {
           if (path.resolve(p) === newLocalResolved) continue; // 不删新文件
-          const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename-no-entry", cleanRelated: false });
+          const delRes = deleteStrmFile(p, { tag: "LifeMonitor/rename-no-entry", cleanRelated: false, account: accountInfo.name });
           if (delRes.deleted) {
             noEntryCleaned++;
             console.info(`[LifeMonitor] rename-no-entry: 清理旧 STRM ${p}`);
@@ -1748,7 +1783,7 @@ async function handleRenameEvent(
   // 无条件空目录清理（兜底）
   if (config.removeEmptyDirs) {
     for (const m of config.pathMappings) {
-      removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/rename-no-entry" });
+      removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/rename-no-entry", account: accountInfo.name });
     }
   }
 
@@ -1909,7 +1944,7 @@ async function processEvent(
               try {
                 const found = findStrmRecursive(m.localPath, strmName);
                 for (const p of found) {
-                  const delRes = deleteStrmFile(p, { tag: "LifeMonitor/move", cleanRelated: false });
+                  const delRes = deleteStrmFile(p, { tag: "LifeMonitor/move", cleanRelated: false, account: accountInfo.name });
                   if (delRes.deleted) {
                     cleanup.deleted.push(`[file-search] ${p}`);
                     console.info(`[LifeMonitor] 文件名递归搜索清理 STRM: ${p}`);
@@ -1932,11 +1967,11 @@ async function processEvent(
                 for (const d of foundDirs) {
                   // 保护根目录边界，避免误删映射根本身
                   if (rootDirs.has(path.resolve(d))) continue;
-                  const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/move-dir-search" });
+                  const dirRes = deleteStrmDir(d, { tag: "LifeMonitor/move-dir-search", account: accountInfo.name });
                   if (dirRes.deleted) {
                     cleanup.deleted.push(`[dir-search] ${d}`);
                     console.info(`[LifeMonitor] 目录名递归搜索清理文件夹: ${d}`);
-                    removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/move-dir-search" });
+                    removeEmptyParents(d, { rootDirs, tag: "LifeMonitor/move-dir-search", account: accountInfo.name });
                   }
                 }
               } catch (e) {
@@ -1952,10 +1987,10 @@ async function processEvent(
           if (config.removeEmptyDirs) {
             const rootDirs = getRootDirsFromMappings(config.pathMappings);
             const oldMapping = matchPathMapping(oldEntry.path, config.pathMappings, accountInfo.name);
-            if (oldMapping) removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move" });
+            if (oldMapping) removeEmptyParents(oldMapping.localPath, { rootDirs, tag: "LifeMonitor/move", account: accountInfo.name });
             // 也在所有 mapping 的 localPath 下扫一遍（安全，只删真正空的）
             for (const m of config.pathMappings) {
-              removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/move" });
+              removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/move", account: accountInfo.name });
             }
           }
 
@@ -1991,11 +2026,11 @@ async function processEvent(
                   // 保护根目录边界，避免误删映射根本身
                   if (rootDirs.has(path.resolve(candidateDir))) continue;
                   if (fs.existsSync(candidateDir) && fs.statSync(candidateDir).isDirectory()) {
-                    deleteStrmDir(candidateDir, { tag: "LifeMonitor/move-outside-nodb" });
+                    deleteStrmDir(candidateDir, { tag: "LifeMonitor/move-outside-nodb", account: accountInfo.name });
                     localDeletedCount++;
                     console.info(`[LifeMonitor] move-outside-nodb: 清理文件夹(无DB记录) ${candidateDir}`);
                     // 清理空父目录
-                    removeEmptyParents(candidateDir, { rootDirs, tag: "LifeMonitor/move-outside-nodb" });
+                    removeEmptyParents(candidateDir, { rootDirs, tag: "LifeMonitor/move-outside-nodb", account: accountInfo.name });
                   }
                 }
               } else {
@@ -2003,7 +2038,7 @@ async function processEvent(
                 const strmName = getStrmFileName(event.file_name);
                 const found = findStrmRecursive(m.localPath, strmName);
                 for (const p of found) {
-                  const delRes = deleteStrmFile(p, { tag: "LifeMonitor/move-outside-nodb", cleanRelated: false });
+                  const delRes = deleteStrmFile(p, { tag: "LifeMonitor/move-outside-nodb", cleanRelated: false, account: accountInfo.name });
                   if (delRes.deleted) {
                     localDeletedCount++;
                     console.info(`[LifeMonitor] move-outside-nodb: 清理STRM(无DB记录) ${p}`);
@@ -2038,7 +2073,7 @@ async function processEvent(
         if (config.removeEmptyDirs) {
           const rootDirs = getRootDirsFromMappings(config.pathMappings);
           for (const m of config.pathMappings) {
-            removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/delete" });
+            removeEmptyParents(m.localPath, { rootDirs, tag: "LifeMonitor/delete", account: accountInfo.name });
           }
         }
         if (cleanup.deleted.length > 0) {
@@ -2207,13 +2242,13 @@ function maybeRunConsistencyCheck(account: string, config: LifeMonitorConfig) {
                   const url = content.trim();
                   // 简单检查：如果 URL 格式异常或为空，清理它
                   if (!url || (!url.startsWith("http") && !url.startsWith("/"))) {
-                    const delRes = deleteStrmFile(fullPath, { tag: "LifeMonitor/consistencyCheck", cleanRelated: false });
+                    const delRes = deleteStrmFile(fullPath, { tag: "LifeMonitor/consistencyCheck", cleanRelated: false, account });
                     if (delRes.deleted) stats.cleaned++;
                     console.info(`[ConsistencyCheck] 清理无效 STRM: ${fullPath}`);
                   }
                 } catch {
                   // 读取失败的 STRM 也清理
-                  try { const delRes = deleteStrmFile(fullPath, { tag: "LifeMonitor/consistencyCheck", cleanRelated: false }); if (delRes.deleted) stats.cleaned++; } catch {}
+                  try { const delRes = deleteStrmFile(fullPath, { tag: "LifeMonitor/consistencyCheck", cleanRelated: false, account }); if (delRes.deleted) stats.cleaned++; } catch {}
                 }
               }
             }
@@ -2245,6 +2280,11 @@ function maybeRunConsistencyCheck(account: string, config: LifeMonitorConfig) {
 // ==================== Polling ====================
 
 async function oncePoll(account: string): Promise<void> {
+  // 入口检查：若已被 stop 则直接退出，避免 in-flight poll 继续写状态
+  if (!monitorStates.get(account)?.running) {
+    return;
+  }
+
   const pollStatus = tryPollMonitor(account);
   if (!pollStatus.ok) {
     console.log(
@@ -2321,6 +2361,12 @@ async function oncePoll(account: string): Promise<void> {
       fromId,
       preferredApi
     );
+
+    // stop 后快速退出：不再处理事件，避免状态闪烁
+    if (!monitorStates.get(account)?.running) {
+      console.log(`[LifeMonitor] ${account}: monitor stopped during pull, skip event processing`);
+      return;
+    }
 
     // Reset 405 counter on success
     reset405Count(account);
@@ -2543,6 +2589,8 @@ export function stopMonitor(account: string): void {
     monitorTimers.delete(account);
   }
 
+  // 设 stopping 标志：让 in-flight oncePoll 在下一个检查点自行退出，
+  // 避免在 stop 后仍写状态导致状态闪烁
   updateState(account, {
     running: false,
     status: "idle",

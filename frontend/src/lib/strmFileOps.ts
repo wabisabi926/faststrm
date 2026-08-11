@@ -34,6 +34,8 @@ export interface RemoveEmptyParentsOptions {
   rootDirs: Set<string>;
   /** 调用方标签，用于日志 */
   tag?: string;
+  /** 账号名，用于日志上下文（符合 project_memory 硬约束） */
+  account?: string;
 }
 
 export interface DeleteStrmFileOptions {
@@ -43,6 +45,8 @@ export interface DeleteStrmFileOptions {
   cleanRelated?: boolean;
   /** 调用方标签 */
   tag?: string;
+  /** 账号名，用于日志上下文 */
+  account?: string;
 }
 
 export interface SyncStrmTextResult {
@@ -52,6 +56,12 @@ export interface SyncStrmTextResult {
   wrote: boolean;
   /** 错误信息 */
   error?: string;
+}
+
+/** 构建带账号上下文的日志前缀，符合 project_memory 硬约束 */
+function buildLogPrefix(tag?: string, account?: string): string {
+  const t = tag || "strmFileOps";
+  return account ? `[${t}] account=${account}` : `[${t}]`;
 }
 
 // ==================== 1. 空目录清理 ====================
@@ -71,7 +81,7 @@ export function removeEmptyParents(
   opts: RemoveEmptyParentsOptions
 ): string[] {
   const removed: string[] = [];
-  const tag = opts.tag || "strmFileOps";
+  const prefix = buildLogPrefix(opts.tag, opts.account);
   // resolve 为绝对路径，确保与 rootDirs（已是 resolved 绝对路径）能正确匹配，
   // 否则用户把 localPath 配成相对路径时根目录保护会失效
   let currentDir = path.resolve(path.dirname(startPath));
@@ -86,7 +96,7 @@ export function removeEmptyParents(
 
       fs.rmdirSync(currentDir);
       removed.push(currentDir);
-      console.log(`[${tag}] 清理空目录: ${currentDir}`);
+      console.log(`${prefix} 清理空目录: ${currentDir}`);
       currentDir = path.dirname(currentDir);
     } catch {
       break; // 读取/删除失败 → 停止
@@ -107,7 +117,7 @@ export function deleteStrmFile(
   strmPath: string,
   opts?: DeleteStrmFileOptions
 ): { deleted: boolean; removedDirs: string[]; relatedDeleted: string[] } {
-  const tag = opts?.tag || "strmFileOps";
+  const prefix = buildLogPrefix(opts?.tag, opts?.account);
   const removedDirs: string[] = [];
   const relatedDeleted: string[] = [];
   let deleted = false;
@@ -116,22 +126,22 @@ export function deleteStrmFile(
     if (fs.existsSync(strmPath)) {
       fs.unlinkSync(strmPath);
       deleted = true;
-      console.log(`[${tag}] 删除 STRM: ${strmPath}`);
+      console.log(`${prefix} 删除 STRM: ${strmPath}`);
     }
   } catch (e) {
-    console.error(`[${tag}] 删除 STRM 失败 ${strmPath}: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`${prefix} 删除 STRM 失败 ${strmPath}: ${e instanceof Error ? e.message : String(e)}`);
     return { deleted: false, removedDirs, relatedDeleted };
   }
 
   // 清理关联文件 (.nfo/.jpg/.srt 等)
   if (deleted && opts?.cleanRelated) {
-    const related = cleanRelatedFiles(strmPath, { tag });
+    const related = cleanRelatedFiles(strmPath, { tag: opts?.tag, account: opts?.account });
     relatedDeleted.push(...related);
   }
 
   // 清理空父目录
   if (deleted && opts?.rootDirs) {
-    const dirs = removeEmptyParents(strmPath, { rootDirs: opts.rootDirs, tag });
+    const dirs = removeEmptyParents(strmPath, { rootDirs: opts.rootDirs, tag: opts?.tag, account: opts?.account });
     removedDirs.push(...dirs);
   }
 
@@ -148,9 +158,9 @@ export function deleteStrmFile(
  */
 export function deleteStrmDir(
   dirPath: string,
-  opts?: { tag?: string }
+  opts?: { tag?: string; account?: string }
 ): { deleted: boolean; error?: string } {
-  const tag = opts?.tag || "strmFileOps";
+  const prefix = buildLogPrefix(opts?.tag, opts?.account);
 
   try {
     if (!fs.existsSync(dirPath)) {
@@ -158,11 +168,11 @@ export function deleteStrmDir(
     }
 
     fs.rmSync(dirPath, { recursive: true, force: true });
-    console.log(`[${tag}] 删除目录: ${dirPath}`);
+    console.log(`${prefix} 删除目录: ${dirPath}`);
     return { deleted: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[${tag}] 删除目录失败 ${dirPath}: ${msg}`);
+    console.error(`${prefix} 删除目录失败 ${dirPath}: ${msg}`);
 
     // 尝试逐个清理
     try {
@@ -177,7 +187,7 @@ export function deleteStrmDir(
         }
       }
       fs.rmdirSync(dirPath);
-      console.log(`[${tag}] 逐个清理后删除目录: ${dirPath}`);
+      console.log(`${prefix} 逐个清理后删除目录: ${dirPath}`);
       return { deleted: true };
     } catch (e2) {
       return { deleted: false, error: e2 instanceof Error ? e2.message : String(e2) };
@@ -209,7 +219,7 @@ export function findStrmRecursive(dir: string, targetStrmName: string): string[]
     }
   } catch (e) {
     console.warn(
-      `[strmFileOps] findStrmRecursive 跳过 ${dir}: ${e instanceof Error ? e.message : String(e)}`
+      `${buildLogPrefix()} findStrmRecursive 跳过 ${dir}: ${e instanceof Error ? e.message : String(e)}`
     );
   }
   return results;
@@ -243,7 +253,7 @@ export function findDirRecursive(dir: string, targetDirName: string): string[] {
     }
   } catch (e) {
     console.warn(
-      `[strmFileOps] findDirRecursive 跳过 ${dir}: ${e instanceof Error ? e.message : String(e)}`
+      `${buildLogPrefix()} findDirRecursive 跳过 ${dir}: ${e instanceof Error ? e.message : String(e)}`
     );
   }
   return results;
@@ -267,9 +277,9 @@ export function findDirRecursive(dir: string, targetDirName: string): string[] {
  */
 export function cleanRelatedFiles(
   baseFilePath: string,
-  opts?: { tag?: string }
+  opts?: { tag?: string; account?: string }
 ): string[] {
-  const tag = opts?.tag || "strmFileOps";
+  const prefix = buildLogPrefix(opts?.tag, opts?.account);
   const deleted: string[] = [];
 
   const dir = path.dirname(baseFilePath);
@@ -289,17 +299,17 @@ export function cleanRelatedFiles(
         try {
           fs.unlinkSync(entryPath);
           deleted.push(entryPath);
-          console.warn(`[${tag}] 清理关联文件: ${entryPath}`);
+          console.warn(`${prefix} 清理关联文件: ${entryPath}`);
         } catch (e) {
           // missing_ok 容忍并发删除
           if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) {
-            console.error(`[${tag}] 删除关联文件失败 ${entryPath}: ${e instanceof Error ? e.message : String(e)}`);
+            console.error(`${prefix} 删除关联文件失败 ${entryPath}: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
       }
     }
   } catch (e) {
-    console.warn(`[${tag}] cleanRelatedFiles 扫描目录失败 ${dir}: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn(`${prefix} cleanRelatedFiles 扫描目录失败 ${dir}: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return deleted;
@@ -322,9 +332,9 @@ export function cleanRelatedFiles(
 export function syncStrmText(
   strmPath: string,
   expectedContent: string,
-  opts?: { createIfMissing?: boolean; tag?: string }
+  opts?: { createIfMissing?: boolean; tag?: string; account?: string }
 ): SyncStrmTextResult {
-  const tag = opts?.tag || "strmFileOps";
+  const prefix = buildLogPrefix(opts?.tag, opts?.account);
   const createIfMissing = opts?.createIfMissing ?? true;
 
   // 文件不存在
@@ -335,7 +345,7 @@ export function syncStrmText(
     try {
       fs.mkdirSync(path.dirname(strmPath), { recursive: true });
       atomicWriteFileSync(strmPath, expectedContent);
-      console.log(`[${tag}] 创建 STRM: ${strmPath}`);
+      console.log(`${prefix} 创建 STRM: ${strmPath}`);
       return { ok: true, wrote: true };
     } catch (e) {
       return { ok: false, wrote: false, error: e instanceof Error ? e.message : String(e) };
@@ -354,7 +364,7 @@ export function syncStrmText(
 
     // 内容不同 → 重写
     atomicWriteFileSync(strmPath, expectedContent);
-    console.log(`[${tag}] 更新 STRM 内容: ${strmPath}`);
+    console.log(`${prefix} 更新 STRM 内容: ${strmPath}`);
     return { ok: true, wrote: true };
   } catch (e) {
     return { ok: false, wrote: false, error: e instanceof Error ? e.message : String(e) };

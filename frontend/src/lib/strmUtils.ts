@@ -14,17 +14,19 @@ interface StrmSettingsLike {
 
 export function resolveStrmSettings(
   account?: string,
-  task?: { strmPrefix?: string; enablePathEncoding?: boolean; enable302?: boolean } | null,
+  task?: { strmPrefix?: string; enablePathEncoding?: boolean } | null,
   settings?: StrmSettingsLike
 ): ResolvedStrmSettings {
   const g = settings || {};
 
   let strmPrefix = g.strmPrefix || "";
   let enablePathEncoding = !!g.enablePathEncoding;
-  // 302 策略统一由全局控制，任务级 enable302 不再生效
+  // 302 策略统一由全局控制，任务级不再覆盖
   const enable302 = !!g.enable302;
 
   if (task) {
+    // 任务级覆盖：strmPrefix 仅在非空时覆盖（空串视为"未设置"，
+    // 与 enablePathEncoding 的 undefined 判断保持一致语义）
     if (task.strmPrefix !== undefined && task.strmPrefix !== "") {
       strmPrefix = task.strmPrefix;
     }
