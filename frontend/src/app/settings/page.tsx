@@ -225,7 +225,6 @@ export default function SettingsPage() {
         setMinFileSizeMb(loadedMinSize > 0 ? (loadedMinSize / (1024 * 1024)).toString() : "");
         setFirstPullMode(monitor.firstPullMode || "latest");
         setMoveMediaMode(monitor.moveMediaMode || "local_move");
-        setLifeEnable302(monitor.enable302);
 
         // Load accounts
         const accountsResp = await axiosInstance.get("/api/account");

@@ -4,15 +4,41 @@
 
 # Fast Strm
 
-**🎉 更新通知（v0.6.0）**：新增 Emby Webhook 通知与 Emby 通知设置页面，Telegram 轮询控制全面中文汉化，通知 API 路由重构统一至 `/api/notify/*`，优化设置页面头部对齐、STRM 清理卡片布局、Sidebar 切换按钮居中对齐，版本号正式升级为 v0.6.0。
+**🎉 更新通知（v0.7.0）**：STRM 路由策略全面优化（默认 302 + Infuse/VidHub 强制代理 + 115 并发限流 + 真实文件大小识别），新增 Emby 删除同步功能（自动清理 STRM + 关联文件 + DB 记录，三道防误删保护），版本号升级为 v0.7.0。
 
-**📌 上一版本（v0.5.0）**：filePathDb 迁移至 SQLite（better-sqlite3），新增统一文件操作工具层、mediaMountPath 全量同步、令牌桶限流，生活事件监控与 STRM 清理逻辑全面重构。
+**📌 上一版本（v0.6.0）**：新增 Emby Webhook 通知与 Emby 通知设置页面，Telegram 轮询控制全面中文汉化，通知 API 路由重构统一至 `/api/notify/*`，优化设置页面头部对齐、STRM 清理卡片布局、Sidebar 切换按钮居中对齐，版本号正式升级为 v0.6.0。
 
 > 推荐：如果使用 115 302 的话，建议将 115 账号命名和 OpenList 或 CD 内命名一致，这样可以保证找不到地址的时候可以正确回源。
 
 ---
 
 ## 📝 版本更新日志
+
+### v0.7.0
+
+- **STRM 路由策略优化**
+  - 默认策略从「代理优先」改为「302 优先」：faststrm 与 Emby Server 同机部署时避免双重中转（115 → faststrm → Emby → 客户端），让 Emby/Kodi/浏览器直连 115 CDN，部署设备零中转
+  - 仅对 Infuse/VidHub/SenPlayer 等 seek 兼容性差的客户端强制代理（参考 emby2Alist 的 clientSelfAlistRule）
+  - 新增 115 单账号并发代理限流（阈值 8，留 2 个余量给其他客户端），超限自动切 302，避免触发 115 约 10 进程上限
+  - 新增真实文件大小识别：调用 115 download API 解析 `file_size` 字段，替代不可靠的文件名估算
+  - 移除局域网强制代理与大文件阈值规则（默认 302 后无需区分）
+  - `urlCache` key 去掉 UA 维度（115 直链解析不依赖 UA），提升缓存命中率
+  - `hopByHop` 头列表提为模块顶层常量，避免每次请求重建
+  - 错误日志补 account 上下文，便于多账号排障
+  - `?mode=redirect|proxy` 调试参数仅私网生效，防止公网绕过 force-proxy UA 保护
+
+- **Emby 删除同步（移植自 samediasyncdel）**
+  - 监听 Emby `library.deleted` 事件，自动删除本地 STRM + 关联字幕/nfo/图片 + 清理空目录 + 更新 filePathDb
+  - 路径映射：Emby 路径 → 115 网盘路径（路径段感知，非 str.replace）
+  - 三道防误删保护：① STRM 不存在则跳过 ② Movie/Episode 标题校验 ③ 整季/整剧目录文件数 ≤100 才删
+  - 去重机制：60 秒窗口防止生活监控与 Emby webhook 重复处理同一路径
+  - Dry-run 模式：首次配置时只记日志不删除，验证路径映射正确性
+  - 白名单：只有配置的 Emby 路径前缀才被处理，缩小爆炸半径
+  - 回收站：STRM 文件和目录都走 7 天回收站（strmFileOps 已有机制）
+  - 删除历史持久化：`data/syncDelHistory.json`，最多保留 200 条
+  - TG 通知：删除时发送通知（可选，替代原有删除通知）
+  - 新增 `emby-notify` 页面"删除同步"配置卡片：启用开关、Dry-run 开关、通知开关、路径映射编辑器
+  - filePathDb 新增 `deleteByPath` 和 `deleteByPathPrefix` 接口
 
 ### v0.6.0
 

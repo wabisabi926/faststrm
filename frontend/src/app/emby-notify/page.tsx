@@ -20,6 +20,10 @@ interface EmbySettings {
   playbackShowOverview?: boolean;
   webhookAuth?: string;
   libraryId?: string;
+  syncDeleteEnabled?: boolean;
+  syncDeletePathMappings?: Array<{ embyPath: string; cloudPath: string; account?: string }>;
+  syncDeleteNotify?: boolean;
+  syncDeleteDryRun?: boolean;
 }
 
 interface TestResult {
@@ -120,6 +124,37 @@ export default function EmbyNotifyPage() {
 
   const updateSetting = <K extends keyof EmbySettings>(key: K, value: EmbySettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  // 删除同步路径映射
+  const [newMappingEmbyPath, setNewMappingEmbyPath] = useState("");
+  const [newMappingCloudPath, setNewMappingCloudPath] = useState("");
+  const [newMappingAccount, setNewMappingAccount] = useState("");
+
+  const updatePathMapping = (index: number, field: "embyPath" | "cloudPath" | "account", value: string) => {
+    const mappings = [...(settings.syncDeletePathMappings || [])];
+    mappings[index] = { ...mappings[index], [field]: value };
+    updateSetting("syncDeletePathMappings", mappings);
+  };
+
+  const addPathMapping = () => {
+    if (!newMappingEmbyPath || !newMappingCloudPath) return;
+    const mappings = [...(settings.syncDeletePathMappings || [])];
+    mappings.push({
+      embyPath: newMappingEmbyPath,
+      cloudPath: newMappingCloudPath,
+      account: newMappingAccount || undefined,
+    });
+    updateSetting("syncDeletePathMappings", mappings);
+    setNewMappingEmbyPath("");
+    setNewMappingCloudPath("");
+    setNewMappingAccount("");
+  };
+
+  const removePathMapping = (index: number) => {
+    const mappings = [...(settings.syncDeletePathMappings || [])];
+    mappings.splice(index, 1);
+    updateSetting("syncDeletePathMappings", mappings);
   };
 
   const webhookUrl = typeof window !== "undefined" ? `${window.location.origin}/api/emby/webhook` : "http://localhost:3000/api/emby/webhook";
@@ -375,6 +410,159 @@ export default function EmbyNotifyPage() {
                 <strong>提示：</strong>配置完成后，Emby 的媒体变动（入库/删除）和播放状态将实时推送到你的 Telegram。
               </p>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 删除同步设置 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <XCircle className="h-5 w-5" />
+            <span>删除同步</span>
+          </CardTitle>
+          <CardDescription>
+            监听 Emby 删除事件，自动删除本地 STRM 文件 + 关联字幕/图片 + 清理 DB 记录
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="flex items-center space-x-2 p-3 rounded-lg border">
+              <Checkbox
+                id="syncDeleteEnabled"
+                checked={!!settings.syncDeleteEnabled}
+                onCheckedChange={(checked) =>
+                  updateSetting("syncDeleteEnabled", checked === true)
+                }
+              />
+              <div className="flex-1">
+                <Label htmlFor="syncDeleteEnabled" className="cursor-pointer">
+                  启用删除同步
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Emby 删除媒体时自动清理 STRM
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2 p-3 rounded-lg border">
+              <Checkbox
+                id="syncDeleteDryRun"
+                checked={!!settings.syncDeleteDryRun}
+                onCheckedChange={(checked) =>
+                  updateSetting("syncDeleteDryRun", checked === true)
+                }
+                disabled={!settings.syncDeleteEnabled}
+              />
+              <div className="flex-1">
+                <Label
+                  htmlFor="syncDeleteDryRun"
+                  className={`cursor-pointer ${!settings.syncDeleteEnabled ? "text-muted-foreground" : ""}`}
+                >
+                  Dry-run 模式
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  只记日志不实际删除（首次验证用）
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2 p-3 rounded-lg border">
+              <Checkbox
+                id="syncDeleteNotify"
+                checked={!!settings.syncDeleteNotify}
+                onCheckedChange={(checked) =>
+                  updateSetting("syncDeleteNotify", checked === true)
+                }
+                disabled={!settings.syncDeleteEnabled}
+              />
+              <div className="flex-1">
+                <Label
+                  htmlFor="syncDeleteNotify"
+                  className={`cursor-pointer ${!settings.syncDeleteEnabled ? "text-muted-foreground" : ""}`}
+                >
+                  删除通知
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  删除时发送 TG 通知（替代上方删除通知）
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* 路径映射表 */}
+          <div className="space-y-2">
+            <Label>路径映射（Emby 路径 → 115 网盘路径）</Label>
+            {(settings.syncDeletePathMappings || []).map((mapping, index) => (
+              <div key={index} className="flex gap-2 items-center">
+                <Input
+                  className="flex-1"
+                  placeholder="Emby 路径前缀，如 /app/data/strm/电影"
+                  value={mapping.embyPath}
+                  onChange={(e) => updatePathMapping(index, "embyPath", e.target.value)}
+                />
+                <span className="text-muted-foreground">→</span>
+                <Input
+                  className="flex-1"
+                  placeholder="网盘路径前缀，如 /电影"
+                  value={mapping.cloudPath}
+                  onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
+                />
+                <Input
+                  className="w-[120px]"
+                  placeholder="账号（可选）"
+                  value={mapping.account || ""}
+                  onChange={(e) => updatePathMapping(index, "account", e.target.value)}
+                />
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => removePathMapping(index)}
+                >
+                  删除
+                </Button>
+              </div>
+            ))}
+            <div className="flex gap-2 items-center">
+              <Input
+                className="flex-1"
+                placeholder="Emby 路径前缀"
+                value={newMappingEmbyPath}
+                onChange={(e) => setNewMappingEmbyPath(e.target.value)}
+              />
+              <span className="text-muted-foreground">→</span>
+              <Input
+                className="flex-1"
+                placeholder="网盘路径前缀"
+                value={newMappingCloudPath}
+                onChange={(e) => setNewMappingCloudPath(e.target.value)}
+              />
+              <Input
+                className="w-[120px]"
+                placeholder="账号（可选）"
+                value={newMappingAccount}
+                onChange={(e) => setNewMappingAccount(e.target.value)}
+              />
+              <Button size="sm" onClick={addPathMapping}>
+                添加
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              只有匹配到 Emby 路径前缀的删除事件才会被处理。账号留空时遍历所有 115 账号删除 DB 记录。
+            </p>
+          </div>
+
+          <div className="flex space-x-2">
+            <Button onClick={handleSave} disabled={loading}>
+              {loading ? "保存中..." : "保存设置"}
+            </Button>
+          </div>
+
+          <div className="p-3 bg-muted/50 rounded-lg text-sm">
+            <p className="font-semibold mb-1">工作流程</p>
+            <p className="text-xs text-muted-foreground">
+              Emby 删除媒体 → 匹配路径映射 → 去重检查（60s） → 防误删（STRM 存在 + 标题匹配 + 目录文件数 ≤100） → 删 STRM + 字幕 + nfo → 清空目录 → 更新 DB → TG 通知
+            </p>
           </div>
         </CardContent>
       </Card>

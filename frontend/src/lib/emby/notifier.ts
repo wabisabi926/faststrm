@@ -8,6 +8,7 @@ import type {
 import { getItemDetail, buildImageUrl } from "./client";
 import { sendTelegramNotification, sendTelegramPhoto } from "../telegram";
 import { readSettings } from "../serverUtils";
+import { handleSyncDelete } from "./syncDel";
 
 // ========== 剧集缓冲（移植自 qmediasync addItemToEpisodeBuffer） ==========
 const episodeBuffer = new Map<string, EpisodeBuffer>();
@@ -532,10 +533,23 @@ export async function handleEmbyWebhookEvent(event: EmbyWebhookEvent): Promise<v
       break;
 
     case "library.deleted":
-      if (event.Item?.Type === "Movie") {
-        await handleMovieDeleted(event.Item);
-      } else if (event.Item?.Type === "Episode" || event.Item?.Type === "Series" || event.Item?.Type === "Season") {
-        handleSeriesEpisodeDeleted(event.Item);
+      // 删除同步：删 STRM + 关联文件 + DB 记录（独立于通知逻辑）
+      if (event.Item?.Path) {
+        handleSyncDelete(event.Item).catch(err => {
+          console.error("[SyncDel] 处理失败:", err);
+        });
+      }
+      // 原有通知逻辑：若 syncDeleteNotify 已开启则跳过重复通知
+      {
+        const s = readSettings();
+        const skipOriginalNotify = s.emby?.syncDeleteEnabled && s.emby?.syncDeleteNotify;
+        if (!skipOriginalNotify) {
+          if (event.Item?.Type === "Movie") {
+            await handleMovieDeleted(event.Item);
+          } else if (event.Item?.Type === "Episode" || event.Item?.Type === "Series" || event.Item?.Type === "Season") {
+            handleSeriesEpisodeDeleted(event.Item);
+          }
+        }
       }
       break;
 

@@ -34,9 +34,11 @@ export interface EmbyWebhookEvent {
     Id: string;
     Name: string;
     Type: string;
+    Path?: string;  // Emby 媒体文件路径（删除同步用）
     ImageTags?: EmbyImageTag;
     SeriesName?: string;
     SeriesId?: string;
+    SeasonId?: string;
     ParentIndexNumber?: number;
     IndexNumber?: number;
   };

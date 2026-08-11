@@ -362,11 +362,37 @@ export function getEntriesByPathPrefix(
   return rows.map((row) => ({
     fileId: row.file_id,
     path: row.path,
-    fileName: row.file_name,
+    file_name: row.file_name,
     parentId: row.parent_id,
     pickCode: row.pickcode,
     updateTime: row.update_time,
   }));
+}
+
+/**
+ * 按精确路径删除记录（Emby 删除同步用）
+ * 删除 path 完全匹配的记录。
+ * @returns 删除的行数
+ */
+export function deleteByPath(account: string, filePath: string): number {
+  const result = getDb().prepare(
+    "DELETE FROM files WHERE account = ? AND path = ?"
+  ).run(account, filePath);
+  return result.changes;
+}
+
+/**
+ * 按路径前缀批量删除记录（Emby 整季/整剧删除同步用）
+ * 删除 path = prefix 或 path 以 prefix/ 开头的所有记录。
+ * @returns 删除的行数
+ */
+export function deleteByPathPrefix(account: string, pathPrefix: string): number {
+  const prefix = pathPrefix.replace(/\/+$/, "") || "/";
+  if (prefix === "/") return 0; // 根目录短路，防全表误删
+  const result = getDb().prepare(
+    "DELETE FROM files WHERE account = ? AND (path = ? OR path LIKE ?)"
+  ).run(account, prefix, `${prefix}/%`);
+  return result.changes;
 }
 
 /**

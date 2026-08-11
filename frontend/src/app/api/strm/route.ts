@@ -1,10 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readAccounts, readSettings } from "@/lib/serverUtils";
-import { getDownloadUrlWeb, type AccountInfo } from "@/lib/115";
+import { getDownloadUrlWebFull, type AccountInfo, type DownloadUrlMeta } from "@/lib/115";
 
 const URL_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
 const REACHABLE_CACHE_TTL = 4 * 60 * 1000; // 4 分钟（略小于 URL_CACHE_TTL）
 const REACHABLE_CACHE_MAX = 256; // 简单 LRU 上限（够用就行，避免内存膨胀）
+
+// 115 单账号并发 proxy 限制（emby2Alist 经验：单账号总下载进程上限约 10）
+const ACCOUNT_PROXY_CONCURRENCY_LIMIT = 8;
+const accountProxyCount = new Map<string, number>();
+
+// hop-by-hop 头部，模块级常量避免每次请求重建
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailers",
+  "transfer-encoding",
+  "upgrade",
+  "content-encoding",
+]);
 
 type RouteDecision = "proxy" | "redirect";
 interface DecisionResult {
@@ -52,7 +69,7 @@ class SimpleLRU<K, V> {
   }
 }
 
-const urlCache = new SimpleLRU<string, string>(512, URL_CACHE_TTL);
+const urlCache = new SimpleLRU<string, DownloadUrlMeta>(512, URL_CACHE_TTL);
 const reachableCache = new SimpleLRU<string, ReachableResult>(
   REACHABLE_CACHE_MAX,
   REACHABLE_CACHE_TTL
@@ -83,29 +100,6 @@ function resolveFileName(raw: string | undefined): string | undefined {
   return /%/.test(raw) ? decodeURIComponent(raw) : raw;
 }
 
-function estimateFileSizeBytesFromName(fileName: string | undefined): number | undefined {
-  if (!fileName) return undefined;
-  // 优先匹配明确的 size 标记，如 .20GB. .45.3G. .12000MB. 等
-  const m = fileName.match(/[._-](\d+(?:\.\d+)?)\s*(GB|G|MB|M|KB|K)\b/i);
-  if (!m) return undefined;
-  const num = Number(m[1]);
-  if (!Number.isFinite(num) || num <= 0) return undefined;
-  const unit = m[2].toUpperCase();
-  switch (unit) {
-    case "GB":
-    case "G":
-      return Math.round(num * 1024 ** 3);
-    case "MB":
-    case "M":
-      return Math.round(num * 1024 ** 2);
-    case "KB":
-    case "K":
-      return Math.round(num * 1024);
-    default:
-      return undefined;
-  }
-}
-
 /* ----------------------- 规则引擎：proxy vs redirect ----------------------- */
 
 /**
@@ -118,8 +112,6 @@ const FORCE_PROXY_UA_TOKENS = Object.freeze([
   "SenPlayer",
   "SenPlayerHD",
 ]);
-
-const LARGE_FILE_BYTES = 20 * 1024 ** 3; // 20GB
 
 function isPrivateNetworkIp(ip: string | null): boolean {
   if (!ip) return false;
@@ -150,38 +142,27 @@ function getClientIp(req: NextRequest): string | null {
 
 function decideRoute(
   req: NextRequest,
-  explicitMode: string | undefined,
-  fileName: string | undefined
+  explicitMode: string | undefined
 ): DecisionResult {
-  // 1) 手动指定优先级最高（调试用）
+  // 1) 手动指定优先级最高（调试用，仅私网生效，见 handleStrm）
   if (explicitMode === "redirect") return { decision: "redirect", reason: "explicit_mode_redirect" };
   if (explicitMode === "proxy") return { decision: "proxy", reason: "explicit_mode_proxy" };
 
   const ua = req.headers.get("user-agent") || "";
 
-  // 2) seek 坑客户端 → 强制代理
+  // 2) seek 坑客户端 → 强制代理（Infuse/VidHub/SenPlayer 对 115 的 302 seek 有 bug）
   for (const token of FORCE_PROXY_UA_TOKENS) {
     if (ua.includes(token)) {
       return { decision: "proxy", reason: `force_proxy_ua:${token}` };
     }
   }
 
-  // 3) 局域网用户 → 代理（家里上行通常够，稳定性优先）
-  if (isPrivateNetworkIp(getClientIp(req))) {
-    return { decision: "proxy", reason: "private_network_prefers_proxy" };
-  }
-
-  // 4) 大文件（≥20GB）→ 走 redirect 省服务器上行；后面会做 redirectCheck
-  const estSize = estimateFileSizeBytesFromName(fileName);
-  if (estSize !== undefined && estSize >= LARGE_FILE_BYTES) {
-    return {
-      decision: "redirect",
-      reason: `large_file_ge_20GB(${Math.round(estSize / 1024 ** 3)}GB)`,
-    };
-  }
-
-  // 5) 默认策略：代理优先，保证所有浏览器/客户端开箱即用
-  return { decision: "proxy", reason: "default_proxy_fallback" };
+  // 3) 默认策略：redirect 优先
+  // 部署设备（faststrm + Emby Server 同机）场景下，proxy 会导致双重中转：
+  //   115 -> faststrm -> Emby Server -> 客户端
+  // redirect 让 Emby Server / Kodi / 浏览器直连 115，faststrm 零中转。
+  // force-proxy UA 已在规则 2 处理，其余客户端默认信任 302 兼容性。
+  return { decision: "redirect", reason: "default_redirect" };
 }
 
 /* -------------------- redirectCheck：后端 HEAD 预检直链 -------------------- */
@@ -246,17 +227,18 @@ async function resolveDownloadUrl(
   pickcode: string,
   account: AccountInfo,
   userAgent: string | undefined
-): Promise<string> {
-  const cacheKey = `${account.name}:${pickcode}:${userAgent || ""}`;
+): Promise<DownloadUrlMeta> {
+  // Phase 1.1: 去掉 UA 维度，115 直链解析不依赖 UA
+  const cacheKey = `${account.name}:${pickcode}`;
   const cached = urlCache.get(cacheKey);
   if (cached) return cached;
 
-  const url = await getDownloadUrlWeb(pickcode, {
+  const meta = await getDownloadUrlWebFull(pickcode, {
     userAgent,
     accountInfo: account,
   });
-  urlCache.set(cacheKey, url);
-  return url;
+  urlCache.set(cacheKey, meta);
+  return meta;
 }
 
 /* ------------------------------- 核心处理器 ------------------------------- */
@@ -288,20 +270,9 @@ async function handleProxy(
   });
 
   const respHeaders = new Headers();
-  const hopByHop = new Set([
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailers",
-    "transfer-encoding",
-    "upgrade",
-    "content-encoding",
-  ]);
 
   for (const [k, v] of upstream.headers.entries()) {
-    if (hopByHop.has(k.toLowerCase())) continue;
+    if (HOP_BY_HOP_HEADERS.has(k.toLowerCase())) continue;
     respHeaders.set(k, v);
   }
 
@@ -348,7 +319,7 @@ async function handleStrm(req: NextRequest): Promise<NextResponse> {
   const accountName = searchParams.get("account") || "";
   const pickcode = searchParams.get("pickcode") || "";
   const fileName = searchParams.get("file_name") || undefined;
-  const explicitMode = searchParams.get("mode")?.toLowerCase();
+  const rawMode = searchParams.get("mode")?.toLowerCase();
 
   if (!accountName) {
     return NextResponse.json({ error: "Missing account" }, { status: 400 });
@@ -376,20 +347,26 @@ async function handleStrm(req: NextRequest): Promise<NextResponse> {
     (readSettings()["user-agent"] as string) ||
     undefined;
 
-  let cdnUrl: string;
+  // Phase 3.2: 解析直链 + 真实文件元数据
+  let meta: DownloadUrlMeta;
   try {
-    cdnUrl = await resolveDownloadUrl(pickcode, account, userAgent);
+    meta = await resolveDownloadUrl(pickcode, account, userAgent);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[STRM] Failed to get download URL:", message);
+    console.error(`[STRM] account=${accountName} failed to get download URL:`, message);
     return NextResponse.json(
       { error: `Failed to get download URL: ${message}` },
       { status: 502 }
     );
   }
+  const cdnUrl = meta.url;
+
+  // Phase 1.4: explicit mode 仅在私网生效，防止公网用户绕过 force-proxy UA 保护
+  const isPrivate = isPrivateNetworkIp(getClientIp(req));
+  const explicitMode = isPrivate ? rawMode : undefined;
 
   // 规则引擎：决策 proxy vs redirect
-  const { decision, reason } = decideRoute(req, explicitMode, fileName);
+  const { decision, reason } = decideRoute(req, explicitMode);
 
   let finalDecision: RouteDecision = decision;
   let finalReason = reason;
@@ -405,23 +382,53 @@ async function handleStrm(req: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // Phase 2.3: 115 单账号并发 proxy 限流
+  // emby2Alist 经验：单账号总下载进程上限约 10，超阈值时切 redirect 避免触发限流
+  if (finalDecision === "proxy") {
+    const current = accountProxyCount.get(accountName) || 0;
+    if (current >= ACCOUNT_PROXY_CONCURRENCY_LIMIT) {
+      finalDecision = "redirect";
+      finalReason = `${reason} -> proxy_concurrency_limit(${current}/${ACCOUNT_PROXY_CONCURRENCY_LIMIT}) fallback_redirect`;
+      console.warn(
+        `[STRM] account=${accountName} proxy concurrency hit limit (${current}/${ACCOUNT_PROXY_CONCURRENCY_LIMIT}), fallback to redirect`
+      );
+    }
+  }
+
   const elapsed = Date.now() - t0;
   const shortPc = `${pickcode.slice(0, 4)}…${pickcode.slice(-3)}`;
+  const sizeLog = meta.fileSize !== undefined ? ` size=${meta.fileSize}` : "";
   console.log(
-    `[STRM] pickcode=${shortPc} decision=${finalDecision} reason=${finalReason} ` +
-      `redirect_check=${redirectCheckStatus ?? "skipped"} elapsed=${elapsed}ms`
+    `[STRM] account=${accountName} pickcode=${shortPc} decision=${finalDecision} reason=${finalReason} ` +
+      `redirect_check=${redirectCheckStatus ?? "skipped"}${sizeLog} elapsed=${elapsed}ms`
   );
 
-  try {
-    if (finalDecision === "redirect") {
-      return doRedirect(cdnUrl, fileName);
+  // proxy 模式：计数 + finally 释放
+  if (finalDecision === "proxy") {
+    accountProxyCount.set(accountName, (accountProxyCount.get(accountName) || 0) + 1);
+    try {
+      return await handleProxy(req, cdnUrl, account, userAgent, fileName);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[STRM][proxy] account=${accountName} error:`, message);
+      return NextResponse.json(
+        { error: `proxy failed: ${message}` },
+        { status: 502 }
+      );
+    } finally {
+      const after = (accountProxyCount.get(accountName) || 1) - 1;
+      if (after <= 0) accountProxyCount.delete(accountName);
+      else accountProxyCount.set(accountName, after);
     }
-    return await handleProxy(req, cdnUrl, account, userAgent, fileName);
+  }
+
+  try {
+    return doRedirect(cdnUrl, fileName);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[STRM][${finalDecision}] error:`, message);
+    console.error(`[STRM][redirect] account=${accountName} error:`, message);
     return NextResponse.json(
-      { error: `${finalDecision} failed: ${message}` },
+      { error: `redirect failed: ${message}` },
       { status: 502 }
     );
   }

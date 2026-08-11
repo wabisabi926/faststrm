@@ -236,6 +236,14 @@ export type AppSettings = {
     playbackShowOverview?: boolean;
     webhookAuth?: string;
     libraryId?: string;
+    /** 删除同步：监听 Emby library.deleted 事件，自动删除本地 STRM + 关联文件 */
+    syncDeleteEnabled?: boolean;
+    /** 删除同步路径映射：Emby 路径（=STRM 本地保存路径）→ 115 网盘路径 */
+    syncDeletePathMappings?: Array<{ embyPath: string; cloudPath: string; account?: string }>;
+    /** 删除同步时发送 TG 通知 */
+    syncDeleteNotify?: boolean;
+    /** Dry-run 模式：只记日志不实际删除（首次配置验证用） */
+    syncDeleteDryRun?: boolean;
   };
   telegram?: {
     botToken?: string;

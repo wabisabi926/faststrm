@@ -449,21 +449,47 @@ async function request115<T = unknown>(
 }
 // POST https://proapi.115.com/android/2.0/ufile/download
 // Use the same getUrl function as the Node.js script
-export async function getDownloadUrlWeb(pickcode, { userAgent, accountInfo }) {
+export interface DownloadUrlMeta {
+  url: string;
+  fileSize?: number;
+  fileName?: string;
+}
+
+export async function getDownloadUrlWebFull(
+  pickcode: string,
+  { userAgent, accountInfo }: { userAgent?: string; accountInfo?: AccountInfo }
+): Promise<DownloadUrlMeta> {
   const data = `data=${encodeURIComponent(encrypt(`{"pick_code":"${pickcode}"}`))}`;
-    const response = await request115<{ data: string }>(
-      `http://pro.api.115.com/android/2.0/ufile/download`,
-      {
-        method: 'POST',
-        headers: { "User-Agent": userAgent, "Content-Type": "application/x-www-form-urlencoded", "Content-Length": String(Buffer.byteLength(data)) },
-        data,
-        userAgent,
-        useCommonHeaders: false,
-        accountInfo,
-      }
-    );
-    const decryptedData = JSON.parse(decrypt(response.data));
-    return decryptedData.url;
+  const response = await request115<{ data: string }>(
+    `http://pro.api.115.com/android/2.0/ufile/download`,
+    {
+      method: 'POST',
+      headers: { "User-Agent": userAgent, "Content-Type": "application/x-www-form-urlencoded", "Content-Length": String(Buffer.byteLength(data)) },
+      data,
+      userAgent,
+      useCommonHeaders: false,
+      accountInfo,
+    }
+  );
+  const decryptedData = JSON.parse(decrypt(response.data)) as {
+    url?: string;
+    file_size?: number;
+    fileName?: string;
+    file_name?: string;
+  };
+  if (!decryptedData.url) {
+    throw new Error("115 download API returned empty url");
+  }
+  return {
+    url: decryptedData.url,
+    fileSize: typeof decryptedData.file_size === "number" ? decryptedData.file_size : undefined,
+    fileName: decryptedData.fileName || decryptedData.file_name,
+  };
+}
+
+export async function getDownloadUrlWeb(pickcode, { userAgent, accountInfo }) {
+  const meta = await getDownloadUrlWebFull(pickcode, { userAgent, accountInfo });
+  return meta.url;
 }
 
 export async function getPickcodeToId(id: number | string, { userAgent = defaultUA(), accountInfo }: { userAgent?: string; accountInfo?: AccountInfo }) {
