@@ -176,7 +176,8 @@ async function scanSingleMapping(
   const settings = readSettings();
   const expectedStrm = resolveStrmSettings(req.account, null, settings);
 
-  const saveDir = path.resolve(process.cwd(), `../data/${req.localPath}`);
+  // P0-C: localPath 统一用 path.resolve 解析（与事件处理器保持一致）
+  const saveDir = path.resolve(req.localPath);
   try {
     const idRes = await fs_dir_getid(req.cloudPath, { accountInfo });
 
@@ -426,8 +427,9 @@ export async function runScan(reqs: MappingScanRequest[]): Promise<ScanResult> {
       });
     }
   } finally {
-    // 扫描完成后不立即恢复监控，等 runExecute 执行完毕后再恢复
-    // 如果用户只扫描不执行，监控暂停会在 FULLSCAN_TIMEOUT_MS (1h) 后自动过期
+    // P1-E: clearScanState 必须在 finally 中执行，避免扫描中断后 scanState 残留导致
+    // 下次调用时已完成的映射被跳过（mappingSetMatches 仍为 true 时）
+    clearScanState();
   }
 
   const totalRemoteFiles = results.reduce((s, r) => s + r.remoteFileCount, 0);
@@ -442,9 +444,6 @@ export async function runScan(reqs: MappingScanRequest[]): Promise<ScanResult> {
       `[strmCleanup] 警告: 扫描结果集较大 (${totalResultItems} 项)，建议分批执行清理操作以避免内存压力`
     );
   }
-
-  // P5.B: 扫描完成，清理状态
-  clearScanState();
 
   return {
     mappings: results,
@@ -547,7 +546,7 @@ export function runExecute(req: ExecuteRequest): ExecuteResult {
     // ==== delete / delete_all 执行删除 ====
     if (action === "delete" || action === "delete_all" || action === "delete_and_regenerate") {
       for (const entry of effectiveEntries) {
-        const saveDir = path.resolve(process.cwd(), `../data/${entry.localPath}`);
+        const saveDir = path.resolve(entry.localPath);
         if (!dryRun) {
           const rootDirs = new Set([saveDir]);
           for (const relPath of entry.staleRelPaths) {
@@ -583,7 +582,7 @@ export function runExecute(req: ExecuteRequest): ExecuteResult {
         const settings = readSettings();
         for (const item of req.missingItems) {
           try {
-            const localDir = path.resolve(process.cwd(), `../data/${item.localPath}`);
+            const localDir = path.resolve(item.localPath);
             const fileName = path.basename(item.relPath);
             const strmName = getStrmFileName(fileName);
             const strmDir = path.resolve(localDir, path.dirname(item.relPath));
@@ -671,7 +670,8 @@ export function runExecute(req: ExecuteRequest): ExecuteResult {
 }
 
 export function resolveDataDir(localPath: string): string {
-  return path.resolve(process.cwd(), `../data/${localPath}`);
+  // P0-C: 统一用 path.resolve 解析，与事件处理器保持一致
+  return path.resolve(localPath);
 }
 
 export function getDefaultScanRequestsFromSettings(): MappingScanRequest[] {

@@ -233,7 +233,7 @@ function startDownloadTask({
   enablePathEncoding?: boolean;
   enable302?: boolean;
 }): string {
-  suspendMonitorForFullScan(account);
+  // P0-A: suspendMonitorForFullScan 已提前到 executeTask 中 tryEnterFullScan 之后
   const total = filePaths.length;
   const taskSubject = new Subject<DownloadProgress>();
   const perFile = new Map<string, number>();
@@ -462,6 +462,10 @@ export async function executeTask(
       };
     }
 
+    // P0-A: 立即暂停增量监控，避免 exportDirParse + removeExtraFiles 窗口内
+    // 监控处理事件创建的新 STRM 被 removeExtraFiles 误删（race condition）
+    suspendMonitorForFullScan(task.account);
+
     const { account, originPath, targetPath } = task;
 
     // 使用统一的 STRM 设置解析（全局默认 + 任务级覆盖 + 302 拼接）
@@ -597,7 +601,24 @@ export async function executeTask(
     const extraLocally = [...localPaths].filter((p) => !remotePaths.has(p));
 
     if (task.removeExtraFiles) {
-      removeExtraFiles(extraLocally, saveDir);
+      // P0-B: 安全阈值防护（文件删除不可逆，应比 DB 清理更严格）
+      // 参考 removeGhostRecords 的三层防护，缩紧 10 倍
+      const MAX_EXTRA_ABSOLUTE = 100;
+      const MAX_EXTRA_RATIO = 0.1;
+      const remoteCount = remoteFiles.length;
+
+      if (remoteCount === 0) {
+        // 防护1: 网盘返回空数据时禁止删除（疑似 API 异常）
+        console.warn(`[executeTask] account=${task.account} 网盘返回 0 文件，跳过 removeExtraFiles 以避免误删全部本地文件`);
+      } else if (extraLocally.length > MAX_EXTRA_ABSOLUTE) {
+        // 防护2: 绝对数量超限
+        console.warn(`[executeTask] account=${task.account} 多余文件数(${extraLocally.length})超过绝对阈值(${MAX_EXTRA_ABSOLUTE})，跳过删除`);
+      } else if (extraLocally.length / remoteCount > MAX_EXTRA_RATIO) {
+        // 防护3: 比例超限
+        console.warn(`[executeTask] account=${task.account} 多余文件比例(${(extraLocally.length / remoteCount * 100).toFixed(1)}%)超过阈值(${MAX_EXTRA_RATIO * 100}%)，跳过删除 (extra=${extraLocally.length}, remote=${remoteCount})`);
+      } else {
+        removeExtraFiles(extraLocally, saveDir);
+      }
     }
 
     if (missingLocally.length === 0) {

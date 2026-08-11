@@ -1178,22 +1178,22 @@ async function handleMoveEvent(
     if (oldMapping) {
       // ========= 有 oldMapping 的正常路径 =========
       if (moveMode === "recreate") {
-        // P3.2e: recreate 模式先建后删 — 先创建新位置 STRM，成功后再删除旧文件
-        // 批量更新子记录的路径前缀（在创建/删除前同步 DB）
-        if (isFolder) {
-          if (oldEntry?.path) {
-            const updatedCount = updatePathPrefixBatch(accountInfo.name, oldEntry.path, cloudPath);
-            if (updatedCount > 0) {
-              console.log(`[LifeMonitor] move: 批量更新 ${updatedCount} 条子记录路径前缀: ${oldEntry.path} -> ${cloudPath}`);
-            }
-          }
-        }
-
+        // P1-D: recreate 模式先建后删 — 先创建新位置 STRM，成功后再更新 DB 并删除旧文件
         // STEP 1: 先创建新位置的 STRM（保留旧文件作为备份）
         const createResult = await handleCreateEvent(accountInfo, event, config, mapping, cloudPath);
 
-        // STEP 2: 验证新文件创建成功后，再删除旧位置的 STRM
+        // STEP 2: 验证新文件创建成功后，再更新 DB 路径前缀并删除旧位置的 STRM
         if (createResult && createResult.success) {
+          // P1-D 修正: DB 路径前缀更新移到创建成功之后，避免创建失败时 DB 与文件系统不一致
+          if (isFolder) {
+            if (oldEntry?.path) {
+              const updatedCount = updatePathPrefixBatch(accountInfo.name, oldEntry.path, cloudPath);
+              if (updatedCount > 0) {
+                console.log(`[LifeMonitor] move: 批量更新 ${updatedCount} 条子记录路径前缀: ${oldEntry.path} -> ${cloudPath}`);
+              }
+            }
+          }
+
           if (isFolder) {
             if (fs.existsSync(oldMapping.localPath)) {
               try {
@@ -2224,7 +2224,8 @@ function maybeRunConsistencyCheck(account: string, config: LifeMonitorConfig) {
         const accountFilter = mapping.account;
         if (accountFilter && accountFilter !== account) continue;
 
-        const localDir = path.resolve(process.cwd(), `../data/${mapping.localPath}`);
+        // P0-C: localPath 统一用 path.resolve 解析（与事件处理器保持一致）
+        const localDir = path.resolve(mapping.localPath);
         if (!fs.existsSync(localDir)) continue;
 
         const cleanDir = (dir: string) => {
@@ -2424,14 +2425,18 @@ async function oncePoll(account: string): Promise<void> {
       notifyCallbacks(account, "event", result);
 
       if (result.action !== "skip") {
-        appendLifeEventLog(
-          account,
-          event.type,
-          result.success,
-          result.filePath,
-          result.localPath,
-          result.message || ""
-        );
+        // P1-F: delete 事件已在 handleDeleteEvent 内部记录日志（含 fileId/pickCode 元数据），
+        // 此处跳过避免重复记录
+        if (!DELETE_EVENT_TYPES.has(event.type)) {
+          appendLifeEventLog(
+            account,
+            event.type,
+            result.success,
+            result.filePath,
+            result.localPath,
+            result.message || ""
+          );
+        }
       }
 
       if (result.action === "skip") {
@@ -2481,14 +2486,17 @@ async function oncePoll(account: string): Promise<void> {
             processedCount++;
             notifyCallbacks(account, "event", result);
             if (result.action !== "skip") {
-              appendLifeEventLog(
-                account,
-                events[i].type,
-                result.success,
-                result.filePath,
-                result.localPath,
-                result.message || ""
-              );
+              // P1-F: delete 事件已在 handleDeleteEvent 内部记录日志，此处跳过避免重复
+              if (!DELETE_EVENT_TYPES.has(events[i].type)) {
+                appendLifeEventLog(
+                  account,
+                  events[i].type,
+                  result.success,
+                  result.filePath,
+                  result.localPath,
+                  result.message || ""
+                );
+              }
             }
             if (result.action !== "skip" && result.success) {
               scheduleEmbyRefresh(account);
