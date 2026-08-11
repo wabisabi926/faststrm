@@ -61,15 +61,19 @@ export default function EmbyNotifyPage() {
       setError(null);
       setSuccess(null);
 
-      const response = await axiosInstance.post("/api/settings", {
-        emby: settings,
-      });
+      const response = await axiosInstance.post("/api/emby/settings", settings);
 
-      if (response.data.success) {
+      if (response.data?.success) {
         setSuccess("Emby 通知设置已保存！");
       }
-    } catch {
-      setError("保存设置失败");
+    } catch (raw) {
+      const err = raw as {
+        response?: { data?: { error?: string; details?: string; message?: string } };
+        message?: string;
+      };
+      const apiMsg = err.response?.data?.error || err.response?.data?.message;
+      const detail = err.response?.data?.details;
+      setError(apiMsg ? (detail ? `${apiMsg}：${detail}` : apiMsg) : "保存设置失败");
     } finally {
       setLoading(false);
     }
@@ -95,16 +99,26 @@ export default function EmbyNotifyPage() {
         },
       });
 
+      const ok = !!response.data?.success;
+      const msg =
+        (typeof response.data?.message === "string" && response.data.message) ||
+        (ok ? "连接成功" : "连接失败");
+
       setTestResult({
-        success: response.data.success,
-        message: response.data.success
-          ? "Emby 连接成功！"
-          : `连接失败：${response.data.message || "未知错误"}`,
+        success: ok,
+        message: ok ? `连接成功：${msg.replace(/^连接成功[：:] */, "")}` : msg,
       });
-    } catch {
+    } catch (raw) {
+      const err = raw as {
+        response?: { data?: { message?: string; debug?: unknown } };
+        message?: string;
+      };
+      const apiMsg =
+        (typeof err.response?.data?.message === "string" && err.response.data.message) ||
+        null;
       setTestResult({
         success: false,
-        message: "测试连接失败，请检查网络和配置",
+        message: apiMsg || "测试连接失败，请检查网络和配置",
       });
     } finally {
       setLoading(false);
