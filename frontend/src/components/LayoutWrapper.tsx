@@ -4,7 +4,7 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
-import { Settings, Github, Share2 } from "lucide-react";
+import { Settings, BookOpen, Share2 } from "lucide-react";
 import axiosInstance, { clearToken } from "@/lib/axios";
 import {
   Menubar,
@@ -101,13 +101,13 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
               </div>
               <div className="ml-auto flex items-center gap-1">
                 <a
-                  href="https://github.com/wabisabi926/faststrm"
+                  href="https://github.com/wabisabi926/faststrm/wiki"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center justify-center rounded p-1 hover:bg-accent"
-                  aria-label="GitHub"
+                  aria-label="Wiki"
                 >
-                  <Github className="h-5 w-5" />
+                  <BookOpen className="h-5 w-5" />
                 </a>
                 <Menubar className="border-0 shadow-none">
                   <MenubarMenu>
