@@ -1,5 +1,5 @@
 "use client"
-import { ListChecks, Inbox, Settings, BookOpen, Bot, History, Activity, Bell } from "lucide-react";
+import { ListChecks, Inbox, Settings, Github, Bot, History, Activity, Bell } from "lucide-react";
 import Image from "next/image";
 
 import {
@@ -129,13 +129,13 @@ export function AppSidebar() {
       <SidebarFooter>
         <div className="flex items-center justify-between mx-2 mb-1 rounded-md px-2 py-1 text-xs group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           <a
-            href="https://github.com/wabisabi926/faststrm/wiki"
+            href="https://github.com/wabisabi926/faststrm"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:justify-center"
           >
-            <BookOpen className="h-4 w-4" />
-            <span className="group-data-[collapsible=icon]:hidden">Wiki</span>
+            <Github className="h-4 w-4" />
+            <span className="group-data-[collapsible=icon]:hidden">GitHub</span>
           </a>
           <span className="px-2 py-0.5 rounded bg-muted text-foreground/80 group-data-[collapsible=icon]:hidden">v{appVersion}</span>
         </div>
