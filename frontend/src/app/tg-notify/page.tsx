@@ -601,8 +601,8 @@ export default function TelegramNotifyPage() {
             </CardContent>
           </Card>
 
-          {/* Webhook 信息 */}
-          {webhookInfo && (
+          {/* Webhook 信息：只有真的配置了 Webhook URL 才展示，轮询模式直接隐藏 */}
+          {webhookInfo?.url && (
             <Card>
               <CardHeader>
                 <CardTitle>Webhook 信息</CardTitle>
