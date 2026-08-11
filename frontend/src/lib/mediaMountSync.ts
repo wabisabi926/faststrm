@@ -173,12 +173,9 @@ export function computeMediaMountEntries(input: ComputeInput): ComputeResult {
     }
   }
 
-  // ========== 场景 2：所有任务 ==========
+  // ========== 场景 2：所有任务（仅 strmPrefix 覆盖，302 统一由全局控制）==========
   for (const task of tasks) {
-    const taskHasStrmConfig =
-      (task.strmPrefix != null && task.strmPrefix !== "") ||
-      task.enable302 === true;
-    if (!taskHasStrmConfig) continue;
+    if (!task.strmPrefix) continue;
     const resolved = resolveStrmSettings(task.account || undefined, task, settings);
     collect(entries, resultSet, resolved.strmPrefix, "task", {
       taskId: task.id,
@@ -186,15 +183,12 @@ export function computeMediaMountEntries(input: ComputeInput): ComputeResult {
     });
   }
 
-  // ========== 场景 3：生活事件监控（若有独立的 strmPrefix/enable302）==========
+  // ========== 场景 3：生活事件监控 ==========
   if (lifeMonitor && Array.isArray(lifeMonitor.accounts)) {
-    // 生活事件配置的优先级：lifeMonitor 自己的 strmPrefix / enable302 > 全局
     const lifeOverride = {
-      strmPrefix: lifeMonitor.strmPrefix ?? settings.strmPrefix,
+      strmPrefix: settings.strmPrefix,
       enablePathEncoding: lifeMonitor.enablePathEncoding ?? settings.enablePathEncoding,
-      enable302:
-        (lifeMonitor as LifeMonitorSettings & { enable302?: boolean }).enable302 ??
-        settings.enable302,
+      enable302: settings.enable302,
     };
     for (const accName of lifeMonitor.accounts) {
       if (!accName) continue;

@@ -21,7 +21,8 @@ export function resolveStrmSettings(
 
   let strmPrefix = g.strmPrefix || "";
   let enablePathEncoding = !!g.enablePathEncoding;
-  let enable302 = !!g.enable302;
+  // 302 策略统一由全局控制，任务级 enable302 不再生效
+  const enable302 = !!g.enable302;
 
   if (task) {
     if (task.strmPrefix !== undefined && task.strmPrefix !== "") {
@@ -29,9 +30,6 @@ export function resolveStrmSettings(
     }
     if (task.enablePathEncoding !== undefined) {
       enablePathEncoding = task.enablePathEncoding;
-    }
-    if (task.enable302 !== undefined) {
-      enable302 = task.enable302;
     }
   }
 

@@ -189,6 +189,7 @@ export interface LifeMonitorSettings {
     rename: boolean;
     move: boolean;
   };
+  /** STRM 前缀（运行时由 resolveStrmSettings 填充，通常为全局设置值） */
   strmPrefix?: string;
   enablePathEncoding?: boolean;
   /** STRM 前缀是否在末尾拼账号名（与全局 enable302 语义一致；留空时 fallback 到全局 AppSettings.enable302） */

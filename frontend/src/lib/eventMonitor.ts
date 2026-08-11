@@ -88,7 +88,6 @@ const DEFAULT_CONFIG: LifeMonitorConfig = {
     rename: true,
     move: true,
   },
-  strmPrefix: "",
   enablePathEncoding: false,
   minFileSize: 0,
   firstPullMode: "latest",

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import axiosInstance from "@/lib/axios";
-import { ChevronRight, ChevronDown, Folder, Loader2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Folder, Loader2, HardDrive } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -15,10 +15,10 @@ import {
 
 interface TreeNode {
   name: string;
-  id: string; // 使用路径作为ID
+  id: string; // 使用完整路径作为 ID
   isDir: boolean;
-  hasChildren?: boolean; // 标记是否有子目录（API返回的）
-  children?: TreeNode[]; // 已加载的子节点
+  hasChildren?: boolean;
+  children?: TreeNode[];
 }
 
 interface LocalDirectoryTreeDialogProps {
@@ -42,7 +42,7 @@ export function LocalDirectoryTreeDialog({
   );
   const [selectedPath, setSelectedPath] = React.useState<string>("");
 
-  // 加载目录树
+  // 加载目录（basePath 为空时，后端自动返回根或盘符列表）
   const loadTree = React.useCallback(
     async (basePath: string = "") => {
       setLoading(true);
@@ -76,54 +76,78 @@ export function LocalDirectoryTreeDialog({
     }
   }, [open, loadTree]);
 
-  // 展开/折叠节点
-  const toggleNode = async (node: TreeNode, parentPath: string = "") => {
-    const currentPath = parentPath ? `${parentPath}/${node.name}` : node.name;
+  // 判断一个路径字符串是不是"顶层"根（空字符串，用于返回真正根级）
+  const isTopLevelParent = (parentId: string) => parentId === "";
 
+  // 获取父路径
+  const getParentPath = (fullPath: string): string => {
+    // 去掉末尾反斜杠/正斜杠
+    const normalized = fullPath.replace(/[\\/]+$/, "");
+    // Windows 盘符: C:\ 或 D: 这种没有父级，返回 ""（回到顶层盘符列表）
+    if (/^[A-Za-z]:[\\/]*$/.test(normalized) || /^[A-Za-z]:$/.test(normalized)) {
+      return "";
+    }
+    // Unix 根 "/"
+    if (normalized === "/") return "";
+    // 取上一级
+    const lastSlash = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+    if (lastSlash <= 0) {
+      // 只剩盘符或根
+      return "";
+    }
+    let parent = normalized.substring(0, lastSlash);
+    // Windows 情况：C:\foo -> C: ，但我们希望返回 C:\ 以便识别为盘符
+    if (/^[A-Za-z]:$/.test(parent)) {
+      parent = parent + "\\";
+    }
+    return parent;
+  };
+
+  // 展开/折叠节点
+  const toggleNode = async (node: TreeNode) => {
     if (expandedNodes.has(node.id)) {
-      // 折叠
       setExpandedNodes((prev) => {
         const next = new Set(prev);
         next.delete(node.id);
         return next;
       });
-    } else {
-      // 展开 - 如果还没有加载子节点，先加载
-      if (node.children === undefined) {
-        setLoadingNodes((prev) => new Set(prev).add(node.id));
-        try {
-          const response = await axiosInstance.post("/api/directory/local/list", {
-            basePath: currentPath,
-          });
+      return;
+    }
 
-          if (response.data.code === 200) {
-            const children = response.data.data || [];
-            const updatedTree = updateTreeNode(tree, node.id, {
-              ...node,
-              children: children,
-            });
-            setTree(updatedTree);
-            if (children.length > 0) {
-              setExpandedNodes((prev) => new Set(prev).add(node.id));
-            }
-          }
-        } catch (error) {
-          console.error("Error loading children:", error);
+    if (node.children === undefined) {
+      setLoadingNodes((prev) => new Set(prev).add(node.id));
+      try {
+        const response = await axiosInstance.post("/api/directory/local/list", {
+          basePath: node.id,
+        });
+
+        if (response.data.code === 200) {
+          const children = response.data.data || [];
           const updatedTree = updateTreeNode(tree, node.id, {
             ...node,
-            children: [],
+            children: children,
           });
           setTree(updatedTree);
-        } finally {
-          setLoadingNodes((prev) => {
-            const next = new Set(prev);
-            next.delete(node.id);
-            return next;
-          });
+          if (children.length > 0) {
+            setExpandedNodes((prev) => new Set(prev).add(node.id));
+          }
         }
-      } else {
-        setExpandedNodes((prev) => new Set(prev).add(node.id));
+      } catch (error) {
+        console.error("Error loading children:", error);
+        const updatedTree = updateTreeNode(tree, node.id, {
+          ...node,
+          children: [],
+        });
+        setTree(updatedTree);
+      } finally {
+        setLoadingNodes((prev) => {
+          const next = new Set(prev);
+          next.delete(node.id);
+          return next;
+        });
       }
+    } else {
+      setExpandedNodes((prev) => new Set(prev).add(node.id));
     }
   };
 
@@ -148,39 +172,45 @@ export function LocalDirectoryTreeDialog({
   };
 
   // 选择路径
-  const handleSelect = (path: string) => {
-    setSelectedPath(path);
+  const handleSelect = (node: TreeNode) => {
+    setSelectedPath(node.id);
   };
 
   // 确认选择
   const handleConfirm = () => {
     if (selectedPath) {
-      onSelect(selectedPath);
+      // 返回给调用方的路径统一做一次规范化（去掉盘符末尾多余反斜杠，保持 API 友好）
+      let finalPath = selectedPath;
+      // Windows 盘符: "C:\" -> "C:" (去掉尾部\，便于后续 join 不会出 C:\\foo)
+      if (/^[A-Za-z]:\\$/.test(finalPath)) {
+        finalPath = finalPath.slice(0, -1);
+      }
+      onSelect(finalPath);
       onOpenChange(false);
     }
   };
 
+  // 判断是否为 Windows 盘符节点（id 形如 "C:\"）
+  const isDriveNode = (node: TreeNode) => /^[A-Za-z]:\\$/.test(node.id);
+
   // 渲染树节点
   const renderTreeNode = (
     node: TreeNode,
-    parentPath: string = "",
     level: number = 0
   ): React.ReactNode => {
-    const currentPath = parentPath
-      ? `${parentPath}/${node.name}`
-      : node.name;
     const isExpanded = expandedNodes.has(node.id);
     const isLoading = loadingNodes.has(node.id);
-    const isSelected = selectedPath === currentPath;
+    const isSelected = selectedPath === node.id;
     const hasLoadedChildren = node.children !== undefined;
     const hasChildrenToShow =
       hasLoadedChildren && node.children && node.children.length > 0;
+    const isDrive = isDriveNode(node);
 
     return (
       <div key={node.id} className="select-none">
         <div
-          className={`flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-100 cursor-pointer ${
-            isSelected ? "bg-blue-50 text-blue-600" : ""
+          className={`flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer ${
+            isSelected ? "bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300" : ""
           }`}
           style={{ paddingLeft: `${level * 20 + 8}px` }}
           onClick={(e) => {
@@ -190,12 +220,12 @@ export function LocalDirectoryTreeDialog({
               target.closest(".folder-icon")
             ) {
               if (node.isDir) {
-                toggleNode(node, parentPath);
+                toggleNode(node);
               }
             } else {
-              handleSelect(currentPath);
+              handleSelect(node);
               if (node.isDir) {
-                toggleNode(node, parentPath);
+                toggleNode(node);
               }
             }
           }}
@@ -215,7 +245,11 @@ export function LocalDirectoryTreeDialog({
               ) : (
                 <ChevronRight className="w-4 h-4 text-gray-400 chevron-icon" />
               )}
-              <Folder className="w-4 h-4 text-blue-500 folder-icon" />
+              {isDrive ? (
+                <HardDrive className="w-4 h-4 text-amber-500 folder-icon" />
+              ) : (
+                <Folder className="w-4 h-4 text-blue-500 folder-icon" />
+              )}
             </>
           ) : (
             <div className="w-4 h-4" />
@@ -225,7 +259,7 @@ export function LocalDirectoryTreeDialog({
         {node.isDir && isExpanded && hasChildrenToShow && (
           <div>
             {node.children!.map((child) =>
-              renderTreeNode(child, currentPath, level + 1)
+              renderTreeNode(child, level + 1)
             )}
           </div>
         )}
@@ -238,7 +272,9 @@ export function LocalDirectoryTreeDialog({
       <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>选择本地目录</DialogTitle>
-          <DialogDescription>选择本地路径</DialogDescription>
+          <DialogDescription>
+            从系统根目录或盘符开始浏览，选择本地路径
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 min-h-[300px] max-h-[500px] border rounded-md p-2 overflow-auto">
@@ -257,8 +293,8 @@ export function LocalDirectoryTreeDialog({
         </div>
 
         {selectedPath && (
-          <div className="text-sm text-gray-600 px-2 py-1 bg-gray-50 rounded">
-            已选择: <span className="font-medium">{selectedPath}</span>
+          <div className="text-sm text-gray-600 dark:text-gray-300 px-2 py-1 bg-gray-50 dark:bg-gray-800 rounded">
+            已选择: <span className="font-medium break-all">{selectedPath}</span>
           </div>
         )}
 

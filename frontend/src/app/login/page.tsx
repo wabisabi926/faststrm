@@ -40,7 +40,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-lg">
         <div className="flex flex-col items-center mb-6">
           <Image
-            src="/logo.svg"
+            src="/logo.png"
             alt="Fast Strm Logo"
             width={64}
             height={64}
@@ -59,7 +59,7 @@ export default function LoginPage() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>用户名</FormLabel>
-                  <Input placeholder="请输入用户名" {...field} />
+                  <Input placeholder="请输入用户名（默认：admin）" {...field} />
                   <FormMessage />
                 </FormItem>
               )}
@@ -71,7 +71,7 @@ export default function LoginPage() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>密码</FormLabel>
-                  <Input type="password" placeholder="请输入密码" {...field} />
+                  <Input type="password" placeholder="请输入密码（默认：admin）" {...field} />
                   <FormMessage />
                 </FormItem>
               )}
