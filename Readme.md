@@ -31,6 +31,27 @@
 
 ## 📝 版本更新日志
 
+### v0.7.1
+
+- **全量扫描与增量监控融合修复（P0/P1）**
+  - `suspendMonitorForFullScan` 提前到 `tryEnterFullScan` 之后，消除监控与 `removeExtraFiles` 的竞态窗口
+  - `removeExtraFiles` 增加三层安全阈值（空数据 / 绝对数 >100 / 比例 >10% 跳过），防止 API 异常时误删
+  - `localPath` 统一 `path.resolve` 解析，移除 `../data/` 硬编码
+  - recreate 模式 DB 路径前缀更新移到创建成功之后，避免失败时 DB 与文件系统不一致
+  - `clearScanState` 移入 `finally` 块，避免扫描中断后状态残留
+  - 删除事件去重日志，避免 `appendLifeEventLog` 重复记录
+
+- **低风险问题修复（P2）**
+  - `runScan` finally 块补 `clearMonitorSuspend`，避免扫描异常时监控永久挂起
+  - `executeTask` 无下载但清理了多余文件时也刷新 Emby
+  - `buildFilePathEntriesFromTree` 用负值标记 `fileId`，避免与真实 115 file_id 冲突
+  - `taskExecutor` 全量扫描后写回 `filePathDb`，确保 302 模式反查 pickcode
+  - `deleteStrmDir` 新增 `rootDirs` 选项，删除后自动清理空父目录
+
+- **任务日志查询修复**
+  - `/api/taskLog/[taskId]` 增加历史记录回退查找，已执行但未运行的任务也能查看日志
+  - 前端 `goToLog` 支持 `executionId` 参数跳转历史模式
+
 ### v0.7.0
 
 - **STRM 路由策略优化**

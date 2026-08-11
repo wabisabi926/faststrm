@@ -18,11 +18,12 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.7.0 已发布**
+> **🎉 v0.7.1 已发布**
 >
-> - ✅ **STRM 路由策略全面优化**：默认 302 优先 + Infuse/VidHub 强制代理 + 115 并发限流 + 真实文件大小识别
-> - ✅ **新增 Emby 删除同步**：自动清理 STRM + 关联文件 + DB 记录，三道防误删保护（存在检查 / 标题匹配 / 文件数限制）
-> - ✅ 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
+> - ✅ **全量扫描与增量监控融合修复（P0/P1）**：监控暂停时序窗口、removeExtraFiles 安全阈值、localPath 路径解析统一、recreate 模式 DB 顺序、clearScanState finally 兜底、删除事件日志去重
+> - ✅ **低风险问题修复（P2）**：runScan 监控恢复、Emby 刷新补全、fileId 负值标记、全量扫描写回 DB、deleteStrmDir 空目录清理
+> - ✅ **任务日志查询修复**：已执行未运行的任务也能查看历史日志
+> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---
 
