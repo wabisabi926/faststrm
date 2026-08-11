@@ -14,9 +14,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Server, Bell, Play, Eye, Copy, Check, RefreshCw, XCircle, FolderOpen } from "lucide-react";
+import { Server, Bell, Play, Eye, Copy, Check, RefreshCw, XCircle, FolderOpen, HardDrive } from "lucide-react";
 import axiosInstance from "@/lib/axios";
 import { LocalDirectoryTreeDialog } from "@/app/task/components/LocalDirectoryTreeDialog";
+import { DirectoryTreeDialog } from "@/app/task/components/DirectoryTreeDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface EmbySettings {
   url?: string;
@@ -167,10 +174,14 @@ export default function EmbyNotifyPage() {
   const [newMappingCloudPath, setNewMappingCloudPath] = useState("");
   const [newMappingAccount, setNewMappingAccount] = useState("");
 
-  // 本地文件夹选择器
+  // 本地文件夹选择器（Emby 路径前缀）
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-  // 指定选择后写入哪个映射行：number=已有映射行索引，"new"=新增行
   const [folderPickerTarget, setFolderPickerTarget] = useState<number | "new" | null>(null);
+
+  // 云盘目录选择器（网盘路径前缀）
+  const [cloudPickerOpen, setCloudPickerOpen] = useState(false);
+  const [cloudPickerTarget, setCloudPickerTarget] = useState<number | "new" | null>(null);
+  const [cloudPickerAccount, setCloudPickerAccount] = useState<string>("");
 
   const handleFolderSelected = (path: string) => {
     if (folderPickerTarget === null) return;
@@ -191,6 +202,34 @@ export default function EmbyNotifyPage() {
   const openFolderPickerForMapping = (index: number) => {
     setFolderPickerTarget(index);
     setFolderPickerOpen(true);
+  };
+
+  // 云盘目录选择器
+  const handleCloudPathSelected = (path: string) => {
+    if (cloudPickerTarget === null) return;
+    if (cloudPickerTarget === "new") {
+      setNewMappingCloudPath(path);
+    } else {
+      updatePathMapping(cloudPickerTarget, "cloudPath", path);
+    }
+    setCloudPickerOpen(false);
+    setCloudPickerTarget(null);
+    setCloudPickerAccount("");
+  };
+
+  const openCloudPickerForNew = () => {
+    if (!newMappingAccount) return;
+    setCloudPickerTarget("new");
+    setCloudPickerAccount(newMappingAccount);
+    setCloudPickerOpen(true);
+  };
+
+  const openCloudPickerForMapping = (index: number) => {
+    const mapping = (settings.syncDeletePathMappings || [])[index];
+    if (!mapping?.account) return;
+    setCloudPickerTarget(index);
+    setCloudPickerAccount(mapping.account);
+    setCloudPickerOpen(true);
   };
 
   const updatePathMapping = (index: number, field: "embyPath" | "cloudPath" | "account", value: string) => {
@@ -576,12 +615,35 @@ export default function EmbyNotifyPage() {
                   </Button>
                 </div>
                 <span className="text-muted-foreground">→</span>
-                <Input
-                  className="flex-1"
-                  placeholder="网盘路径前缀，如 /电影"
-                  value={mapping.cloudPath}
-                  onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
-                />
+                <div className="flex-1 flex gap-1 items-center">
+                  <Input
+                    className="flex-1"
+                    placeholder="网盘路径前缀，如 /电影"
+                    value={mapping.cloudPath}
+                    onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
+                  />
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="shrink-0 inline-flex">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="shrink-0"
+                            disabled={!mapping.account}
+                            onClick={() => openCloudPickerForMapping(index)}
+                          >
+                            <HardDrive className="h-4 w-4" />
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {mapping.account ? "选择网盘目录" : "请先选择具体账号"}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
                 <Select
                   value={mapping.account || "__all__"}
                   onValueChange={(v) => updatePathMapping(index, "account", v === "__all__" ? "" : v)}
@@ -627,12 +689,35 @@ export default function EmbyNotifyPage() {
                 </Button>
               </div>
               <span className="text-muted-foreground">→</span>
-              <Input
-                className="flex-1"
-                placeholder="网盘路径前缀"
-                value={newMappingCloudPath}
-                onChange={(e) => setNewMappingCloudPath(e.target.value)}
-              />
+              <div className="flex-1 flex gap-1 items-center">
+                <Input
+                  className="flex-1"
+                  placeholder="网盘路径前缀"
+                  value={newMappingCloudPath}
+                  onChange={(e) => setNewMappingCloudPath(e.target.value)}
+                />
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="shrink-0 inline-flex">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0"
+                          disabled={!newMappingAccount}
+                          onClick={openCloudPickerForNew}
+                        >
+                          <HardDrive className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {newMappingAccount ? "选择网盘目录" : "请先选择具体账号"}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <Select
                 value={newMappingAccount || "__all__"}
                 onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
@@ -690,6 +775,22 @@ export default function EmbyNotifyPage() {
         }}
         onSelect={handleFolderSelected}
       />
+
+      {/* 云盘目录选择器：用于网盘路径前缀的快速选择 */}
+      {cloudPickerAccount && (
+        <DirectoryTreeDialog
+          open={cloudPickerOpen}
+          onOpenChange={(open) => {
+            setCloudPickerOpen(open);
+            if (!open) {
+              setCloudPickerTarget(null);
+              setCloudPickerAccount("");
+            }
+          }}
+          account={cloudPickerAccount}
+          onSelect={handleCloudPathSelected}
+        />
+      )}
     </div>
   );
 }
