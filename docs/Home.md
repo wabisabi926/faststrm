@@ -18,7 +18,7 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.7.1 已发布**
+> **🎉 v0.8.0 已发布**
 >
 > - ✅ **全量扫描与增量监控融合修复（P0/P1）**：监控暂停时序窗口、removeExtraFiles 安全阈值、localPath 路径解析统一、recreate 模式 DB 顺序、clearScanState finally 兜底、删除事件日志去重
 > - ✅ **低风险问题修复（P2）**：runScan 监控恢复、Emby 刷新补全、fileId 负值标记、全量扫描写回 DB、deleteStrmDir 空目录清理

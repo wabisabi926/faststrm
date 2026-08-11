@@ -21,17 +21,19 @@
 - 支持自定义前缀（方便配合媒体服务器使用）
 - 基于115目录树生成
 - 支持 115 生活事件实时监控（增量同步 + 全量同步）
+- **STRM 智能路由**：默认 302 直连 115 CDN，Infuse/VidHub/SenPlayer 自动强制代理，115 单账号并发限流，HEAD 预检降级
+- **Emby 删除同步**：监听 Emby `library.deleted` 事件自动清理 STRM + 关联文件，三道防误删保护
 - filePathDb 基于 SQLite 持久化，file_id 字符串绑定避免精度丢失
 - 支持账号级令牌桶限流和重试逻辑
 - 支持定时任务调度
-- 支持 STRM 清理与对账（扫描孤儿文件、自动恢复监控）
+- 支持 STRM 清理与三方对账（扫描孤儿文件、自动恢复监控）
 - 支持 Telegram Bot 通知与交互
 - 登录密码 SHA-256 哈希存储，115 cookie / Emby API Key 等凭据 AES-256-GCM 加密
 - 轻量，易于二次开发
 
 ## 📝 版本更新日志
 
-### v0.7.1
+### v0.8.0
 
 - **全量扫描与增量监控融合修复（P0/P1）**
   - `suspendMonitorForFullScan` 提前到 `tryEnterFullScan` 之后，消除监控与 `removeExtraFiles` 的竞态窗口
