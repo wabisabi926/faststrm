@@ -13,7 +13,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Settings, LifeBuoy, Shield, User } from "lucide-react";
+import { Settings, LifeBuoy, Shield, User, Lock, UserCog } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import axiosInstance, { getUsername, setUsername, clearToken, clearUsername } from "@/lib/axios";
 import { StrmCleanupCard } from "./StrmCleanupCard";
 
@@ -1415,94 +1416,104 @@ export default function SettingsPage() {
             <StrmCleanupCard />
           </section>
 
-          <Separator />
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <UserCog className="h-5 w-5" />
+                <CardTitle>账户安全</CardTitle>
+              </div>
+              <CardDescription>
+                当前用户：<span className="font-medium text-foreground">{currentUsername}</span>
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <User className="h-4 w-4" />
+                    修改用户名
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    修改后需重新登录。规则：3-32 位，字母/数字/下划线。
+                  </p>
+                  <div className="grid gap-2">
+                    <Label htmlFor="usernameCurrentPassword">当前密码</Label>
+                    <Input
+                      id="usernameCurrentPassword"
+                      type="password"
+                      value={usernameCurrentPwd}
+                      onChange={(e) => setUsernameCurrentPwd(e.target.value)}
+                      placeholder="输入当前密码"
+                    />
+                    <Label htmlFor="newUsername">新用户名</Label>
+                    <Input
+                      id="newUsername"
+                      value={newUsername}
+                      onChange={(e) => setNewUsername(e.target.value)}
+                      placeholder="3-32 位，字母/数字/下划线"
+                    />
+                    <Label htmlFor="confirmUsername">确认新用户名</Label>
+                    <Input
+                      id="confirmUsername"
+                      value={confirmUsername}
+                      onChange={(e) => setConfirmUsername(e.target.value)}
+                      placeholder="再次输入新用户名"
+                    />
+                    <Button
+                      disabled={changingUsername}
+                      onClick={handleChangeUsername}
+                      className="mt-1"
+                    >
+                      {changingUsername ? "修改中..." : "修改用户名"}
+                    </Button>
+                  </div>
+                </div>
 
-          <section className="space-y-4">
-            <div className="flex items-center gap-2">
-              <User className="h-5 w-5" />
-              <h2 className="text-lg font-semibold">当前用户</h2>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              登录用户名：<span className="font-medium text-foreground">{currentUsername}</span>
-            </p>
-          </section>
-
-          <Separator />
-
-          <section className="space-y-4">
-            <h2 className="text-lg font-semibold">修改用户名</h2>
-            <p className="text-sm text-muted-foreground">
-              修改后需使用新用户名重新登录。规则：3-32 位，字母/数字/下划线，以字母或下划线开头，不能为纯数字。
-            </p>
-            <div className="grid gap-2 max-w-sm">
-              <Label htmlFor="usernameCurrentPassword">当前密码</Label>
-              <Input
-                id="usernameCurrentPassword"
-                type="password"
-                value={usernameCurrentPwd}
-                onChange={(e) => setUsernameCurrentPwd(e.target.value)}
-                placeholder="输入当前密码"
-              />
-              <Label htmlFor="newUsername">新用户名</Label>
-              <Input
-                id="newUsername"
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                placeholder="3-32 位，字母/数字/下划线"
-              />
-              <Label htmlFor="confirmUsername">确认新用户名</Label>
-              <Input
-                id="confirmUsername"
-                value={confirmUsername}
-                onChange={(e) => setConfirmUsername(e.target.value)}
-                placeholder="再次输入新用户名"
-              />
-              <Button
-                disabled={changingUsername}
-                onClick={handleChangeUsername}
-              >
-                {changingUsername ? "修改中..." : "修改用户名"}
-              </Button>
-            </div>
-          </section>
-
-          <Separator />
-
-          <section className="space-y-4">
-            <h2 className="text-lg font-semibold">修改密码</h2>
-            <div className="grid gap-2 max-w-sm">
-              <Label htmlFor="currentPassword">当前密码</Label>
-              <Input
-                id="currentPassword"
-                type="password"
-                value={currentPwd}
-                onChange={(e) => setCurrentPwd(e.target.value)}
-                placeholder="输入当前密码"
-              />
-              <Label htmlFor="newPassword">新密码</Label>
-              <Input
-                id="newPassword"
-                type="password"
-                value={newPwd}
-                onChange={(e) => setNewPwd(e.target.value)}
-                placeholder="至少 6 位"
-              />
-              <Label htmlFor="confirmPassword">确认新密码</Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                value={confirmPwd}
-                onChange={(e) => setConfirmPwd(e.target.value)}
-                placeholder="再次输入新密码"
-              />
-              <Button
-                disabled={changingPwd}
-                onClick={handleChangePassword}
-              >
-                {changingPwd ? "修改中..." : "修改密码"}
-              </Button>
-            </div>
-          </section>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Lock className="h-4 w-4" />
+                    修改密码
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    定期修改密码有助于提升账户安全性。
+                  </p>
+                  <div className="grid gap-2">
+                    <Label htmlFor="currentPassword">当前密码</Label>
+                    <Input
+                      id="currentPassword"
+                      type="password"
+                      value={currentPwd}
+                      onChange={(e) => setCurrentPwd(e.target.value)}
+                      placeholder="输入当前密码"
+                    />
+                    <Label htmlFor="newPassword">新密码</Label>
+                    <Input
+                      id="newPassword"
+                      type="password"
+                      value={newPwd}
+                      onChange={(e) => setNewPwd(e.target.value)}
+                      placeholder="至少 6 位"
+                    />
+                    <Label htmlFor="confirmPassword">确认新密码</Label>
+                    <Input
+                      id="confirmPassword"
+                      type="password"
+                      value={confirmPwd}
+                      onChange={(e) => setConfirmPwd(e.target.value)}
+                      placeholder="再次输入新密码"
+                    />
+                    <Button
+                      disabled={changingPwd}
+                      onClick={handleChangePassword}
+                      className="mt-1"
+                    >
+                      {changingPwd ? "修改中..." : "修改密码"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>
