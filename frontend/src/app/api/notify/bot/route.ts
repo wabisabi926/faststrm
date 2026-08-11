@@ -13,35 +13,63 @@ function maskToken(token: string): string {
   return `${idPart}:${'*'.repeat(Math.max(secretPart.length - 4, 0))}${secretPart.slice(-4)}`;
 }
 
+// 3 秒超时兜底：避免 Telegram 网络不通时阻塞整个页面
+const withTimeout = <T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
+  Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+
 // 获取机器人信息
 export async function GET() {
   try {
     const settings = readSettings();
     const telegram = settings.telegram;
-    
+
     if (!telegram || !telegram.botToken) {
       return NextResponse.json({ error: "Telegram not configured" }, { status: 400 });
     }
 
-    const bot = createTelegramBot(telegram.botToken);
-    const botInfo = await bot.getMe();
-    const webhookInfo = await bot.getWebhookInfo();
-
-
-    return NextResponse.json({
-      bot: botInfo,
-      webhook: webhookInfo,
+    // 本地配置立刻可用，不需要等 Telegram 返回
+    const baseResponse = {
       configured: true,
       chatId: telegram.chatId || '',
       enabled: telegram.enabled ?? true,
-      botToken: maskToken(telegram.botToken || '')
+      botToken: maskToken(telegram.botToken || ''),
+      webhookUrl: telegram.webhookUrl || '',
+    };
+
+    // 并行 + 3 秒兜底请求 Telegram 实时信息
+    // 失败/超时不影响基础配置返回，只是右侧机器人状态卡信息会缺失
+    const bot = createTelegramBot(telegram.botToken);
+    const [botInfoResult, webhookInfoResult] = await Promise.allSettled([
+      withTimeout(bot.getMe(), 3000, { ok: false as const }),
+      withTimeout(bot.getWebhookInfo(), 3000, { ok: false as const }),
+    ]);
+
+    const botInfo =
+      botInfoResult.status === "fulfilled" && botInfoResult.value?.ok
+        ? botInfoResult.value
+        : undefined;
+    const webhookInfo =
+      webhookInfoResult.status === "fulfilled" && webhookInfoResult.value?.ok
+        ? webhookInfoResult.value
+        : undefined;
+
+    return NextResponse.json({
+      ...baseResponse,
+      bot: botInfo,
+      webhook: webhookInfo,
     });
   } catch (error) {
     console.error("Telegram bot info error:", error);
-    return NextResponse.json({ 
-      error: "Failed to get bot info", 
-      details: error instanceof Error ? error.message : String(error) 
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Failed to get bot info",
+        details: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
+    );
   }
 }
 

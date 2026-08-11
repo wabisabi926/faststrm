@@ -45,6 +45,16 @@ interface TelegramUser {
   id: number;
 }
 
+function maskToken(token: string): string {
+  if (!token) return "";
+  if (token.length <= 8) return "***";
+  const sep = token.indexOf(":");
+  if (sep === -1) return "***";
+  const idPart = token.slice(0, sep);
+  const secretPart = token.slice(sep + 1);
+  return `${idPart}:${"*".repeat(Math.max(secretPart.length - 4, 0))}${secretPart.slice(-4)}`;
+}
+
 export default function TelegramNotifyPage() {
   const [activeTab, setActiveTab] = useState<"bot" | "users">("bot");
 
@@ -56,6 +66,9 @@ export default function TelegramNotifyPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [pollingStatus, setPollingStatus] = useState<{ polling: boolean; message: string } | null>(null);
+  // 用户不改 token 就点保存时：用原始明文，不要把 mask 字符串发给后端
+  const [originalTokenPlain, setOriginalTokenPlain] = useState<string>("");
+  const [tokenModified, setTokenModified] = useState<boolean>(false);
 
   // 用户管理相关状态
   const [users, setUsers] = useState<TelegramUser[]>([]);
@@ -79,16 +92,32 @@ export default function TelegramNotifyPage() {
 
   const loadBotInfo = async () => {
     try {
-      const response = await axiosInstance.get("/api/notify/bot");
-      if (response.data.configured) {
-        setBotInfo(response.data.bot.result);
-        setWebhookInfo(response.data.webhook.result);
-        setConfig({
-          botToken: response.data.botToken || "",
-          chatId: response.data.chatId || "",
-          webhookUrl: response.data.webhook.result?.url || "",
-          enabled: response.data.enabled !== false,
-        });
+      // 并行两次请求：
+      //   ①  /api/settings        → 读本地 JSON（毫秒级），立刻回填左侧输入框
+      //   ②  /api/notify/bot      → Telegram 实时信息（较慢），填右侧机器人状态卡
+      void (async () => {
+        try {
+          const settingsResp = await axiosInstance.get("/api/settings");
+          const telegram = settingsResp.data?.telegram;
+          if (telegram?.botToken) {
+            setOriginalTokenPlain(telegram.botToken || "");
+            setTokenModified(false);
+            setConfig({
+              botToken: maskToken(telegram.botToken || ""),
+              chatId: telegram.chatId || "",
+              webhookUrl: telegram.webhookUrl || "",
+              enabled: telegram.enabled !== false,
+            });
+          }
+        } catch (e) {
+          console.error("加载本地 Telegram 配置失败:", e);
+        }
+      })();
+
+      const botResp = await axiosInstance.get("/api/notify/bot");
+      if (botResp.data.configured) {
+        if (botResp.data.bot) setBotInfo(botResp.data.bot.result ?? botResp.data.bot);
+        if (botResp.data.webhook) setWebhookInfo(botResp.data.webhook.result ?? botResp.data.webhook);
       }
     } catch (error) {
       console.error("加载 Bot 信息失败:", error);
@@ -101,8 +130,11 @@ export default function TelegramNotifyPage() {
       setError(null);
       setSuccess(null);
 
+      // 如果用户没改 token 输入框：把本地保存的明文 token 发回，不要发 mask 字符串
+      const effectiveBotToken = tokenModified ? config.botToken : originalTokenPlain;
+
       const response = await axiosInstance.post("/api/notify/bot", {
-        botToken: config.botToken,
+        botToken: effectiveBotToken,
         chatId: config.chatId,
         webhookUrl: config.webhookUrl,
         enabled: config.enabled !== false,
@@ -111,8 +143,11 @@ export default function TelegramNotifyPage() {
       if (response.data.success) {
         setSuccess("Telegram 机器人配置成功！");
         setBotInfo(response.data.bot);
+        const savedToken = tokenModified && config.botToken ? config.botToken : originalTokenPlain;
+        setOriginalTokenPlain(savedToken);
+        setTokenModified(false);
         setConfig({
-          botToken: response.data.botToken || "",
+          botToken: maskToken(savedToken || ""),
           chatId: response.data.chatId || "",
           webhookUrl: response.data.webhook?.result?.url || "",
         });
@@ -382,7 +417,10 @@ export default function TelegramNotifyPage() {
                     type="password"
                     placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
                     value={config.botToken || ""}
-                    onChange={(e) => setConfig({ ...config, botToken: e.target.value })}
+                    onChange={(e) => {
+                      setConfig({ ...config, botToken: e.target.value });
+                      setTokenModified(true);
+                    }}
                   />
                   <p className="text-sm text-muted-foreground">
                     从 @BotFather 获取。格式：数字:35位字符
