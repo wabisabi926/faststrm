@@ -35,14 +35,11 @@ export default function DownloadProgressPage({
   // 加载历史日志
   const loadHistoryLogs = useCallback(async () => {
     try {
-      console.log("Loading history logs for taskId:", taskId, "executionId:", executionId);
       // 获取所有历史记录，然后找到特定的执行记录
       const response = await axiosInstance.get("/api/taskHistory");
       const allHistory = response.data;
-      console.log("All history data:", allHistory);
       const execution = allHistory.find((h: { id: string }) => h.id === executionId);
-      console.log("Found execution:", execution);
-      
+
       if (execution) {
         setConnectionStatus("历史记录");
         setTaskStatus(execution.status === "completed" ? "已完成" : 
@@ -95,8 +92,6 @@ export default function DownloadProgressPage({
           return;
         }
 
-        console.log('Starting SSE connection to:', `/api/taskLog/${taskId}`);
-        
         const response = await fetch(`/api/taskLog/${taskId}`, {
           method: 'GET',
           headers: {
@@ -106,8 +101,6 @@ export default function DownloadProgressPage({
           signal: abortController.signal,
         });
 
-        console.log('SSE response status:', response.status);
-        
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -125,7 +118,6 @@ export default function DownloadProgressPage({
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            console.log('SSE stream ended');
             setConnectionStatus("连接已断开");
             break;
           }
@@ -140,7 +132,6 @@ export default function DownloadProgressPage({
               if (dataStr.trim()) {
                 try {
                   const data: Progress = JSON.parse(dataStr);
-                  console.log('SSE data received:', data);
                   
                   if (data.error) {
                     // 没有任务的情况
@@ -183,7 +174,6 @@ export default function DownloadProgressPage({
         }
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
-          console.log('SSE connection aborted');
           setConnectionStatus("连接已取消");
         } else {
           console.error('SSE connection error:', error);
@@ -208,12 +198,9 @@ export default function DownloadProgressPage({
     setIsCancelling(true);
     try {
       const response = await axiosInstance.post('/api/cancelTask', { taskId });
-      console.log('Task cancellation response:', response.data);
       
       if (response.data.message) {
         setTaskStatus("已取消");
-        // 显示成功消息
-        console.log('Task cancelled successfully');
       }
     } catch (error: unknown) {
       console.error('Failed to cancel task:', error);

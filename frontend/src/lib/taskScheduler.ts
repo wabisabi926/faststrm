@@ -171,7 +171,7 @@ function _registerJob(taskId: string, schedule: TaskSchedule): void {
     const tasks = readScheduledTasks();
     const idx = tasks.findIndex((t) => t.id === taskId);
     if (idx !== -1) {
-      if (!tasks[idx].schedule) tasks[idx].schedule = {};
+      if (!tasks[idx].schedule) tasks[idx].schedule = { enabled: false, mode: "interval" };
       tasks[idx].schedule!.nextRunAt = next;
       saveTasks(tasks);
     }

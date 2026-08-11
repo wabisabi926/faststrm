@@ -362,7 +362,7 @@ export function getEntriesByPathPrefix(
   return rows.map((row) => ({
     fileId: row.file_id,
     path: row.path,
-    file_name: row.file_name,
+    fileName: row.file_name,
     parentId: row.parent_id,
     pickCode: row.pickcode,
     updateTime: row.update_time,

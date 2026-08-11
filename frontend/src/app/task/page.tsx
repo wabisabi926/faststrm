@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { DataTable } from "@/components/data-table";
 import { AddTaskDialog } from "./components/AddTaskDialog";
 import { TaskScheduleDialog, TaskSchedule } from "./components/TaskScheduleDialog";
@@ -181,7 +180,7 @@ export default function Home() {
     
     try {
       const res = await axiosInstance.post("/api/startTask", { id }, {
-        timeout: 180000 // 设置60秒超时
+        timeout: 180000 // 设置180秒超时
       });
       toast.success(`任务已开始: ${res.data.message}`);
       

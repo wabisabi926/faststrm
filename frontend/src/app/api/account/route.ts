@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const accounts = readAccounts() as AccountInfo[];
+  const accounts = readAccounts() as unknown as AccountInfo[];
   if (accounts.find((a: AccountInfo) => a.name === name)) {
     return NextResponse.json({ error: "Account name already exists" }, { status: 400 });
   }
@@ -107,7 +107,7 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  const accounts = readAccounts() as AccountInfo[];
+  const accounts = readAccounts() as unknown as AccountInfo[];
   const idx = accounts.findIndex((a: AccountInfo) => a.name === name);
 
   if (idx === -1) {
@@ -130,7 +130,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Missing name" }, { status: 400 });
   }
 
-  const accounts = readAccounts() as AccountInfo[];
+  const accounts = readAccounts() as unknown as AccountInfo[];
   const newAccounts = accounts.filter((a: AccountInfo) => a.name !== name);
 
   if (newAccounts.length === accounts.length) {

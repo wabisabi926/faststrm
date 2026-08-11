@@ -668,7 +668,7 @@ export function updateTaskScheduleState(
   const tasks = readScheduledTasks();
   const idx = tasks.findIndex((t) => t.id === taskId);
   if (idx === -1) return;
-  if (!tasks[idx].schedule) tasks[idx].schedule = {};
+  if (!tasks[idx].schedule) tasks[idx].schedule = { enabled: false, mode: "interval" };
   Object.assign(tasks[idx].schedule, state);
   saveTasks(tasks);
 }

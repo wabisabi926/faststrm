@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

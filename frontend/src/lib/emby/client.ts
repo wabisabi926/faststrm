@@ -1,5 +1,5 @@
 // Emby REST API 客户端封装（参考 qmediasync/embyclient-rest-go）
-import axios from "axios";
+import axios, { type AxiosError } from "axios";
 import type { EmbyItemDetail, EmbyImageTag } from "./types";
 
 const DEFAULT_TIMEOUT = 10_000;

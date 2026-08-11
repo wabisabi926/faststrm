@@ -260,14 +260,37 @@ async function handleProxy(
   // 禁用上游压缩，否则没法做 passthrough 的 content-length
   forwardedHeaders.set("Accept-Encoding", "identity");
 
-  const upstream = await fetch(cdnUrl, {
-    method: req.method,
-    headers: forwardedHeaders,
-    // @ts-expect-error Next.js fetch supports duplex for streaming bodies
-    duplex: "half",
-    cache: "no-store",
-    redirect: "follow",
-  });
+  // 建连超时控制 + 客户端断连传播
+  // 防止 CDN 慢响应导致 proxy 并发名额被永久占用（accountProxyCount 不释放）
+  const controller = new AbortController();
+  const CONNECT_TIMEOUT_MS = 30_000;
+  const timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
+  // 客户端断连时取消上游 fetch，释放连接
+  if (req.signal) {
+    if (req.signal.aborted) controller.abort();
+    else req.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(cdnUrl, {
+      method: req.method,
+      headers: forwardedHeaders,
+      // @ts-expect-error Next.js fetch supports duplex for streaming bodies
+      duplex: "half",
+      cache: "no-store",
+      redirect: "follow",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    const msg = err instanceof Error ? err.name : String(err);
+    console.warn(`[STRM][handleProxy] upstream fetch failed account=${account.name}: ${msg}`);
+    return new NextResponse(`Upstream fetch failed: ${msg}`, { status: 502 });
+  }
+
+  // 建连成功，清除建连超时（传输阶段靠 req.signal 控制客户端断连）
+  clearTimeout(timer);
 
   const respHeaders = new Headers();
 

@@ -6,7 +6,7 @@ import * as z from "zod";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import axiosInstance from "@/lib/axios";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle, ChevronDown, ChevronRight } from "lucide-react";
 import {
   Dialog,
   DialogClose,
@@ -39,8 +39,8 @@ import { LocalDirectoryTreeDialog } from "./LocalDirectoryTreeDialog";
 import { resolveStrmSettings } from "@/lib/strmUtils";
 
 export const taskFormSchema = z.object({
-  account: z.string().min(1, "Account 不能为空"),
-  originPath: z.string().min(1, "Origin Path 不能为空"),
+  account: z.string().min(1, "账户不能为空"),
+  originPath: z.string().min(1, "远程路径不能为空"),
   targetPath: z.string().optional(),
   strmType: z.string().optional(),
   strmPrefix: z.string().optional(),
@@ -68,11 +68,11 @@ export function AddTaskDialog({
   const [loading, setLoading] = React.useState(false);
   const [directoryDialogOpen, setDirectoryDialogOpen] = React.useState(false);
   const [localDirectoryDialogOpen, setLocalDirectoryDialogOpen] = React.useState(false);
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const [formValues, setFormValues] = React.useState({
     strmPrefix: "",
     originPath: "",
     account: "",
-    enable302: false,
   });
 
   // 获取选中账户的类型
@@ -86,24 +86,29 @@ export function AddTaskDialog({
 
   // 计算预览路径
   const getPreviewPath = () => {
-    const { strmPrefix, originPath, account, enable302 } = formValues;
-    if (!strmPrefix && !originPath) {
-      return "请输入 Strm Prefix 和 Origin Path";
+    const { strmPrefix, originPath, account } = formValues;
+    if (!originPath) {
+      return "请输入远程路径";
+    }
+    if (!strmPrefix) {
+      return `留空使用全局前缀 → .../${account || "{account}"}/${originPath}/....../abc.mkv`;
     }
     const resolved = resolveStrmSettings(account, {
       strmPrefix,
-      enable302: is115Account ? enable302 : false,
     });
-    const origin = originPath || "";
-    return `${resolved.strmPrefix}/${origin}/....../abc.mkv`;
+    return `${resolved.strmPrefix}/${originPath}/....../abc.mkv`;
   };
 
-  // 编辑时，如果启用了302且strmPrefix以账号结尾，需要去掉账号后缀
+  // 编辑时，去掉 strmPrefix 末尾可能残留的账号后缀（旧版数据兼容）
   const getInitialStrmPrefix = () => {
     if (!task) return "";
     let prefix = task.strmPrefix || "";
-    if (task.enable302 && task.account && prefix.endsWith("/" + task.account)) {
+    // 旧版数据可能拼接了 /account 或 /api/strm，清理掉
+    if (task.account && prefix.endsWith("/" + task.account)) {
       prefix = prefix.slice(0, -(task.account.length + 1));
+    }
+    if (prefix.endsWith("/api/strm")) {
+      prefix = prefix.slice(0, -"/api/strm".length);
     }
     return prefix;
   };
@@ -113,6 +118,7 @@ export function AddTaskDialog({
     defaultValues: task ? {
       ...task,
       strmPrefix: getInitialStrmPrefix(),
+      enable302: undefined,
     } : {
       account: "",
       originPath: "",
@@ -120,7 +126,6 @@ export function AddTaskDialog({
       strmType: "local",
       strmPrefix: "",
       removeExtraFiles: true,
-      enable302: false,
     },
   });
 
@@ -131,7 +136,6 @@ export function AddTaskDialog({
         strmPrefix: value.strmPrefix || "",
         originPath: value.originPath || "",
         account: value.account || "",
-        enable302: value.enable302 || false,
       });
     });
     return () => subscription.unsubscribe();
@@ -140,16 +144,17 @@ export function AddTaskDialog({
   // 初始化时同步表单值到状态
   React.useEffect(() => {
     if (task) {
-      // 如果启用了302且strmPrefix以账号结尾，去掉账号后缀
       let prefix = task.strmPrefix || "";
-      if (task.enable302 && task.account && prefix.endsWith("/" + task.account)) {
+      if (task.account && prefix.endsWith("/" + task.account)) {
         prefix = prefix.slice(0, -(task.account.length + 1));
+      }
+      if (prefix.endsWith("/api/strm")) {
+        prefix = prefix.slice(0, -"/api/strm".length);
       }
       setFormValues({
         strmPrefix: prefix,
         originPath: task.originPath || "",
         account: task.account || "",
-        enable302: task.enable302 || false,
       });
     }
   }, [task]);
@@ -208,7 +213,7 @@ export function AddTaskDialog({
                   <FormControl>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Select account" />
+                        <SelectValue placeholder="选择账户" />
                       </SelectTrigger>
                       <SelectContent className="z-[60]">
                         {accountsLoading ? (
@@ -234,43 +239,6 @@ export function AddTaskDialog({
               )}
             />
 
-            {/* 开启 302 - 仅 115 账户显示 */}
-            {is115Account && (
-              <FormField
-                control={form.control}
-                name="enable302"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="flex items-center gap-1">
-                      开启 302 重定向
-                      <div className="group relative">
-                        <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" />
-                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 text-white text-sm rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
-                          开启后，Strm 前缀会自动拼接 /账户名
-                          <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
-                        </div>
-                      </div>
-                    </FormLabel>
-                    <FormControl>
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          id="enable302"
-                          checked={field.value || false}
-                          onChange={(e) => field.onChange(e.target.checked)}
-                          className="rounded border-gray-300"
-                        />
-                        <label htmlFor="enable302" className="text-sm">
-                          启用 302 重定向模式
-                        </label>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
-
             {/* Origin Path */}
             <FormField
               control={form.control}
@@ -282,14 +250,14 @@ export function AddTaskDialog({
                     <div className="group relative">
                       <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" />
                       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 text-white text-sm rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
-                        在这里输入网盘路径或openlist的路径，如：tv 或 kuake/tv
+                        在这里输入网盘路径或 OpenList 的路径，如：tv 或 115/TV
                         <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
                       </div>
                     </div>
                   </FormLabel>
                   <FormControl>
                     <div className="flex items-center gap-2">
-                      <Input {...field} placeholder="Origin Path" className="flex-1" />
+                      <Input {...field} placeholder="远程路径" className="flex-1" />
                       {is115Account && formValues.account && (
                         <Button
                           type="button"
@@ -319,14 +287,14 @@ export function AddTaskDialog({
                     <div className="group relative">
                       <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" />
                       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 text-white text-sm rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
-                        这里将生成strm文件到你的挂载目录里，比如填写 tv 将在挂载目录创建tv目录，并将 Origin Path 内所有的文件strm到TargetPath
+                        这里将生成 strm 文件到你的挂载目录里，比如填写 tv 将在挂载目录创建 tv 目录，并将 Origin Path 内所有的文件 strm 到 Target Path
                         <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
                       </div>
                     </div>
                   </FormLabel>
                   <FormControl>
                     <div className="flex items-center gap-2">
-                      <Input {...field} placeholder="Target Path" className="flex-1" />
+                      <Input {...field} placeholder="本地路径" className="flex-1" />
                       <Button
                         type="button"
                         variant="outline"
@@ -338,43 +306,6 @@ export function AddTaskDialog({
                       </Button>
                     </div>
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-
-            {/* Strm Prefix */}
-            <FormField
-              control={form.control}
-              name="strmPrefix"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="flex items-center gap-1">
-                    Strm 前缀
-                    <div className="group relative">
-                      <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" />
-                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 text-white text-sm rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
-                        用于生成strm文件的前缀，最终路径为 Strm Prefix + Origin Path
-                        <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
-                      </div>
-                    </div>
-                  </FormLabel>
-                  <FormControl>
-                    <div className="flex items-center gap-1">
-                      <Input {...field} placeholder="Strm Prefix" className={is115Account && formValues.enable302 ? "flex-1" : "w-full"} />
-                      {is115Account && formValues.enable302 && (
-                        <Input
-                          value={`/${formValues.account}`}
-                          disabled
-                          className="w-[120px] bg-gray-100 text-gray-600 font-medium flex-shrink-0"
-                        />
-                      )}
-                    </div>
-                  </FormControl>
-                  <div className="text-sm text-red-600 font-medium">
-                    请确保emby可以访问到该路径: {getPreviewPath()}
-                  </div>
                   <FormMessage />
                 </FormItem>
               )}
@@ -414,6 +345,53 @@ export function AddTaskDialog({
                 </FormItem>
               )}
             />
+
+            {/* 高级设置：STRM 前缀覆盖 */}
+            <div className="border rounded-md p-3 space-y-3">
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen(!advancedOpen)}
+                className="flex items-center gap-2 text-sm font-medium w-full text-left"
+              >
+                {advancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                高级设置（覆盖全局默认）
+              </button>
+              {advancedOpen && (
+                <div className="space-y-4 pt-1">
+                  {/* Strm 前缀 */}
+                  <FormField
+                    control={form.control}
+                    name="strmPrefix"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="flex items-center gap-1">
+                          Strm 前缀
+                          <div className="group relative">
+                            <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" />
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 text-white text-sm rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
+                              覆盖全局 Strm 前缀设置，留空使用全局默认
+                              <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
+                            </div>
+                          </div>
+                        </FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="留空使用全局默认前缀" className="flex-1" />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          全局默认值在「设置 → STRM 生成设置」中配置
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* 预览路径 */}
+                  <div className="text-sm text-amber-600 font-medium bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded">
+                    预览：{getPreviewPath()}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <DialogFooter>
               <DialogClose asChild>

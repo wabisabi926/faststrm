@@ -15,6 +15,18 @@
 import * as fs from "fs";
 import * as path from "path";
 
+// ==================== 内部工具 ====================
+
+/**
+ * 原子写入文件：先写临时文件再 rename，避免进程崩溃导致文件内容写一半损坏。
+ * 临时文件与目标文件同目录（保证同分区，rename 是原子的）。
+ */
+function atomicWriteFileSync(filePath: string, content: string): void {
+  const tmpPath = `${filePath}.tmp.${process.pid}`;
+  fs.writeFileSync(tmpPath, content, "utf-8");
+  fs.renameSync(tmpPath, filePath);
+}
+
 // ==================== 类型 ====================
 
 export interface RemoveEmptyParentsOptions {
@@ -60,7 +72,9 @@ export function removeEmptyParents(
 ): string[] {
   const removed: string[] = [];
   const tag = opts.tag || "strmFileOps";
-  let currentDir = path.dirname(startPath);
+  // resolve 为绝对路径，确保与 rootDirs（已是 resolved 绝对路径）能正确匹配，
+  // 否则用户把 localPath 配成相对路径时根目录保护会失效
+  let currentDir = path.resolve(path.dirname(startPath));
 
   while (currentDir) {
     // 命中根目录边界 → 停止
@@ -320,7 +334,7 @@ export function syncStrmText(
     }
     try {
       fs.mkdirSync(path.dirname(strmPath), { recursive: true });
-      fs.writeFileSync(strmPath, expectedContent, "utf-8");
+      atomicWriteFileSync(strmPath, expectedContent);
       console.log(`[${tag}] 创建 STRM: ${strmPath}`);
       return { ok: true, wrote: true };
     } catch (e) {
@@ -339,7 +353,7 @@ export function syncStrmText(
     }
 
     // 内容不同 → 重写
-    fs.writeFileSync(strmPath, expectedContent, "utf-8");
+    atomicWriteFileSync(strmPath, expectedContent);
     console.log(`[${tag}] 更新 STRM 内容: ${strmPath}`);
     return { ok: true, wrote: true };
   } catch (e) {

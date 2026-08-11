@@ -13,10 +13,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Settings, LifeBuoy, Shield, User, Lock, UserCog } from "lucide-react";
+import { Settings, LifeBuoy, Shield, UserCog, FolderOpen } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import axiosInstance, { getUsername, setUsername, clearToken, clearUsername } from "@/lib/axios";
+import type { AxiosError } from "axios";
 import { StrmCleanupCard } from "./StrmCleanupCard";
+import { DirectoryTreeDialog } from "@/app/task/components/DirectoryTreeDialog";
+import { LocalDirectoryTreeDialog } from "@/app/task/components/LocalDirectoryTreeDialog";
 
 type PathMapping = {
   account?: string;
@@ -178,6 +187,14 @@ export default function SettingsPage() {
   const [newCloudPath, setNewCloudPath] = useState("");
   const [newLocalPath, setNewLocalPath] = useState("");
 
+  // Directory picker dialog states
+  // For existing row editing: index points to the mapping row
+  // For new row: index = -1
+  const [cloudPickerOpen, setCloudPickerOpen] = useState(false);
+  const [localPickerOpen, setLocalPickerOpen] = useState(false);
+  const [pickerTargetRow, setPickerTargetRow] = useState(-1); // -1 = new row, >=0 = existing row
+  const [pickerAccount, setPickerAccount] = useState<string>("");
+
   // Merge saved monitor states + selected but not-yet-saved accounts for display
   const displayMonitorStates: (MonitorState & { pending?: boolean })[] = (() => {
     const byAccount = new Map<string, MonitorState>();
@@ -234,8 +251,7 @@ export default function SettingsPage() {
         setAccounts(accountsResp.data?.map?.((a: { name: string }) => a.name) || []);
 
         // Load monitor states
-        const monitorResp = await axiosInstance.get("/api/lifeMonitor");
-        setMonitorStates(monitorResp.data?.states || []);
+        await refreshMonitorStates();
 
         // 加载当前用户名
         const savedUsername = getUsername();
@@ -255,6 +271,16 @@ export default function SettingsPage() {
 
     loadData();
   }, []);
+
+  // 统一刷新 lifeMonitor 状态，替代复制粘贴的 7 处 axiosInstance.get + setMonitorStates
+  const refreshMonitorStates = async () => {
+    try {
+      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
+      setMonitorStates(monitorResp.data?.states || []);
+    } catch (e) {
+      console.error("Failed to refresh monitor states:", e);
+    }
+  };
 
   const fetchMountDryRun = async () => {
     setMountDryRunLoading(true);
@@ -484,6 +510,52 @@ export default function SettingsPage() {
     setPathMappings(prev => prev.filter((_, i) => i !== index));
   };
 
+  // Directory picker handlers for existing rows
+  const openCloudPicker = (rowIndex: number, account?: string) => {
+    setPickerTargetRow(rowIndex);
+    setPickerAccount(account || accounts[0] || "");
+    setCloudPickerOpen(true);
+  };
+
+  const openLocalPicker = (rowIndex: number) => {
+    setPickerTargetRow(rowIndex);
+    setLocalPickerOpen(true);
+  };
+
+  // Directory picker handlers for new row
+  const openNewCloudPicker = () => {
+    setPickerTargetRow(-1);
+    setPickerAccount(newMappingAccount !== "__all__" ? newMappingAccount : (accounts[0] || ""));
+    setCloudPickerOpen(true);
+  };
+
+  const openNewLocalPicker = () => {
+    setPickerTargetRow(-1);
+    setLocalPickerOpen(true);
+  };
+
+  const handleCloudPathSelected = (path: string) => {
+    if (pickerTargetRow >= 0) {
+      const updated = [...pathMappings];
+      updated[pickerTargetRow] = { ...updated[pickerTargetRow], cloudPath: path };
+      setPathMappings(updated);
+    } else {
+      setNewCloudPath(path);
+    }
+    setCloudPickerOpen(false);
+  };
+
+  const handleLocalPathSelected = (path: string) => {
+    if (pickerTargetRow >= 0) {
+      const updated = [...pathMappings];
+      updated[pickerTargetRow] = { ...updated[pickerTargetRow], localPath: path };
+      setPathMappings(updated);
+    } else {
+      setNewLocalPath(path);
+    }
+    setLocalPickerOpen(false);
+  };
+
   const handleVerify = async () => {
     if (selectedAccounts.length === 0) {
       toast.error("请先选择账号");
@@ -553,12 +625,10 @@ export default function SettingsPage() {
         },
       });
       toast.success(resp.data?.message || "监控已更新");
-      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
-      setMonitorStates(monitorResp.data?.states || []);
+      await refreshMonitorStates();
     } catch {
       toast.error("启动监控失败");
-      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
-      setMonitorStates(monitorResp.data?.states || []);
+      await refreshMonitorStates();
     }
   };
 
@@ -569,12 +639,10 @@ export default function SettingsPage() {
         account,
       });
       toast.success(`监控已停止: ${account}`);
-      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
-      setMonitorStates(monitorResp.data?.states || []);
+      await refreshMonitorStates();
     } catch {
       toast.error("停止监控失败");
-      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
-      setMonitorStates(monitorResp.data?.states || []);
+      await refreshMonitorStates();
     }
   };
 
@@ -585,20 +653,19 @@ export default function SettingsPage() {
         account,
       });
       toast.success(resp.data?.message || `监控已启动: ${account}`);
-      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
-      setMonitorStates(monitorResp.data?.states || []);
+      await refreshMonitorStates();
     } catch (err) {
-      const axiosErr = err as { response?: { data?: { error?: string }; message?: string } };
+      const axiosErr = err as AxiosError<{ error?: string }>;
       const msg = axiosErr?.response?.data?.error || axiosErr?.message || "启动监控失败";
       toast.error(msg);
-      const monitorResp = await axiosInstance.get("/api/lifeMonitor");
-      setMonitorStates(monitorResp.data?.states || []);
+      await refreshMonitorStates();
     }
   };
 
-  if (loading) return <div>Loading...</div>;
+  if (loading) return <div>加载中...</div>;
 
   return (
+    <>
     <div className="mx-auto max-w-3xl space-y-6">
       {/* Page Title */}
       <div>
@@ -1228,27 +1295,63 @@ export default function SettingsPage() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <Input
-                        value={mapping.cloudPath}
-                        onChange={(e) => {
-                          const updated = [...pathMappings];
-                          updated[index] = { ...updated[index], cloudPath: e.target.value };
-                          setPathMappings(updated);
-                        }}
-                        placeholder="115 网盘路径，如 /电影"
-                        className="flex-1"
-                      />
+                      <div className="flex-1 flex gap-1 items-center">
+                        <Input
+                          value={mapping.cloudPath}
+                          onChange={(e) => {
+                            const updated = [...pathMappings];
+                            updated[index] = { ...updated[index], cloudPath: e.target.value };
+                            setPathMappings(updated);
+                          }}
+                          placeholder="115 网盘路径，如 /电影"
+                          className="flex-1"
+                        />
+                        <TooltipProvider delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => openCloudPicker(index, mapping.account)}
+                                  title={mapping.account ? "选择网盘目录" : ""}
+                                  disabled={!mapping.account || accounts.length === 0}
+                                >
+                                  <FolderOpen className="w-4 h-4" />
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            {!mapping.account && (
+                              <TooltipContent side="top" className="max-w-[240px]">
+                                <p>全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
+                              </TooltipContent>
+                            )}
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
                       <span className="text-muted-foreground">→</span>
-                      <Input
-                        value={mapping.localPath}
-                        onChange={(e) => {
-                          const updated = [...pathMappings];
-                          updated[index] = { ...updated[index], localPath: e.target.value };
-                          setPathMappings(updated);
-                        }}
-                        placeholder="本地路径，如/app/data/media/电影"
-                        className="flex-1"
-                      />
+                      <div className="flex-1 flex gap-1 items-center">
+                        <Input
+                          value={mapping.localPath}
+                          onChange={(e) => {
+                            const updated = [...pathMappings];
+                            updated[index] = { ...updated[index], localPath: e.target.value };
+                            setPathMappings(updated);
+                          }}
+                          placeholder="本地路径，如/app/data/media/电影"
+                          className="flex-1"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => openLocalPicker(index)}
+                          title="选择本地目录"
+                        >
+                          <FolderOpen className="w-4 h-4" />
+                        </Button>
+                      </div>
                       <Button
                         variant="destructive"
                         size="sm"
@@ -1274,19 +1377,55 @@ export default function SettingsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Input
-                    value={newCloudPath}
-                    onChange={(e) => setNewCloudPath(e.target.value)}
-                    placeholder="115 网盘路径，如 /电影"
-                    className="flex-1"
-                  />
+                  <div className="flex-1 flex gap-1 items-center">
+                    <Input
+                      value={newCloudPath}
+                      onChange={(e) => setNewCloudPath(e.target.value)}
+                      placeholder="115 网盘路径，如 /电影"
+                      className="flex-1"
+                    />
+                    <TooltipProvider delayDuration={100}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={openNewCloudPicker}
+                              title={newMappingAccount !== "__all__" ? "选择网盘目录" : ""}
+                              disabled={newMappingAccount === "__all__" || accounts.length === 0}
+                            >
+                              <FolderOpen className="w-4 h-4" />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        {newMappingAccount === "__all__" && (
+                          <TooltipContent side="top" className="max-w-[240px]">
+                            <p>全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
+                          </TooltipContent>
+                        )}
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
                   <span className="text-muted-foreground">→</span>
-                  <Input
-                    value={newLocalPath}
-                    onChange={(e) => setNewLocalPath(e.target.value)}
-                    placeholder="本地路径，如/app/data/media/电影"
-                    className="flex-1"
-                  />
+                  <div className="flex-1 flex gap-1 items-center">
+                    <Input
+                      value={newLocalPath}
+                      onChange={(e) => setNewLocalPath(e.target.value)}
+                      placeholder="本地路径，如/app/data/media/电影"
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={openNewLocalPicker}
+                      title="选择本地目录"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                    </Button>
+                  </div>
                   <Button size="sm" onClick={addPathMapping}>
                     添加
                   </Button>
@@ -1480,5 +1619,19 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+
+    {/* Directory Picker Dialogs */}
+    <DirectoryTreeDialog
+      open={cloudPickerOpen}
+      onOpenChange={setCloudPickerOpen}
+      account={pickerAccount}
+      onSelect={handleCloudPathSelected}
+    />
+    <LocalDirectoryTreeDialog
+      open={localPickerOpen}
+      onOpenChange={setLocalPickerOpen}
+      onSelect={handleLocalPathSelected}
+    />
+    </>
   );
 }
