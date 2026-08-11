@@ -134,7 +134,7 @@ function listDirectory(targetPath: string) {
           hasChildren,
         });
       }
-    } catch (error) {
+    } catch {
       // 忽略无法访问的文件/目录（权限问题等）
     }
   }

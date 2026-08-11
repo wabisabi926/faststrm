@@ -1087,7 +1087,7 @@ async function handleDeleteEvent(
     const strmPath = path.join(path.dirname(mapping.localPath), strmFileName);
 
     if (fs.existsSync(strmPath)) {
-      const delRes = deleteStrmFile(strmPath, { rootDirs, cleanRelated: true, tag: "LifeMonitor/delete", account: accountInfo.name });
+      void deleteStrmFile(strmPath, { rootDirs, cleanRelated: true, tag: "LifeMonitor/delete", account: accountInfo.name });
       result.success = true;
       result.message = `STRM 文件已删除: ${strmPath}`;
       if (result.action !== "skip") {

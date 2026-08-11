@@ -76,33 +76,6 @@ export function LocalDirectoryTreeDialog({
     }
   }, [open, loadTree]);
 
-  // 判断一个路径字符串是不是"顶层"根（空字符串，用于返回真正根级）
-  const isTopLevelParent = (parentId: string) => parentId === "";
-
-  // 获取父路径
-  const getParentPath = (fullPath: string): string => {
-    // 去掉末尾反斜杠/正斜杠
-    const normalized = fullPath.replace(/[\\/]+$/, "");
-    // Windows 盘符: C:\ 或 D: 这种没有父级，返回 ""（回到顶层盘符列表）
-    if (/^[A-Za-z]:[\\/]*$/.test(normalized) || /^[A-Za-z]:$/.test(normalized)) {
-      return "";
-    }
-    // Unix 根 "/"
-    if (normalized === "/") return "";
-    // 取上一级
-    const lastSlash = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
-    if (lastSlash <= 0) {
-      // 只剩盘符或根
-      return "";
-    }
-    let parent = normalized.substring(0, lastSlash);
-    // Windows 情况：C:\foo -> C: ，但我们希望返回 C:\ 以便识别为盘符
-    if (/^[A-Za-z]:$/.test(parent)) {
-      parent = parent + "\\";
-    }
-    return parent;
-  };
-
   // 展开/折叠节点
   const toggleNode = async (node: TreeNode) => {
     if (expandedNodes.has(node.id)) {

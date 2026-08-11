@@ -76,7 +76,7 @@ export default function DownloadProgressPage({
       console.error("Failed to load history logs:", error);
       setConnectionStatus("加载历史记录失败");
     }
-  }, [taskId, executionId]);
+  }, [executionId]);
 
   useEffect(() => {
     let abortController: AbortController | null = null;
