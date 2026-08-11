@@ -402,16 +402,28 @@ export default function TelegramNotifyPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="webhookUrl">Webhook URL（可选）</Label>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="webhookUrl">Webhook URL（可选）</Label>
+                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 h-5 px-1.5 text-[10px] font-medium">
+                      家用 / Nas / 内网 → 留空，用轮询
+                    </Badge>
+                  </div>
                   <Input
                     id="webhookUrl"
-                    placeholder="https://你的域名.com/api/notify/webhook"
+                    placeholder="https://<你的公网域名>/api/notify/webhook（仅云服务器场景填写）"
                     value={config.webhookUrl || ""}
                     onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
                   />
-                  <p className="text-sm text-muted-foreground">
-                    留空则使用轮询模式
-                  </p>
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    <p>
+                      <span className="font-semibold text-foreground">推荐方案 · 轮询模式（留空）：</span>
+                      无需公网 IP / 域名 / HTTPS，家里 Nas、局域网、Docker 均可直接使用，消息延迟约 5 秒。
+                    </p>
+                    <p>
+                      <span className="font-semibold text-foreground">Webhook 模式（填写）：</span>
+                      仅适合部署在<span className="font-semibold">境外云服务器</span>且有域名 + HTTPS 的场景，可获得毫秒级实时消息。
+                    </p>
+                  </div>
                 </div>
 
                 <div className="flex items-center space-x-2">
@@ -478,7 +490,12 @@ export default function TelegramNotifyPage() {
                     <Separator />
 
                     <div className="space-y-2">
-                      <h4 className="text-sm font-medium">功能权限：</h4>
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-medium">功能权限：</h4>
+                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 h-5 px-1.5 text-[10px] font-medium">
+                          仅展示，在 @BotFather 修改
+                        </Badge>
+                      </div>
                       <div className="space-y-1">
                         <div className="flex items-center space-x-2">
                           {botInfo.can_join_groups ? (
@@ -487,6 +504,7 @@ export default function TelegramNotifyPage() {
                             <XCircle className="h-3 w-3 text-red-500" />
                           )}
                           <span className="text-xs">可加入群组</span>
+                          <span className="text-[10px] text-muted-foreground ml-auto">/setjoingroups</span>
                         </div>
                         <div className="flex items-center space-x-2">
                           {botInfo.can_read_all_group_messages ? (
@@ -495,6 +513,7 @@ export default function TelegramNotifyPage() {
                             <XCircle className="h-3 w-3 text-red-500" />
                           )}
                           <span className="text-xs">可读取所有群组消息</span>
+                          <span className="text-[10px] text-muted-foreground ml-auto">/setprivacy → Disable</span>
                         </div>
                         <div className="flex items-center space-x-2">
                           {botInfo.supports_inline_queries ? (
@@ -503,8 +522,13 @@ export default function TelegramNotifyPage() {
                             <XCircle className="h-3 w-3 text-red-500" />
                           )}
                           <span className="text-xs">支持内联查询</span>
+                          <span className="text-[10px] text-muted-foreground ml-auto">/setinline → Enable</span>
                         </div>
                       </div>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed pt-1 border-t border-border/60">
+                        💡 <span className="font-medium text-foreground">faststrm 最低要求</span>：只需要「可加入群组」为 ✅ 即可正常收发通知。其余两项默认关闭是 Telegram 的安全隐私策略，
+                        <span className="font-medium text-foreground"> 不建议为了「全打勾」去关闭隐私模式</span>。
+                      </p>
                     </div>
 
                     <Button onClick={testBot} disabled={loading} className="w-full">
