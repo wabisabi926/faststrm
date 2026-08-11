@@ -1,4 +1,5 @@
 import { downloadTasks } from "@/lib/downloadTaskManager";
+import { getTaskHistory } from "@/lib/taskHistoryManager";
 import { NextRequest } from "next/server";
 
 export async function GET(
@@ -12,10 +13,17 @@ export async function GET(
   const isSSE = acceptHeader.includes("text/event-stream");
 
   if (!isSSE) {
-    if (!task) {
-      return new Response(JSON.stringify({ error: "Task not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
+    if (task) {
+      return new Response(JSON.stringify({ message: "Task found", taskId }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    return new Response(JSON.stringify({ message: "Task found", taskId }), { status: 200, headers: { "Content-Type": "application/json" } });
+
+    const history = getTaskHistory(taskId);
+    if (history.length > 0) {
+      const latest = history[0];
+      return new Response(JSON.stringify({ message: "History found", taskId, executionId: latest.id }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    return new Response(JSON.stringify({ error: "Task not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
   }
 
   const stream = new ReadableStream({
