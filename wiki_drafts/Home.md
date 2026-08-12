@@ -8,10 +8,16 @@
 
 > **🎉 v0.8.2 已发布**
 >
+> - ✅ **📱 115 扫码登录**：手机 App 扫码自动获取 Cookie，支持 7 种客户端类型，告别 F12 抓包
+> - ✅ **🔄 账户状态 TG 通知闭环**：`telegram.accountAlerts` 配置块，账号异常/恢复自动推送，与「更新 Cookie」按钮形成闭环
+> - ✅ **🍪 更新 Cookie 对话框**：账号异常时一键扫码刷新 Cookie，无需删除重建账号
+> - ✅ **🐛 STRM 生成路径修复**：修复全量扫描误加 `../data/` 前缀导致 302 模式 pickcode 反查失败的 P0 漏洞，新增 4 层兜底保护
+> - ✅ **🔀 路由策略配置化**：`forceProxyUaTokens` / `accountProxyConcurrencyLimit` / `redirectCheckTimeoutMs` 迁移到 `settings.json`，Web UI 可改实时生效
 > - ✅ **统一页面排版**：设置 / TG 通知 / Emby 通知页面全部改为 border/section 风格，Label 行高优化为 leading-6
 > - ✅ **默认设置 + admin 登录修复**：docker-entrypoint.sh 复制 `.config/.config.json` 后自动补 `admin/admin` 密码哈希，修复首次部署 admin 登录失败；去掉了 TS 层重复的配置复制逻辑（Docker 原本就有）
 > - ✅ **生活监控自动启动**：服务重启后，若监控配置已启用且账号 Cookie/凭据正常，首次访问监控页面或接口时会自动拉起，无需手动点击启动
 > - ✅ **清理 .trash 临时目录**：旧代码残留的 `data/.trash` 目录已完全移除，相关代码路径清零
+> - ✅ **界面本地化**：「Dry-run」在所有用户可见界面统一改为「试运行」
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---
@@ -32,7 +38,7 @@
 | 路由播放 | **[STRM 路由策略](STRM-路由策略)** | 302 vs 代理决策逻辑、规则引擎、降级机制 |
 | 删除同步 | **[删除同步](删除同步)** | Emby library.deleted 事件处理、路径映射、试运行模式 |
 | 实时监控 | **[生活事件监控](生活事件监控)** | 115 网盘变动增量同步、四类事件处理 |
-| 清理对账 | **[STRM 清理对账](STRM-清理对账)** | 孤儿扫描、全量对账、回收站管理 |
+| 清理对账 | **[STRM 清理对账](STRM-清理对账)** | 孤儿扫描、全量对账、防误删 |
 | 消息通知 | **[Telegram 通知](Telegram-通知)** | Bot 配置、通知类型、轮询 vs Webhook |
 | 分享转存 | **[分享链接转存](分享链接转存)** | 115 链接解析、目录浏览、一键转存 |
 

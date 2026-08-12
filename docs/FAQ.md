@@ -17,11 +17,13 @@ docker-compose up -d
 
 ### Q: 如何修改登录密码？
 
-A: 登录后进入「设置」→ 修改密码。或直接编辑 `config/config.json`（密码 SHA-256 哈希）后重启容器。
+A: 登录后进入「设置」→ 修改密码。或直接编辑 `config/config.json`（密码使用 salt+SHA-256 哈希存储）后重启容器。
 
 ### Q: 忘记密码怎么办？
 
-A: 停止容器 → 编辑 `config/config.json` → 把 `password` 改为 `admin` 的 SHA-256 值（`8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918`）→ 重启容器 → 用 `admin/admin` 登录。
+A: 停止容器 → 编辑 `config/config.json` → 把 `password` 改为明文 `admin`（代码对旧格式有明文兼容）→ 重启容器 → 用 `admin/admin` 登录 → 立即在「设置」页面修改密码（会自动写入 salt+SHA-256 哈希）。
+
+> ⚠️ 不要直接填纯 SHA-256 值（如 `8c6976e5...`），当前密码使用 salt+SHA-256 机制，纯哈希值无法通过验证。
 
 ## STRM 生成
 
@@ -86,15 +88,14 @@ A: faststrm 已对 Infuse 强制走 proxy 模式。如果仍卡死：
 
 ### Q: 想让所有请求都走 302（不中转）？
 
-A: 当前默认就是 302。force-proxy UA 列表（Infuse/VidHub/SenPlayer）会强制 proxy，如需移除：
-- 编辑 `route.ts` 中的 `FORCE_PROXY_UA_TOKENS` 数组
-- 或在私网用 `?mode=redirect` 指定
+A: 当前默认就是 302。force-proxy UA 列表（Infuse/VidHub/SenPlayer）会强制 proxy，如需自定义可在「设置」页面 → STRM 路由策略 → `forceProxyUaTokens` 中调整（对应 `settings.json → strm.forceProxyUaTokens`），修改实时生效无需重启。或在私网用 `?mode=redirect` 指定。
 
 ### Q: 115 单账号播放报错「并发过多」？
 
-A: 这是 115 的约 10 进程上限。faststrm 已有并发限流（阈值 8），如仍触发：
+A: 这是 115 的约 10 进程上限。faststrm 已有并发限流（默认阈值 8），如仍触发：
 - 减少同时播放的设备数
 - 考虑使用多个 115 账号分流
+- 在「设置」页面 → STRM 路由策略 → `accountProxyConcurrencyLimit` 调小阈值（对应 `settings.json → strm.accountProxyConcurrencyLimit`）
 
 ## Emby 集成
 
@@ -116,13 +117,11 @@ A: 排查：
 
 ### Q: 删除同步误删了文件？
 
-A: 从 `.trash/` 回收站恢复：
-1. 进入容器的 `data/.trash/` 目录
-2. 找到对应日期子目录
-3. 移回原位置
-4. 重新执行任务或全量对账
+A: STRM 删除为直接物理删除，无回收站。恢复方式：
+1. 在 115 网盘客户端确认源文件是否存在
+2. 若源文件存在，重新执行对应任务或全量对账即可重新生成 STRM
 
-> 回收站保留 7 天，请尽快恢复。
+> 建议首次启用删除同步时开启「试运行模式」确认路径映射正确，避免误删。
 
 ## Telegram 通知
 
@@ -166,12 +165,11 @@ A: faststrm 内存占用主要来自：
 - reachableCache（256 条，约 10MB）
 - SQLite filePathDb（取决于文件数）
 
-如内存紧张，可在 `route.ts` 调小缓存容量。
+> 缓存容量（`URL_CACHE_TTL` / `URL_CACHE_SIZE` / `REACHABLE_CACHE_TTL` / `REACHABLE_CACHE_SIZE`）保持内部常量，未暴露到 `settings.json`。如确需调整，请修改源码后重新构建。
 
 ### Q: 磁盘占用增长？
 
 A: 主要来自：
-- `.trash/` 回收站（7 天自动清理）
 - `logs/` 日志（建议定期清理或配置 logrotate）
 - `filePathDb.sqlite`（随文件数增长，可定期 VACUUM）
 
@@ -191,7 +189,7 @@ A: 备份以下目录：
 - `config/` - 配置文件
 - `data/` - 数据文件（filePathDb、历史记录等）
 
-> 不需要备份 `logs/` 和 `data/.trash/`。
+> 不需要备份 `logs/`。
 
 ### Q: 如何完全重置？
 

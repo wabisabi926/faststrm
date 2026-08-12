@@ -63,7 +63,7 @@ suspendMonitorForFullScan(account)  暂停生活监控
   ↓
 对比本地 STRM + filePathDb：
   新增 → 生成 STRM + 写 DB
-  删除 → 移入回收站 + 删 DB
+  删除 → 直接物理删除 + 删 DB
   更新 → 覆盖 STRM + 更新 DB
   ↓
 清理空目录（removeEmptyParents）
@@ -161,9 +161,9 @@ http://192.168.1.100:3000/api/strm?account=我的115&pickcode=xxxx&file_name=小
 ## 删除多余文件
 
 `removeExtraFiles: true` 时：
-- 扫描时发现本地 STRM 在远端不存在 → 移入 `.trash/` 回收站（7 天保留）
+- 扫描时发现本地 STRM 在远端不存在 → 直接物理删除（`fs.unlinkSync`）
 - 同时清理 DB 中对应记录
-- 不会直接物理删除，可从回收站恢复
+- 不经过回收站，不可从本地恢复；误删可在 115 网盘恢复文件后重新全量扫描生成
 
 ---
 

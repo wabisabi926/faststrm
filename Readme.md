@@ -13,7 +13,9 @@
 - 开源自由，支持批量生成 `.strm` 文件
 - 基于 115 目录树生成，支持自定义前缀配合媒体服务器使用
 - 115 生活事件实时监控（增量同步 + 全量同步）
-- **STRM 智能路由**：302 直连优先 + 静默降级代理，Infuse/VidHub/SenPlayer 自动强制代理
+- **📱 115 扫码登录**：手机 App 扫码自动获取 Cookie，无需 F12 抓包；Cookie 失效后一键扫码刷新
+- **🔄 账户状态 TG 通知闭环**：账号异常自动推送，扫码恢复后自动推送恢复通知
+- **STRM 智能路由**：302 直连优先 + 静默降级代理，Infuse/VidHub/SenPlayer 自动强制代理，路由参数可在线配置
 - **Emby 删除同步**：监听 `library.deleted` 事件自动清理 STRM，三道防误删保护
 - 支持 Telegram Bot 通知与交互
 - 轻量，易于二次开发
@@ -28,7 +30,16 @@ docker-compose up -d
 
 # 或使用 Docker 镜像
 docker pull wabisabi926/faststrm:latest
-docker run -d -p 3000:3000 -v ./data:/app/data wabisabi926/faststrm:latest
+docker run -d \
+  --name faststrm \
+  -p 3000:3000 \
+  -v ./config:/app/config \
+  -v ./data:/app/data \
+  -v ./logs:/app/logs \
+  -v /path/to/your/strm:/app/data/strm \
+  -e TZ=Asia/Shanghai \
+  --restart unless-stopped \
+  wabisabi926/faststrm:latest
 ```
 
 启动后访问 `http://localhost:3000`，默认账号密码：**admin / admin**
@@ -51,12 +62,19 @@ docker run -d -p 3000:3000 -v ./data:/app/data wabisabi926/faststrm:latest
 
 ---
 
-## 📝 最新版本 (v0.8.1)
+## 📝 最新版本 (v0.8.2)
 
-- **Emby 通知修复**：修复设置无法保存和测试连接失败，新增局部更新接口和 9 种错误分类
-- **TG 通知优化**：回填从秒级到毫秒级，隐藏空卡片，明确轮询 vs Webhook 推荐方案
-- **路径映射增强**：Emby 路径增加本地选择器，115 网盘路径增加云盘目录选择器，账号改为下拉
-- **文档重构**：精简 Readme，详细内容迁移至 GitHub Wiki（16 个页面）
+- **� 115 扫码登录**：新增 3 个二维码 API + 前端扫码 Tab，支持 7 种客户端类型，告别 F12 抓 Cookie
+- **🔄 账户状态 TG 通知闭环**：新增 `telegram.accountAlerts` 配置块，账号异常/恢复自动推送，与「更新 Cookie」按钮形成闭环
+- **🍪 更新 Cookie 对话框**：账号异常时一键扫码刷新 Cookie，无需删除重建账号
+- **�� STRM 生成路径修复**：修复全量扫描误加 `../data/` 前缀导致 302 模式 pickcode 反查失败的 P0 漏洞，新增 4 层兜底保护
+- **🔀 路由策略配置化**：`forceProxyUaTokens` / `accountProxyConcurrencyLimit` / `redirectCheckTimeoutMs` 迁移到 `settings.json`，Web UI 可改实时生效
+- **🐛 admin 登录修复**：修复首次 Docker 部署 admin/admin 无法登录的漏洞，entrypoint 复制默认配置后自动写入 SHA-256+salt 密码哈希
+- **🚀 生活监控自动启动**：服务重启后无需手动点启动，懒加载触发，进程级一次性保证
+- **🎨 页面排版统一**：设置/TG/Emby 通知页面统一 section 风格，Label 行高优化解决表单拥挤
+- **⚙️ 配置逻辑归位**：恢复 docker-entrypoint.sh 原有的 `.config/` → `config/` 复制链路，删除 TS 层冗余代码
+- **🧹 移除 .trash 目录**：清理历史遗留临时目录，相关逻辑已迁移至 `removeExtraFiles` 安全机制
+- **🌐 界面本地化**：「Dry-run」在所有用户可见界面统一改为「试运行」
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
