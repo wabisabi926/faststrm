@@ -58,9 +58,10 @@ const playbackCache = new Map<string, PlaybackCacheEntry>();
 const PLAYBACK_DEDUP_WINDOW_MS = 60_000;
 const PLAYBACK_CACHE_TTL_MS = 5 * 60_000;
 
-// ========== 通知模板（移植自 qmediasync notificationTemplate，保留评分 🆔） ==========
-const MOVIE_TEMPLATE = `
-{{title}} ({{year}})
+// ========== 通知模板（对齐 qmediasync 格式 + HTML parse_mode 加粗） ==========
+const MOVIE_TEMPLATE = `<b>📺 Emby 电影入库通知</b>
+
+<b>{{title}}</b> ({{year}})
 
 🆔 评分: {{rate}}
 🎬 类型: {{genres}}
@@ -68,30 +69,28 @@ const MOVIE_TEMPLATE = `
 ⏰ 入库时间: {{addedTime}}
 
 📝 简介
-{{overview}}
-`;
+{{overview}}`;
 
-const SERIES_TEMPLATE = `
-{{title}} ({{year}})
-{{seasonEpisodes}}
-🆔 评分: {{rate}}
+const SERIES_TEMPLATE = `<b>📺 Emby 电视剧入库通知</b>
+
+<b>{{title}}</b> ({{year}})
+{{seasonEpisodes}}🆔 评分: {{rate}}
 🎬 类型: {{genres}}
 👤 主演: {{actors}}
 ⏰ 入库时间: {{addedTime}}
 
 📝 简介
-{{overview}}
-`;
+{{overview}}`;
 
-const DELETED_MOVIE_TEMPLATE = `
-🗑️ 电影名称：{{title}}
-⏰ 删除时间: {{time}}
-`;
+const DELETED_MOVIE_TEMPLATE = `<b>🗑️ Emby 媒体删除通知</b>
 
-const DELETED_SERIES_TEMPLATE = `
-🗑️ 电视剧名称：{{title}}
-{{seasonEpisodes}}⏰ 删除时间: {{time}}
-`;
+<b>电影名称：</b>{{title}}
+⏰ 删除时间: {{time}}`;
+
+const DELETED_SERIES_TEMPLATE = `<b>🗑️ Emby 媒体删除通知</b>
+
+<b>电视剧名称：</b>{{title}}
+{{seasonEpisodes}}⏰ 删除时间: {{time}}`;
 
 // ========== 辅助函数 ==========
 function formatSeasonEpisodes(seasons: Map<number, number[]>): string {
@@ -256,7 +255,7 @@ async function formatPlaybackNotification(
   const playbackInfo = eventData.PlaybackInfo;
 
   const titleLine =
-    `${getEventTypeEmoji(event)} <b>${getEventTypeName(event)}</b> ${item.Name || "未知"}\n`;
+    `${getEventTypeEmoji(event)} <b>${getEventTypeName(event)} ${item.Name || "未知"}</b>\n`;
   let body = "";
   body += `👤 用户: ${user?.Name || "未知"}\n`;
   body += `📱 设备: ${session?.DeviceName || "未知"} (${session?.Client || "未知"})\n`;
@@ -328,9 +327,19 @@ async function downloadPosterToTemp(imageUrl: string, tempPath: string, userAgen
 function getTgBotAndChat(): { bot: TelegramBot; chatId: string } | null {
   const s = readSettings();
   const tg = s.telegram;
-  if (!tg?.enabled || !tg.botToken || !tg.chatId) {
+  if (!tg?.enabled) {
+    console.warn("[Emby] Telegram 通知未启用");
     return null;
   }
+  if (!tg.botToken) {
+    console.warn("[Emby] Telegram botToken 未配置");
+    return null;
+  }
+  if (!tg.chatId) {
+    console.warn("[Emby] Telegram chatId 未配置");
+    return null;
+  }
+  console.log(`[Emby] Telegram 配置正常，chatId=${tg.chatId}`);
   return { bot: createTelegramBot(tg.botToken), chatId: tg.chatId };
 }
 
@@ -339,9 +348,14 @@ async function sendEmbyText(text: string): Promise<void> {
   const ctx = getTgBotAndChat();
   if (!ctx) return;
   try {
-    await ctx.bot.sendNotification(text, ctx.chatId);
+    const result = await ctx.bot.sendNotification(text, ctx.chatId);
+    if (result?.ok) {
+      console.log(`[Emby] 文本通知发送成功 -> chatId=${ctx.chatId}`);
+    } else {
+      console.warn(`[Emby] 文本通知发送失败: ${result?.error || result?.description || "未知错误"}`);
+    }
   } catch (err) {
-    console.error("[Emby] 文本通知发送失败:", err);
+    console.error("[Emby] 文本通知发送异常:", err);
   }
 }
 
@@ -416,7 +430,13 @@ async function handleMovieAdded(item: EmbyWebhookEvent["Item"]): Promise<void> {
   const detail = await getItemDetail(item.Id, cfg);
 
   if (!detail) {
-    const fallback = `📚 <b>电影入库通知</b>\n${item.Name}\n⏰ ${new Date().toLocaleString()}`;
+    const fallback = `<b>📺 Emby 电影入库通知</b>
+
+<b>${item.Name || "未知"}</b>
+
+⏰ 入库时间: ${new Date().toLocaleString()}
+
+<i>（详情获取失败，已降级为简版通知）</i>`;
     await sendEmbyText(fallback);
     return;
   }
@@ -478,7 +498,13 @@ async function flushAddedEpisodeBuffer(seriesId: string): Promise<void> {
     const detail = await getItemDetail(seriesId, cfg);
     const message = detail
       ? formatSeriesNotification(detail, buffer.seasons)
-      : `📚 <b>剧集入库通知</b>\n${buffer.seriesName}\n📺 ${formatSeasonEpisodes(buffer.seasons)}\n⏰ ${new Date().toLocaleString()}`;
+      : `<b>📺 Emby 电视剧入库通知</b>
+
+<b>${buffer.seriesName}</b>
+📺 入库季集: ${formatSeasonEpisodes(buffer.seasons)}
+⏰ 入库时间: ${new Date().toLocaleString()}
+
+<i>（详情获取失败，已降级为简版通知）</i>`;
 
     if (detail) {
       await sendEmbyWithPoster(seriesId, detail.ImageTags, message, cfg);
@@ -496,7 +522,7 @@ async function handleMovieDeleted(item: EmbyWebhookEvent["Item"]): Promise<void>
   const settings = readSettings();
   if (!settings.emby?.notifyMediaRemoved) return;
   if (!getTgBotAndChat()) return;
-  const text = `🗑️ <b>Emby 媒体删除通知</b>\n${formatDeletedMovieNotification(item.Name || "未知")}`;
+  const text = formatDeletedMovieNotification(item.Name || "未知");
   await sendEmbyText(text);
 }
 
@@ -542,10 +568,10 @@ async function flushDeletedEpisodeBuffer(seriesId: string): Promise<void> {
   if (!getTgBotAndChat()) return;
 
   const body = formatDeletedSeriesNotification(buffer.seriesName, buffer.seasons);
-  await sendEmbyText(`🗑️ <b>Emby 媒体删除通知</b>\n${body}`);
+  await sendEmbyText(body);
 }
 
-// ========== 播放通知 ==========
+// ========== 播放通知（带海报，对齐 qmediasync） ==========
 async function handlePlaybackEvent(event: EmbyWebhookEvent): Promise<void> {
   const settings = readSettings();
   if (!settings.emby?.notifyPlayback) return;
@@ -565,7 +591,20 @@ async function handlePlaybackEvent(event: EmbyWebhookEvent): Promise<void> {
   }
 
   const message = await formatPlaybackNotification(event.Event, event);
-  await sendEmbyText(message);
+
+  // 尝试带海报发送（对齐 qmediasync 的 createPlaybackNotification）
+  const cfg = {
+    url: settings.emby?.url || "",
+    apiKey: settings.emby?.apiKey || "",
+    userAgent: (settings["user-agent"] || "FastStrm/1.0") as string,
+  };
+  const itemId = event.Item?.Id;
+  const imageTags = event.Item?.ImageTags;
+  if (itemId && imageTags && cfg.url && cfg.apiKey) {
+    await sendEmbyWithPoster(itemId, imageTags as EmbyItemDetail["ImageTags"], message, cfg);
+  } else {
+    await sendEmbyText(message);
+  }
 }
 
 // ========== 旧的 sendNotificationWithImage 彻底删除；

@@ -83,16 +83,11 @@ docker run -d \
 
 ---
 
-## 📝 最新版本 (v0.8.3)
+## 📝 最新版本 (v0.8.4)
 
-- **🐛 Emby 通知消息格式修复**：移除所有通知被二次包装的 `✅ Task Completed` 前缀和 `Time:` 后缀，入库/删除/播放通知直接呈现原始内容
-- **🖼️ Emby 海报图片发送修复**：内网 Emby 海报 URL 无法被 Telegram 服务器访问，改为先下载到本地临时文件再 multipart 上传到 TG，失败自动降级纯文本
-- **🔌 Webhook 路由兼容**：Emby 默认发送 form-data 格式，路由仅处理 JSON 导致解析失败，现已兼容两种 Content-Type
-- **⚙️ Webhook runtime 修复**：声明 `runtime = "nodejs"`，避免 Node 原生模块（fs/os）在 edge 运行时报错
-- **🔧 userAgent 字段名修复**：`settings.userAgent` → `settings["user-agent"]`，匹配实际配置键名
-- **🧹 Cookie 过期预警天数移除**：115 Cookie 不会自动过期（仅人为操作失效），预警功能无意义，已移除 UI 输入和相关逻辑
-- **🗑️ 删除同步通知链路统一**：syncDel.ts 残留的 `sendTelegramNotification` 二次包装 Bug 修复，与 notifier.ts 同走裸发链路
-- **📚 Wiki 分类与排序优化**：使用 `_Sidebar.md` 自定义侧边栏，移除数字前缀，参考主流项目分类方式
+- **🐛 Emby 详情 API 404 修复**：根因是 `/emby/Items/{itemId}` 路径返回「找不到文件」，导致只能收到简版通知；对齐 qmediasync 改用 `/emby/Users/{userId}/Items/{itemId}` 路径
+- **✨ Emby userId 缓存**：新增 `getEmbyUserId()` 函数，10 分钟 TTL 内存缓存，避免每次通知都查询用户列表
+- **✅ 富媒体通知修复**：修复后入库通知可正常获取评分、类型、主演、简介、海报并带图发送到 Telegram
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 

@@ -14,7 +14,7 @@ export interface EmbyItemDetail {
   Overview?: string;
   Genres?: string[];
   People?: Array<{ Name: string; Type: string }>;
-  ImageTags?: Record<string, string>;
+  ImageTags?: EmbyImageTag;
   ProductionYear?: number;
   DateCreated?: string;
 }
