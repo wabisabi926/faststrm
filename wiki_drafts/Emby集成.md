@@ -1,4 +1,4 @@
-# 功能详解 - Emby 集成
+# Emby 集成
 
 Fast Strm 与 Emby 的集成包含三部分：媒体库刷新、Webhook 通知、删除同步。
 

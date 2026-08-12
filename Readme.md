@@ -83,19 +83,16 @@ docker run -d \
 
 ---
 
-## 📝 最新版本 (v0.8.2)
+## 📝 最新版本 (v0.8.3)
 
-- **� 115 扫码登录**：新增 3 个二维码 API + 前端扫码 Tab，支持 7 种客户端类型，告别 F12 抓 Cookie
-- **🔄 账户状态 TG 通知闭环**：新增 `telegram.accountAlerts` 配置块，账号异常/恢复自动推送，与「更新 Cookie」按钮形成闭环
-- **🍪 更新 Cookie 对话框**：账号异常时一键扫码刷新 Cookie，无需删除重建账号
-- **�� STRM 生成路径修复**：修复全量扫描误加 `../data/` 前缀导致 302 模式 pickcode 反查失败的 P0 漏洞，新增 4 层兜底保护
-- **🔀 路由策略配置化**：`forceProxyUaTokens` / `accountProxyConcurrencyLimit` / `redirectCheckTimeoutMs` 迁移到 `settings.json`，Web UI 可改实时生效
-- **🐛 admin 登录修复**：修复首次 Docker 部署 admin/admin 无法登录的漏洞，entrypoint 复制默认配置后自动写入 SHA-256+salt 密码哈希
-- **🚀 生活监控自动启动**：服务重启后无需手动点启动，懒加载触发，进程级一次性保证
-- **🎨 页面排版统一**：设置/TG/Emby 通知页面统一 section 风格，Label 行高优化解决表单拥挤
-- **⚙️ 配置逻辑归位**：恢复 docker-entrypoint.sh 原有的 `.config/` → `config/` 复制链路，删除 TS 层冗余代码
-- **🧹 移除 .trash 目录**：清理历史遗留临时目录，相关逻辑已迁移至 `removeExtraFiles` 安全机制
-- **🌐 界面本地化**：「Dry-run」在所有用户可见界面统一改为「试运行」
+- **🐛 Emby 通知消息格式修复**：移除所有通知被二次包装的 `✅ Task Completed` 前缀和 `Time:` 后缀，入库/删除/播放通知直接呈现原始内容
+- **🖼️ Emby 海报图片发送修复**：内网 Emby 海报 URL 无法被 Telegram 服务器访问，改为先下载到本地临时文件再 multipart 上传到 TG，失败自动降级纯文本
+- **🔌 Webhook 路由兼容**：Emby 默认发送 form-data 格式，路由仅处理 JSON 导致解析失败，现已兼容两种 Content-Type
+- **⚙️ Webhook runtime 修复**：声明 `runtime = "nodejs"`，避免 Node 原生模块（fs/os）在 edge 运行时报错
+- **🔧 userAgent 字段名修复**：`settings.userAgent` → `settings["user-agent"]`，匹配实际配置键名
+- **🧹 Cookie 过期预警天数移除**：115 Cookie 不会自动过期（仅人为操作失效），预警功能无意义，已移除 UI 输入和相关逻辑
+- **🗑️ 删除同步通知链路统一**：syncDel.ts 残留的 `sendTelegramNotification` 二次包装 Bug 修复，与 notifier.ts 同走裸发链路
+- **📚 Wiki 分类与排序优化**：使用 `_Sidebar.md` 自定义侧边栏，移除数字前缀，参考主流项目分类方式
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 

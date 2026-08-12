@@ -80,11 +80,10 @@ Fast Strm 支持通过 Telegram Bot 推送通知，包括任务状态、Emby 事
 | 启用账户状态通知 | 总开关 |
 | 异常通知 | 账号 Cookie 失效等异常时推送告警 |
 | 恢复通知 | 账号恢复正常时推送通知 |
-| 过期预警天数 | Cookie 过期前几天开始警告（默认 1 天，0 = 仅过期当天） |
 
 **闭环流程**：账号异常 → TG 推送告警 → 用户在「账号管理」点击「更新 Cookie」扫码刷新 → 后端异步重检状态 → 恢复正常后推送恢复通知
 
-> 对应配置：`settings.json → telegram.accountAlerts`，详见 [配置说明](配置说明#accountalerts-格式v082-新增)。
+> 对应配置：`settings.json → telegram.accountAlerts`，详见 [配置参考](配置说明#accountalerts-格式v082-新增)。
 
 ---
 

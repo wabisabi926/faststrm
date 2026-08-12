@@ -72,9 +72,8 @@ A: 支持以下 7 种客户端类型（对齐 p115client `APP_TO_SSOENT`）：
 A: 在「Telegram 通知」页面开启「账户状态通知」：
 1. 配置 Telegram Bot（如未配置见 [Telegram 通知](Telegram-通知)）
 2. 勾选「启用账户状态通知」
-3. 可选：配置「过期预警天数」（默认 3 天前预警）
 
-异常时推送告警，扫码刷新后自动推送恢复通知，形成闭环。详见 [配置说明](配置说明) 的 `telegram.accountAlerts` 段。
+异常时推送告警，扫码刷新后自动推送恢复通知，形成闭环。详见 [配置参考](配置说明) 的 `telegram.accountAlerts` 段。
 
 ### Q: 中文路径在 Kodi 中显示乱码？
 

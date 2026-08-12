@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { Bot, Settings, MessageSquare, CheckCircle, XCircle, AlertCircle, RefreshCw, Play, Square, Users, Plus, Trash2, UserPlus, ShieldAlert, Clock, Bell } from "lucide-react";
+import { Bot, Settings, MessageSquare, CheckCircle, XCircle, AlertCircle, RefreshCw, Play, Square, Users, Plus, Trash2, UserPlus, ShieldAlert, Bell } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -48,7 +48,6 @@ interface AccountAlertsConfig {
   enabled: boolean;
   onError: boolean;
   onRecover: boolean;
-  expiryWarningDays: number;
 }
 
 function maskToken(token: string): string {
@@ -81,7 +80,6 @@ export default function TelegramNotifyPage() {
     enabled: false,
     onError: true,
     onRecover: true,
-    expiryWarningDays: 1,
   });
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alertsSuccess, setAlertsSuccess] = useState<string | null>(null);
@@ -261,7 +259,6 @@ export default function TelegramNotifyPage() {
           enabled: response.data.enabled ?? false,
           onError: response.data.onError ?? true,
           onRecover: response.data.onRecover ?? true,
-          expiryWarningDays: response.data.expiryWarningDays ?? 1,
         });
       }
     } catch (error) {
@@ -803,32 +800,7 @@ export default function TelegramNotifyPage() {
                 </div>
               </div>
 
-              {/* 过期预警天数（预留功能） */}
-              <div className="space-y-2">
-                <Label htmlFor="expiryWarningDays" className="flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5" />
-                  Cookie 过期预警天数
-                  <span className="text-xs text-muted-foreground">（预留功能，当前仅用于配置记录）</span>
-                </Label>
-                <Input
-                  id="expiryWarningDays"
-                  type="number"
-                  min={1}
-                  max={7}
-                  disabled={!accountAlerts.enabled}
-                  value={accountAlerts.expiryWarningDays}
-                  onChange={(e) =>
-                    setAccountAlerts({
-                      ...accountAlerts,
-                      expiryWarningDays: parseInt(e.target.value) || 1
-                    })
-                  }
-                  className="max-w-[100px]"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Cookie 即将过期时提前多少天发送预警通知
-                </p>
-              </div>
+
 
               {/* 说明 */}
               <Alert className="bg-blue-50 border-blue-200">

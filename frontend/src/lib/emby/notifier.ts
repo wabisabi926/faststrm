@@ -1,4 +1,4 @@
-// Emby 通知逻辑（移植自 qmediasync）
+// Emby 通知逻辑（全盘移植自 qmediasync + 适配 Next.js）
 import type {
   EmbyItemDetail,
   EmbyWebhookEvent,
@@ -6,26 +6,63 @@ import type {
   PlaybackCacheEntry,
 } from "./types";
 import { getItemDetail, buildImageUrl } from "./client";
-import { sendTelegramNotification, sendTelegramPhoto } from "../telegram";
+import { createTelegramBot, TelegramBot } from "../telegram";
 import { readSettings } from "../serverUtils";
 import { handleSyncDelete } from "./syncDel";
+import axios from "axios";
+import fs from "node:fs";
 
-// ========== 剧集缓冲（移植自 qmediasync addItemToEpisodeBuffer） ==========
-const episodeBuffer = new Map<string, EpisodeBuffer>();
-const episodeBufferTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const episodeBufferStarted = { value: false };
+// ========== 剧集缓冲（入库/删除独立，移植自 qmediasync newSeriesBuffer / deletedSeriesBuffer）==========
+const addedEpisodeBuffer = new Map<string, EpisodeBuffer>();
+const addedEpisodeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const deletedEpisodeBuffer = new Map<string, EpisodeBuffer>();
+const deletedEpisodeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const DEBOUNCE_WINDOW_MS = 10_000;
 const BUFFER_CHECK_INTERVAL_MS = 5_000;
+let bufferCheckerInterval: ReturnType<typeof setInterval> | null = null;
+let bufferCheckerRefCount = 0;
 
-// ========== 播放事件去重（移植自 qmediasync） ==========
+function refBufferChecker(): void {
+  bufferCheckerRefCount++;
+  if (!bufferCheckerInterval) {
+    bufferCheckerInterval = setInterval(() => {
+      const now = Date.now();
+      // 处理新增缓冲
+      for (const [seriesId, buffer] of addedEpisodeBuffer.entries()) {
+        if (now - buffer.lastUpdated >= DEBOUNCE_WINDOW_MS) {
+          void flushAddedEpisodeBuffer(seriesId);
+        }
+      }
+      // 处理删除缓冲
+      for (const [seriesId, buffer] of deletedEpisodeBuffer.entries()) {
+        if (now - buffer.lastUpdated >= DEBOUNCE_WINDOW_MS) {
+          void flushDeletedEpisodeBuffer(seriesId);
+        }
+      }
+      // 两个缓冲都空了，停掉定时器
+      if (
+        addedEpisodeBuffer.size === 0 &&
+        deletedEpisodeBuffer.size === 0 &&
+        bufferCheckerInterval
+      ) {
+        clearInterval(bufferCheckerInterval);
+        bufferCheckerInterval = null;
+        bufferCheckerRefCount = 0;
+      }
+    }, BUFFER_CHECK_INTERVAL_MS);
+  }
+}
+
+// ========== 播放事件去重（移植自 qmediasync playbackEventCache） ==========
 const playbackCache = new Map<string, PlaybackCacheEntry>();
 const PLAYBACK_DEDUP_WINDOW_MS = 60_000;
 const PLAYBACK_CACHE_TTL_MS = 5 * 60_000;
 
-// ========== 通知模板（移植自 qmediasync notificationTemplate） ==========
+// ========== 通知模板（移植自 qmediasync notificationTemplate，保留评分 🆔） ==========
 const MOVIE_TEMPLATE = `
 {{title}} ({{year}})
 
+🆔 评分: {{rate}}
 🎬 类型: {{genres}}
 👤 主演: {{actors}}
 ⏰ 入库时间: {{addedTime}}
@@ -37,6 +74,7 @@ const MOVIE_TEMPLATE = `
 const SERIES_TEMPLATE = `
 {{title}} ({{year}})
 {{seasonEpisodes}}
+🆔 评分: {{rate}}
 🎬 类型: {{genres}}
 👤 主演: {{actors}}
 ⏰ 入库时间: {{addedTime}}
@@ -46,27 +84,13 @@ const SERIES_TEMPLATE = `
 `;
 
 const DELETED_MOVIE_TEMPLATE = `
-🗑️ <b>电影删除</b>
-{{title}}
-⏰ {{time}}
+🗑️ 电影名称：{{title}}
+⏰ 删除时间: {{time}}
 `;
 
 const DELETED_SERIES_TEMPLATE = `
-🗑️ <b>剧集删除</b>
-{{title}}
-{{seasonEpisodes}}
-⏰ {{time}}
-`;
-
-const PLAYBACK_TEMPLATE = `
-{{eventEmoji}} <b>{{eventName}}</b> {{name}}
-
-👤 用户: {{userName}}
-📱 设备: {{deviceName}} ({{clientName}})
-{{seriesInfo}}
-{{progressInfo}}
-{{durationInfo}}
-⏰ {{time}}
+🗑️ 电视剧名称：{{title}}
+{{seasonEpisodes}}⏰ 删除时间: {{time}}
 `;
 
 // ========== 辅助函数 ==========
@@ -77,11 +101,11 @@ function formatSeasonEpisodes(seasons: Map<number, number[]>): string {
   const parts: string[] = [];
 
   for (const seasonNumber of seasonNumbers) {
-    const episodes = [...(seasons.get(seasonNumber) || [])].sort((a, b) => a - b);
-    if (episodes.length === 0) continue;
+    const episodesRaw = [...(seasons.get(seasonNumber) || [])];
+    if (episodesRaw.length === 0) continue;
 
     // 去重
-    const uniqueEpisodes = [...new Set(episodes)];
+    const uniqueEpisodes = [...new Set(episodesRaw)].sort((a, b) => a - b);
 
     let range = "";
     let start = uniqueEpisodes[0];
@@ -102,16 +126,16 @@ function formatSeasonEpisodes(seasons: Map<number, number[]>): string {
   return parts.join("; ");
 }
 
+/** 参考 qmediasync：HH:MM:SS 格式 */
 function formatTicksToTime(ticks: number): string {
   // Emby ticks: 1 tick = 10,000 nanoseconds = 0.00001 seconds
-  const ms = Math.floor(ticks / 10000);
-  const totalSeconds = Math.floor(ms / 1000);
+  const totalSeconds = Math.floor(ticks / 10_000_000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  if (hours > 0) return `${hours}小时${minutes}分`;
-  if (minutes > 0) return `${minutes}分${seconds}秒`;
-  return `${seconds}秒`;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  if (hours > 0) return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+  return `${pad(minutes)}:${pad(seconds)}`;
 }
 
 function getEventTypeEmoji(event: string): string {
@@ -144,15 +168,29 @@ function fillTemplate(
   return result.trim();
 }
 
+/** 解析 Emby DateCreated，失败回退当前时间 */
+function formatDateCreated(dateCreated?: string): string {
+  if (!dateCreated) return new Date().toLocaleString();
+  const t = new Date(dateCreated);
+  if (Number.isNaN(t.getTime())) return new Date().toLocaleString();
+  return t.toLocaleString();
+}
+
 function formatMovieNotification(detail: EmbyItemDetail): string {
   const genres = detail.Genres?.length ? detail.Genres.join(", ") : "暂无数据";
-  const actors = detail.People?.filter(p => p.Type === "Actor").slice(0, 5).map(p => p.Name).join(", ") || "暂无数据";
+  const actors =
+    detail.People?.filter(p => p.Type === "Actor").slice(0, 5).map(p => p.Name).join(", ") ||
+    "暂无数据";
   const overview = detail.Overview || "暂无简介";
-  const addedTime = new Date().toLocaleString();
+  const rating = detail.CommunityRating && detail.CommunityRating > 0
+    ? detail.CommunityRating.toFixed(1)
+    : "暂无数据";
+  const addedTime = formatDateCreated(detail.DateCreated);
 
   return fillTemplate(MOVIE_TEMPLATE, {
     title: detail.Name || "未知",
     year: detail.ProductionYear || "未知",
+    rate: rating,
     genres,
     actors,
     addedTime,
@@ -165,27 +203,27 @@ function formatSeriesNotification(
   seasons: Map<number, number[]>
 ): string {
   const genres = detail.Genres?.length ? detail.Genres.join(", ") : "暂无数据";
-  const actors = detail.People?.filter(p => p.Type === "Actor").slice(0, 5).map(p => p.Name).join(", ") || "暂无数据";
+  const actors =
+    detail.People?.filter(p => p.Type === "Actor").slice(0, 5).map(p => p.Name).join(", ") ||
+    "暂无数据";
   const overview = detail.Overview || "暂无简介";
-  const addedTime = new Date().toLocaleString();
-  const seasonEpisodes = formatSeasonEpisodes(seasons);
+  const rating = detail.CommunityRating && detail.CommunityRating > 0
+    ? detail.CommunityRating.toFixed(1)
+    : "暂无数据";
+  const addedTime = formatDateCreated(detail.DateCreated);
+  const seasonEpisodesStr = formatSeasonEpisodes(seasons);
+  const seasonEpisodesLine = seasonEpisodesStr ? `📺 入库季集: ${seasonEpisodesStr}\n` : "";
 
-  let template = fillTemplate(SERIES_TEMPLATE, {
+  return fillTemplate(SERIES_TEMPLATE, {
     title: detail.Name || "未知",
     year: detail.ProductionYear || "未知",
+    rate: rating,
     genres,
     actors,
     addedTime,
     overview,
-    seasonEpisodes: seasonEpisodes ? `📺 入库季集: ${seasonEpisodes}\n` : "",
+    seasonEpisodes: seasonEpisodesLine,
   });
-
-  // 如果没有季集信息，移除模板中的 seasonEpisodes 行
-  if (!seasonEpisodes) {
-    template = template.replace("{{seasonEpisodes}}\n", "");
-  }
-
-  return template;
 }
 
 function formatDeletedMovieNotification(itemName: string): string {
@@ -199,220 +237,254 @@ function formatDeletedSeriesNotification(
   seriesName: string,
   seasons: Map<number, number[]>
 ): string {
-  const seasonEpisodes = formatSeasonEpisodes(seasons);
-  let template = fillTemplate(DELETED_SERIES_TEMPLATE, {
+  const seasonEpisodesStr = formatSeasonEpisodes(seasons);
+  const seasonEpisodesLine = seasonEpisodesStr ? `删除季集: ${seasonEpisodesStr}\n` : "";
+  return fillTemplate(DELETED_SERIES_TEMPLATE, {
     title: seriesName,
     time: new Date().toLocaleString(),
-    seasonEpisodes: seasonEpisodes ? `删除季集: ${seasonEpisodes}\n` : "",
+    seasonEpisodes: seasonEpisodesLine,
   });
-  if (!seasonEpisodes) {
-    template = template.replace("{{seasonEpisodes}}\n", "");
-  }
-  return template;
 }
 
-function formatPlaybackNotification(
+async function formatPlaybackNotification(
   event: string,
   eventData: EmbyWebhookEvent
-): string {
+): Promise<string> {
   const item = eventData.Item;
   const user = eventData.User;
   const session = eventData.Session;
   const playbackInfo = eventData.PlaybackInfo;
 
-  let progressInfo = "";
-  let durationInfo = "";
-  let seriesInfo = "";
-
+  const titleLine =
+    `${getEventTypeEmoji(event)} <b>${getEventTypeName(event)}</b> ${item.Name || "未知"}\n`;
+  let body = "";
+  body += `👤 用户: ${user?.Name || "未知"}\n`;
+  body += `📱 设备: ${session?.DeviceName || "未知"} (${session?.Client || "未知"})\n`;
   if (item.Type === "Episode") {
-    seriesInfo = `📺 剧集: ${item.SeriesName || "未知"}\n`;
-    if (item.ParentIndexNumber && item.IndexNumber) {
-      seriesInfo += `👟 季集: S${item.ParentIndexNumber}E${item.IndexNumber}\n`;
+    if (item.SeriesName) body += `📺 电视剧: ${item.SeriesName}\n`;
+    if (item.ParentIndexNumber != null && item.IndexNumber != null) {
+      body += `👟 季集: S${item.ParentIndexNumber}E${item.IndexNumber}\n`;
     }
   }
 
-  // 进度（如果启用）
+  // 播放进度
   const settings = readSettings();
   if (settings.emby?.playbackShowProgress && playbackInfo) {
     const positionTicks = playbackInfo.PositionTicks || 0;
-    const mediaSource = playbackInfo.MediaSource;
-    const totalTicks = mediaSource?.RunTimeTicks || 0;
+    const totalTicks = playbackInfo.MediaSource?.RunTimeTicks || 0;
     if (positionTicks > 0 && totalTicks > 0) {
       const progress = Math.round((positionTicks / totalTicks) * 100);
-      const currentTime = formatTicksToTime(positionTicks);
-      const totalTime = formatTicksToTime(totalTicks);
-      progressInfo = `⏱️ 进度: ${currentTime} / ${totalTime} (${progress}%)\n`;
+      body +=
+        `⏱️ 进度: ${formatTicksToTime(positionTicks)} / ${formatTicksToTime(totalTicks)} (${progress}%)\n`;
+    } else if (totalTicks > 0) {
+      body += `⏱️ 时长: ${formatTicksToTime(totalTicks)}\n`;
     }
   }
 
-  // 播放时长（仅 stop 事件）
+  // 播放结束：观看时长
   if (event === "playback.stop" && playbackInfo) {
     const positionTicks = playbackInfo.PositionTicks || 0;
     if (positionTicks > 0) {
-      durationInfo = `⏱️ 观看时长: ${formatTicksToTime(positionTicks)}\n`;
+      body += `⏱️ 观看时长: ${formatTicksToTime(positionTicks)}\n`;
     }
   }
 
-  return fillTemplate(PLAYBACK_TEMPLATE, {
-    eventEmoji: getEventTypeEmoji(event),
-    eventName: getEventTypeName(event),
-    name: item.Name || "未知",
-    userName: user?.Name || "未知",
-    deviceName: session?.DeviceName || "未知",
-    clientName: session?.Client || "",
-    seriesInfo,
-    progressInfo,
-    durationInfo,
-    time: new Date().toLocaleString(),
-  });
-}
-
-// ========== 获取图片 URL ==========
-function getPosterUrl(
-  itemId: string,
-  imageTags: EmbyItemDetail["ImageTags"],
-  config: { url: string; apiKey: string }
-): string | null {
-  const primaryTag = imageTags?.Primary;
-  const backdropTag = imageTags?.Backdrop;
-  return (
-    buildImageUrl(itemId, primaryTag, "Primary", config) ||
-    buildImageUrl(itemId, backdropTag, "Backdrop", config)
-  );
-}
-
-// ========== 核心通知函数 ==========
-
-// 发送带图片或不带图片的通知
-async function sendNotificationWithImage(
-  message: string,
-  imageUrl: string | null,
-  chatId: string | undefined
-): Promise<void> {
-  if (!chatId) return;
-  try {
-    if (imageUrl) {
-      await sendTelegramPhoto(chatId, imageUrl, message);
-    } else {
-      await sendTelegramNotification(message, "complete");
-    }
-  } catch (err) {
-    console.error("[Emby] 发送通知失败:", err);
-    // 降级：不带图片重试
-    if (imageUrl) {
-      try {
-        await sendTelegramNotification(message, "complete");
-      } catch {
-        // 忽略
+  // 简介（需要 Emby 详情）
+  if (settings.emby?.playbackShowOverview && item.Id) {
+    const embyCfg = { url: settings.emby.url || "", apiKey: settings.emby.apiKey || "" };
+    if (embyCfg.url && embyCfg.apiKey) {
+      const detail = await getItemDetail(item.Id, embyCfg);
+      if (detail?.Overview) {
+        let overview = detail.Overview;
+        if (overview.length > 100) overview = overview.slice(0, 100) + "...";
+        body += `📝 简介: ${overview}\n`;
       }
     }
+  }
+
+  return titleLine + body.trimEnd();
+}
+
+// ========== 下载 Emby 海报到本地临时文件（移植自 qmediasync helpers.DownloadFile） ==========
+async function downloadPosterToTemp(imageUrl: string, tempPath: string, userAgent: string): Promise<boolean> {
+  try {
+    const resp = await axios.get(imageUrl, {
+      responseType: "arraybuffer",
+      timeout: 15_000,
+      headers: { "User-Agent": userAgent },
+    });
+    if (resp.status !== 200 || !resp.data) return false;
+    fs.writeFileSync(tempPath, Buffer.from(resp.data));
+    return true;
+  } catch (err) {
+    console.error("[Emby] 下载海报失败:", err);
+    return false;
+  }
+}
+
+// ========== 核心发送函数（完全裸发，不经过 sendTelegramNotification 二次包装） ==========
+
+/** 检查 Telegram 是否配置完整，否则直接 return */
+function getTgBotAndChat(): { bot: TelegramBot; chatId: string } | null {
+  const s = readSettings();
+  const tg = s.telegram;
+  if (!tg?.enabled || !tg.botToken || !tg.chatId) {
+    return null;
+  }
+  return { bot: createTelegramBot(tg.botToken), chatId: tg.chatId };
+}
+
+/** 裸发纯文本 Emby 通知（不加 Task Completed 等前缀） */
+async function sendEmbyText(text: string): Promise<void> {
+  const ctx = getTgBotAndChat();
+  if (!ctx) return;
+  try {
+    await ctx.bot.sendNotification(text, ctx.chatId);
+  } catch (err) {
+    console.error("[Emby] 文本通知发送失败:", err);
+  }
+}
+
+/** 带图片通知：先下载 Emby 海报到本地临时文件，再 multipart 上传 TG，失败降级纯文本 */
+async function sendEmbyWithPoster(
+  itemId: string,
+  imageTags: EmbyItemDetail["ImageTags"],
+  text: string,
+  config: { url: string; apiKey: string; userAgent?: string }
+): Promise<void> {
+  const ctx = getTgBotAndChat();
+  if (!ctx) return;
+  if (!config.url || !config.apiKey) {
+    // 拿不到 Emby URL 直接纯文字
+    await sendEmbyText(text);
+    return;
+  }
+
+  // 1) 构造图片 URL，优先 Backdrop（参考 qmediasync）
+  let imageUrl: string | null = null;
+  const bd = imageTags?.Backdrop || (imageTags as unknown as { backdrop?: string })?.backdrop;
+  const primary = imageTags?.Primary || (imageTags as unknown as { Primary?: string })?.Primary;
+  if (bd) {
+    imageUrl = buildImageUrl(itemId, bd, "Backdrop", config);
+  } else if (primary) {
+    imageUrl = buildImageUrl(itemId, primary, "Primary", config);
+  }
+
+  if (!imageUrl) {
+    await sendEmbyText(text);
+    return;
+  }
+
+  // 2) 下载到临时文件
+  const tempPath = TelegramBot.makeTempPosterPath(itemId);
+  const ua = config.userAgent || "FastStrm/1.0";
+  const ok = await downloadPosterToTemp(imageUrl, tempPath, ua);
+
+  if (!ok) {
+    await sendEmbyText(text);
+    return;
+  }
+
+  // 3) multipart 上传
+  try {
+    const r = await ctx.bot.sendPhotoFromFile(ctx.chatId, tempPath, text);
+    if (!r?.ok) {
+      console.warn("[Emby] 图片通知失败，降级纯文本:", r?.error);
+      await sendEmbyText(text);
+    }
+  } catch (err) {
+    console.error("[Emby] sendPhotoFromFile 异常，降级纯文本:", err);
+    await sendEmbyText(text);
+  } finally {
+    try { fs.unlinkSync(tempPath); } catch { /* 忽略 */ }
   }
 }
 
 // ========== 入库通知 ==========
 
-// 电影入库
 async function handleMovieAdded(item: EmbyWebhookEvent["Item"]): Promise<void> {
   const settings = readSettings();
-  if (!settings.emby || !settings.emby.notifyMediaAdded) return;
+  if (!settings.emby?.notifyMediaAdded) return;
   if (!item.Id) return;
+  if (!getTgBotAndChat()) return; // 前置配置检查
 
-  const config = { url: settings.emby.url || "", apiKey: settings.emby.apiKey || "" };
-  const detail = await getItemDetail(item.Id, config);
+  const cfg = {
+    url: settings.emby.url || "",
+    apiKey: settings.emby.apiKey || "",
+    userAgent: (settings["user-agent"] || "FastStrm/1.0") as string,
+  };
+  const detail = await getItemDetail(item.Id, cfg);
 
-  const message = detail
-    ? formatMovieNotification(detail)
-    : `📺 <b>电影入库</b>\n${item.Name}\n⏰ ${new Date().toLocaleString()}`;
+  if (!detail) {
+    const fallback = `📚 <b>电影入库通知</b>\n${item.Name}\n⏰ ${new Date().toLocaleString()}`;
+    await sendEmbyText(fallback);
+    return;
+  }
 
-  const imageUrl = detail ? getPosterUrl(item.Id, detail.ImageTags, config) : null;
-  await sendNotificationWithImage(message, imageUrl, settings.telegram?.chatId);
+  const message = formatMovieNotification(detail);
+  await sendEmbyWithPoster(item.Id, detail.ImageTags, message, cfg);
 }
 
-// 剧集入库（带缓冲合并）
+// 剧集入库缓冲
 function handleSeriesEpisodeAdded(item: EmbyWebhookEvent["Item"]): void {
   if (!item.SeriesId) return;
-
   const seriesId = item.SeriesId;
-  const buffer = episodeBuffer.get(seriesId) || {
+
+  const buffer: EpisodeBuffer = addedEpisodeBuffer.get(seriesId) || {
     seriesId,
     seriesName: item.SeriesName || item.Name || "未知",
     seasons: new Map(),
     lastUpdated: Date.now(),
   };
-
   const seasonNumber = item.ParentIndexNumber || 0;
   const episodeNumber = item.IndexNumber || 0;
-
-  if (!buffer.seasons.has(seasonNumber)) {
-    buffer.seasons.set(seasonNumber, []);
-  }
+  if (!buffer.seasons.has(seasonNumber)) buffer.seasons.set(seasonNumber, []);
   const episodes = buffer.seasons.get(seasonNumber)!;
-  if (!episodes.includes(episodeNumber)) {
-    episodes.push(episodeNumber);
-  }
+  if (!episodes.includes(episodeNumber)) episodes.push(episodeNumber);
   buffer.lastUpdated = Date.now();
-  episodeBuffer.set(seriesId, buffer);
+  addedEpisodeBuffer.set(seriesId, buffer);
 
-  // 重置定时器
-  const existingTimer = episodeBufferTimers.get(seriesId);
+  const existingTimer = addedEpisodeTimers.get(seriesId);
   if (existingTimer) clearTimeout(existingTimer);
-  const timer = setTimeout(() => flushEpisodeBuffer(seriesId), DEBOUNCE_WINDOW_MS);
-  episodeBufferTimers.set(seriesId, timer);
-
-  // 启动缓冲检查器（只启动一次）
-  if (!episodeBufferStarted.value) {
-    episodeBufferStarted.value = true;
-    startBufferChecker();
-  }
+  const timer = setTimeout(() => void flushAddedEpisodeBuffer(seriesId), DEBOUNCE_WINDOW_MS);
+  addedEpisodeTimers.set(seriesId, timer);
+  refBufferChecker();
 }
 
-// 剧集入库缓冲检查器（定时检查是否有缓冲已超过窗口时间）
-function startBufferChecker(): void {
-  const interval = setInterval(() => {
-    const now = Date.now();
-    for (const [seriesId, buffer] of episodeBuffer.entries()) {
-      if (now - buffer.lastUpdated >= DEBOUNCE_WINDOW_MS) {
-        flushEpisodeBuffer(seriesId);
-      }
-    }
-    if (episodeBuffer.size === 0) {
-      clearInterval(interval);
-      episodeBufferStarted.value = false;
-    }
-  }, BUFFER_CHECK_INTERVAL_MS);
-}
-
-// 刷新剧集缓冲（发送通知）
-async function flushEpisodeBuffer(seriesId: string): Promise<void> {
-  const timer = episodeBufferTimers.get(seriesId);
+async function flushAddedEpisodeBuffer(seriesId: string): Promise<void> {
+  const timer = addedEpisodeTimers.get(seriesId);
   if (timer) {
     clearTimeout(timer);
-    episodeBufferTimers.delete(seriesId);
+    addedEpisodeTimers.delete(seriesId);
   }
-
-  const buffer = episodeBuffer.get(seriesId);
+  const buffer = addedEpisodeBuffer.get(seriesId);
   if (!buffer) return;
-  episodeBuffer.delete(seriesId);
+  addedEpisodeBuffer.delete(seriesId);
 
-  // 检查时间戳是否足够老（防止定时器与用户手动触发冲突）
-  if (Date.now() - buffer.lastUpdated < DEBOUNCE_WINDOW_MS - 500) {
-    return;
-  }
+  if (Date.now() - buffer.lastUpdated < DEBOUNCE_WINDOW_MS - 500) return;
 
   const settings = readSettings();
   if (!settings.emby?.notifyMediaAdded) return;
   if (!settings.emby.url || !settings.emby.apiKey) return;
+  if (!getTgBotAndChat()) return;
 
-  const config = { url: settings.emby.url, apiKey: settings.emby.apiKey };
+  const cfg = {
+    url: settings.emby.url,
+    apiKey: settings.emby.apiKey,
+    userAgent: (settings["user-agent"] || "FastStrm/1.0") as string,
+  };
 
   try {
-    const detail = await getItemDetail(seriesId, config);
+    const detail = await getItemDetail(seriesId, cfg);
     const message = detail
       ? formatSeriesNotification(detail, buffer.seasons)
-      : `📺 <b>剧集入库</b>\n${buffer.seriesName}\n${formatSeasonEpisodes(buffer.seasons)}\n⏰ ${new Date().toLocaleString()}`;
+      : `📚 <b>剧集入库通知</b>\n${buffer.seriesName}\n📺 ${formatSeasonEpisodes(buffer.seasons)}\n⏰ ${new Date().toLocaleString()}`;
 
-    const imageUrl = detail ? getPosterUrl(seriesId, detail.ImageTags, config) : null;
-    await sendNotificationWithImage(message, imageUrl, settings.telegram?.chatId);
+    if (detail) {
+      await sendEmbyWithPoster(seriesId, detail.ImageTags, message, cfg);
+    } else {
+      await sendEmbyText(message);
+    }
   } catch (err) {
     console.error(`[Emby] 发送剧集入库通知失败 seriesId=${seriesId}:`, err);
   }
@@ -420,102 +492,85 @@ async function flushEpisodeBuffer(seriesId: string): Promise<void> {
 
 // ========== 删除通知 ==========
 
-// 电影删除
 async function handleMovieDeleted(item: EmbyWebhookEvent["Item"]): Promise<void> {
   const settings = readSettings();
   if (!settings.emby?.notifyMediaRemoved) return;
-  const message = formatDeletedMovieNotification(item.Name);
-  await sendTelegramNotification(message, "complete");
+  if (!getTgBotAndChat()) return;
+  const text = `🗑️ <b>Emby 媒体删除通知</b>\n${formatDeletedMovieNotification(item.Name || "未知")}`;
+  await sendEmbyText(text);
 }
 
-// 剧集删除（带缓冲合并）
 function handleSeriesEpisodeDeleted(item: EmbyWebhookEvent["Item"]): void {
   if (!item.SeriesId) return;
-
   const seriesId = item.SeriesId;
-  const buffer = episodeBuffer.get(seriesId) || {
+
+  const buffer: EpisodeBuffer = deletedEpisodeBuffer.get(seriesId) || {
     seriesId,
     seriesName: item.SeriesName || item.Name || "未知",
     seasons: new Map(),
     lastUpdated: Date.now(),
   };
-
   const seasonNumber = item.ParentIndexNumber || 0;
   const episodeNumber = item.IndexNumber || 0;
-
-  if (!buffer.seasons.has(seasonNumber)) {
-    buffer.seasons.set(seasonNumber, []);
-  }
+  if (!buffer.seasons.has(seasonNumber)) buffer.seasons.set(seasonNumber, []);
   const episodes = buffer.seasons.get(seasonNumber)!;
-  if (!episodes.includes(episodeNumber)) {
-    episodes.push(episodeNumber);
-  }
+  if (!episodes.includes(episodeNumber)) episodes.push(episodeNumber);
   buffer.lastUpdated = Date.now();
-  episodeBuffer.set(seriesId, buffer);
+  deletedEpisodeBuffer.set(seriesId, buffer);
 
-  const existingTimer = episodeBufferTimers.get(seriesId);
+  const existingTimer = deletedEpisodeTimers.get(seriesId);
   if (existingTimer) clearTimeout(existingTimer);
-  const timer = setTimeout(() => flushDeletedEpisodeBuffer(seriesId), DEBOUNCE_WINDOW_MS);
-  episodeBufferTimers.set(seriesId, timer);
-
-  if (!episodeBufferStarted.value) {
-    episodeBufferStarted.value = true;
-    startBufferChecker();
-  }
+  const timer = setTimeout(() => void flushDeletedEpisodeBuffer(seriesId), DEBOUNCE_WINDOW_MS);
+  deletedEpisodeTimers.set(seriesId, timer);
+  refBufferChecker();
 }
 
 async function flushDeletedEpisodeBuffer(seriesId: string): Promise<void> {
-  const timer = episodeBufferTimers.get(seriesId);
+  const timer = deletedEpisodeTimers.get(seriesId);
   if (timer) {
     clearTimeout(timer);
-    episodeBufferTimers.delete(seriesId);
+    deletedEpisodeTimers.delete(seriesId);
   }
-
-  const buffer = episodeBuffer.get(seriesId);
+  const buffer = deletedEpisodeBuffer.get(seriesId);
   if (!buffer) return;
-  episodeBuffer.delete(seriesId);
+  deletedEpisodeBuffer.delete(seriesId);
 
-  if (Date.now() - buffer.lastUpdated < DEBOUNCE_WINDOW_MS - 500) {
-    return;
-  }
+  if (Date.now() - buffer.lastUpdated < DEBOUNCE_WINDOW_MS - 500) return;
 
   const settings = readSettings();
   if (!settings.emby?.notifyMediaRemoved) return;
+  if (!getTgBotAndChat()) return;
 
-  const message = formatDeletedSeriesNotification(buffer.seriesName, buffer.seasons);
-  await sendTelegramNotification(message, "complete");
+  const body = formatDeletedSeriesNotification(buffer.seriesName, buffer.seasons);
+  await sendEmbyText(`🗑️ <b>Emby 媒体删除通知</b>\n${body}`);
 }
 
 // ========== 播放通知 ==========
 async function handlePlaybackEvent(event: EmbyWebhookEvent): Promise<void> {
   const settings = readSettings();
   if (!settings.emby?.notifyPlayback) return;
-
-  // 暂停事件通常不通知
-  if (event.Event === "playback.pause") return;
+  if (!getTgBotAndChat()) return;
 
   // 去重（1分钟内不重复）
-  const cacheKey = `${event.User?.Id || "unknown"}_${event.Item?.Type || "unknown"}_${event.Item?.Name || "unknown"}_${event.Session?.DeviceName || "unknown"}_${event.Event}`;
+  const cacheKey =
+    `${event.User?.Id || "unknown"}_${event.Item?.Type || "unknown"}_` +
+    `${event.Item?.Name || "unknown"}_${event.Session?.DeviceName || "unknown"}_${event.Event}`;
   const now = Date.now();
-
   const cached = playbackCache.get(cacheKey);
-  if (cached && now - cached.timestamp < PLAYBACK_DEDUP_WINDOW_MS) {
-    console.log(`[Emby] 播放事件去重: ${cacheKey}`);
-    return;
-  }
-
+  if (cached && now - cached.timestamp < PLAYBACK_DEDUP_WINDOW_MS) return;
   playbackCache.set(cacheKey, { timestamp: now });
-
-  // 清理过期缓存
-  for (const [key, entry] of playbackCache.entries()) {
-    if (now - entry.timestamp > PLAYBACK_CACHE_TTL_MS) {
-      playbackCache.delete(key);
-    }
+  // 清理过期
+  for (const [k, v] of playbackCache.entries()) {
+    if (now - v.timestamp > PLAYBACK_CACHE_TTL_MS) playbackCache.delete(k);
   }
 
-  const message = formatPlaybackNotification(event.Event, event);
-  await sendTelegramNotification(message, "complete");
+  const message = await formatPlaybackNotification(event.Event, event);
+  await sendEmbyText(message);
 }
+
+// ========== 旧的 sendNotificationWithImage 彻底删除；
+//            保留一个兼容性占位函数（空实现，防止外部有 import 调用；
+//            这里本来就是纯内部 export-free，直接干掉即可）。
 
 // ========== 主事件分发 ==========
 export async function handleEmbyWebhookEvent(event: EmbyWebhookEvent): Promise<void> {
@@ -526,37 +581,39 @@ export async function handleEmbyWebhookEvent(event: EmbyWebhookEvent): Promise<v
   switch (event.Event) {
     case "library.new":
       if (event.Item?.Type === "Movie") {
-        await handleMovieAdded(event.Item);
+        void handleMovieAdded(event.Item);
       } else if (event.Item?.Type === "Episode") {
         handleSeriesEpisodeAdded(event.Item);
       }
       break;
 
-    case "library.deleted":
+    case "library.deleted": {
       // 删除同步：删 STRM + 关联文件 + DB 记录（独立于通知逻辑）
       if (event.Item?.Path) {
         handleSyncDelete(event.Item).catch(err => {
           console.error("[SyncDel] 处理失败:", err);
         });
       }
-      // 原有通知逻辑：若 syncDeleteNotify 已开启则跳过重复通知
-      {
-        const s = readSettings();
-        const skipOriginalNotify = s.emby?.syncDeleteEnabled && s.emby?.syncDeleteNotify;
-        if (!skipOriginalNotify) {
-          if (event.Item?.Type === "Movie") {
-            await handleMovieDeleted(event.Item);
-          } else if (event.Item?.Type === "Episode" || event.Item?.Type === "Series" || event.Item?.Type === "Season") {
-            handleSeriesEpisodeDeleted(event.Item);
-          }
+      const s = readSettings();
+      const skipOriginalNotify = !!s.emby?.syncDeleteEnabled && !!s.emby?.syncDeleteNotify;
+      if (!skipOriginalNotify) {
+        if (event.Item?.Type === "Movie") {
+          void handleMovieDeleted(event.Item);
+        } else if (
+          event.Item?.Type === "Episode" ||
+          event.Item?.Type === "Series" ||
+          event.Item?.Type === "Season"
+        ) {
+          handleSeriesEpisodeDeleted(event.Item);
         }
       }
       break;
+    }
 
     case "playback.start":
     case "playback.pause":
     case "playback.stop":
-      await handlePlaybackEvent(event);
+      void handlePlaybackEvent(event);
       break;
 
     default:

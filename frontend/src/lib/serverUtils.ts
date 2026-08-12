@@ -265,12 +265,10 @@ export type AppSettings = {
     accountAlerts?: {
       /** 是否开启账户状态通知 */
       enabled?: boolean;
-      /** 账号异常时通知（Cookie 过期等） */
+      /** 账号异常时通知（Cookie 失效等） */
       onError?: boolean;
       /** 账号恢复正常时通知 */
       onRecover?: boolean;
-      /** Cookie 即将过期预警天数 */
-      expiryWarningDays?: number;
     };
   };
   lifeMonitor?: LifeMonitorSettings;

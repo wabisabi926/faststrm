@@ -12,7 +12,6 @@ export async function GET() {
       enabled: alerts.enabled ?? false,
       onError: alerts.onError ?? true,
       onRecover: alerts.onRecover ?? true,
-      expiryWarningDays: alerts.expiryWarningDays ?? 1,
     });
   } catch (error) {
     console.error("Get account alerts config error:", error);
@@ -27,7 +26,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { enabled, onError, onRecover, expiryWarningDays } = body;
+    const { enabled, onError, onRecover } = body;
 
     const settings = readSettings();
 
@@ -41,7 +40,6 @@ export async function POST(request: NextRequest) {
       enabled: enabled !== undefined ? enabled : false,
       onError: onError !== undefined ? onError : true,
       onRecover: onRecover !== undefined ? onRecover : true,
-      expiryWarningDays: expiryWarningDays !== undefined ? expiryWarningDays : 1,
     };
 
     writeSettings(settings);

@@ -19,7 +19,7 @@ import * as path from "path";
 import { readSettings, readAccounts } from "../serverUtils";
 import { deleteStrmFile, deleteStrmDir, removeEmptyParents } from "../strmFileOps";
 import { deleteByPath, deleteByPathPrefix } from "../filePathDb";
-import { sendTelegramNotification } from "../telegram";
+import { createTelegramBot } from "../telegram";
 import { addSyncDelRecord } from "../syncDelHistory";
 import type { EmbyWebhookEvent } from "./types";
 
@@ -155,10 +155,10 @@ export async function handleSyncDelete(
     dryRun,
   });
 
-  // TG 通知
+  // TG 通知（裸发，不经过 sendTelegramNotification 的 Task Completed 包装）
   if (emby.syncDeleteNotify) {
     const message = formatDeleteNotification(itemName, itemType, deletedFiles, deletedDirs, dryRun);
-    await sendTelegramNotification(message, "complete");
+    await sendSyncDelText(message);
   }
 
   console.log(`[${TAG}] 完成: type=${itemType} name=${itemName} files=${deletedFiles} dirs=${deletedDirs} dryRun=${dryRun}`);
@@ -338,6 +338,22 @@ function cleanupDbRecords(cloudPath: string, itemType: string, account?: string)
 }
 
 // ==================== 通知 ====================
+
+/**
+ * 裸发 TG 文本通知（与 notifier.ts 的 sendEmbyText 同语义）
+ * 避免 sendTelegramNotification 的 ✅ Task Completed 二次包装
+ */
+async function sendSyncDelText(text: string): Promise<void> {
+  try {
+    const s = readSettings();
+    const tg = s.telegram;
+    if (!tg?.enabled || !tg.botToken || !tg.chatId) return;
+    const bot = createTelegramBot(tg.botToken);
+    await bot.sendNotification(text, tg.chatId);
+  } catch (err) {
+    console.error(`[${TAG}] TG 通知发送失败:`, err);
+  }
+}
 
 function formatDeleteNotification(
   itemName: string,

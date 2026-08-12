@@ -32,18 +32,16 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.8.2 已发布**
+> **🎉 v0.8.3 已发布**
 >
-> - ✅ **📱 115 扫码登录**：手机 App 扫码自动获取 Cookie，支持 7 种客户端类型，告别 F12 抓包
-> - ✅ **🔄 账户状态 TG 通知闭环**：`telegram.accountAlerts` 配置块，账号异常/恢复自动推送，与「更新 Cookie」按钮形成闭环
-> - ✅ **🍪 更新 Cookie 对话框**：账号异常时一键扫码刷新 Cookie，无需删除重建账号
-> - ✅ **🐛 STRM 生成路径修复**：修复全量扫描误加 `../data/` 前缀导致 302 模式 pickcode 反查失败的 P0 漏洞，新增 4 层兜底保护
-> - ✅ **🔀 路由策略配置化**：`forceProxyUaTokens` / `accountProxyConcurrencyLimit` / `redirectCheckTimeoutMs` 迁移到 `settings.json`，Web UI 可改实时生效
-> - ✅ **统一页面排版**：设置 / TG 通知 / Emby 通知页面全部改为 border/section 风格，Label 行高优化为 leading-6
-> - ✅ **默认设置 + admin 登录修复**：docker-entrypoint.sh 复制 `.config/.config.json` 后自动补 `admin/admin` 密码哈希，修复首次部署 admin 登录失败；去掉了 TS 层重复的配置复制逻辑（Docker 原本就有）
-> - ✅ **生活监控自动启动**：服务重启后，若监控配置已启用且账号 Cookie/凭据正常，首次访问监控页面或接口时会自动拉起，无需手动点击启动
-> - ✅ **清理 .trash 临时目录**：旧代码残留的 `data/.trash` 目录已完全移除，相关代码路径清零
-> - ✅ **界面本地化**：「Dry-run」在所有用户可见界面统一改为「试运行」
+> - ✅ **🐛 Emby 通知消息格式修复**：移除所有通知被二次包装的 `✅ Task Completed` 前缀和 `Time:` 后缀，入库/删除/播放通知直接呈现原始内容
+> - ✅ **🖼️ Emby 海报图片发送修复**：内网海报无法被 TG 服务器访问，改为下载到本地再 multipart 上传，失败自动降级纯文本
+> - ✅ **🔌 Webhook 路由兼容**：支持 Emby 默认的 form-data 格式，不再只能处理 JSON
+> - ✅ **⚙️ Webhook runtime 修复**：声明 `runtime = "nodejs"`，避免 Node 原生模块（fs/os）在 edge 运行时报错
+> - ✅ **🔧 userAgent 字段名修复**：`settings.userAgent` → `settings["user-agent"]`，匹配实际配置键名
+> - ✅ **🧹 Cookie 过期预警天数移除**：115 Cookie 不会自动过期（仅人为操作失效），预警功能无意义
+> - ✅ **🗑️ 删除同步通知链路统一**：syncDel.ts 残留的二次包装 Bug 修复，所有 Emby 通知统一走裸发链路
+> - ✅ **📚 Wiki 分类与排序优化**：使用 `_Sidebar.md` 自定义侧边栏，参考主流项目分类方式
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---

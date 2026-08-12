@@ -1,5 +1,8 @@
 // Telegram Bot API 集成
 import axios from "axios";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
 export interface TelegramConfig {
   botToken: string;
@@ -67,7 +70,7 @@ export interface TelegramBotInfo {
   supports_inline_queries: boolean;
 }
 
-class TelegramBot {
+export class TelegramBot {
   private botToken: string;
   private baseUrl: string;
 
@@ -187,6 +190,35 @@ class TelegramBot {
       console.error('Telegram sendPhoto error:', error);
       return { ok: false, error: `Telegram API error: ${error instanceof Error ? error.message : String(error)}` };
     }
+  }
+
+  // 发送本地文件图片（multipart/form-data，适配内网 Emby 海报无法被 TG 服务器访问的场景）
+  async sendPhotoFromFile(
+    chatId: string,
+    filePath: string,
+    caption?: string
+  ): Promise<TelegramResponse> {
+    try {
+      const basename = path.basename(filePath);
+      const fileBuffer = fs.readFileSync(filePath);
+      const blob = new Blob([fileBuffer]);
+      const form = new FormData();
+      form.append("chat_id", chatId);
+      if (caption) form.append("caption", caption);
+      form.append("parse_mode", "HTML");
+      form.append("photo", blob, basename);
+
+      const response = await axios.post(`${this.baseUrl}/sendPhoto`, form);
+      return response.data;
+    } catch (error) {
+      console.error('Telegram sendPhotoFromFile error:', error);
+      return { ok: false, error: `Telegram API error: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  /** 返回临时海报文件路径（用于 Emby 海报下载后上传 TG） */
+  static makeTempPosterPath(itemId: string, suffix = ""): string {
+    return path.join(os.tmpdir(), `emby_${itemId}${suffix}.jpg`);
   }
 
   // 发送带按钮的消息
