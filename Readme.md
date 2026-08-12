@@ -38,6 +38,9 @@
 - 支持 Telegram Bot 通知与交互
 - 轻量，易于二次开发
 
+tg交流群：
+https://t.me/+J6csNlBG6q1iYjBl
+
 ## 📦 快速开始
 
 ```bash
