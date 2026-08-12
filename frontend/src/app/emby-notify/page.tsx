@@ -560,7 +560,7 @@ export default function EmbyNotifyPage() {
                   htmlFor="syncDeleteDryRun"
                   className={`cursor-pointer ${!settings.syncDeleteEnabled ? "text-muted-foreground" : ""}`}
                 >
-                  Dry-run 模式
+                  试运行模式
                 </Label>
                 <p className="text-xs text-muted-foreground">
                   只记日志不实际删除（首次验证用）

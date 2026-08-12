@@ -5,6 +5,217 @@ import { defer, firstValueFrom, Observable } from "rxjs";
 import { encrypt, decrypt } from "./115crypto";
 import { SimpleCache } from "./SimpleCache";
 import { readSettings } from "./serverUtils";
+import QRCode from "qrcode";
+
+// ==================== 115 扫码登录（移植自 p115client） ====================
+
+// 设备类型 → ssoent 映射（对齐 p115client APP_TO_SSOENT）
+export const APP_TO_SSOENT: Record<string, string> = {
+  alipaymini: "R2",      // 支付宝小程序（默认，VIP 推荐，不会踢掉现有设备）
+  wechatmini: "R1",      // 微信小程序
+  "115android": "F3",    // 115 安卓
+  "115ios": "D3",        // 115 iOS
+  tv: "I1",              // 115 TV
+  web: "A1",             // 115 网页（⚠️ 会踢掉网页端登录）
+  qandroid: "M1",        // 115 管理端
+};
+
+// 设备类型 → 中文显示名（对齐 p115client AVAILABLE_APPS）
+export const CLIENT_DISPLAY: Record<string, string> = {
+  alipaymini: "支付宝小程序",
+  wechatmini: "微信小程序",
+  "115android": "115 安卓",
+  "115ios": "115 iOS",
+  tv: "115 TV",
+  web: "115 网页",
+  qandroid: "115 管理端",
+};
+
+// 扫码状态码映射（对齐 p115client：0/1/2/-1/-2）
+export type QrCodeStatus = "waiting" | "scanned" | "success" | "expired" | "cancelled";
+
+export interface QrCodeTokenResp {
+  uid: string;
+  time: string;
+  sign: string;
+  qrcode: string;       // 二维码内容（URL）
+  qrcodeBase64: string; // base64 编码的 PNG 图片（带 data: 前缀）
+  tips: string;
+  clientType: string;
+}
+
+export interface QrCodeStatusResp {
+  status: QrCodeStatus;
+  msg: string;
+  cookie?: string; // status=success 时返回
+}
+
+/**
+ * 1. 获取二维码 token
+ * 对齐 p115client: P115Client.login_qrcode_token()
+ * GET https://qrcodeapi.115.com/api/1.0/{app}/1.0/token/
+ */
+export async function getQrcodeToken(clientType: string = "alipaymini"): Promise<QrCodeTokenResp> {
+  // 校验 clientType，无效则回退到 alipaymini
+  if (!APP_TO_SSOENT[clientType]) {
+    clientType = "alipaymini";
+  }
+  console.log(`[QRCODE-LOGIN] Getting token, clientType=${clientType}`);
+
+  const url = `https://qrcodeapi.115.com/api/1.0/${clientType}/1.0/token/`;
+  const resp = await axios.get(url, { timeout: 10000 });
+
+  const data = resp.data?.data || {};
+  const uid = String(data.uid || "");
+  const time = String(data.time || "");
+  const sign = String(data.sign || "");
+
+  if (!uid || !time || !sign) {
+    throw new Error("获取二维码失败：返回登录参数不完整");
+  }
+
+  // 二维码内容（手机端扫描此 URL）
+  let qrcodeContent = String(data.qrcode || "");
+  if (!qrcodeContent) {
+    qrcodeContent = `https://115.com/scan/dg-${uid}`;
+  }
+
+  // 生成 base64 PNG（避免前端跨域加载图片）
+  const qrcodeBase64 = await QRCode.toDataURL(qrcodeContent, {
+    width: 240,
+    margin: 1,
+    errorCorrectionLevel: "M",
+  });
+
+  return {
+    uid,
+    time,
+    sign,
+    qrcode: qrcodeContent,
+    qrcodeBase64,
+    tips: "请使用 115 客户端扫描二维码登录",
+    clientType,
+  };
+}
+
+/**
+ * 2. 查询扫码状态
+ * 对齐 p115client: P115Client.login_qrcode_scan_status(payload)
+ * GET https://qrcodeapi.115.com/get/status/?uid=&time=&sign=
+ *
+ * 注意：URL 末尾必须带 `/`，否则 404
+ */
+export async function getQrcodeStatus(
+  uid: string,
+  time: string,
+  sign: string,
+  clientType: string = "alipaymini"
+): Promise<QrCodeStatusResp> {
+  if (!APP_TO_SSOENT[clientType]) {
+    clientType = "alipaymini";
+  }
+
+  const url = "https://qrcodeapi.115.com/get/status/";
+  const resp = await axios.get(url, {
+    params: { uid, time, sign },
+    timeout: 10000,
+  });
+
+  const statusCode = resp.data?.data?.status;
+  let status: QrCodeStatus;
+  let msg: string;
+
+  switch (statusCode) {
+    case 0:
+      status = "waiting";
+      msg = "等待扫码";
+      break;
+    case 1:
+      status = "scanned";
+      msg = "已扫码，等待确认";
+      break;
+    case 2:
+      // 登录成功，需调第 3 步换 cookie
+      msg = "登录成功";
+      try {
+        const cookie = await getQrcodeResult(uid, clientType);
+        return { status: "success", msg, cookie };
+      } catch (err) {
+        throw new Error(`获取登录结果失败: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    case -1:
+      status = "expired";
+      msg = "二维码已过期";
+      break;
+    case -2:
+      status = "cancelled";
+      msg = "用户取消登录";
+      break;
+    default:
+      // 兜底：key invalid 也视为过期
+      if (resp.data?.message === "key invalid") {
+        status = "expired";
+        msg = "二维码已过期";
+      } else {
+        status = "expired";
+        msg = `未知状态码: ${statusCode}`;
+      }
+      break;
+  }
+
+  return { status, msg };
+}
+
+/**
+ * 3. 用 uid 换 cookie
+ * 对齐 p115client: P115Client.login_qrcode_scan_result(uid, app=app)
+ * POST https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/
+ * body: account={uid}&app={app}
+ *
+ * 返回标准 cookie 字符串：key1=value1; key2=value2; ...
+ */
+export async function getQrcodeResult(
+  uid: string,
+  clientType: string = "alipaymini"
+): Promise<string> {
+  if (!APP_TO_SSOENT[clientType]) {
+    clientType = "alipaymini";
+  }
+
+  const url = `https://passportapi.115.com/app/1.0/${clientType}/1.0/login/qrcode/`;
+  console.log(`[QRCODE-LOGIN] Fetching cookie, uid=${uid}, clientType=${clientType}`);
+
+  const resp = await axios.post(url, `account=${uid}`, {
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": defaultUA(),
+    },
+    timeout: 15000,
+    // 响应头中的 Set-Cookie 可能包含关键字段，需要保留
+    maxRedirects: 0,
+    validateStatus: () => true, // 任何状态码都返回，由下面解析
+  });
+
+  const data = resp.data?.data || {};
+  const cookieDict = data.cookie;
+
+  if (!cookieDict || typeof cookieDict !== "object") {
+    throw new Error(`登录响应中未包含 cookie 数据: ${JSON.stringify(resp.data)}`);
+  }
+
+  // 拼接 cookie 字符串：key=value; key=value; ...
+  const cookieString = Object.entries(cookieDict as Record<string, string>)
+    .filter(([k, v]) => k && v)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+
+  if (!cookieString) {
+    throw new Error("Cookie 字符串为空");
+  }
+
+  console.log(`[QRCODE-LOGIN] Successfully got cookie, length=${cookieString.length}`);
+  return cookieString;
+}
 
 // 定义账户信息类型（导出供 115share 等模块使用）
 export interface AccountInfo {

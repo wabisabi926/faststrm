@@ -34,8 +34,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Info } from "lucide-react";
+import { Info, QrCode, KeyRound } from "lucide-react";
 import { toast } from "sonner";
+import { QrCodeLogin } from "./QrCodeLogin";
 
 // 表单验证规则
 export const accountFormSchema = z.object({
@@ -70,6 +71,8 @@ interface AddAccountDialogProps {
 export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
+  // 115 Cookie 获取方式：qrcode=扫码登录，manual=手动粘贴
+  const [cookieMode, setCookieMode] = React.useState<"qrcode" | "manual">("qrcode");
 
   const form = useForm<AccountFormValues>({
     resolver: zodResolver(accountFormSchema),
@@ -84,6 +87,12 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
   });
 
   const watchAccountType = form.watch("accountType");
+
+  // 扫码登录成功回调：回填 Cookie
+  const handleQrcodeSuccess = React.useCallback((cookie: string) => {
+    form.setValue("cookie", cookie, { shouldValidate: true });
+    toast.success("扫码登录成功，Cookie 已自动填入");
+  }, [form]);
 
   const onSubmit = async (values: AccountFormValues) => {
     setLoading(true);
@@ -103,6 +112,7 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
 
       setOpen(false);
       form.reset();
+      setCookieMode("qrcode");
     } catch (err) {
       console.error("提交失败:", err);
       toast.error("操作失败");
@@ -115,14 +125,20 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
   const accountTypes = ["115", "openlist"];
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => {
+      setOpen(v);
+      if (!v) {
+        form.reset();
+        setCookieMode("qrcode");
+      }
+    }}>
       <DialogTrigger asChild>
         {trigger ?? (
           <Button variant="outline">{account ? "Edit Account" : "Add Account"}</Button>
         )}
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>{account ? "编辑账户" : "新增账户"}</DialogTitle>
           <DialogDescription>
@@ -176,19 +192,73 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
             {/* 115 类型字段 */}
             {watchAccountType === "115" && (
               <>
-                <FormField
-                  control={form.control}
-                  name="cookie"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Cookie</FormLabel>
-                      <FormControl>
-                        <Input placeholder="输入 115 网盘的 Cookie" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {/* Cookie 获取方式切换 */}
+                <div className="space-y-2">
+                  <FormLabel>Cookie 获取方式</FormLabel>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={cookieMode === "qrcode" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setCookieMode("qrcode")}
+                      className="flex-1"
+                    >
+                      <QrCode className="w-4 h-4 mr-1.5" />
+                      扫码登录
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={cookieMode === "manual" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setCookieMode("manual")}
+                      className="flex-1"
+                    >
+                      <KeyRound className="w-4 h-4 mr-1.5" />
+                      手动粘贴
+                    </Button>
+                  </div>
+                </div>
+
+                {/* 扫码登录模式 */}
+                {cookieMode === "qrcode" ? (
+                  <QrCodeLogin onSuccess={handleQrcodeSuccess} />
+                ) : (
+                  /* 手动粘贴模式 */
+                  <FormField
+                    control={form.control}
+                    name="cookie"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Cookie</FormLabel>
+                        <FormControl>
+                          <Input placeholder="输入 115 网盘的 Cookie" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                {/* 扫码成功后显示已填入的 Cookie（只读） */}
+                {cookieMode === "qrcode" && form.watch("cookie") && (
+                  <FormField
+                    control={form.control}
+                    name="cookie"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Cookie（已通过扫码获取）</FormLabel>
+                        <FormControl>
+                          <Input
+                            readOnly
+                            value={field.value ? `${field.value.slice(0, 40)}...（长度 ${field.value.length}）` : ""}
+                            className="bg-green-50 text-green-700"
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                )}
+
                 <Alert>
                   <Info className="h-4 w-4" />
                   <AlertDescription>

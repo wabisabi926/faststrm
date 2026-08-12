@@ -259,10 +259,10 @@ export default function SettingsPage() {
           setCurrentUsername(savedUsername);
         }
 
-        // 加载媒体挂载路径 dry-run 快照
+        // 加载媒体挂载路径试运行快照
         await fetchMountDryRun();
       } catch (err) {
-        console.error("Failed to load settings:", err);
+        console.error("加载设置失败:", err);
         toast.error("加载设置失败");
       } finally {
         setLoading(false);
@@ -288,7 +288,7 @@ export default function SettingsPage() {
       const resp = await axiosInstance.get("/api/mediaMountSync");
       setMountDryRun(resp.data || null);
     } catch (e) {
-      console.error("Failed to fetch media mount dry-run:", e);
+      console.error("获取媒体挂载试运行数据失败:", e);
     } finally {
       setMountDryRunLoading(false);
     }
@@ -300,7 +300,7 @@ export default function SettingsPage() {
     try {
       const resp = await axiosInstance.post("/api/mediaMountSync", {});
       setLastSyncApply(resp.data || null);
-      // 同步成功后刷新 dry-run 视图 + 刷新 settings（因为 mediaMountPath 被写回了）
+      // 同步成功后刷新试运行视图 + 刷新 settings（因为 mediaMountPath 被写回了）
       await Promise.all([
         fetchMountDryRun(),
         (async () => {
@@ -455,7 +455,7 @@ export default function SettingsPage() {
 
       const saveResp = await axiosInstance.put("/api/settings", saveData);
       setData(saveData);
-      // 保存后自动刷新 dry-run 视图（因为全局 strmPrefix/enable302/任务/生活事件 都可能影响）
+      // 保存后自动刷新试运行视图（因为全局 strmPrefix/enable302/任务/生活事件 都可能影响）
       await fetchMountDryRun();
       const syncInfo = (saveResp.data as { mediaMountSync?: { changed?: boolean; nginx?: { attempted?: boolean; ok?: boolean; message?: string } } } | undefined)?.mediaMountSync;
       const syncSummaries: string[] = [];

@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { Bot, Settings, MessageSquare, CheckCircle, XCircle, AlertCircle, RefreshCw, Play, Square, Users, Plus, Trash2, UserPlus } from "lucide-react";
+import { Bot, Settings, MessageSquare, CheckCircle, XCircle, AlertCircle, RefreshCw, Play, Square, Users, Plus, Trash2, UserPlus, ShieldAlert, Clock, Bell } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -45,6 +45,13 @@ interface TelegramUser {
   id: number;
 }
 
+interface AccountAlertsConfig {
+  enabled: boolean;
+  onError: boolean;
+  onRecover: boolean;
+  expiryWarningDays: number;
+}
+
 function maskToken(token: string): string {
   if (!token) return "";
   if (token.length <= 8) return "***";
@@ -70,6 +77,16 @@ export default function TelegramNotifyPage() {
   const [originalTokenPlain, setOriginalTokenPlain] = useState<string>("");
   const [tokenModified, setTokenModified] = useState<boolean>(false);
 
+  // 账户状态通知配置状态
+  const [accountAlerts, setAccountAlerts] = useState<AccountAlertsConfig>({
+    enabled: false,
+    onError: true,
+    onRecover: true,
+    expiryWarningDays: 1,
+  });
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [alertsSuccess, setAlertsSuccess] = useState<string | null>(null);
+
   // 用户管理相关状态
   const [users, setUsers] = useState<TelegramUser[]>([]);
   const [newUserId, setNewUserId] = useState("");
@@ -77,10 +94,11 @@ export default function TelegramNotifyPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<number | null>(null);
 
-  // 页面挂载时仅一次加载 Bot 配置 + 轮询状态（静默回填，不影响 UI 响应）
+  // 页面挂载时仅一次加载 Bot 配置 + 轮询状态 + 账户状态通知配置
   useEffect(() => {
     void loadBotInfo();
     void checkPollingStatus();
+    void loadAccountAlerts();
   }, []);
 
   // 切换到用户管理 Tab 时加载用户列表
@@ -232,6 +250,43 @@ export default function TelegramNotifyPage() {
       setError(axiosError.response?.data?.error || "停止轮询失败");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 加载账户状态通知配置
+  const loadAccountAlerts = async () => {
+    try {
+      const response = await axiosInstance.get("/api/notify/alerts");
+      if (response.data) {
+        setAccountAlerts({
+          enabled: response.data.enabled ?? false,
+          onError: response.data.onError ?? true,
+          onRecover: response.data.onRecover ?? true,
+          expiryWarningDays: response.data.expiryWarningDays ?? 1,
+        });
+      }
+    } catch (error) {
+      console.error("加载账户状态通知配置失败:", error);
+    }
+  };
+
+  // 保存账户状态通知配置
+  const saveAccountAlerts = async () => {
+    try {
+      setAlertsLoading(true);
+      setAlertsSuccess(null);
+      setError(null);
+
+      const response = await axiosInstance.post("/api/notify/alerts", accountAlerts);
+
+      if (response.data.success) {
+        setAlertsSuccess("账户状态通知配置保存成功！");
+      }
+    } catch (error) {
+      const axiosError = error as { response?: { data?: { error?: string } } };
+      setError(axiosError.response?.data?.error || "保存账户状态通知配置失败");
+    } finally {
+      setAlertsLoading(false);
     }
   };
 
@@ -669,6 +724,151 @@ export default function TelegramNotifyPage() {
               </CardContent>
             </Card>
           )}
+
+          {/* 账户状态通知配置 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <ShieldAlert className="h-5 w-5" />
+                <span>账户状态通知</span>
+                <Badge variant={accountAlerts.enabled ? "default" : "outline"} className="ml-2">
+                  {accountAlerts.enabled ? "已启用" : "未启用"}
+                </Badge>
+              </CardTitle>
+              <CardDescription>当账号状态异常或恢复时，自动发送 Telegram 通知</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* 启用开关 */}
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="alertsEnabled"
+                  checked={accountAlerts.enabled}
+                  onCheckedChange={(checked) => 
+                    setAccountAlerts({ ...accountAlerts, enabled: checked === true })
+                  }
+                />
+                <label
+                  htmlFor="alertsEnabled"
+                  className="text-sm font-medium leading-none cursor-pointer"
+                >
+                  启用账户状态通知
+                </label>
+              </div>
+
+              <Separator />
+
+              {/* 通知选项 */}
+              <div className="grid gap-3 md:grid-cols-2">
+                {/* 异常通知 */}
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="onError"
+                    checked={accountAlerts.onError}
+                    disabled={!accountAlerts.enabled}
+                    onCheckedChange={(checked) => 
+                      setAccountAlerts({ ...accountAlerts, onError: checked === true })
+                    }
+                  />
+                  <label
+                    htmlFor="onError"
+                    className={`text-sm leading-none ${!accountAlerts.enabled ? "text-muted-foreground" : "cursor-pointer"}`}
+                  >
+                    <span className="flex items-center gap-1">
+                      <AlertCircle className="h-3.5 w-3.5 text-red-500" />
+                      账号异常时通知
+                    </span>
+                  </label>
+                </div>
+
+                {/* 恢复通知 */}
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="onRecover"
+                    checked={accountAlerts.onRecover}
+                    disabled={!accountAlerts.enabled}
+                    onCheckedChange={(checked) => 
+                      setAccountAlerts({ ...accountAlerts, onRecover: checked === true })
+                    }
+                  />
+                  <label
+                    htmlFor="onRecover"
+                    className={`text-sm leading-none ${!accountAlerts.enabled ? "text-muted-foreground" : "cursor-pointer"}`}
+                  >
+                    <span className="flex items-center gap-1">
+                      <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+                      账号恢复正常时通知
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* 过期预警天数（预留功能） */}
+              <div className="space-y-2">
+                <Label htmlFor="expiryWarningDays" className="flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5" />
+                  Cookie 过期预警天数
+                  <span className="text-xs text-muted-foreground">（预留功能，当前仅用于配置记录）</span>
+                </Label>
+                <Input
+                  id="expiryWarningDays"
+                  type="number"
+                  min={1}
+                  max={7}
+                  disabled={!accountAlerts.enabled}
+                  value={accountAlerts.expiryWarningDays}
+                  onChange={(e) => 
+                    setAccountAlerts({ 
+                      ...accountAlerts, 
+                      expiryWarningDays: parseInt(e.target.value) || 1 
+                    })
+                  }
+                  className="max-w-[100px]"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Cookie 即将过期时提前多少天发送预警通知
+                </p>
+              </div>
+
+              {/* 说明 */}
+              <Alert className="bg-blue-50 border-blue-200">
+                <Bell className="h-4 w-4 text-blue-600" />
+                <AlertDescription className="text-xs text-blue-800">
+                  <strong>通知触发条件：</strong>
+                  <br />
+                  • 账号状态从"正常"变为"异常"时发送异常通知
+                  <br />
+                  • 账号状态从"异常"恢复为"正常"时发送恢复通知
+                  <br />
+                  • 每个状态变化只会通知一次，避免重复打扰
+                </AlertDescription>
+              </Alert>
+
+              {/* 保存按钮 */}
+              <div className="flex items-center gap-2">
+                <Button 
+                  onClick={saveAccountAlerts} 
+                  disabled={alertsLoading}
+                  size="sm"
+                >
+                  {alertsLoading ? "保存中..." : "保存通知设置"}
+                </Button>
+                <Button 
+                  onClick={() => loadAccountAlerts()} 
+                  disabled={alertsLoading}
+                  variant="outline"
+                  size="sm"
+                >
+                  重新加载
+                </Button>
+                {alertsSuccess && (
+                  <span className="text-xs text-green-600 flex items-center gap-1">
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    {alertsSuccess}
+                  </span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 

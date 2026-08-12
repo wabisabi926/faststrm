@@ -6,8 +6,28 @@ const URL_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
 const REACHABLE_CACHE_TTL = 4 * 60 * 1000; // 4 分钟（略小于 URL_CACHE_TTL）
 const REACHABLE_CACHE_MAX = 256; // 简单 LRU 上限（够用就行，避免内存膨胀）
 
-// 115 单账号并发 proxy 限制（emby2Alist 经验：单账号总下载进程上限约 10）
-const ACCOUNT_PROXY_CONCURRENCY_LIMIT = 8;
+// 可配置化的默认值（settings 读取失败时兜底）
+const DEFAULT_FORCE_PROXY_UA_TOKENS = Object.freeze(["Infuse", "VidHub", "SenPlayer", "SenPlayerHD"]);
+const DEFAULT_ACCOUNT_PROXY_CONCURRENCY_LIMIT = 8;
+const DEFAULT_REDIRECT_CHECK_TIMEOUT_MS = 5000;
+
+// 读取 strm 路由策略配置（带兜底默认值）
+function getStrmRouteConfig() {
+  const s = readSettings();
+  const st = s.strm || {};
+  return {
+    forceProxyUaTokens: (st.forceProxyUaTokens && st.forceProxyUaTokens.length > 0)
+      ? st.forceProxyUaTokens
+      : DEFAULT_FORCE_PROXY_UA_TOKENS,
+    accountProxyConcurrencyLimit: (st.accountProxyConcurrencyLimit && st.accountProxyConcurrencyLimit > 0)
+      ? st.accountProxyConcurrencyLimit
+      : DEFAULT_ACCOUNT_PROXY_CONCURRENCY_LIMIT,
+    redirectCheckTimeoutMs: (st.redirectCheckTimeoutMs && st.redirectCheckTimeoutMs > 0)
+      ? st.redirectCheckTimeoutMs
+      : DEFAULT_REDIRECT_CHECK_TIMEOUT_MS,
+  };
+}
+
 const accountProxyCount = new Map<string, number>();
 
 // hop-by-hop 头部，模块级常量避免每次请求重建
@@ -105,13 +125,8 @@ function resolveFileName(raw: string | undefined): string | undefined {
 /**
  * 已知 seek/302 兼容性差的客户端 UA 关键字（参考 emby2Alist 的 clientSelfAlistRule）。
  * 这些客户端强制代理，避免 seek 时 Range 跟 302 Location 对不上导致进度条拖动异常。
+ * P2-16: 配置化 — 从 settings.strm.forceProxyUaTokens 读取，默认值见 DEFAULT_FORCE_PROXY_UA_TOKENS
  */
-const FORCE_PROXY_UA_TOKENS = Object.freeze([
-  "Infuse",
-  "VidHub",
-  "SenPlayer",
-  "SenPlayerHD",
-]);
 
 function isPrivateNetworkIp(ip: string | null): boolean {
   if (!ip) return false;
@@ -142,7 +157,8 @@ function getClientIp(req: NextRequest): string | null {
 
 function decideRoute(
   req: NextRequest,
-  explicitMode: string | undefined
+  explicitMode: string | undefined,
+  forceProxyUaTokens: readonly string[]
 ): DecisionResult {
   // 1) 手动指定优先级最高（调试用，仅私网生效，见 handleStrm）
   if (explicitMode === "redirect") return { decision: "redirect", reason: "explicit_mode_redirect" };
@@ -151,7 +167,7 @@ function decideRoute(
   const ua = req.headers.get("user-agent") || "";
 
   // 2) seek 坑客户端 → 强制代理（Infuse/VidHub/SenPlayer 对 115 的 302 seek 有 bug）
-  for (const token of FORCE_PROXY_UA_TOKENS) {
+  for (const token of forceProxyUaTokens) {
     if (ua.includes(token)) {
       return { decision: "proxy", reason: `force_proxy_ua:${token}` };
     }
@@ -186,14 +202,14 @@ function build115SafeHeaders(
 async function redirectCheck(
   cdnUrl: string,
   account: AccountInfo,
-  userAgent: string | undefined
+  userAgent: string | undefined,
+  timeoutMs: number
 ): Promise<ReachableResult> {
   const cacheKey = `${account.name}|${cdnUrl}`;
   const cached = reachableCache.get(cacheKey);
   if (cached) return cached;
 
   const controller = new AbortController();
-  const timeoutMs = 5000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let status = 0;
@@ -370,6 +386,9 @@ async function handleStrm(req: NextRequest): Promise<NextResponse> {
     (readSettings()["user-agent"] as string) ||
     undefined;
 
+  // P2-16: 读取可配置化的路由策略
+  const routeCfg = getStrmRouteConfig();
+
   // Phase 3.2: 解析直链 + 真实文件元数据
   let meta: DownloadUrlMeta;
   try {
@@ -389,14 +408,14 @@ async function handleStrm(req: NextRequest): Promise<NextResponse> {
   const explicitMode = isPrivate ? rawMode : undefined;
 
   // 规则引擎：决策 proxy vs redirect
-  const { decision, reason } = decideRoute(req, explicitMode);
+  const { decision, reason } = decideRoute(req, explicitMode, routeCfg.forceProxyUaTokens);
 
   let finalDecision: RouteDecision = decision;
   let finalReason = reason;
   let redirectCheckStatus: number | undefined;
 
   if (decision === "redirect") {
-    const check = await redirectCheck(cdnUrl, account, userAgent);
+    const check = await redirectCheck(cdnUrl, account, userAgent, routeCfg.redirectCheckTimeoutMs);
     redirectCheckStatus = check.status;
     if (!check.ok) {
       // 直链不可达 → 降级 proxy，保证用户体验不炸
@@ -405,15 +424,14 @@ async function handleStrm(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // Phase 2.3: 115 单账号并发 proxy 限流
-  // emby2Alist 经验：单账号总下载进程上限约 10，超阈值时切 redirect 避免触发限流
+  // Phase 2.3: 115 单账号并发 proxy 限流（配置化）
   if (finalDecision === "proxy") {
     const current = accountProxyCount.get(accountName) || 0;
-    if (current >= ACCOUNT_PROXY_CONCURRENCY_LIMIT) {
+    if (current >= routeCfg.accountProxyConcurrencyLimit) {
       finalDecision = "redirect";
-      finalReason = `${reason} -> proxy_concurrency_limit(${current}/${ACCOUNT_PROXY_CONCURRENCY_LIMIT}) fallback_redirect`;
+      finalReason = `${reason} -> proxy_concurrency_limit(${current}/${routeCfg.accountProxyConcurrencyLimit}) fallback_redirect`;
       console.warn(
-        `[STRM] account=${accountName} proxy concurrency hit limit (${current}/${ACCOUNT_PROXY_CONCURRENCY_LIMIT}), fallback to redirect`
+        `[STRM] account=${accountName} proxy concurrency hit limit (${current}/${routeCfg.accountProxyConcurrencyLimit}), fallback to redirect`
       );
     }
   }

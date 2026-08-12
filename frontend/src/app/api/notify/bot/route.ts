@@ -130,12 +130,13 @@ export async function POST(request: NextRequest) {
     // 读取当前设置
     const settings = readSettings();
 
-    // 更新 Telegram 配置
+    // 更新 Telegram 配置（保留 accountAlerts 子配置）
     settings.telegram = {
       botToken,
       chatId: chatId || settings.telegram?.chatId,
       webhookUrl: webhookUrl || settings.telegram?.webhookUrl,
-      enabled: enabled !== undefined ? enabled : (settings.telegram?.enabled ?? true)
+      enabled: enabled !== undefined ? enabled : (settings.telegram?.enabled ?? true),
+      accountAlerts: settings.telegram?.accountAlerts,  // 保留账户状态通知配置
     };
 
     // 保存设置

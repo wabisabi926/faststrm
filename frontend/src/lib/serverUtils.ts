@@ -222,6 +222,15 @@ export type AppSettings = {
   enablePathEncoding?: boolean;  // 是否启用 URL 路径编码
   enable302?: boolean;  // 是否在 strmPrefix 后自动拼接账号名（用于 Emby 302 重定向）
   removeExtraFiles?: boolean;  // 是否自动删除远程已不存在的本地 STRM 文件
+  // STRM 路由策略（route.ts 配置化常量）
+  strm?: {
+    /** 强制走代理的 UA 关键字（seek/302 兼容性差的客户端），默认 ["Infuse","VidHub","SenPlayer","SenPlayerHD"] */
+    forceProxyUaTokens?: string[];
+    /** 单账号并发代理上限，默认 8（115 限流，超阈值自动降级 redirect） */
+    accountProxyConcurrencyLimit?: number;
+    /** HEAD 可达性预检超时(ms)，默认 5000 */
+    redirectCheckTimeoutMs?: number;
+  };
   download?: {
     linkMaxPerSecond?: number;
     linkMaxConcurrent?: number;
@@ -243,7 +252,7 @@ export type AppSettings = {
     syncDeletePathMappings?: Array<{ embyPath: string; cloudPath: string; account?: string }>;
     /** 删除同步时发送 TG 通知 */
     syncDeleteNotify?: boolean;
-    /** Dry-run 模式：只记日志不实际删除（首次配置验证用） */
+    /** 试运行模式：只记日志不实际删除（首次配置验证用） */
     syncDeleteDryRun?: boolean;
   };
   telegram?: {
@@ -252,6 +261,17 @@ export type AppSettings = {
     webhookUrl?: string;
     enabled?: boolean;
     allowedUsers?: number[];
+    /** 账户状态通知配置 */
+    accountAlerts?: {
+      /** 是否开启账户状态通知 */
+      enabled?: boolean;
+      /** 账号异常时通知（Cookie 过期等） */
+      onError?: boolean;
+      /** 账号恢复正常时通知 */
+      onRecover?: boolean;
+      /** Cookie 即将过期预警天数 */
+      expiryWarningDays?: number;
+    };
   };
   lifeMonitor?: LifeMonitorSettings;
 } & Record<string, unknown>;
@@ -293,6 +313,28 @@ function sanitizeAppSettings(raw: unknown): AppSettings {
       } else {
         s[key] = undefined;
       }
+    }
+  }
+
+  // strm 子配置类型清洗
+  if (s.strm && typeof s.strm === "object") {
+    const st = s.strm as Record<string, unknown>;
+    if (st.forceProxyUaTokens !== undefined) {
+      if (!Array.isArray(st.forceProxyUaTokens)) {
+        st.forceProxyUaTokens = [];
+      } else {
+        st.forceProxyUaTokens = (st.forceProxyUaTokens as unknown[])
+          .map((x) => (typeof x === "string" ? x : String(x)))
+          .filter(Boolean);
+      }
+    }
+    if (st.accountProxyConcurrencyLimit !== undefined) {
+      const n = Number(st.accountProxyConcurrencyLimit);
+      st.accountProxyConcurrencyLimit = Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+    }
+    if (st.redirectCheckTimeoutMs !== undefined) {
+      const n = Number(st.redirectCheckTimeoutMs);
+      st.redirectCheckTimeoutMs = Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
     }
   }
 

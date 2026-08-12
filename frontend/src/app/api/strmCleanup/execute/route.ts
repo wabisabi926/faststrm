@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           message: `单次删除文件数过多 (${totalRequested})`,
-          error: "单次最多允许删除 2000 个文件，建议先 dryRun 或分批执行",
+          error: "单次最多允许删除 2000 个文件，建议先启用试运行模式或分批执行",
         },
         { status: 413 }
       );

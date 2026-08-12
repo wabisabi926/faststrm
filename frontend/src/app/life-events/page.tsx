@@ -145,16 +145,16 @@ export default function LifeEventsPage() {
 
       {/* 过滤条 */}
       <Card>
-        <CardContent className="pt-4">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex items-center gap-2">
+        <CardContent className="py-3">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div className="flex items-center gap-1.5">
               <Filter className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">过滤：</span>
+              <span className="text-sm font-medium text-muted-foreground">过滤</span>
             </div>
-            <div className="flex flex-col">
-              <label className="text-xs text-muted-foreground mb-1">账号</label>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-muted-foreground whitespace-nowrap">账号</label>
               <select
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                className="h-8 rounded-md border border-input bg-background px-2 text-sm min-w-[100px]"
                 value={accountFilter}
                 onChange={(e) => setAccountFilter(e.target.value)}
               >
@@ -166,10 +166,10 @@ export default function LifeEventsPage() {
                 ))}
               </select>
             </div>
-            <div className="flex flex-col">
-              <label className="text-xs text-muted-foreground mb-1">事件类型</label>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-muted-foreground whitespace-nowrap">事件类型</label>
               <select
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                className="h-8 rounded-md border border-input bg-background px-2 text-sm min-w-[100px]"
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value)}
               >
@@ -181,10 +181,10 @@ export default function LifeEventsPage() {
                 <option value="folder-sync">文件夹同步</option>
               </select>
             </div>
-            <div className="flex flex-col">
-              <label className="text-xs text-muted-foreground mb-1">状态</label>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-muted-foreground whitespace-nowrap">状态</label>
               <select
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                className="h-8 rounded-md border border-input bg-background px-2 text-sm min-w-[100px]"
                 value={successFilter}
                 onChange={(e) => setSuccessFilter(e.target.value)}
               >

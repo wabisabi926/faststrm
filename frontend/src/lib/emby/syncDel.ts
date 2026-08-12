@@ -122,8 +122,8 @@ export async function handleSyncDelete(
   let deletedDirs = 0;
 
   if (dryRun) {
-    console.log(`[${TAG}] Dry-run 模式，仅记录不删除: ${embyPath} (cloudPath=${cloudPath})`);
-    // Dry-run 仍统计文件数
+    console.log(`[${TAG}] 试运行模式，仅记录不删除: ${embyPath} (cloudPath=${cloudPath})`);
+    // 试运行模式仍统计文件数
     if (isDir) {
       try {
         const entries = fs.readdirSync(embyPath, { recursive: true });
@@ -353,7 +353,7 @@ function formatDeleteNotification(
     Series: "整剧",
   };
   const typeText = typeMap[itemType] || itemType;
-  const dryRunTag = dryRun ? " [Dry-run]" : "";
+  const dryRunTag = dryRun ? " [试运行]" : "";
 
   return `🗑️ 媒体删除同步${dryRunTag}
 <b>标题:</b> ${itemName}
