@@ -4,7 +4,21 @@
 
   # Fast Strm
 
-  **开源、简洁、可改造的 115 网盘 STRM 生成与同步工具**
+  **FastStrm — 让 115 网盘和你的播放器真正「同步」**
+
+  > 想象一下：你在 115 网盘存了一部电影，打开 Emby/Kodi 就能直接看；你在网盘删了，播放器里自动消失——FastStrm 就是实现这件事的工具。
+  >
+  > ✅ **网盘增删改，本地秒同步** — 网盘里新传的电影，播放器里立刻出现；删了的也自动消失，不用每次手动扫描
+  >
+  > ✅ **扫码登录，零配置** — 手机扫一扫就搞定，不用 F12 抓 Cookie，过期了再扫一下就好
+  >
+  > ✅ **看片不卡，零带宽消耗** — 直接走 115 原链接播放，不经过你的服务器中转，4K 秒开
+  >
+  > ✅ **Emby 深度联动** — 在 Emby 里删了片，网盘对应的本地文件自动清理，不占磁盘
+  >
+  > ✅ **异常主动通知** — Cookie 过期、账号异常，Telegram 第一时间推送，不用自己盯着看
+  >
+  > ✅ **Docker 一键启动** — 一行命令搞定，5 分钟内看完第一部电影
 
   [![GitHub](https://img.shields.io/badge/GitHub-wabisabi926%2Ffaststrm-181717?logo=github&style=flat-square)](https://github.com/wabisabi926/faststrm)
   [![Version](https://img.shields.io/github/v/release/wabisabi926/faststrm?color=blue&label=Release&logo=semver&style=flat-square)](https://github.com/wabisabi926/faststrm/releases)
