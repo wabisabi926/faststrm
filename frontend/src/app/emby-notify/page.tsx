@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -261,11 +260,11 @@ export default function EmbyNotifyPage() {
   const webhookUrl = typeof window !== "undefined" ? `${window.location.origin}/api/emby/webhook` : "http://localhost:3000/api/emby/webhook";
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       {/* 页面标题 */}
-      <div className="flex items-center space-x-2">
-        <Bell className="h-6 w-6" />
-        <h1 className="text-3xl font-bold">Emby 通知</h1>
+      <div>
+        <h1 className="text-2xl font-semibold">Emby 通知</h1>
+        <p className="text-sm text-muted-foreground mt-1">配置 Emby 媒体服务器的通知与删除同步</p>
       </div>
 
       {/* 错误/成功提示 */}
@@ -291,15 +290,13 @@ export default function EmbyNotifyPage() {
       )}
 
       {/* Emby 连接配置 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Server className="h-5 w-5" />
-            <span>Emby 连接配置</span>
-          </CardTitle>
-          <CardDescription>配置 Emby 服务器连接信息</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <section className="border rounded-md p-5 space-y-5">
+        <div className="flex items-center gap-2">
+          <Server className="h-5 w-5" />
+          <h2 className="text-base font-medium">Emby 连接配置</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">配置 Emby 服务器连接信息</p>
+        <div className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="embyUrl">Emby URL</Label>
@@ -336,19 +333,17 @@ export default function EmbyNotifyPage() {
               测试连接
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {/* 通知设置 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Bell className="h-5 w-5" />
-            <span>通知设置</span>
-          </CardTitle>
-          <CardDescription>选择需要启用的通知类型</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <section className="border rounded-md p-5 space-y-5">
+        <div className="flex items-center gap-2">
+          <Bell className="h-5 w-5" />
+          <h2 className="text-base font-medium">通知设置</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">选择需要启用的通知类型</p>
+        <div className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex items-center space-x-2 p-3 rounded-lg border">
               <Checkbox
@@ -432,101 +427,95 @@ export default function EmbyNotifyPage() {
               {loading ? "保存中..." : "保存设置"}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {/* Webhook 配置指引 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Play className="h-5 w-5" />
-            <span>Webhook 配置指引</span>
-          </CardTitle>
-          <CardDescription>
-            在 Emby 后台配置 Webhook 以接收通知
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <h4 className="font-medium">步骤 1：打开 Emby Webhook 设置</h4>
-              <p className="text-sm text-muted-foreground">
-                在 Emby 后台：<code className="bg-muted px-1 rounded">设置 → 通知 → Webhook</code>
-              </p>
-            </div>
+      <section className="border rounded-md p-5 space-y-5">
+        <div className="flex items-center gap-2">
+          <Play className="h-5 w-5" />
+          <h2 className="text-base font-medium">Webhook 配置指引</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">
+          在 Emby 后台配置 Webhook 以接收通知
+        </p>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <h4 className="font-medium">步骤 1：打开 Emby Webhook 设置</h4>
+            <p className="text-sm text-muted-foreground">
+              在 Emby 后台：<code className="bg-muted px-1 rounded">设置 → 通知 → Webhook</code>
+            </p>
+          </div>
 
-            <div className="space-y-2">
-              <h4 className="font-medium">步骤 2：添加 Webhook URL</h4>
-              <div className="flex items-center space-x-2">
-                <code className="flex-1 bg-muted px-3 py-2 rounded text-sm font-mono truncate">
-                  {webhookUrl}
-                </code>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={copyWebhookUrl}
-                  className="shrink-0"
-                >
-                  {webhookCopied ? (
-                    <>
-                      <Check className="h-4 w-4 mr-1" />
-                      已复制
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-4 w-4 mr-1" />
-                      复制
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <h4 className="font-medium">步骤 3：勾选事件类型</h4>
-              <p className="text-sm text-muted-foreground">
-                在 Emby Webhook 设置中勾选以下事件：
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
-                  媒体入库 (library.new)
-                </code>
-                <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
-                  媒体删除 (library.deleted)
-                </code>
-                <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
-                  播放开始 (playback.start)
-                </code>
-                <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
-                  播放暂停 (playback.pause)
-                </code>
-                <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
-                  播放结束 (playback.stop)
-                </code>
-              </div>
-            </div>
-
-            <div className="rounded-lg bg-muted/50 p-3">
-              <p className="text-sm text-muted-foreground">
-                <strong>提示：</strong>配置完成后，Emby 的媒体变动（入库/删除）和播放状态将实时推送到你的 Telegram。
-              </p>
+          <div className="space-y-2">
+            <h4 className="font-medium">步骤 2：添加 Webhook URL</h4>
+            <div className="flex items-center space-x-2">
+              <code className="flex-1 bg-muted px-3 py-2 rounded text-sm font-mono truncate">
+                {webhookUrl}
+              </code>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={copyWebhookUrl}
+                className="shrink-0"
+              >
+                {webhookCopied ? (
+                  <>
+                    <Check className="h-4 w-4 mr-1" />
+                    已复制
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4 mr-1" />
+                    复制
+                  </>
+                )}
+              </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
+
+          <div className="space-y-2">
+            <h4 className="font-medium">步骤 3：勾选事件类型</h4>
+            <p className="text-sm text-muted-foreground">
+              在 Emby Webhook 设置中勾选以下事件：
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+                媒体入库 (library.new)
+              </code>
+              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+                媒体删除 (library.deleted)
+              </code>
+              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+                播放开始 (playback.start)
+              </code>
+              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+                播放暂停 (playback.pause)
+              </code>
+              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+                播放结束 (playback.stop)
+              </code>
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-muted/50 p-3">
+            <p className="text-sm text-muted-foreground">
+              <strong>提示：</strong>配置完成后，Emby 的媒体变动（入库/删除）和播放状态将实时推送到你的 Telegram。
+            </p>
+          </div>
+        </div>
+      </section>
 
       {/* 删除同步设置 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <XCircle className="h-5 w-5" />
-            <span>删除同步</span>
-          </CardTitle>
-          <CardDescription>
-            监听 Emby 删除事件，自动删除本地 STRM 文件 + 关联字幕/图片 + 清理 DB 记录
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <section className="border rounded-md p-5 space-y-5">
+        <div className="flex items-center gap-2">
+          <XCircle className="h-5 w-5" />
+          <h2 className="text-base font-medium">删除同步</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">
+          监听 Emby 删除事件，自动删除本地 STRM 文件 + 关联字幕/图片 + 清理 DB 记录
+        </p>
+        <div className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex items-center space-x-2 p-3 rounded-lg border">
               <Checkbox
@@ -755,8 +744,8 @@ export default function EmbyNotifyPage() {
               Emby 删除媒体 → 匹配路径映射 → 去重检查（60s） → 防误删（STRM 存在 + 标题匹配 + 目录文件数 ≤100） → 删 STRM + 字幕 + nfo → 清空目录 → 更新 DB → TG 通知
             </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {/* 注意事项 */}
       <Alert>

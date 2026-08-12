@@ -63,6 +63,10 @@ type Settings = {
   enablePathEncoding?: boolean;
   enable302?: boolean;
   removeExtraFiles?: boolean;
+  // STRM 路由策略配置（302 模式生效）
+  forceProxyUaTokens?: string[];
+  accountProxyConcurrencyLimit?: number;
+  redirectCheckTimeoutMs?: number;
   emby?: {
     url?: string;
     apiKey?: string;
@@ -114,6 +118,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [strmExtensionsInput, setStrmExtensionsInput] = useState("");
   const [downloadExtensionsInput, setDownloadExtensionsInput] = useState("");
+  // STRM 路由策略配置
+  const [forceProxyUaInput, setForceProxyUaInput] = useState("");
 
   // 媒体挂载路径：SSOT 管理，不再手动编辑
   type MountSourceTag = "global_302" | "task" | "life_monitor";
@@ -232,6 +238,7 @@ export default function SettingsPage() {
         setData(settings);
         setStrmExtensionsInput((settings.strmExtensions || []).join(", "));
         setDownloadExtensionsInput((settings.downloadExtensions || []).join(", "));
+        setForceProxyUaInput((settings.forceProxyUaTokens || []).join(", "));
 
         // Load life monitor config
         const monitor = settings.lifeMonitor || DEFAULT_MONITOR_CONFIG;
@@ -434,12 +441,19 @@ export default function SettingsPage() {
         ? Math.floor(parsedMb * 1024 * 1024)
         : 0;
 
+      // 解析强制代理 UA tokens
+      const forceProxyUaTokens = forceProxyUaInput
+        .split(",")
+        .map(token => token.trim())
+        .filter(token => token.length > 0);
+
       // 注意：mediaMountPath 不在此处手工写入，由 SSOT 的 syncMediaMountPaths() 统一维护
       //       （PUT /api/settings 内部会自动触发 sync，并返回同步详情）
       const saveData = {
         ...data,
         strmExtensions,
         downloadExtensions,
+        forceProxyUaTokens,
         lifeMonitor: {
           enabled: monitorEnabled,
           accounts: selectedAccounts,
@@ -724,10 +738,14 @@ export default function SettingsPage() {
       {/* Tab 1: 基础设置 */}
       {activeTab === "basic" && (
         <div className="space-y-6">
-          <section className="space-y-4">
-            <h2 className="text-base font-medium">基础设置</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
+          {/* 基础设置 */}
+          <section className="border rounded-md p-5 space-y-5">
+            <div>
+              <h2 className="text-base font-medium">基础设置</h2>
+              <p className="text-xs text-muted-foreground mt-1">全局 User-Agent 与文件扩展名配置</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="space-y-3">
                 <Label>User-Agent</Label>
                 <Input
                   value={data["user-agent"] || ""}
@@ -736,26 +754,27 @@ export default function SettingsPage() {
                   }
                   placeholder="Mozilla/5.0 ..."
                 />
+                <p className="text-xs text-muted-foreground">
+                  访问 115 API 时使用的 UA
+                </p>
               </div>
-              <div className="space-y-2">
-                <Label>Strm文件扩展名</Label>
+              <div className="space-y-3">
+                <Label>Strm 文件扩展名</Label>
                 <Input
                   value={strmExtensionsInput}
                   onChange={(e) => setStrmExtensionsInput(e.target.value)}
-                  placeholder="请输入 例如：.mkv, .mp4, .mp3"
+                  placeholder=".mkv, .mp4, .mp3"
                 />
                 <p className="text-xs text-muted-foreground">
                   用逗号分隔，自动添加点号前缀
                 </p>
               </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
+              <div className="space-y-3 md:col-span-2">
                 <Label>下载文件扩展名</Label>
                 <Input
                   value={downloadExtensionsInput}
                   onChange={(e) => setDownloadExtensionsInput(e.target.value)}
-                  placeholder="请输入 例如：.srt, .ass, .sub, .nfo"
+                  placeholder=".srt, .ass, .sub, .nfo"
                 />
                 <p className="text-xs text-muted-foreground">
                   用逗号分隔，自动添加点号前缀
@@ -764,26 +783,30 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <Separator />
-
-          <section className="space-y-4">
-            <h2 className="text-base font-medium">STRM 生成设置（全局默认）</h2>
-            <div className="grid grid-cols-1 gap-4">
-              <div className="space-y-2">
-                <Label>Strm 前缀</Label>
-                <Input
-                  value={data.strmPrefix || ""}
-                  onChange={(e) =>
-                    setData({ ...data, strmPrefix: e.target.value })
-                  }
-                  placeholder="http://localhost:3000"
-                />
-                <p className="text-xs text-muted-foreground">
-                  STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。302 模式下自动追加 <code>/api/strm</code>，无需手动添加。
-                </p>
-              </div>
+          {/* STRM 生成设置 */}
+          <section className="border rounded-md p-5 space-y-5">
+            <div>
+              <h2 className="text-base font-medium">STRM 生成设置（全局默认）</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                适用于所有账号的生活事件监控和全量扫描，任务级可单独覆盖
+              </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+            <div className="space-y-3">
+              <Label>Strm 前缀</Label>
+              <Input
+                value={data.strmPrefix || ""}
+                onChange={(e) =>
+                  setData({ ...data, strmPrefix: e.target.value })
+                }
+                placeholder="http://localhost:3000"
+              />
+              <p className="text-xs text-muted-foreground">
+                STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。302 模式下自动追加 <code>/api/strm</code>，无需手动添加。
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="global-enable-302"
@@ -793,7 +816,7 @@ export default function SettingsPage() {
                   }
                 />
                 <label htmlFor="global-enable-302" className="text-sm cursor-pointer leading-tight">
-                  302 重定向<span className="text-xs text-muted-foreground">（生成带 pickcode 的 STRM）</span>
+                  302 重定向<span className="text-xs text-muted-foreground">（带 pickcode）</span>
                 </label>
               </div>
               <div className="flex items-center gap-2">
@@ -817,22 +840,78 @@ export default function SettingsPage() {
                   }
                 />
                 <label htmlFor="global-remove-extra" className="text-sm cursor-pointer">
-                  删除多余本地 STRM 文件
+                  删除多余 STRM 文件
                 </label>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              以上为全局默认值，适用于所有账号的生活事件监控和全量扫描。任务级可单独覆盖 302 和前缀，路径编码统一受全局控制。
-            </p>
+
+            {/* STRM 路由策略配置（302 模式生效） */}
+            {data.enable302 && (
+              <div className="space-y-4 pt-4 border-t">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-muted-foreground" />
+                  <h3 className="text-sm font-medium">STRM 路由策略</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  302 模式下生效。默认 redirect（不走本机带宽），仅以下 UA 强制走 proxy。
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  <div className="space-y-3">
+                    <Label>强制代理 UA 标识</Label>
+                    <Input
+                      value={forceProxyUaInput}
+                      onChange={(e) => setForceProxyUaInput(e.target.value)}
+                      placeholder="Infuse, VidHub"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      逗号分隔
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <Label>单账号代理并发上限</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={data.accountProxyConcurrencyLimit ?? 8}
+                      onChange={(e) =>
+                        setData({ ...data, accountProxyConcurrencyLimit: parseInt(e.target.value) || 8 })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      超过自动切 redirect
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <Label>Redirect 检测超时（ms）</Label>
+                    <Input
+                      type="number"
+                      min="500"
+                      max="10000"
+                      step="500"
+                      value={data.redirectCheckTimeoutMs ?? 5000}
+                      onChange={(e) =>
+                        setData({ ...data, redirectCheckTimeoutMs: parseInt(e.target.value) || 5000 })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      失败降级 proxy
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
 
-          <Separator />
-
-          <section className="space-y-4">
-            <h2 className="text-base font-medium">下载限流配置</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>链接获取每秒请求数 (linkMaxPerSecond)</Label>
+          {/* 下载限流配置 */}
+          <section className="border rounded-md p-5 space-y-5">
+            <div>
+              <h2 className="text-base font-medium">下载限流配置</h2>
+              <p className="text-xs text-muted-foreground mt-1">控制 115 API 与下载的并发上限</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <div className="space-y-3">
+                <Label>链接获取每秒请求数</Label>
                 <Input
                   type="number"
                   min="1"
@@ -841,20 +920,18 @@ export default function SettingsPage() {
                   onChange={(e) =>
                     setData({
                       ...data,
-                      download: { 
-                        ...(data.download || {}), 
-                        linkMaxPerSecond: parseInt(e.target.value) || 2 
+                      download: {
+                        ...(data.download || {}),
+                        linkMaxPerSecond: parseInt(e.target.value) || 2
                       },
                     })
                   }
                   placeholder="2"
                 />
-                <p className="text-xs text-muted-foreground">
-                  控制获取下载链接的每秒请求数
-                </p>
+                <p className="text-xs text-muted-foreground">linkMaxPerSecond</p>
               </div>
-              <div className="space-y-2">
-                <Label>链接获取并发数 (linkMaxConcurrent)</Label>
+              <div className="space-y-3">
+                <Label>链接获取并发数</Label>
                 <Input
                   type="number"
                   min="1"
@@ -863,22 +940,18 @@ export default function SettingsPage() {
                   onChange={(e) =>
                     setData({
                       ...data,
-                      download: { 
-                        ...(data.download || {}), 
-                        linkMaxConcurrent: parseInt(e.target.value) || 10 
+                      download: {
+                        ...(data.download || {}),
+                        linkMaxConcurrent: parseInt(e.target.value) || 10
                       },
                     })
                   }
                   placeholder="10"
                 />
-                <p className="text-xs text-muted-foreground">
-                  控制同时获取下载链接的数量
-                </p>
+                <p className="text-xs text-muted-foreground">linkMaxConcurrent</p>
               </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>文件下载并发数 (downloadMaxConcurrent)</Label>
+              <div className="space-y-3">
+                <Label>文件下载并发数</Label>
                 <Input
                   type="number"
                   min="1"
@@ -887,17 +960,15 @@ export default function SettingsPage() {
                   onChange={(e) =>
                     setData({
                       ...data,
-                      download: { 
-                        ...(data.download || {}), 
-                        downloadMaxConcurrent: parseInt(e.target.value) || 2 
+                      download: {
+                        ...(data.download || {}),
+                        downloadMaxConcurrent: parseInt(e.target.value) || 2
                       },
                     })
                   }
                   placeholder="2"
                 />
-                <p className="text-xs text-muted-foreground">
-                  控制同时下载文件的数量
-                </p>
+                <p className="text-xs text-muted-foreground">downloadMaxConcurrent</p>
               </div>
             </div>
           </section>
@@ -1082,7 +1153,7 @@ export default function SettingsPage() {
       {/* Tab 2: 生活事件 */}
       {activeTab === "monitor" && (
         <div className="space-y-6">
-          <section className="space-y-4">
+          <section className="border rounded-md p-5 space-y-5">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-medium">115 生活事件监控</h2>
               <div className="flex items-center gap-2">
@@ -1102,9 +1173,9 @@ export default function SettingsPage() {
 
             <div className={`space-y-4 ${!monitorEnabled ? "opacity-50 pointer-events-none" : ""}`}>
               {/* Account Selection */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <Label>监控账号</Label>
-                <div className="flex flex-wrap gap-4 p-3 border rounded-md">
+                <div className="flex flex-wrap gap-5 p-3 border rounded-md">
                   {accounts.length === 0 ? (
                     <p className="text-sm text-muted-foreground">暂无可用账号，请先在账号管理中添加 115 账号</p>
                   ) : (
@@ -1125,8 +1196,8 @@ export default function SettingsPage() {
               </div>
 
               {/* Poll Interval */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="space-y-3">
                   <Label>轮询间隔（秒）</Label>
                   <Input
                     type="number"
@@ -1142,9 +1213,9 @@ export default function SettingsPage() {
               </div>
 
               {/* Event Types */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <Label>处理的事件类型</Label>
-                <div className="flex flex-wrap gap-4 p-3 border rounded-md">
+                <div className="flex flex-wrap gap-5 p-3 border rounded-md">
                   <div className="flex items-center gap-2">
                     <Checkbox
                       id="evt-create"
@@ -1209,7 +1280,7 @@ export default function SettingsPage() {
               </div>
 
               {/* Min File Size */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <Label>最小文件大小（MB）</Label>
                 <Input
                   type="number"
@@ -1228,7 +1299,7 @@ export default function SettingsPage() {
               </div>
 
               {/* First Pull Mode */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <Label>首次拉取模式</Label>
                 <Select
                   value={firstPullMode}
@@ -1251,7 +1322,7 @@ export default function SettingsPage() {
               </div>
 
               {/* Move Media Mode */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <Label>移动事件处理模式</Label>
                 <Select
                   value={moveMediaMode}
@@ -1272,9 +1343,9 @@ export default function SettingsPage() {
               </div>
 
               {/* Path Mappings */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <Label>路径映射（115 网盘路径 → 本地保存路径）</Label>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {pathMappings.map((mapping, index) => (
                     <div key={index} className="flex gap-2 items-center">
                       <Select
@@ -1436,7 +1507,7 @@ export default function SettingsPage() {
               </div>
 
               {/* Verify Button */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex gap-2 items-center">
                   <Button
                     variant="outline"
@@ -1452,7 +1523,7 @@ export default function SettingsPage() {
                   )}
                 </div>
                 {verifyResult && verifyResult.perAccount.length > 0 && (
-                  <div className="rounded-md border p-3 space-y-2 text-sm">
+                  <div className="rounded-md border p-3 space-y-3 text-sm">
                     {verifyResult.perAccount.map(r => (
                       <div key={r.account} className="flex items-start gap-2">
                         <span className={r.success ? "text-green-500 mt-0.5" : "text-red-500 mt-0.5 shrink-0"}>
@@ -1477,9 +1548,9 @@ export default function SettingsPage() {
 
               {/* Monitor Status */}
               {displayMonitorStates.length > 0 && (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <Label>监控状态</Label>
-                  <div className="p-3 border rounded-md space-y-2">
+                  <div className="p-3 border rounded-md space-y-3">
                     {displayMonitorStates.map((state) => (
                       <div key={state.account} className="flex items-center justify-between">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1553,23 +1624,24 @@ export default function SettingsPage() {
       {/* Tab 3: 清理与安全 */}
       {activeTab === "security" && (
         <div className="space-y-6">
-          <section className="space-y-4">
-            <h2 className="text-base font-medium">STRM 清理</h2>
+          <section className="border rounded-md p-5 space-y-5">
+            <div>
+              <h2 className="text-base font-medium">STRM 清理</h2>
+              <p className="text-xs text-muted-foreground mt-1">扫描本地与网盘的一致性，清理失效 STRM</p>
+            </div>
             <StrmCleanupCard />
           </section>
 
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <UserCog className="h-5 w-5" />
-                <CardTitle>修改用户名和密码</CardTitle>
-              </div>
-              <CardDescription>
-                当前用户：<span className="font-medium text-foreground">{currentUsername}</span>
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-3 max-w-sm">
+          <section className="border rounded-md p-5 space-y-5">
+            <div className="flex items-center gap-2">
+              <UserCog className="h-5 w-5" />
+              <h2 className="text-base font-medium">修改用户名和密码</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              当前用户：<span className="font-medium text-foreground">{currentUsername}</span>
+            </p>
+            <div className="grid gap-4 max-w-sm">
+              <div className="space-y-3">
                 <Label htmlFor="currentPassword">当前密码</Label>
                 <Input
                   id="currentPassword"
@@ -1578,8 +1650,10 @@ export default function SettingsPage() {
                   onChange={(e) => setCurrentPwd(e.target.value)}
                   placeholder="输入当前密码"
                 />
+              </div>
+              <div className="space-y-3">
                 <Label htmlFor="newUsername">
-                  新用户名 <span className="text-muted-foreground font-normal">（如不修改请留空）</span>
+                  新用户名 <span className="text-muted-foreground font-normal text-xs">（如不修改请留空）</span>
                 </Label>
                 <Input
                   id="newUsername"
@@ -1587,8 +1661,10 @@ export default function SettingsPage() {
                   onChange={(e) => setNewUsername(e.target.value)}
                   placeholder="3-32 位，字母/数字/下划线"
                 />
+              </div>
+              <div className="space-y-3">
                 <Label htmlFor="newPassword">
-                  新密码 <span className="text-muted-foreground font-normal">（如不修改请留空）</span>
+                  新密码 <span className="text-muted-foreground font-normal text-xs">（如不修改请留空）</span>
                 </Label>
                 <Input
                   id="newPassword"
@@ -1597,6 +1673,8 @@ export default function SettingsPage() {
                   onChange={(e) => setNewPwd(e.target.value)}
                   placeholder="至少 6 位"
                 />
+              </div>
+              <div className="space-y-3">
                 <Label htmlFor="confirmPassword">确认新密码</Label>
                 <Input
                   id="confirmPassword"
@@ -1606,16 +1684,16 @@ export default function SettingsPage() {
                   placeholder="再次输入新密码"
                   disabled={!newPwd.trim()}
                 />
-                <Button
-                  disabled={savingCredentials}
-                  onClick={handleSaveCredentials}
-                  className="mt-2"
-                >
-                  {savingCredentials ? "保存中..." : "保存"}
-                </Button>
               </div>
-            </CardContent>
-          </Card>
+              <Button
+                disabled={savingCredentials}
+                onClick={handleSaveCredentials}
+                className="mt-2"
+              >
+                {savingCredentials ? "保存中..." : "保存"}
+              </Button>
+            </div>
+          </section>
         </div>
       )}
     </div>

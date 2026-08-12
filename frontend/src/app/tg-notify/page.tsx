@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -397,11 +396,13 @@ export default function TelegramNotifyPage() {
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       {/* 页面标题 */}
-      <div className="flex items-center space-x-2">
-        <Bot className="h-6 w-6" />
-        <h1 className="text-3xl font-bold">Telegram 通知</h1>
+      <div>
+        <h1 className="text-2xl font-semibold">Telegram 通知</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          配置 Telegram 机器人通知、轮询控制、用户授权及账户状态提醒
+        </p>
       </div>
 
       {/* Tab 切换 */}
@@ -454,17 +455,17 @@ export default function TelegramNotifyPage() {
       {/* Bot 配置 Tab 内容 */}
       {activeTab === "bot" && (
         <div className="space-y-6">
-          <div className="grid gap-6 md:grid-cols-2">
+          <div className="grid gap-5 md:grid-cols-2">
             {/* 机器人配置 */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
+            <section className="border rounded-md p-5 space-y-5">
+              <div>
+                <div className="flex items-center gap-2">
                   <Settings className="h-5 w-5" />
-                  <span>机器人配置</span>
-                </CardTitle>
-                <CardDescription>配置你的 Telegram 机器人</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
+                  <h2 className="text-base font-medium">机器人配置</h2>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">配置你的 Telegram 机器人</p>
+              </div>
+              <div className="space-y-3">
                 <div className="space-y-2">
                   <Label htmlFor="botToken">机器人 Token</Label>
                   <Input
@@ -544,19 +545,19 @@ export default function TelegramNotifyPage() {
                     </Button>
                   )}
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </section>
 
             {/* 机器人状态 */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
+            <section className="border rounded-md p-5 space-y-5">
+              <div>
+                <div className="flex items-center gap-2">
                   <Bot className="h-5 w-5" />
-                  <span>机器人状态</span>
-                </CardTitle>
-                <CardDescription>当前机器人信息和状态</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
+                  <h2 className="text-base font-medium">机器人状态</h2>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">当前机器人信息和状态</p>
+              </div>
+              <div className="space-y-3">
                 {botInfo ? (
                   <>
                     <div className="flex items-center space-x-2">
@@ -638,20 +639,20 @@ export default function TelegramNotifyPage() {
                     </p>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </section>
           </div>
 
           {/* 轮询控制 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
+          <section className="border rounded-md p-5 space-y-5">
+            <div>
+              <div className="flex items-center gap-2">
                 <RefreshCw className="h-5 w-5" />
-                <span>轮询控制</span>
-              </CardTitle>
-              <CardDescription>控制机器人接收消息的模式</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+                <h2 className="text-base font-medium">轮询控制</h2>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">控制机器人接收消息的模式</p>
+            </div>
+            <div className="space-y-3">
               {pollingStatus && (
                 <div className="flex items-center space-x-2">
                   <Badge variant={pollingStatus.polling ? "default" : "outline"}>
@@ -692,17 +693,17 @@ export default function TelegramNotifyPage() {
                 <p><strong>轮询模式：</strong>机器人每 5 秒检查新消息（降低频率以避免冲突）</p>
                 <p><strong>Webhook 模式：</strong>Telegram 直接向服务器发送消息</p>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
           {/* Webhook 信息：只有真的配置了 Webhook URL 才展示，轮询模式直接隐藏 */}
           {webhookInfo?.url && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Webhook 信息</CardTitle>
-                <CardDescription>当前 Webhook 配置和状态</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
+            <section className="border rounded-md p-5 space-y-5">
+              <div>
+                <h2 className="text-base font-medium">Webhook 信息</h2>
+                <p className="text-xs text-muted-foreground mt-1">当前 Webhook 配置和状态</p>
+              </div>
+              <div className="space-y-3">
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-sm font-medium">Webhook URL：</span>
@@ -721,29 +722,29 @@ export default function TelegramNotifyPage() {
                     </div>
                   )}
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </section>
           )}
 
           {/* 账户状态通知配置 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
+          <section className="border rounded-md p-5 space-y-5">
+            <div>
+              <div className="flex items-center gap-2">
                 <ShieldAlert className="h-5 w-5" />
-                <span>账户状态通知</span>
-                <Badge variant={accountAlerts.enabled ? "default" : "outline"} className="ml-2">
+                <h2 className="text-base font-medium">账户状态通知</h2>
+                <Badge variant={accountAlerts.enabled ? "default" : "outline"}>
                   {accountAlerts.enabled ? "已启用" : "未启用"}
                 </Badge>
-              </CardTitle>
-              <CardDescription>当账号状态异常或恢复时，自动发送 Telegram 通知</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">当账号状态异常或恢复时，自动发送 Telegram 通知</p>
+            </div>
+            <div className="space-y-3">
               {/* 启用开关 */}
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="alertsEnabled"
                   checked={accountAlerts.enabled}
-                  onCheckedChange={(checked) => 
+                  onCheckedChange={(checked) =>
                     setAccountAlerts({ ...accountAlerts, enabled: checked === true })
                   }
                 />
@@ -765,7 +766,7 @@ export default function TelegramNotifyPage() {
                     id="onError"
                     checked={accountAlerts.onError}
                     disabled={!accountAlerts.enabled}
-                    onCheckedChange={(checked) => 
+                    onCheckedChange={(checked) =>
                       setAccountAlerts({ ...accountAlerts, onError: checked === true })
                     }
                   />
@@ -786,7 +787,7 @@ export default function TelegramNotifyPage() {
                     id="onRecover"
                     checked={accountAlerts.onRecover}
                     disabled={!accountAlerts.enabled}
-                    onCheckedChange={(checked) => 
+                    onCheckedChange={(checked) =>
                       setAccountAlerts({ ...accountAlerts, onRecover: checked === true })
                     }
                   />
@@ -816,10 +817,10 @@ export default function TelegramNotifyPage() {
                   max={7}
                   disabled={!accountAlerts.enabled}
                   value={accountAlerts.expiryWarningDays}
-                  onChange={(e) => 
-                    setAccountAlerts({ 
-                      ...accountAlerts, 
-                      expiryWarningDays: parseInt(e.target.value) || 1 
+                  onChange={(e) =>
+                    setAccountAlerts({
+                      ...accountAlerts,
+                      expiryWarningDays: parseInt(e.target.value) || 1
                     })
                   }
                   className="max-w-[100px]"
@@ -845,15 +846,15 @@ export default function TelegramNotifyPage() {
 
               {/* 保存按钮 */}
               <div className="flex items-center gap-2">
-                <Button 
-                  onClick={saveAccountAlerts} 
+                <Button
+                  onClick={saveAccountAlerts}
                   disabled={alertsLoading}
                   size="sm"
                 >
                   {alertsLoading ? "保存中..." : "保存通知设置"}
                 </Button>
-                <Button 
-                  onClick={() => loadAccountAlerts()} 
+                <Button
+                  onClick={() => loadAccountAlerts()}
                   disabled={alertsLoading}
                   variant="outline"
                   size="sm"
@@ -867,66 +868,64 @@ export default function TelegramNotifyPage() {
                   </span>
                 )}
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </div>
       )}
 
       {/* 用户管理 Tab 内容 */}
       {activeTab === "users" && (
         <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="flex items-center space-x-2">
-                    <UserPlus className="h-5 w-5" />
-                    <span>授权用户</span>
-                  </CardTitle>
-                  <CardDescription>管理可访问机器人的用户</CardDescription>
+          <section className="border rounded-md p-5 space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <UserPlus className="h-5 w-5" />
+                  <h2 className="text-base font-medium">授权用户</h2>
                 </div>
-                <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button>
-                      <Plus className="h-4 w-4 mr-2" />
-                      添加用户
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>添加新用户</DialogTitle>
-                      <DialogDescription>
-                        将新用户添加到授权列表，该用户可以使用所有机器人命令。
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="userId">用户 ID</Label>
-                        <Input
-                          id="userId"
-                          type="number"
-                          placeholder="输入 Telegram 用户 ID"
-                          value={newUserId}
-                          onChange={(e) => setNewUserId(e.target.value)}
-                        />
-                        <p className="text-sm text-muted-foreground">
-                          向机器人发送消息并查看日志获取用户 ID
-                        </p>
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
-                        取消
-                      </Button>
-                      <Button onClick={handleAddUser} disabled={loading}>
-                        {loading ? "添加中..." : "添加"}
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
+                <p className="text-xs text-muted-foreground mt-1">管理可访问机器人的用户</p>
               </div>
-            </CardHeader>
-            <CardContent>
+              <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button>
+                    <Plus className="h-4 w-4 mr-2" />
+                    添加用户
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>添加新用户</DialogTitle>
+                    <DialogDescription>
+                      将新用户添加到授权列表，该用户可以使用所有机器人命令。
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="userId">用户 ID</Label>
+                      <Input
+                        id="userId"
+                        type="number"
+                        placeholder="输入 Telegram 用户 ID"
+                        value={newUserId}
+                        onChange={(e) => setNewUserId(e.target.value)}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        向机器人发送消息并查看日志获取用户 ID
+                      </p>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
+                      取消
+                    </Button>
+                    <Button onClick={handleAddUser} disabled={loading}>
+                      {loading ? "添加中..." : "添加"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+            <div className="space-y-3">
               {users.length === 0 ? (
                 <div className="text-center py-8">
                   <AlertCircle className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
@@ -973,8 +972,8 @@ export default function TelegramNotifyPage() {
                   </TableBody>
                 </Table>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
           {/* 删除确认对话框 */}
           <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

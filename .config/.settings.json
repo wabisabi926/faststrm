@@ -2,19 +2,73 @@
   "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/116.0.5845.89 Mobile/15E148 Safari/604.1",
   "internalToken": "",
   "emby": {
-    "url": "http://172.17.0.1:8096",
-    "apiKey": "YOUR_EMBY_API_KEY"
+    "url": "",
+    "apiKey": "",
+    "notifyMediaAdded": false,
+    "notifyMediaRemoved": false,
+    "notifyPlayback": false,
+    "playbackShowProgress": false,
+    "playbackShowOverview": false,
+    "webhookAuth": "",
+    "libraryId": "",
+    "syncDeleteEnabled": false,
+    "syncDeletePathMappings": [],
+    "syncDeleteNotify": false,
+    "syncDeleteDryRun": true
   },
   "telegram": {
-    "botToken": "YOUR_TELEGRAM_BOT_TOKEN",
-    "chatId": "YOUR_TELEGRAM_CHAT_ID",
-    "allowedUsers": []
+    "botToken": "",
+    "chatId": "",
+    "webhookUrl": "",
+    "enabled": true,
+    "allowedUsers": [],
+    "accountAlerts": {
+      "enabled": true,
+      "onError": true,
+      "onRecover": true,
+      "expiryWarningDays": 1
+    }
   },
-  "strmExtensions": [".mp4", ".mkv", ".avi", ".mov", ".rmvb", ".webm", ".flv", ".m3u8", ".mp3", ".flac", ".ogg", ".m4a", ".wav", ".opus", ".wma"],
-  "downloadExtensions": [".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"],
+  "strmExtensions": [
+    ".mkv", ".mp4", ".avi", ".iso", ".mov", ".rmvb",
+    ".webm", ".flv", ".m3u8", ".mp3", ".flac", ".ogg",
+    ".m4a", ".wav", ".opus", ".wma"
+  ],
+  "downloadExtensions": [
+    ".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"
+  ],
   "download": {
     "linkMaxPerSecond": 2,
     "linkMaxConcurrent": 2,
     "downloadMaxConcurrent": 5
-  }
+  },
+  "mediaMountPath": [],
+  "lifeMonitor": {
+    "enabled": true,
+    "accounts": [],
+    "pollInterval": 30,
+    "pathMappings": [],
+    "removeEmptyDirs": true,
+    "eventTypes": {
+      "create": true,
+      "remove": true,
+      "rename": true,
+      "move": true
+    },
+    "minFileSize": 0,
+    "firstPullMode": "last",
+    "moveMediaMode": "local_move"
+  },
+  "strmPrefix": "",
+  "enable302": true,
+  "enablePathEncoding": true,
+  "removeExtraFiles": true,
+  "forceProxyUaTokens": [
+    "Infuse",
+    "VidHub",
+    "SenPlayer",
+    "SenPlayerHD"
+  ],
+  "accountProxyConcurrencyLimit": 8,
+  "redirectCheckTimeoutMs": 5000
 }

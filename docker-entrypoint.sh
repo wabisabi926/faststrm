@@ -11,11 +11,39 @@ mkdir -p "$CONFIG_DIR"
 for file in .config.json .account.json .tasks.json .settings.json; do
   TARGET_FILE="$CONFIG_DIR/$(echo $file | sed 's/^\.//')"
   DEFAULT_FILE="$DEFAULT_DIR/$file"
-  
+
   if [ ! -f "$TARGET_FILE" ]; then
     if [ -f "$DEFAULT_FILE" ]; then
       echo "Creating $TARGET_FILE from default"
       cp "$DEFAULT_FILE" "$TARGET_FILE"
+      # 对 config.json：如果默认模板里 username=admin 且密码为空，则自动写入 admin/admin（SHA-256 + salt 哈希）
+      if [ "$file" = ".config.json" ]; then
+        node -e "
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const path = require('path');
+          const cfgFile = '$TARGET_FILE';
+          const saltFile = path.join(path.dirname(cfgFile), '.salt');
+          try {
+            const cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf-8'));
+            if (cfg.username === 'admin' && !cfg.password) {
+              let salt;
+              if (fs.existsSync(saltFile)) {
+                salt = fs.readFileSync(saltFile, 'utf-8').trim();
+              } else {
+                salt = crypto.randomBytes(32).toString('hex');
+                fs.writeFileSync(saltFile, salt, 'utf-8');
+              }
+              const hash = crypto.createHash('sha256').update(salt + 'admin').digest('hex');
+              cfg.password = '\$sha256\$' + hash;
+              fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2), 'utf-8');
+              console.log('Default admin password hashed (admin/admin) in config.json');
+            }
+          } catch (e) {
+            console.error('Failed to hash admin password:', e.message);
+          }
+        "
+      fi
     else
       echo "Warning: default file $DEFAULT_FILE not found, creating empty JSON"
       echo '{}' > "$TARGET_FILE"

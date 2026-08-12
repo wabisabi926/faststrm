@@ -28,11 +28,16 @@ STRM 生成是 Fast Strm 的核心功能：扫描 115 网盘目录树，为每�
 - `strmPrefix = http://服务器:3000/api/strm`
 - STRM 内容：`http://服务器:3000/api/strm?account=xxx&pickcode=xxx&file_name=xxx`
 - 播放时走 [路由策略](STRM-路由策略) 决策
+- 优点：可在路由层做 force-proxy、并发限流、可达性预检
+- **依赖 pickcode**：302 模式必须有 `pickcode` 才能生成有效 STRM
 
 **直链模式**（`enable302: false`）：
 - `strmPrefix = http://OpenList地址`
 - STRM 内容：`http://OpenList/d/115/电影/xxx.mkv`
 - 播放器直连 OpenList，faststrm 不参与
+- 优点：不依赖 faststrm 在线
+- 缺点：无路由策略、无 force-proxy
+- **不依赖 pickcode**：直接拼接路径生成
 
 ### 路径映射
 
@@ -86,7 +91,7 @@ http://192.168.1.100:3000/api/strm?account=我的115&pickcode=xxxx&file_name=小
 
 ---
 
-## 路径编码
+### 路径编码
 
 `enablePathEncoding: true` 时，URL 中的中文/特殊字符会被 `encodeURI`：
 
@@ -94,6 +99,47 @@ http://192.168.1.100:3000/api/strm?account=我的115&pickcode=xxxx&file_name=小
 - 开：`/%E7%94%B5%E5%BD%B1/%E5%B0%8F%E7%8E%8B%E5%AD%90.mkv`
 
 > 💡 Kodi 某些版本对非编码中文路径支持不好，建议开启。
+
+---
+
+## pickcode 获取机制
+
+302 模式下，`pickcode` 是 STRM 的核心凭证（115 文件唯一标识，17 位字母数字）。获取方式因生成途径而异：
+
+### 生活事件生成（推荐方式）
+
+115 生活事件 API 直接返回 `pick_code` 字段，100% 可靠：
+
+```
+115 → life event → pick_code → generateStrmContent → 写入 STRM
+                                                → upsertFilePathEntry（存 DB）
+```
+
+### 全量扫描生成
+
+全量扫描时 `exportDirParse` 只返回文件列表（不含 pickcode），需要从 `filePathDb` 反查：
+
+```
+全量扫描 → getFilePathEntryByPath(account, cloudPath)
+         → 命中：DB 已有记录 → 取 pickcode → 生成 STRM
+         → 未命中：跳过生成，输出警告日志
+```
+
+**首次全量扫描**时 DB 可能为空，`pickcode` 无法获取。建议流程：
+1. 先启用生活事件监控，让 115 回传事件填充 DB
+2. 或首次全量扫描作为初始化（部分文件可能没有 pickcode）
+3. 后续扫描可正常反查
+
+### 兜底保护
+
+当 `enable302=true` 但 `pickcode` 缺失时，系统有 4 层防御：
+
+1. `generateStrmContent` 返回空字符串 + `console.warn` 警告
+2. `enqueueForAccount.downloadOrCreateStrm` 检查空字符串，跳过写入
+3. `strmCleanup` 补生成时检查空字符串，跳过并记录错误
+4. `syncStrmText` 防御性检查，拒绝写入空内容
+
+日志示例：`[STRM] enable302=true 但 pickcode 缺失，跳过生成: cloudPath=电影/xxx.mkv, account=小号`
 
 ---
 

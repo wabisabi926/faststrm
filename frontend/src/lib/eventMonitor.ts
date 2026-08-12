@@ -117,6 +117,7 @@ const g = globalThis as unknown as {
   __lifeIdPathMemoryCache?: Map<string, string>;
   __embyDebounceTimers?: Map<string, NodeJS.Timeout>;
   __embyLastFireTime?: Map<string, number>;
+  __lifeMonitorsAutoStarted?: boolean;
 };
 
 if (!g.__lifeMonitorStates) {
@@ -154,6 +155,54 @@ const idPathMemoryCache = g.__lifeIdPathMemoryCache;
 function ensureConfigDir() {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+}
+
+/**
+ * 服务首次懒加载时自动启动监控（每进程一次）
+ * 触发条件（同时满足）：
+ *   1. 监控配置中 enabled = true
+ *   2. 监控账号列表 accounts 非空
+ *   3. 每个被监控账号的凭据存在（115：cookie 非空；openlist：url/account/password 非空）
+ *   真正的 CK 有效性在首次轮询时自动检测，失败会把 running 状态置为 error
+ */
+function tryAutoStartMonitorsOnce(): void {
+  if (g.__lifeMonitorsAutoStarted) return;
+  g.__lifeMonitorsAutoStarted = true;
+
+  try {
+    const config = getLifeMonitorConfig();
+    if (!config.enabled) {
+      console.log("[LifeMonitor] 自动启动：监控未启用，跳过");
+      return;
+    }
+    if (!config.accounts || config.accounts.length === 0) {
+      console.log("[LifeMonitor] 自动启动：监控账号列表为空，跳过");
+      return;
+    }
+
+    const accounts = readAccounts() as unknown as AccountInfo[];
+    const accountMap = new Map(accounts.map((a) => [a.name, a]));
+
+    for (const accName of config.accounts) {
+      const acc = accountMap.get(accName);
+      let hasCredentials = false;
+      if (acc) {
+        if (acc.accountType === "115") {
+          hasCredentials = !!acc.cookie && acc.cookie.length > 0;
+        } else if (acc.accountType === "openlist") {
+          hasCredentials = !!(acc.url && acc.account && acc.password);
+        }
+      }
+      if (hasCredentials) {
+        const r = startMonitor(accName);
+        console.log(`[LifeMonitor] 自动启动账号 ${accName}: ${r.success ? "成功" : "跳过 (" + (r.message || "") + ")"}`);
+      } else {
+        console.log(`[LifeMonitor] 自动启动账号 ${accName}: 跳过（凭据为空或账号不存在）`);
+      }
+    }
+  } catch (err) {
+    console.error("[LifeMonitor] 自动启动失败:", err);
   }
 }
 
@@ -376,12 +425,17 @@ function saveState(account: string, fromTime: number, fromId: number) {
 export function getLifeMonitorConfig(): LifeMonitorConfig {
   const settings = readSettings();
   const monitor = (settings as Record<string, unknown>).lifeMonitor as LifeMonitorConfig | undefined;
-  if (!monitor) return { ...DEFAULT_CONFIG };
-  return {
-    ...DEFAULT_CONFIG,
-    ...monitor,
-    eventTypes: { ...DEFAULT_CONFIG.eventTypes, ...(monitor.eventTypes || {}) },
-  };
+  const config = !monitor
+    ? { ...DEFAULT_CONFIG }
+    : {
+        ...DEFAULT_CONFIG,
+        ...monitor,
+        eventTypes: { ...DEFAULT_CONFIG.eventTypes, ...(monitor.eventTypes || {}) },
+      };
+  // 懒加载触发自动启动：首次有用户访问监控相关接口/页面时触发
+  // （保护标志在 tryAutoStartMonitorsOnce 内部，且在最顶部先设置，避免 re-entrancy）
+  tryAutoStartMonitorsOnce();
+  return config;
 }
 
 export function saveLifeMonitorConfig(config: LifeMonitorConfig): void {

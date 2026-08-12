@@ -31,6 +31,7 @@ STRM 生成是 Fast Strm 的核心功能：扫描 115 网盘目录树，为每�
 - STRM 内容：`http://服务器:3000/api/strm?account=xxx&pickcode=xxx&file_name=xxx`
 - 播放时 faststrm 接收请求 → 走[路由策略](功能详解-STRM路由策略)决策
 - 优点：可在路由层做 force-proxy、并发限流、可达性预检
+- **依赖 pickcode**：302 模式必须有 `pickcode` 才能生成有效 STRM
 
 **直链模式**（`enable302: false`）：
 - `strmPrefix = http://OpenList地址`
@@ -38,6 +39,7 @@ STRM 生成是 Fast Strm 的核心功能：扫描 115 网盘目录树，为每�
 - 播放时播放器直连 OpenList，faststrm 不参与
 - 优点：不依赖 faststrm 在线
 - 缺点：无路由策略、无 force-proxy
+- **不依赖 pickcode**：直接拼接路径生成
 
 ### 路径映射
 
@@ -88,6 +90,40 @@ Emby 媒体库刷新（防抖）
   ↓
 TG 通知
 ```
+
+## pickcode 获取机制
+
+302 模式下，`pickcode` 是 STRM 的核心凭证（115 文件唯一标识）。获取方式因生成途径而异：
+
+### 生活事件生成
+
+115 生活事件 API 直接返回 `pick_code` 字段，100% 可靠：
+
+```
+115 → life event → pick_code → generateStrmContent → 写入 STRM
+                                                → upsertFilePathEntry（存 DB）
+```
+
+### 全量扫描生成
+
+全量扫描时 `exportDirParse` 只返回文件列表（不含 pickcode），需要从 `filePathDb` 反查：
+
+```
+全量扫描 → getFilePathEntryByPath(account, cloudPath)
+         → 命中：DB 已有记录 → 取 pickcode → 生成 STRM
+         → 未命中：跳过生成，输出警告日志
+```
+
+**首次全量扫描**时 DB 可能为空，`pickcode` 无法获取。执行一次全量扫描后，后续扫描可正常反查。
+
+### 兜底保护
+
+当 `enable302=true` 但 `pickcode` 缺失时：
+
+1. `generateStrmContent` 返回空字符串 + `console.warn` 警告
+2. 调用方（`enqueueForAccount` / `strmCleanup`）跳过写入
+3. `syncStrmText` 防御性检查，拒绝写入空内容
+4. 日志中可看到：`[STRM] enable302=true 但 pickcode 缺失，跳过生成`
 
 ## STRM 文件格式
 

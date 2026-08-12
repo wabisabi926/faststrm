@@ -88,12 +88,6 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
 
   const watchAccountType = form.watch("accountType");
 
-  // 扫码登录成功回调：回填 Cookie
-  const handleQrcodeSuccess = React.useCallback((cookie: string) => {
-    form.setValue("cookie", cookie, { shouldValidate: true });
-    toast.success("扫码登录成功，Cookie 已自动填入");
-  }, [form]);
-
   const onSubmit = async (values: AccountFormValues) => {
     setLoading(true);
     try {
@@ -120,6 +114,25 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
       setLoading(false);
     }
   };
+
+  // 扫码登录成功回调：回填 Cookie 并自动提交表单
+  const handleQrcodeSuccess = React.useCallback((cookie: string) => {
+    form.setValue("cookie", cookie, { shouldValidate: true });
+    toast.success("扫码登录成功，正在保存...");
+
+    // 自动提交表单（延迟 500ms 让用户看到成功提示）
+    setTimeout(() => {
+      const values = form.getValues();
+      // 检查账户名称是否已填
+      if (!values.name) {
+        toast.error("请先填写账户名称");
+        return;
+      }
+      // 触发表单提交（内部会做校验）
+      form.handleSubmit(onSubmit)();
+    }, 500);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
 
   // 模拟可选账号类型
   const accountTypes = ["115", "openlist"];
