@@ -292,6 +292,11 @@ export function downloadOrCreateStrm(
           pickcode: opts?.pickcode,
           fileName: opts?.fileName,
         });
+        // P2-15: generateStrmContent 返回空字符串时跳过写入（enable302 模式但 pickcode 缺失）
+        if (!finalPath) {
+          observer.error(new Error(`STRM 生成失败: pickcode 缺失, 文件 ${displayPath}`));
+          return;
+        }
         fs.writeFileSync(strmPath, finalPath, "utf8");
         observer.next({ percent: 100, filePath: displayPath });
         observer.complete();

@@ -31,7 +31,7 @@ import {
 import { exportDirParse, fs_dir_getid } from "@/lib/115";
 import type { AccountInfo } from "@/lib/115";
 import { getFilePathEntryByPath, upsertFilePathEntryBatch } from "@/lib/filePathDb";
-import { buildFilePathEntriesFromTree } from "@/lib/strmCleanup";
+import { buildFilePathEntriesFromTree, resolveDataDir } from "@/lib/strmCleanup";
 import { sendTelegramNotification } from "@/lib/telegram";
 import { encryptAccounts } from "@/lib/passwordCrypto";
 import { TaskSchedule } from "@/lib/taskScheduler";
@@ -597,7 +597,9 @@ export async function executeTask(
       tree = buildTree(openlistTreeData) as TreeEntry[];
     }
 
-    const saveDir = path.resolve(process.cwd(), `../data/${targetPath}`);
+    // P0-D: targetPath 已是用户配置的绝对路径（如 /app/data/media/电影），
+    // 统一用 resolveDataDir/path.resolve 解析，避免再硬拼 ../data 前缀导致路径嵌套
+    const saveDir = resolveDataDir(targetPath);
     if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
 
     const remoteFiles: string[] = [];

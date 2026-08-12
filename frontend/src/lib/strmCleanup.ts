@@ -631,6 +631,14 @@ export function runExecute(req: ExecuteRequest): ExecuteResult {
                   fileName: path.basename(item.relPath),
                 }
               );
+              // P2-15: pickcode 缺失时跳过（enable302 模式下 generateStrmContent 返回空字符串）
+              if (!content) {
+                errors.push({
+                  path: item.relPath,
+                  error: `pickcode 缺失，无法生成 302 STRM`,
+                });
+                continue;
+              }
               if (!fs.existsSync(strmDir)) {
                 fs.mkdirSync(strmDir, { recursive: true });
               }

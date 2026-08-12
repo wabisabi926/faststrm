@@ -154,11 +154,14 @@ export function getFilePathEntry(account: string, fileId: FileId): FilePathEntry
   };
 }
 
-/** 按路径查找记录（用于 302 模式下从路径反查 pickcode） */
+/** 按路径查找记录（用于 302 模式下从路径反查 pickcode）
+ *  P2-14: 路径规范化 —— 统一去掉前导 / 再匹配，避免 life events 存 "电影/xxx" 和全量扫描传 "/电影/xxx" 对不上
+ */
 export function getFilePathEntryByPath(account: string, filePath: string): FilePathEntry | undefined {
+  const normalizedPath = filePath.replace(/^\/+/, "");
   const row = getDb().prepare(
     "SELECT file_id, path, file_name, parent_id, pickcode, update_time FROM files WHERE account = ? AND path = ?"
-  ).get(account, filePath) as
+  ).get(account, normalizedPath) as
     | { file_id: number; path: string; file_name: string; parent_id: number; pickcode: string; update_time: number }
     | undefined;
 

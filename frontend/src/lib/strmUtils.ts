@@ -80,7 +80,16 @@ export function generateStrmContent(
     return `${prefix}?${params.toString()}`;
   }
 
-  // 非 302 模式：旧版路径拼接
+  if (opts?.enable302 && !opts.pickcode) {
+    // P2-13: enable302=true 但 pickcode 缺失时，记录警告并返回空字符串
+    // 调用方应检查返回值，空字符串表示该文件无法生成有效的 302 STRM
+    console.warn(
+      `[STRM] enable302=true 但 pickcode 缺失，跳过生成: cloudPath=${cloudPath}, account=${opts?.account || "-"}`
+    );
+    return "";
+  }
+
+  // 非 302 模式：旧版路径拼接（直接访问 OpenList/直链）
   const normalized = cloudPath.startsWith("/") ? cloudPath : "/" + cloudPath;
   const content = `${prefix}${normalized}`;
   return enablePathEncoding ? encodeURI(content) : content;

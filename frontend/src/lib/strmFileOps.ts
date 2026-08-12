@@ -363,6 +363,12 @@ export function syncStrmText(
   const prefix = buildLogPrefix(opts?.tag, opts?.account);
   const createIfMissing = opts?.createIfMissing ?? true;
 
+  // P2-15: 空内容保护，防止写入空 STRM 文件
+  if (!expectedContent || expectedContent.trim() === "") {
+    console.warn(`${prefix} STRM 内容为空，跳过写入: ${strmPath}`);
+    return { ok: false, wrote: false, error: `STRM 内容为空: ${strmPath}` };
+  }
+
   // 文件不存在
   if (!fs.existsSync(strmPath)) {
     if (!createIfMissing) {
