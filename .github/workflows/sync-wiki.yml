@@ -15,6 +15,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
+      wiki: write
 
     steps:
     - name: Checkout repository
@@ -24,6 +25,13 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: 20
+
+    - name: Verify token has wiki scope
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        SCOPE=$(curl -sI -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/${{ github.repository }} | grep -i 'x-oauth-scopes' || true)
+        echo "Token scopes: $SCOPE"
 
     - name: Sync wiki_drafts to GitHub Wiki
       env:
