@@ -6,19 +6,27 @@
 
   **FastStrm — 让 115 网盘和你的播放器真正「同步」**
 
-  > 想象一下：你在 115 网盘存了一部电影，打开 Emby/Kodi 就能直接看；你在网盘删了，播放器里自动消失——FastStrm 就是实现这件事的工具。
-  >
-  > ✅ **网盘增删改，本地秒同步** — 网盘里新传的电影，播放器里立刻出现；删了的也自动消失，不用每次手动扫描
-  >
-  > ✅ **扫码登录，零配置** — 手机扫一扫就搞定，不用 F12 抓 Cookie，过期了再扫一下就好
-  >
-  > ✅ **看片不卡，零带宽消耗** — 直接走 115 原链接播放，不经过你的服务器中转，4K 秒开
-  >
-  > ✅ **Emby 深度联动** — 在 Emby 里删了片，网盘对应的本地文件自动清理，不占磁盘
-  >
-  > ✅ **异常主动通知** — Cookie 过期、账号异常，Telegram 第一时间推送，不用自己盯着看
-  >
-  > ✅ **Docker 一键启动** — 一行命令搞定，5 分钟内看完第一部电影
+</div>
+
+<div align="left">
+
+> 想象一下：你在 115 网盘存了一部电影，打开 Emby/Kodi 就能直接看；你在网盘删了，播放器里自动消失——FastStrm 就是实现这件事的工具。
+>
+> ✅ **网盘增删改，本地秒同步** — 网盘里新传的电影，播放器里立刻出现；删了的也自动消失，不用每次手动扫描
+>
+> ✅ **扫码登录，零配置** — 手机扫一扫就搞定，不用 F12 抓 Cookie，过期了再扫一下就好
+>
+> ✅ **看片不卡，零带宽消耗** — 直接走 115 原链接播放，不经过你的服务器中转，4K 秒开
+>
+> ✅ **Emby 深度联动** — 在 Emby 里删了片，网盘对应的本地文件自动清理，不占磁盘
+>
+> ✅ **异常主动通知** — Cookie 过期、账号异常，Telegram 第一时间推送，不用自己盯着看
+>
+> ✅ **Docker 一键启动** — 一行命令搞定，5 分钟内看完第一部电影
+
+</div>
+
+<div align="left">
 
   [![GitHub](https://img.shields.io/badge/GitHub-wabisabi926%2Ffaststrm-181717?logo=github&style=flat-square)](https://github.com/wabisabi926/faststrm)
   [![Version](https://img.shields.io/github/v/release/wabisabi926/faststrm?color=blue&label=Release&logo=semver&style=flat-square)](https://github.com/wabisabi926/faststrm/releases)
@@ -32,16 +40,14 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.8.3 已发布**
+> **🎉 v0.8.5 已发布**
 >
-> - ✅ **🐛 Emby 通知消息格式修复**：移除所有通知被二次包装的 `✅ Task Completed` 前缀和 `Time:` 后缀，入库/删除/播放通知直接呈现原始内容
-> - ✅ **🖼️ Emby 海报图片发送修复**：内网海报无法被 TG 服务器访问，改为下载到本地再 multipart 上传，失败自动降级纯文本
-> - ✅ **🔌 Webhook 路由兼容**：支持 Emby 默认的 form-data 格式，不再只能处理 JSON
-> - ✅ **⚙️ Webhook runtime 修复**：声明 `runtime = "nodejs"`，避免 Node 原生模块（fs/os）在 edge 运行时报错
-> - ✅ **🔧 userAgent 字段名修复**：`settings.userAgent` → `settings["user-agent"]`，匹配实际配置键名
-> - ✅ **🧹 Cookie 过期预警天数移除**：115 Cookie 不会自动过期（仅人为操作失效），预警功能无意义
-> - ✅ **🗑️ 删除同步通知链路统一**：syncDel.ts 残留的二次包装 Bug 修复，所有 Emby 通知统一走裸发链路
-> - ✅ **📚 Wiki 分类与排序优化**：使用 `_Sidebar.md` 自定义侧边栏，参考主流项目分类方式
+> - 🔒 **P0 安全修复**：修复 `/api/strmCleanup/*` 认证绕过漏洞（middleware 路径匹配从 `startsWith` 改为精确匹配）
+> - 🔒 **P0 JWT 密钥安全**：移除硬编码默认密钥，改为环境变量 → 持久化文件 → 自动生成随机密钥三级解析，生产环境拒绝默认密钥启动
+> - 🚀 **服务自启动**：定时任务调度器和 Telegram 轮询在服务启动时自动初始化，无需手动触发
+> - 🔧 **TG Bot 内部调用优化**：`/scan`、`/cleanup` 命令改为直接调用服务层，不再通过 HTTP 绕过 JWT 认证
+> - 🔧 **TG Webhook 安全**：支持 `secret_token` 验证
+> - 📦 **依赖升级**：Next.js 15.4.8 → 15.5.23，axios 等安全漏洞修复
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---
