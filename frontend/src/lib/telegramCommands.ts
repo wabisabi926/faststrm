@@ -1,6 +1,11 @@
 import { createTelegramBot } from "./telegram";
 import { readSettings, isTelegramUserAllowed, readAccounts } from "./serverUtils";
 import { getMonitorStatus } from "./eventMonitor";
+import {
+  runScan,
+  runReconcile,
+  getDefaultScanRequestsFromSettings,
+} from "./strmCleanup";
 
 export const BOT_COMMANDS = [
   { command: "status", description: "📊 系统状态" },
@@ -92,40 +97,38 @@ async function handleScan(bot: Bot, chatId: string) {
   });
 
   try {
-    const response = await fetch(`${BASE_URL}/api/strmCleanup/scan`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "reconcile", useSettingsDefaults: true }),
-    });
-
-    const result = await response.json();
-
-    if (response.ok) {
-      const scanned = result.mappingsScanned?.length || 0;
-      const created = result.createdCount || 0;
-      const deleted = result.deletedCount || 0;
-      const errors = result.errors || 0;
-
-      let text = `✅ <b>全量对账完成</b>\n\n`;
-      text += `• 扫描映射: ${scanned}\n`;
-      text += `• 生成 STRM: ${created}\n`;
-      text += `• 清理 STRM: ${deleted}\n`;
-      if (errors > 0) text += `• 错误: ${errors}\n`;
-      text += `\n⏰ ${new Date().toLocaleString()}`;
-
-      await bot.sendMessage({ chat_id: chatId, text, parse_mode: "HTML" });
-    } else {
+    const mappings = getDefaultScanRequestsFromSettings();
+    if (mappings.length === 0) {
       await bot.sendMessage({
         chat_id: chatId,
-        text: `❌ <b>全量对账失败</b>\n\n${result.message || result.error || "未知错误"}`,
+        text: `❌ <b>未找到扫描配置</b>\n\n请在 Web UI 的设置中先添加 115 生活事件监控的路径映射。`,
         parse_mode: "HTML",
       });
+      return;
     }
+
+    const result = await runReconcile(mappings);
+
+    const totalRemote = result.results.reduce((s, r) => s + r.cloudFileCount, 0);
+    const totalLocal = result.results.reduce((s, r) => s + r.localStrmCount, 0);
+    const totalStale = result.results.reduce((s, r) => s + r.staleStrms.length, 0);
+    const totalMissing = result.results.reduce((s, r) => s + r.missingStrms.length, 0);
+
+    let text = `✅ <b>全量对账完成</b>\n\n`;
+    text += `• 扫描映射: ${result.results.length}\n`;
+    text += `• 远程文件: ${totalRemote}\n`;
+    text += `• 本地 STRM: ${totalLocal}\n`;
+    text += `• 孤儿 STRM: ${totalStale}\n`;
+    text += `• 缺失 STRM: ${totalMissing}\n`;
+    text += `• 耗时: ${(result.totalDurationMs / 1000).toFixed(1)}s\n`;
+    text += `\n⏰ ${new Date().toLocaleString()}`;
+
+    await bot.sendMessage({ chat_id: chatId, text, parse_mode: "HTML" });
   } catch (error) {
-    console.error("Error calling reconcile API:", error);
+    console.error("Error during reconcile:", error);
     await bot.sendMessage({
       chat_id: chatId,
-      text: `❌ 全量对账请求失败: ${error instanceof Error ? error.message : String(error)}`,
+      text: `❌ 全量对账失败: ${error instanceof Error ? error.message : String(error)}`,
       parse_mode: "HTML",
     });
   }
@@ -139,41 +142,37 @@ async function handleCleanup(bot: Bot, chatId: string) {
   });
 
   try {
-    const response = await fetch(`${BASE_URL}/api/strmCleanup/scan`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "scan", useSettingsDefaults: true }),
-    });
-
-    const result = await response.json();
-
-    if (response.ok) {
-      const stale = result.staleCount || 0;
-      const missing = result.missingCount || 0;
-
-      let text = `📋 <b>孤儿扫描完成</b>\n\n`;
-      text += `• 孤儿 STRM: ${stale}\n`;
-      text += `• 缺失 STRM: ${missing}\n`;
-
-      if (stale > 0) {
-        text += `\n⚠️ 发现 ${stale} 个孤儿 STRM，请在 Web UI 确认后执行清理。`;
-      } else {
-        text += `\n✅ 没有发现孤儿 STRM。`;
-      }
-
-      await bot.sendMessage({ chat_id: chatId, text, parse_mode: "HTML" });
-    } else {
+    const mappings = getDefaultScanRequestsFromSettings();
+    if (mappings.length === 0) {
       await bot.sendMessage({
         chat_id: chatId,
-        text: `❌ <b>扫描失败</b>\n\n${result.message || result.error || "未知错误"}`,
+        text: `❌ <b>未找到扫描配置</b>\n\n请在 Web UI 的设置中先添加 115 生活事件监控的路径映射。`,
         parse_mode: "HTML",
       });
+      return;
     }
+
+    const result = await runScan(mappings);
+
+    const stale = result.totalStale;
+    const missing = result.totalMissing;
+
+    let text = `📋 <b>孤儿扫描完成</b>\n\n`;
+    text += `• 孤儿 STRM: ${stale}\n`;
+    text += `• 缺失 STRM: ${missing}\n`;
+
+    if (stale > 0) {
+      text += `\n⚠️ 发现 ${stale} 个孤儿 STRM，请在 Web UI 确认后执行清理。`;
+    } else {
+      text += `\n✅ 没有发现孤儿 STRM。`;
+    }
+
+    await bot.sendMessage({ chat_id: chatId, text, parse_mode: "HTML" });
   } catch (error) {
-    console.error("Error calling scan API:", error);
+    console.error("Error during scan:", error);
     await bot.sendMessage({
       chat_id: chatId,
-      text: `❌ 孤儿扫描请求失败: ${error instanceof Error ? error.message : String(error)}`,
+      text: `❌ 孤儿扫描失败: ${error instanceof Error ? error.message : String(error)}`,
       parse_mode: "HTML",
     });
   }

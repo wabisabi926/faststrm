@@ -13,6 +13,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Telegram not configured" }, { status: 400 });
     }
 
+    // Telegram secret_token 验证（如果配置了的话）
+    const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN || telegram.webhookSecretToken;
+    if (secretToken) {
+      const providedToken = request.headers.get("x-telegram-bot-api-secret-token");
+      if (!providedToken || providedToken !== secretToken) {
+        console.warn("[Telegram] Webhook secret_token 验证失败");
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
+
     const bot = createTelegramBot(telegram.botToken);
     const update: TelegramUpdate = await request.json();
 

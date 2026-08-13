@@ -1,7 +1,18 @@
 import { SignJWT, jwtVerify } from 'jose';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
-const secret = new TextEncoder().encode(JWT_SECRET);
+let _secret: Uint8Array | null = null;
+
+// 启动时注入密钥（由 layout.tsx 等服务端入口调用）
+export function setSecret(secret: Uint8Array): void {
+  _secret = secret;
+}
+
+function getSecret(): Uint8Array {
+  if (!_secret) {
+    throw new Error("JWT 密钥未初始化，请在服务端启动时调用 setSecret()");
+  }
+  return _secret;
+}
 
 export interface TokenPayload {
   username: string;
@@ -14,8 +25,8 @@ export async function generateToken(username: string): Promise<string> {
   const token = await new SignJWT({ username })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('24h') // 24小时过期
-    .sign(secret);
+    .setExpirationTime('24h')
+    .sign(getSecret());
   
   return token;
 }
@@ -23,9 +34,8 @@ export async function generateToken(username: string): Promise<string> {
 // 验证JWT token
 export async function verifyToken(token: string): Promise<TokenPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await jwtVerify(token, getSecret());
     
-    // 验证payload包含必要字段
     if (typeof payload.username !== 'string' || 
         typeof payload.iat !== 'number' || 
         typeof payload.exp !== 'number') {
@@ -48,5 +58,5 @@ export function extractTokenFromHeader(authHeader: string | null): string | null
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
   }
-  return authHeader.substring(7); // 移除 "Bearer " 前缀
+  return authHeader.substring(7);
 }

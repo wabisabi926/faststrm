@@ -17,7 +17,7 @@ export async function middleware(req: NextRequest) {
   }
 
   // STRM 302 跳转接口放行（播放器无 token）
-  if (pathname.startsWith("/api/strm")) {
+  if (pathname === "/api/strm") {
     return NextResponse.next();
   }
 

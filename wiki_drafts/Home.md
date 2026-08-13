@@ -20,11 +20,14 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.8.4 已发布**
+> **🎉 v0.8.5 已发布**
 >
-> - ✅ **🐛 Emby 详情 API 404 修复**：根因是 `/emby/Items/{itemId}` 路径返回「找不到文件」，导致只能收到简版通知；对齐 qmediasync 改用 `/emby/Users/{userId}/Items/{itemId}` 路径
-> - ✅ **✨ Emby userId 缓存**：新增 `getEmbyUserId()` 函数，10 分钟 TTL 内存缓存，避免每次通知都查询用户列表
-> - ✅ **✅ 富媒体通知修复**：修复后入库通知可正常获取评分、类型、主演、简介、海报并带图发送到 Telegram
+> - 🔒 **P0 安全修复**：修复 `/api/strmCleanup/*` 认证绕过漏洞（middleware 路径匹配从 `startsWith` 改为精确匹配）
+> - 🔒 **P0 JWT 密钥安全**：移除硬编码默认密钥，改为环境变量 → 持久化文件 → 自动生成随机密钥三级解析，生产环境拒绝默认密钥启动
+> - 🚀 **服务自启动**：定时任务调度器和 Telegram 轮询在服务启动时自动初始化，无需手动触发
+> - 🔧 **TG Bot 内部调用优化**：`/scan`、`/cleanup` 命令改为直接调用服务层，不再通过 HTTP 绕过 JWT 认证
+> - 🔧 **TG Webhook 安全**：支持 `secret_token` 验证
+> - 📦 **依赖升级**：Next.js 15.4.8 → 15.5.23，axios 等安全漏洞修复
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---
