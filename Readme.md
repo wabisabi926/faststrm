@@ -87,13 +87,13 @@ docker run -d \
 
 ---
 
-## 📝 最新版本 (v0.8.5)
+## 📝 最新版本 (v0.8.6)
 
-- **� P0 安全修复**：修复 `/api/strmCleanup/*` 认证绕过漏洞，middleware 路径匹配从 `startsWith("/api/strm")` 改为精确匹配 `=== "/api/strm"`
-- **🔒 JWT 密钥安全**：移除硬编码默认密钥，改为三级解析（环境变量 → 持久化文件 → 自动生成随机密钥），生产环境拒绝默认密钥启动
-- **🚀 服务自启动**：定时任务调度器和 Telegram 轮询在服务启动时自动初始化（layout.tsx），重启后无需手动触发
-- **🔧 TG Bot 优化**：`/scan`、`/cleanup` 命令改为直接调用服务层 `runReconcile()`/`runScan()`，不再通过 HTTP 绕过认证；Webhook 支持 `secret_token` 验证
-- **📦 依赖升级**：Next.js 15.4.8 → 15.5.23，axios 等安全漏洞修复
+- **🔧 Telegram 轮询自启动**：新增 `autoPolling` 配置项，服务启动时自动启动轮询，支持运行时自愈（防止崩溃/HMR 导致轮询挂起）
+- **🎨 移动端 UI 优化**：表格横向溢出修复、Dialog 宽度适配、网格响应式、页面居中对齐统一
+- **� 统一日志系统**：新增 `logger.ts` 日志基础设施，迁移 ~80 处 console 调用，高频日志降噪
+- **🏗️ 代码架构优化**：大文件拆分（eventMonitor/strmCleanup/notifier），新增健康检查端点 `/api/health`
+- **� TG 通知 UI 增强**：新增「启动时自动轮询」复选框，修复保存后状态丢失问题
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 

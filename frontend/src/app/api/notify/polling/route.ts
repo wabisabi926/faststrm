@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createTelegramBot } from "@/lib/telegram";
 import { readSettings } from "@/lib/serverUtils";
 import { stopPolling, getPollingStatus, forceCleanup, safeStartPolling } from "@/lib/telegramPolling";
+import { logger } from "@/lib/logger";
 
 // 启动轮询
 export async function POST() {
@@ -13,7 +14,7 @@ export async function POST() {
     
     // 检查 Telegram 配置是否完整
     if (!telegram || !telegram.botToken) {
-      console.log("Telegram not configured (missing botToken), cannot start polling");
+      logger.info("Telegram not configured (missing botToken), cannot start polling");
       return NextResponse.json({ error: "Telegram 未配置" }, { status: 400 });
     }
 
@@ -23,9 +24,9 @@ export async function POST() {
     // 删除现有的 webhook（如果存在）
     try {
       await bot.deleteWebhook();
-      console.log("Deleted existing webhook for polling mode");
+      logger.info("Deleted existing webhook for polling mode");
     } catch (error) {
-      console.log("No webhook to delete or error deleting webhook:", error);
+      logger.info("No webhook to delete or error deleting webhook:", error);
     }
 
     // 使用安全启动轮询
@@ -36,7 +37,7 @@ export async function POST() {
       message: "轮询已启动" 
     });
   } catch (error) {
-    console.error("Telegram polling start error:", error);
+    logger.error("Telegram polling start error:", error);
     return NextResponse.json({ 
       error: "启动轮询失败", 
       details: error instanceof Error ? error.message : String(error) 
@@ -53,7 +54,7 @@ export async function DELETE() {
     
     // 检查 Telegram 配置是否完整
     if (!telegram || !telegram.botToken) {
-      console.log("Telegram not configured (missing botToken), cannot stop polling");
+      logger.info("Telegram not configured (missing botToken), cannot stop polling");
       return NextResponse.json({ error: "Telegram 未配置" }, { status: 400 });
     }
 
@@ -64,7 +65,7 @@ export async function DELETE() {
     if (telegram.webhookUrl) {
       const bot = createTelegramBot(telegram.botToken);
       await bot.setWebhook(telegram.webhookUrl);
-      console.log("Stopped polling, webhook enabled");
+      logger.info("Stopped polling, webhook enabled");
     }
 
     return NextResponse.json({ 
@@ -72,7 +73,7 @@ export async function DELETE() {
       message: "轮询已停止" 
     });
   } catch (error) {
-    console.error("Telegram polling stop error:", error);
+    logger.error("Telegram polling stop error:", error);
     return NextResponse.json({ 
       error: "停止轮询失败", 
       details: error instanceof Error ? error.message : String(error) 
@@ -89,7 +90,7 @@ export async function GET() {
     
     // 检查 Telegram 配置是否完整
     if (!telegram || !telegram.botToken) {
-      console.log("Telegram not configured (missing botToken), cannot get polling status");
+      logger.info("Telegram not configured (missing botToken), cannot get polling status");
       return NextResponse.json({ error: "Telegram 未配置" }, { status: 400 });
     }
 
@@ -106,7 +107,7 @@ export async function GET() {
       message: pollingStatus.message
     });
   } catch (error) {
-    console.error("Telegram polling status error:", error);
+    logger.error("Telegram polling status error:", error);
     return NextResponse.json({ 
       error: "获取轮询状态失败", 
       details: error instanceof Error ? error.message : String(error) 
@@ -130,7 +131,7 @@ export async function PUT() {
       }, { status: 500 });
     }
   } catch (error) {
-    console.error("Telegram force cleanup error:", error);
+    logger.error("Telegram force cleanup error:", error);
     return NextResponse.json({ 
       error: "强制清理失败", 
       details: error instanceof Error ? error.message : String(error) 

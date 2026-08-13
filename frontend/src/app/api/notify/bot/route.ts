@@ -35,6 +35,7 @@ export async function GET() {
       configured: true,
       chatId: telegram.chatId || '',
       enabled: telegram.enabled ?? true,
+      autoPolling: telegram.autoPolling !== false,
       botToken: maskToken(telegram.botToken || ''),
       webhookUrl: telegram.webhookUrl || '',
     };
@@ -77,7 +78,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { botToken, chatId, webhookUrl, enabled } = body;
+    const { botToken, chatId, webhookUrl, enabled, autoPolling } = body;
 
     if (!botToken) {
       return NextResponse.json({ error: "Bot token is required" }, { status: 400 });
@@ -136,6 +137,7 @@ export async function POST(request: NextRequest) {
       chatId: chatId || settings.telegram?.chatId,
       webhookUrl: webhookUrl || settings.telegram?.webhookUrl,
       enabled: enabled !== undefined ? enabled : (settings.telegram?.enabled ?? true),
+      autoPolling: autoPolling !== undefined ? autoPolling : (settings.telegram?.autoPolling ?? true),
       accountAlerts: settings.telegram?.accountAlerts,  // 保留账户状态通知配置
     };
 

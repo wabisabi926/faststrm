@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import axios from "axios";
+import { logger } from "./logger";
 
 const CACHE_DIR = path.resolve(process.cwd(), "../cache");
 if (!fs.existsSync(CACHE_DIR)) {
@@ -30,7 +31,7 @@ export async function getData({id, account, originPath}: {id: string, account: s
 
   // 命中缓存
   if (latestCache && now - latestCache.timestamp < TWO_HOURS) {
-    console.log("✅ 使用缓存:", latestCache.file);
+    logger.debug("使用缓存:", latestCache.file);
     const content = fs.readFileSync(
       path.join(CACHE_DIR, latestCache.file),
       "utf-8"
@@ -39,7 +40,7 @@ export async function getData({id, account, originPath}: {id: string, account: s
   }
 
   // 拉取新数据
-  console.log("⏬ 拉取新数据");
+  logger.debug("拉取新数据");
   const response = await axios.get(
     `http://localhost:5005/getSrcTreeList?account=${account}&path=${originPath}`
   );

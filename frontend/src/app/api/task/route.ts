@@ -11,6 +11,7 @@ import {
   computeNextRun,
   TaskSchedule,
 } from "@/lib/taskScheduler";
+import { logger } from "@/lib/logger";
 
 type TaskRow = {
   id: string;
@@ -103,11 +104,11 @@ export async function DELETE(req: NextRequest) {
         const stat = fs.statSync(localPath);
         if (stat.isDirectory()) {
           fs.rmSync(localPath, { recursive: true, force: true });
-          console.log(`[TaskDelete] 已清理 STRM 目录: ${localPath}`);
+          logger.info(`[TaskDelete] 已清理 STRM 目录: ${localPath}`);
         }
       }
     } catch (err) {
-      console.error("[TaskDelete] 清理 STRM 目录失败:", err);
+      logger.error("[TaskDelete] 清理 STRM 目录失败:", err);
     }
   }
 

@@ -327,7 +327,7 @@ export default function Home() {
                   <FolderX className="w-4 h-4" />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
+              <DialogContent className="max-w-[95vw] sm:max-w-[425px]">
                 <DialogHeader>
                   <DialogTitle>确认清空目录</DialogTitle>
                   <DialogDescription>
@@ -548,7 +548,7 @@ export default function Home() {
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
+              <DialogContent className="max-w-[95vw] sm:max-w-[425px]">
                 <DialogHeader>
                   <DialogTitle>确认删除</DialogTitle>
                   <DialogDescription>
@@ -615,8 +615,8 @@ export default function Home() {
   }
 
   return (
-    <div className="w-full h-full p-6">
-      <div className="flex justify-between items-center mb-6">
+    <div className="mx-auto max-w-7xl space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">任务管理</h1>
           <p className="text-gray-600 mt-1">管理和监控你的下载任务</p>

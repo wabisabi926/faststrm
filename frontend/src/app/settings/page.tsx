@@ -739,7 +739,7 @@ export default function SettingsPage() {
       {activeTab === "basic" && (
         <div className="space-y-6">
           {/* 基础设置 */}
-          <section className="border rounded-md p-5 space-y-5">
+          <section className="border rounded-md p-4 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">基础设置</h2>
               <p className="text-xs text-muted-foreground mt-1">全局 User-Agent 与文件扩展名配置</p>
@@ -784,7 +784,7 @@ export default function SettingsPage() {
           </section>
 
           {/* STRM 生成设置 */}
-          <section className="border rounded-md p-5 space-y-5">
+          <section className="border rounded-md p-4 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">STRM 生成设置（全局默认）</h2>
               <p className="text-xs text-muted-foreground mt-1">
@@ -904,7 +904,7 @@ export default function SettingsPage() {
           </section>
 
           {/* 下载限流配置 */}
-          <section className="border rounded-md p-5 space-y-5">
+          <section className="border rounded-md p-4 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">下载限流配置</h2>
               <p className="text-xs text-muted-foreground mt-1">控制 115 API 与下载的并发上限</p>
@@ -1153,8 +1153,8 @@ export default function SettingsPage() {
       {/* Tab 2: 生活事件 */}
       {activeTab === "monitor" && (
         <div className="space-y-6">
-          <section className="border rounded-md p-5 space-y-5">
-            <div className="flex items-center justify-between">
+          <section className="border rounded-md p-4 sm:p-5 space-y-5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <h2 className="text-base font-medium">115 生活事件监控</h2>
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -1624,7 +1624,7 @@ export default function SettingsPage() {
       {/* Tab 3: 清理与安全 */}
       {activeTab === "security" && (
         <div className="space-y-6">
-          <section className="border rounded-md p-5 space-y-5">
+          <section className="border rounded-md p-4 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">STRM 清理</h2>
               <p className="text-xs text-muted-foreground mt-1">扫描本地与网盘的一致性，清理失效 STRM</p>
@@ -1632,7 +1632,7 @@ export default function SettingsPage() {
             <StrmCleanupCard />
           </section>
 
-          <section className="border rounded-md p-5 space-y-5">
+          <section className="border rounded-md p-4 sm:p-5 space-y-5">
             <div className="flex items-center gap-2">
               <UserCog className="h-5 w-5" />
               <h2 className="text-base font-medium">修改用户名和密码</h2>

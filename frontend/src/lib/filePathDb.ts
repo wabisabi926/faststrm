@@ -11,6 +11,7 @@ import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { logger } from "./logger";
 
 // ==================== 类型定义 ====================
 
@@ -145,9 +146,9 @@ function migrateFromJsonIfNeeded(database: DatabaseType): void {
     if (!fs.existsSync(backupPath)) {
       fs.copyFileSync(OLD_JSON_FILE, backupPath);
     }
-    console.log(`[filePathDb] 从 JSON 迁移了 ${entries.length} 条记录到 SQLite`);
+    logger.info(`从 JSON 迁移了 ${entries.length} 条记录到 SQLite`);
   } catch (e) {
-    console.error("[filePathDb] JSON 迁移失败:", e);
+    logger.error("JSON 迁移失败", undefined, { error: String(e) });
   }
 }
 
@@ -303,32 +304,25 @@ export function removeGhostRecords(
 
   if (seenFileIds.size === 0) {
     if (warnOnBlock) {
-      console.warn(`[filePathDb] 警告: seenFileIds 为空，疑似 API 返回异常，跳过 DB 清理以避免全表删除 (account=${account}, prefix=${pathPrefix})`);
+      logger.warn("seenFileIds 为空，疑似 API 返回异常，跳过 DB 清理以避免全表删除", { account, pathPrefix });
     }
     return 0;
   }
 
   const db = getDb();
-  // P1修复：使用 normalizeDbPath 规范化前缀，确保查询与写入一致
   const normalizedPrefix = normalizeDbPath(pathPrefix);
   const prefix = normalizedPrefix.endsWith("/") ? normalizedPrefix : normalizedPrefix + "/";
 
-  // 查出该前缀下所有 file_id（字符串形式以匹配 Set 比较时归一化）
   const rows = db.prepare(
     "SELECT file_id FROM files WHERE account = ? AND (path = ? OR path LIKE ?)"
   ).all(account, prefix.replace(/\/+$/, ""), `${prefix}%`) as { file_id: number }[];
 
-  // 统一 String() 归一化以避免 JS Number 精度丢失导致比较失败
   const seenStringSet = new Set(Array.from(seenFileIds).map((id) => String(id)));
   const allIds = new Set(rows.map((r) => String(r.file_id)));
   const totalCount = allIds.size;
 
   if (totalCount === 0) return 0;
 
-  // 差集：DB 有但扫描没看到的
-  // P0修复：保护正数ID（来自生活事件的真实file_id），永不被幽灵清理删除
-  // 原因：占位符用负数ID（-1,-2,...），生活事件用真实正数ID（19位），主键不同导致共存。
-  // 正数ID是文件存在的真实凭据，绝不能因全量扫描而删除。
   const candidatesNotSeen: string[] = [];
   for (const id of allIds) {
     if (!seenStringSet.has(id)) {
@@ -338,45 +332,29 @@ export function removeGhostRecords(
   const ghostIds = candidatesNotSeen.filter((id) => Number(id) < 0);
   const positiveGhostCount = candidatesNotSeen.length - ghostIds.length;
   if (positiveGhostCount > 0) {
-    console.info(
-      `[filePathDb] 跳过 ${positiveGhostCount} 条正数ID（生活事件真实file_id）的幽灵清理 (account=${account}, prefix=${pathPrefix})`
-    );
+    logger.info(`跳过 ${positiveGhostCount} 条正数ID的幽灵清理`, { account, pathPrefix });
   }
 
   const ghostCount = ghostIds.length;
   if (ghostCount === 0) {
-    if (positiveGhostCount > 0) {
-      console.info(
-        `[filePathDb] 幽灵记录 ${positiveGhostCount} 条均为正数ID，无负数占位符可清理 (account=${account}, prefix=${pathPrefix})`
-      );
-    }
     return 0;
   }
 
-  // 绝对数量阈值检查
   if (ghostCount > maxAbsoluteCount) {
     if (warnOnBlock) {
-      console.warn(
-        `[filePathDb] 警告: 幽灵记录数(${ghostCount})超过绝对阈值(${maxAbsoluteCount})，` +
-        `拒绝删除以避免误删 (account=${account}, prefix=${pathPrefix}, total=${totalCount})`
-      );
+      logger.warn(`幽灵记录数(${ghostCount})超过绝对阈值(${maxAbsoluteCount})，拒绝删除`, { account, pathPrefix, total: totalCount });
     }
     return 0;
   }
 
-  // 比例阈值检查
   const ratio = ghostCount / totalCount;
   if (ratio > maxRatio) {
     if (warnOnBlock) {
-      console.warn(
-        `[filePathDb] 警告: 幽灵记录比例(${(ratio * 100).toFixed(1)}%)超过阈值(${maxRatio * 100}%)，` +
-        `拒绝删除以避免误删 (account=${account}, prefix=${pathPrefix}, ghost=${ghostCount}, total=${totalCount})`
-      );
+      logger.warn(`幽灵记录比例(${(ratio * 100).toFixed(1)}%)超过阈值(${maxRatio * 100}%)，拒绝删除`, { account, pathPrefix, ghost: ghostCount, total: totalCount });
     }
     return 0;
   }
 
-  // 分块删除
   const deleteStmt = db.prepare("DELETE FROM files WHERE account = ? AND file_id = ?");
   const deleteBatch = db.transaction((ids: string[]) => {
     for (const id of ids) {
@@ -391,6 +369,9 @@ export function removeGhostRecords(
     deleted += chunk.length;
   }
 
+  if (deleted > 0) {
+    logger.info(`清理幽灵记录完成`, { account, pathPrefix, deleted, total: totalCount });
+  }
   return deleted;
 }
 
@@ -461,6 +442,7 @@ export function getEntryCount(account?: string): number {
 
 /**
  * 批量 upsert（用于全量扫描后批量写入）
+ * 性能优化：单次事务内处理所有记录，减少 fsync 开销
  */
 export function upsertFilePathEntryBatch(account: string, entries: FilePathEntry[]): void {
   if (entries.length === 0) return;
@@ -491,10 +473,43 @@ export function upsertFilePathEntryBatch(account: string, entries: FilePathEntry
   });
 
   // 分块处理，避免单次事务过大
-  for (let i = 0; i < entries.length; i += SQLITE_CHUNK_SIZE) {
-    const chunk = entries.slice(i, i + SQLITE_CHUNK_SIZE);
+  const chunks = Math.ceil(entries.length / SQLITE_CHUNK_SIZE);
+  const t0 = performance.now();
+  for (let i = 0; i < chunks; i++) {
+    const chunk = entries.slice(i * SQLITE_CHUNK_SIZE, (i + 1) * SQLITE_CHUNK_SIZE);
     batch(chunk);
   }
+  const durationMs = Math.round(performance.now() - t0);
+  if (durationMs > 500) {
+    logger.info(`批量 upsert ${entries.length} 条记录耗时 ${durationMs}ms`, { account });
+  }
+}
+
+/**
+ * 批量删除（用于清理多个 file_id）
+ */
+export function removeFilePathEntryBatch(account: string, fileIds: FileId[]): number {
+  if (fileIds.length === 0) return 0;
+  const db = getDb();
+  const ids = fileIds.map((id) => String(id));
+
+  const deleteStmt = db.prepare("DELETE FROM files WHERE account = ? AND file_id = ?");
+  let deleted = 0;
+
+  // 分块删除
+  const chunks = Math.ceil(ids.length / SQLITE_CHUNK_SIZE);
+  for (let i = 0; i < chunks; i++) {
+    const chunk = ids.slice(i * SQLITE_CHUNK_SIZE, (i + 1) * SQLITE_CHUNK_SIZE);
+    const batch = db.transaction((chunkIds: string[]) => {
+      for (const id of chunkIds) {
+        const result = deleteStmt.run(account, id);
+        deleted += result.changes;
+      }
+    });
+    batch(chunk);
+  }
+
+  return deleted;
 }
 
 /**

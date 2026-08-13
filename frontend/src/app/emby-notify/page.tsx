@@ -290,7 +290,7 @@ export default function EmbyNotifyPage() {
       )}
 
       {/* Emby 连接配置 */}
-      <section className="border rounded-md p-5 space-y-5">
+      <section className="border rounded-md p-4 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Server className="h-5 w-5" />
           <h2 className="text-base font-medium">Emby 连接配置</h2>
@@ -337,7 +337,7 @@ export default function EmbyNotifyPage() {
       </section>
 
       {/* 通知设置 */}
-      <section className="border rounded-md p-5 space-y-5">
+      <section className="border rounded-md p-4 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Bell className="h-5 w-5" />
           <h2 className="text-base font-medium">通知设置</h2>
@@ -431,7 +431,7 @@ export default function EmbyNotifyPage() {
       </section>
 
       {/* Webhook 配置指引 */}
-      <section className="border rounded-md p-5 space-y-5">
+      <section className="border rounded-md p-4 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Play className="h-5 w-5" />
           <h2 className="text-base font-medium">Webhook 配置指引</h2>
@@ -507,7 +507,7 @@ export default function EmbyNotifyPage() {
       </section>
 
       {/* 删除同步设置 */}
-      <section className="border rounded-md p-5 space-y-5">
+      <section className="border rounded-md p-4 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <XCircle className="h-5 w-5" />
           <h2 className="text-base font-medium">删除同步</h2>
@@ -584,7 +584,7 @@ export default function EmbyNotifyPage() {
           <div className="space-y-2">
             <Label>路径映射（Emby 路径 → 115 网盘路径）</Label>
             {(settings.syncDeletePathMappings || []).map((mapping, index) => (
-              <div key={index} className="flex gap-2 items-center">
+              <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="flex-1 flex gap-1 items-center">
                   <Input
                     className="flex-1"
@@ -603,7 +603,8 @@ export default function EmbyNotifyPage() {
                     <FolderOpen className="h-4 w-4" />
                   </Button>
                 </div>
-                <span className="text-muted-foreground">→</span>
+                <span className="text-muted-foreground hidden sm:inline">→</span>
+                <span className="text-muted-foreground sm:hidden">↓</span>
                 <div className="flex-1 flex gap-1 items-center">
                   <Input
                     className="flex-1"
@@ -658,7 +659,7 @@ export default function EmbyNotifyPage() {
                 </Button>
               </div>
             ))}
-            <div className="flex gap-2 items-center">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="flex-1 flex gap-1 items-center">
                 <Input
                   className="flex-1"
@@ -677,7 +678,8 @@ export default function EmbyNotifyPage() {
                   <FolderOpen className="h-4 w-4" />
                 </Button>
               </div>
-              <span className="text-muted-foreground">→</span>
+              <span className="text-muted-foreground hidden sm:inline">→</span>
+              <span className="text-muted-foreground sm:hidden">↓</span>
               <div className="flex-1 flex gap-1 items-center">
                 <Input
                   className="flex-1"

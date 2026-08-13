@@ -14,6 +14,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { logger } from "@/lib/logger";
 
 // ==================== 内部工具 ====================
 
@@ -105,7 +106,7 @@ export function removeEmptyParents(
 
       fs.rmdirSync(currentDir);
       removed.push(currentDir);
-      console.log(`${prefix} 清理空目录: ${currentDir}`);
+      logger.info(`${prefix} 清理空目录: ${currentDir}`);
       currentDir = path.dirname(currentDir);
     } catch {
       break; // 读取/删除失败 → 停止
@@ -135,10 +136,10 @@ export function deleteStrmFile(
     if (fs.existsSync(strmPath)) {
       fs.unlinkSync(strmPath);
       deleted = true;
-      console.log(`${prefix} 删除 STRM: ${strmPath}`);
+      logger.info(`${prefix} 删除 STRM: ${strmPath}`);
     }
   } catch (e) {
-    console.error(`${prefix} 删除 STRM 失败 ${strmPath}: ${e instanceof Error ? e.message : String(e)}`);
+    logger.error(`${prefix} 删除 STRM 失败 ${strmPath}: ${e instanceof Error ? e.message : String(e)}`);
     return { deleted: false, removedDirs, relatedDeleted };
   }
 
@@ -177,7 +178,7 @@ export function deleteStrmDir(
     }
 
     fs.rmSync(dirPath, { recursive: true, force: true });
-    console.log(`${prefix} 删除目录: ${dirPath}`);
+    logger.info(`${prefix} 删除目录: ${dirPath}`);
 
     // P2-12: 删除后清理空父目录（如果提供了 rootDirs）
     if (opts?.rootDirs && opts.rootDirs.size > 0) {
@@ -188,17 +189,17 @@ export function deleteStrmDir(
           account: opts.account,
         });
         if (removed.length > 0) {
-          console.log(`${prefix} deleteStrmDir 清理空父目录: ${removed.join(", ")}`);
+          logger.info(`${prefix} deleteStrmDir 清理空父目录: ${removed.join(", ")}`);
         }
       } catch (e) {
-        console.warn(`${prefix} deleteStrmDir 清理空父目录失败: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn(`${prefix} deleteStrmDir 清理空父目录失败: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
     return { deleted: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`${prefix} 删除目录失败 ${dirPath}: ${msg}`);
+    logger.error(`${prefix} 删除目录失败 ${dirPath}: ${msg}`);
 
     // 尝试逐个清理
     try {
@@ -213,7 +214,7 @@ export function deleteStrmDir(
         }
       }
       fs.rmdirSync(dirPath);
-      console.log(`${prefix} 逐个清理后删除目录: ${dirPath}`);
+      logger.info(`${prefix} 逐个清理后删除目录: ${dirPath}`);
       return { deleted: true };
     } catch (e2) {
       return { deleted: false, error: e2 instanceof Error ? e2.message : String(e2) };
@@ -244,7 +245,7 @@ export function findStrmRecursive(dir: string, targetStrmName: string): string[]
       }
     }
   } catch (e) {
-    console.warn(
+    logger.warn(
       `${buildLogPrefix()} findStrmRecursive 跳过 ${dir}: ${e instanceof Error ? e.message : String(e)}`
     );
   }
@@ -278,7 +279,7 @@ export function findDirRecursive(dir: string, targetDirName: string): string[] {
       }
     }
   } catch (e) {
-    console.warn(
+    logger.warn(
       `${buildLogPrefix()} findDirRecursive 跳过 ${dir}: ${e instanceof Error ? e.message : String(e)}`
     );
   }
@@ -325,17 +326,17 @@ export function cleanRelatedFiles(
         try {
           fs.unlinkSync(entryPath);
           deleted.push(entryPath);
-          console.warn(`${prefix} 清理关联文件: ${entryPath}`);
+          logger.warn(`${prefix} 清理关联文件: ${entryPath}`);
         } catch (e) {
           // missing_ok 容忍并发删除
           if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) {
-            console.error(`${prefix} 删除关联文件失败 ${entryPath}: ${e instanceof Error ? e.message : String(e)}`);
+            logger.error(`${prefix} 删除关联文件失败 ${entryPath}: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
       }
     }
   } catch (e) {
-    console.warn(`${prefix} cleanRelatedFiles 扫描目录失败 ${dir}: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn(`${prefix} cleanRelatedFiles 扫描目录失败 ${dir}: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return deleted;
@@ -365,7 +366,7 @@ export function syncStrmText(
 
   // P2-15: 空内容保护，防止写入空 STRM 文件
   if (!expectedContent || expectedContent.trim() === "") {
-    console.warn(`${prefix} STRM 内容为空，跳过写入: ${strmPath}`);
+    logger.warn(`${prefix} STRM 内容为空，跳过写入: ${strmPath}`);
     return { ok: false, wrote: false, error: `STRM 内容为空: ${strmPath}` };
   }
 
@@ -377,7 +378,7 @@ export function syncStrmText(
     try {
       fs.mkdirSync(path.dirname(strmPath), { recursive: true });
       atomicWriteFileSync(strmPath, expectedContent);
-      console.log(`${prefix} 创建 STRM: ${strmPath}`);
+      logger.info(`${prefix} 创建 STRM: ${strmPath}`);
       return { ok: true, wrote: true };
     } catch (e) {
       return { ok: false, wrote: false, error: e instanceof Error ? e.message : String(e) };
@@ -396,7 +397,7 @@ export function syncStrmText(
 
     // 内容不同 → 重写
     atomicWriteFileSync(strmPath, expectedContent);
-    console.log(`${prefix} 更新 STRM 内容: ${strmPath}`);
+    logger.info(`${prefix} 更新 STRM 内容: ${strmPath}`);
     return { ok: true, wrote: true };
   } catch (e) {
     return { ok: false, wrote: false, error: e instanceof Error ? e.message : String(e) };

@@ -9,12 +9,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Bot, MessageSquare, CheckCircle, XCircle, RefreshCw, Play, Square, AlertCircle } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import axiosInstance from "@/lib/axios";
+import { logger } from "@/lib/logger";
 
 interface TelegramConfig {
   botToken?: string;
   chatId?: string;
   webhookUrl?: string;
   enabled?: boolean;
+  autoPolling?: boolean;
 }
 
 interface BotInfo {
@@ -69,10 +71,11 @@ export default function TelegramNotifyPage() {
               chatId: telegram.chatId || "",
               webhookUrl: telegram.webhookUrl || "",
               enabled: telegram.enabled !== false,
+              autoPolling: telegram.autoPolling !== false,
             });
           }
         } catch (e) {
-          console.error("加载本地 Telegram 配置失败:", e);
+          logger.error("加载本地 Telegram 配置失败:", e);
         }
       })();
 
@@ -82,7 +85,7 @@ export default function TelegramNotifyPage() {
         if (botResp.data.webhook) setWebhookInfo(botResp.data.webhook.result ?? botResp.data.webhook);
       }
     } catch (error) {
-      console.error("加载 Bot 信息失败:", error);
+      logger.error("加载 Bot 信息失败:", error);
     }
   };
 
@@ -99,6 +102,7 @@ export default function TelegramNotifyPage() {
         chatId: config.chatId,
         webhookUrl: config.webhookUrl,
         enabled: config.enabled !== false,
+        autoPolling: config.autoPolling !== false,
       });
 
       if (response.data.success) {
@@ -110,6 +114,8 @@ export default function TelegramNotifyPage() {
           botToken: maskToken(savedToken || ""),
           chatId: response.data.chatId || "",
           webhookUrl: response.data.webhook?.result?.url || "",
+          enabled: config.enabled !== false,
+          autoPolling: config.autoPolling !== false,
         });
         await loadBotInfo();
       }
@@ -147,7 +153,7 @@ export default function TelegramNotifyPage() {
       const response = await axiosInstance.get("/api/notify/polling");
       setPollingStatus(response.data);
     } catch (error) {
-      console.error("检查轮询状态失败:", error);
+      logger.error("检查轮询状态失败:", error);
     }
   };
 
@@ -233,7 +239,7 @@ export default function TelegramNotifyPage() {
       )}
 
       {/* 机器人配置 */}
-      <section className="border rounded-md p-5 space-y-4">
+      <section className="border rounded-md p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-2">
           <Bot className="h-5 w-5" />
           <h2 className="text-base font-medium">机器人配置</h2>
@@ -277,15 +283,27 @@ export default function TelegramNotifyPage() {
         </div>
 
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="enabled"
-              checked={config.enabled !== false}
-              onCheckedChange={(checked) => setConfig({ ...config, enabled: checked === true })}
-            />
-            <label htmlFor="enabled" className="text-sm font-medium leading-none cursor-pointer">
-              启用通知
-            </label>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="enabled"
+                checked={config.enabled !== false}
+                onCheckedChange={(checked) => setConfig({ ...config, enabled: checked === true })}
+              />
+              <label htmlFor="enabled" className="text-sm font-medium leading-none cursor-pointer">
+                启用通知
+              </label>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="autoPolling"
+                checked={config.autoPolling !== false}
+                onCheckedChange={(checked) => setConfig({ ...config, autoPolling: checked === true })}
+              />
+              <label htmlFor="autoPolling" className="text-sm font-medium leading-none cursor-pointer">
+                启动时自动轮询
+              </label>
+            </div>
           </div>
           <div className="flex space-x-2">
             {botInfo && (
@@ -337,7 +355,7 @@ export default function TelegramNotifyPage() {
               </Badge>
             )}
           </div>
-          <div className="flex space-x-1.5">
+          <div className="flex flex-wrap gap-1.5">
             <Button
               onClick={startPolling}
               disabled={loading || pollingStatus?.polling === true}

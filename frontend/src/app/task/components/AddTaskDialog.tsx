@@ -193,7 +193,7 @@ export function AddTaskDialog({
         )}
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-[450px]">
+      <DialogContent className="max-w-[95vw] sm:max-w-[450px]">
         <DialogHeader>
           <DialogTitle>{task ? "编辑任务" : "新增任务"}</DialogTitle>
           <DialogDescription>

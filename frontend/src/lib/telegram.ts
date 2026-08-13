@@ -1,8 +1,30 @@
 // Telegram Bot API 集成
-import axios from "axios";
+import axios, { AxiosInstance } from "axios";
+import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { logger } from "./logger";
+
+// 防止 TLSSocket error 监听器超限警告
+process.setMaxListeners(30);
+
+// 复用 https.Agent 连接池，避免频繁创建销毁 TLSSocket
+const telegramHttpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 10,
+  maxFreeSockets: 10,
+  timeout: 30000,
+  // 空闲 socket 超时后自动销毁，防止复用已关闭的连接
+  keepAliveMsecs: 30000,
+});
+
+// 专用 axios 实例
+const telegramAxios: AxiosInstance = axios.create({
+  httpsAgent: telegramHttpsAgent,
+  timeout: 60000,
+  maxRedirects: 5,
+});
 
 export interface TelegramConfig {
   botToken: string;
@@ -82,11 +104,16 @@ export class TelegramBot {
   // 发送消息
   async sendMessage(message: TelegramMessage): Promise<TelegramResponse> {
     try {
-      const response = await axios.post(`${this.baseUrl}/sendMessage`, message);
-      return response.data;
+      const response = await telegramAxios.post(`${this.baseUrl}/sendMessage`, message);
+      const result = response.data;
+      if (result.ok) {
+        logger.info(`[Telegram] Message sent to chat ${message.chat_id}`);
+      } else {
+        logger.warn(`[Telegram] sendMessage not ok:`, result);
+      }
+      return result;
     } catch (error) {
-      console.error('Telegram sendMessage error:', error);
-      // 不抛出错误，避免影响主流程，只记录日志
+      logger.error('Telegram sendMessage error:', error);
       return { ok: false, error: `Telegram API error: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -94,7 +121,7 @@ export class TelegramBot {
   // 发送通知消息（简化版本）
   async sendNotification(text: string, chatId?: string): Promise<TelegramResponse> {
     if (!chatId) {
-      console.warn('Chat ID is required for sending notifications, skipping...');
+      logger.warn('Chat ID is required for sending notifications, skipping...');
       return { ok: false, error: 'Chat ID is required for sending notifications' };
     }
 
@@ -105,7 +132,7 @@ export class TelegramBot {
         parse_mode: 'HTML'
       });
     } catch (error) {
-      console.error('Failed to send Telegram notification:', error);
+      logger.error('Failed to send Telegram notification:', error);
       return { ok: false, error: `Failed to send notification: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -113,36 +140,60 @@ export class TelegramBot {
   // 获取机器人信息
   async getMe(): Promise<TelegramResponse> {
     try {
-      const response = await axios.get(`${this.baseUrl}/getMe`);
+      const response = await telegramAxios.get(`${this.baseUrl}/getMe`);
       return response.data;
     } catch (error) {
-      console.error('Telegram getMe error:', error);
+      logger.error('Telegram getMe error:', error);
       return { ok: false, error: `Failed to get bot info: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
 
   // 获取更新（用于 webhook 或轮询）
   async getUpdates(offset?: number, limit?: number, timeout?: number): Promise<TelegramUpdate[]> {
-    try {
-      const params = new URLSearchParams();
-      if (offset) params.append('offset', offset.toString());
-      if (limit) params.append('limit', limit.toString());
-      if (timeout) params.append('timeout', timeout.toString());
+    const params = new URLSearchParams();
+    if (offset) params.append('offset', offset.toString());
+    if (limit) params.append('limit', limit.toString());
+    if (timeout) params.append('timeout', timeout.toString());
 
-      const response = await axios.get(`${this.baseUrl}/getUpdates?${params}`, {
-        timeout: (timeout || 30) * 1000 + 5000, // 给额外的5秒缓冲时间
-      });
-      return response.data.result || [];
-    } catch (error: unknown) {
-      // 409 错误表示没有新消息，这是正常的，不需要记录
-      if (error && typeof error === 'object' && 'response' in error && 
-          (error as { response?: { status?: number } }).response?.status === 409) {
-        console.log('Telegram getUpdates: No new messages (409)');
-        return []; // 返回空数组而不是抛出错误
+    const url = `${this.baseUrl}/getUpdates?${params}`;
+    const reqTimeout = (timeout || 30) * 1000 + 5000;
+
+    // 重试循环：最多 3 次，指数退避处理瞬时网络错误
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const response = await telegramAxios.get(url, { timeout: reqTimeout });
+        return response.data.result || [];
+      } catch (error: unknown) {
+        // 409 错误表示没有新消息，这是正常的
+        if (error && typeof error === 'object' && 'response' in error && 
+            (error as { response?: { status?: number } }).response?.status === 409) {
+          return [];
+        }
+
+        const errCode = (error as { code?: string })?.code;
+        const isTransientNetworkError =
+          errCode === 'ECONNRESET' || errCode === 'ECONNREFUSED' || errCode === 'EPIPE' ||
+          (error as Error)?.message?.includes('socket hang up');
+
+        // 可重试的网络错误，使用指数退避
+        if (isTransientNetworkError && attempt < MAX_RETRIES - 1) {
+          telegramHttpsAgent.destroy();
+          const backoff = 100 * Math.pow(2, attempt); // 100ms, 200ms, 400ms
+          await new Promise((r) => setTimeout(r, backoff));
+          continue;
+        }
+
+        // 最后一次重试仍失败，降级为 warn
+        if (isTransientNetworkError) {
+          logger.warn('[Telegram] getUpdates network error (retried):', errCode || 'socket hang up');
+        } else {
+          logger.error('Telegram getUpdates error:', error);
+        }
+        return [];
       }
-      console.error('Telegram getUpdates error:', error);
-      return []; // 返回空数组而不是抛出错误
     }
+    return [];
   }
 
   // 设置 webhook
@@ -151,10 +202,10 @@ export class TelegramBot {
       const data: { url: string; secret_token?: string } = { url };
       if (secretToken) data.secret_token = secretToken;
 
-      const response = await axios.post(`${this.baseUrl}/setWebhook`, data);
+      const response = await telegramAxios.post(`${this.baseUrl}/setWebhook`, data);
       return response.data;
     } catch (error) {
-      console.error('Telegram setWebhook error:', error);
+      logger.error('Telegram setWebhook error:', error);
       return { ok: false, error: `Failed to set webhook: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -162,10 +213,10 @@ export class TelegramBot {
   // 删除 webhook
   async deleteWebhook(): Promise<TelegramResponse> {
     try {
-      const response = await axios.post(`${this.baseUrl}/deleteWebhook`);
+      const response = await telegramAxios.post(`${this.baseUrl}/deleteWebhook`);
       return response.data;
     } catch (error) {
-      console.error('Telegram deleteWebhook error:', error);
+      logger.error('Telegram deleteWebhook error:', error);
       return { ok: false, error: `Failed to delete webhook: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -173,10 +224,10 @@ export class TelegramBot {
   // 获取 webhook 信息
   async getWebhookInfo(): Promise<TelegramResponse> {
     try {
-      const response = await axios.get(`${this.baseUrl}/getWebhookInfo`);
+      const response = await telegramAxios.get(`${this.baseUrl}/getWebhookInfo`);
       return response.data;
     } catch (error) {
-      console.error('Telegram getWebhookInfo error:', error);
+      logger.error('Telegram getWebhookInfo error:', error);
       return { ok: false, error: `Failed to get webhook info: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -184,10 +235,10 @@ export class TelegramBot {
   // 发送图片
   async sendPhoto(message: TelegramMessage & { photo: string }): Promise<TelegramResponse> {
     try {
-      const response = await axios.post(`${this.baseUrl}/sendPhoto`, message);
+      const response = await telegramAxios.post(`${this.baseUrl}/sendPhoto`, message);
       return response.data;
     } catch (error) {
-      console.error('Telegram sendPhoto error:', error);
+      logger.error('Telegram sendPhoto error:', error);
       return { ok: false, error: `Telegram API error: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -208,10 +259,10 @@ export class TelegramBot {
       form.append("parse_mode", "HTML");
       form.append("photo", blob, basename);
 
-      const response = await axios.post(`${this.baseUrl}/sendPhoto`, form);
+      const response = await telegramAxios.post(`${this.baseUrl}/sendPhoto`, form);
       return response.data;
     } catch (error) {
-      console.error('Telegram sendPhotoFromFile error:', error);
+      logger.error('Telegram sendPhotoFromFile error:', error);
       return { ok: false, error: `Telegram API error: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -259,10 +310,10 @@ export class TelegramBot {
       };
       if (replyMarkup) data.reply_markup = replyMarkup;
 
-      const response = await axios.post(`${this.baseUrl}/editMessageText`, data);
+      const response = await telegramAxios.post(`${this.baseUrl}/editMessageText`, data);
       return response.data;
     } catch (error) {
-      console.error('Telegram editMessageText error:', error);
+      logger.error('Telegram editMessageText error:', error);
       return { ok: false, error: `Failed to edit message: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -273,10 +324,10 @@ export class TelegramBot {
       const data: { callback_query_id: string; text?: string } = { callback_query_id: callbackQueryId };
       if (text) data.text = text;
 
-      const response = await axios.post(`${this.baseUrl}/answerCallbackQuery`, data);
+      const response = await telegramAxios.post(`${this.baseUrl}/answerCallbackQuery`, data);
       return response.data;
     } catch (error) {
-      console.error('Telegram answerCallbackQuery error:', error);
+      logger.error('Telegram answerCallbackQuery error:', error);
       return { ok: false, error: `Failed to answer callback query: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -284,13 +335,13 @@ export class TelegramBot {
   // 设置 Bot 菜单命令
   async setMyCommands(commands: Array<{ command: string; description: string }>): Promise<TelegramResponse> {
     try {
-      const response = await axios.post(`${this.baseUrl}/setMyCommands`, {
+      const response = await telegramAxios.post(`${this.baseUrl}/setMyCommands`, {
         commands,
         scope: { type: 'all_private_chats' }
       });
       return response.data;
     } catch (error) {
-      console.error('Telegram setMyCommands error:', error);
+      logger.error('Telegram setMyCommands error:', error);
       return { ok: false, error: `Failed to set bot commands: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -298,10 +349,10 @@ export class TelegramBot {
   // 删除 Bot 菜单命令
   async deleteMyCommands(): Promise<TelegramResponse> {
     try {
-      const response = await axios.post(`${this.baseUrl}/deleteMyCommands`);
+      const response = await telegramAxios.post(`${this.baseUrl}/deleteMyCommands`);
       return response.data;
     } catch (error) {
-      console.error('Telegram deleteMyCommands error:', error);
+      logger.error('Telegram deleteMyCommands error:', error);
       return { ok: false, error: `Failed to delete bot commands: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -381,7 +432,7 @@ export async function sendTelegramNotification(message: string, type: 'start' | 
     
     // 检查 Telegram 配置是否完整
     if (!telegram || !telegram.botToken || !telegram.chatId) {
-      console.log('Telegram not configured (missing botToken or chatId), skipping notification');
+      logger.debug('Telegram not configured (missing botToken or chatId), skipping notification');
       return;
     }
     if (telegram.enabled === false) {
@@ -419,9 +470,9 @@ export async function sendTelegramNotification(message: string, type: 'start' | 
     const formattedMessage = `${emoji} <b>${prefix}</b>\n\n${message}\n\n<b>Time:</b> ${new Date().toLocaleString()}`;
     
     await bot.sendNotification(formattedMessage, telegram.chatId);
-    console.log(`Telegram notification sent: ${type}`);
+    logger.debug(`[Telegram] notification sent: ${type}`);
   } catch (error) {
-    console.error('Failed to send Telegram notification:', error);
+    logger.error('Failed to send Telegram notification:', error);
     // 不抛出错误，避免影响主流程
   }
 }
@@ -436,7 +487,7 @@ export async function sendTelegramPhoto(chatId: string, photoUrl: string, captio
     
     // 检查 Telegram 配置是否完整
     if (!telegram || !telegram.botToken) {
-      console.log('Telegram not configured (missing botToken), skipping photo send');
+      logger.debug('Telegram not configured (missing botToken), skipping photo send');
       return;
     }
     if (telegram.enabled === false) {
@@ -451,8 +502,8 @@ export async function sendTelegramPhoto(chatId: string, photoUrl: string, captio
       text: caption,
       parse_mode: 'HTML'
     });
-    console.log('Telegram photo sent');
+    logger.info('Telegram photo sent');
   } catch (error) {
-    console.error('Failed to send Telegram photo:', error);
+    logger.error('Failed to send Telegram photo:', error);
   }
 }

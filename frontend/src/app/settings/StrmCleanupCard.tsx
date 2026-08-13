@@ -510,7 +510,7 @@ export function StrmCleanupCard() {
         {scanResult && (
           <>
             {/* 统计面板 */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
               <StatCard
                 label="网盘媒体文件"
                 value={scanResult.totalRemoteFiles}

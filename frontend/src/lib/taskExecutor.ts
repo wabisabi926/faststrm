@@ -39,6 +39,7 @@ import {
   tryEnterFullScan,
   exitFullScan,
   suspendMonitorForFullScan,
+  touchFullScanHeartbeat,
   AccountRuntimeState,
 } from "./accountRuntimeState";
 
@@ -467,6 +468,20 @@ export async function executeTask(
     // 监控处理事件创建的新 STRM 被 removeExtraFiles 误删（race condition）
     suspendMonitorForFullScan(task.account);
 
+    // 启动全量扫描锁心跳：防止任务执行超过 FULLSCAN_TIMEOUT_MS(10分钟)
+    // 后锁自动释放，允许第二个任务并发启动。心跳每分钟刷新一次
+    const heartbeatInterval = setInterval(() => {
+      try {
+        touchFullScanHeartbeat(task.account);
+      } catch {}
+    }, 60 * 1000);
+
+    // 在任务完成或异常时必须停止心跳 + 释放锁
+    const stopHeartbeatAndExit = () => {
+      clearInterval(heartbeatInterval);
+      exitFullScan(task.account);
+    };
+
     const { account, originPath, targetPath } = task;
 
     // 使用统一的 STRM 设置解析（全局默认 + 任务级覆盖 + 302 拼接）
@@ -642,7 +657,7 @@ export async function executeTask(
     }
 
     if (missingLocally.length === 0) {
-      exitFullScan(task.account);
+      stopHeartbeatAndExit();
       // P2-5: 若 removeExtraFiles 清理了多余文件，即使无下载也刷新 Emby
       if (task.removeExtraFiles && extraLocally.length > 0) {
         notifyEmbyRefresh();
@@ -688,7 +703,7 @@ export async function executeTask(
   } catch (error) {
     console.error("executeTask error: ", error);
     if (task) {
-      exitFullScan(task.account);
+      stopHeartbeatAndExit();
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
     return {

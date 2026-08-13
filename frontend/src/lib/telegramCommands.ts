@@ -1,6 +1,7 @@
 import { createTelegramBot } from "./telegram";
 import { readSettings, isTelegramUserAllowed, readAccounts } from "./serverUtils";
 import { getMonitorStatus } from "./eventMonitor";
+import { logger } from "@/lib/logger";
 import {
   runScan,
   runReconcile,
@@ -80,7 +81,7 @@ async function handleStatus(bot: Bot, chatId: string) {
 
     await bot.sendMessage({ chat_id: chatId, text: message, parse_mode: "HTML" });
   } catch (error) {
-    console.error("Error handling status:", error);
+    logger.error("Error handling status:", error);
     await bot.sendMessage({
       chat_id: chatId,
       text: `❌ 获取状态失败: ${error instanceof Error ? error.message : String(error)}`,
@@ -125,7 +126,7 @@ async function handleScan(bot: Bot, chatId: string) {
 
     await bot.sendMessage({ chat_id: chatId, text, parse_mode: "HTML" });
   } catch (error) {
-    console.error("Error during reconcile:", error);
+    logger.error("Error during reconcile:", error);
     await bot.sendMessage({
       chat_id: chatId,
       text: `❌ 全量对账失败: ${error instanceof Error ? error.message : String(error)}`,
@@ -169,7 +170,7 @@ async function handleCleanup(bot: Bot, chatId: string) {
 
     await bot.sendMessage({ chat_id: chatId, text, parse_mode: "HTML" });
   } catch (error) {
-    console.error("Error during scan:", error);
+    logger.error("Error during scan:", error);
     await bot.sendMessage({
       chat_id: chatId,
       text: `❌ 孤儿扫描失败: ${error instanceof Error ? error.message : String(error)}`,
@@ -202,7 +203,7 @@ async function handleAccounts(bot: Bot, chatId: string) {
 
     await bot.sendMessage({ chat_id: chatId, text: message, parse_mode: "HTML" });
   } catch (error) {
-    console.error("Error handling accounts:", error);
+    logger.error("Error handling accounts:", error);
     await bot.sendMessage({
       chat_id: chatId,
       text: `❌ 获取账号列表失败: ${error instanceof Error ? error.message : String(error)}`,
@@ -233,7 +234,7 @@ export async function handleMessage(bot: Bot, message: MessageLike, source: stri
   const username = message.from.username || message.from.first_name;
   const userId = message.from.id;
 
-  console.log(`[Telegram ${source}] Message from ${username} (${userId}): ${text}`);
+  logger.debug(`[Telegram ${source}] Message from ${username} (${userId}): ${text}`);
 
   if (text?.startsWith("/")) {
     await handleCommand(bot, chatId, text, username, userId);
@@ -288,7 +289,7 @@ async function handleCommand(bot: Bot, chatId: string, command: string, username
 
 export async function handleCallbackQuery(bot: Bot, callbackQuery: CallbackQueryLike, source: string = "Polling") {
   if (!callbackQuery.message) {
-    console.error("Callback query has no message");
+    logger.error("Callback query has no message");
     return;
   }
 
@@ -296,7 +297,7 @@ export async function handleCallbackQuery(bot: Bot, callbackQuery: CallbackQuery
   const data = callbackQuery.data;
   const queryId = callbackQuery.id;
 
-  console.log(`[Telegram ${source}] Callback query: ${data}`);
+  logger.debug(`[Telegram ${source}] Callback query: ${data}`);
 
   await bot.answerCallbackQuery(queryId, "处理中...");
 

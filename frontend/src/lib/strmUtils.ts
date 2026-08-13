@@ -92,5 +92,10 @@ export function generateStrmContent(
   // 非 302 模式：旧版路径拼接（直接访问 OpenList/直链）
   const normalized = cloudPath.startsWith("/") ? cloudPath : "/" + cloudPath;
   const content = `${prefix}${normalized}`;
-  return enablePathEncoding ? encodeURI(content) : content;
+  if (!enablePathEncoding) return content;
+
+  // encodeURI 不处理 # 和 ?，这两个字符在 URL 中是分隔符（fragment / query-string）
+  // 文件名里只要出现它们，播放器请求就会被截断或变成查询参数
+  // 这里改用 encodeURIComponent 对整段路径做完整转义
+  return encodeURIComponent(content);
 }

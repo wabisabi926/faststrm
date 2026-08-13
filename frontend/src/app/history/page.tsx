@@ -20,6 +20,7 @@ import {
   Download,
   Trash
 } from "lucide-react";
+import { logger } from "@/lib/logger";
 
 interface TaskExecutionHistory {
   id: string;
@@ -96,7 +97,7 @@ export default function TaskHistoryPage() {
       const response = await axiosInstance.get("/api/taskHistory");
       setHistory(response.data);
     } catch (error) {
-      console.error("Failed to fetch task history:", error);
+      logger.error("Failed to fetch task history:", error);
       toast.error("获取任务历史失败");
     } finally {
       setLoading(false);
@@ -109,7 +110,7 @@ export default function TaskHistoryPage() {
       setHistory(history.filter(h => h.id !== executionId));
       toast.success("删除成功");
     } catch (error) {
-      console.error("Failed to delete history:", error);
+      logger.error("Failed to delete history:", error);
       toast.error("删除失败");
     }
   };
@@ -121,7 +122,7 @@ export default function TaskHistoryPage() {
       // 重新加载历史记录
       fetchHistory();
     } catch (error) {
-      console.error("Failed to delete history:", error);
+      logger.error("Failed to delete history:", error);
       toast.error("删除失败");
     }
   };

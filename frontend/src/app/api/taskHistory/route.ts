@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllTaskHistory, getTaskHistory, deleteTaskHistory, deleteAllHistory } from "@/lib/taskHistoryManager";
+import { logger } from "@/lib/logger";
 
 // 获取所有任务历史记录
 export async function GET(req: NextRequest) {
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(allHistory);
     }
   } catch (error) {
-    console.error("Failed to get task history:", error);
+    logger.error("Failed to get task history:", error);
     return NextResponse.json(
       { error: "Failed to get task history" },
       { status: 500 }
@@ -48,7 +49,7 @@ export async function DELETE(req: NextRequest) {
     deleteTaskHistory(executionId);
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Failed to delete task history:", error);
+    logger.error("Failed to delete task history:", error);
     return NextResponse.json(
       { error: "Failed to delete task history" },
       { status: 500 }

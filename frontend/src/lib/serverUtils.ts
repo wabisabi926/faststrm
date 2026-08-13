@@ -5,10 +5,31 @@ import { decryptAccounts, decryptSettings, encryptSettings } from "./passwordCry
 
 const accountFile = path.join(process.cwd(), "../config", "account.json");
 
+// 内存缓存：减少高频 readSettings/readAccounts 的磁盘 I/O
+type CacheEntry<T> = { data: T | null; time: number };
+const SETTINGS_CACHE_TTL = 5000;
+const ACCOUNTS_CACHE_TTL = 5000;
+
+let settingsCache: CacheEntry<AppSettings> = { data: null, time: 0 };
+let accountsCache: CacheEntry<unknown[]> = { data: null, time: 0 };
+let tasksCache: CacheEntry<unknown[]> = { data: null, time: 0 };
+
+function cacheValid<T>(c: CacheEntry<T>, ttl: number): c is { data: T; time: number } {
+  return c.data !== null && Date.now() - c.time < ttl;
+}
+
 export function readAccounts() {
-  if (!fs.existsSync(accountFile)) return [];
+  if (cacheValid(accountsCache, ACCOUNTS_CACHE_TTL)) {
+    return accountsCache.data;
+  }
+  if (!fs.existsSync(accountFile)) {
+    accountsCache = { data: [], time: Date.now() };
+    return [];
+  }
   const accounts = JSON.parse(fs.readFileSync(accountFile, "utf-8"));
-  return decryptAccounts(accounts);
+  const decrypted = decryptAccounts(accounts);
+  accountsCache = { data: decrypted, time: Date.now() };
+  return decrypted;
 }
 
 type Node = {
@@ -52,14 +73,23 @@ const settingsFile = path.join(process.cwd(), "../config/settings.json");
 
 // 工具函数：读取任务
 export function readTasks() {
-  if (!fs.existsSync(tasksFile)) return [];
+  if (cacheValid(tasksCache, SETTINGS_CACHE_TTL)) {
+    return tasksCache.data;
+  }
+  if (!fs.existsSync(tasksFile)) {
+    tasksCache = { data: [], time: Date.now() };
+    return [];
+  }
   const data = fs.readFileSync(tasksFile, "utf-8");
-  return JSON.parse(data);
+  const parsed = JSON.parse(data);
+  tasksCache = { data: parsed, time: Date.now() };
+  return parsed;
 }
 
 // 工具函数：保存任务
 export function saveTasks(tasks: unknown[]) {
   fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2), "utf-8");
+  tasksCache = { data: tasks, time: Date.now() };
 }
 
 // 删除多余文件，并清理空父目录
@@ -260,6 +290,8 @@ export type AppSettings = {
     chatId?: string;
     webhookUrl?: string;
     enabled?: boolean;
+    /** 是否自动启动轮询（服务启动时自动启动，默认 true） */
+    autoPolling?: boolean;
     allowedUsers?: number[];
     /** 账户状态通知配置 */
     accountAlerts?: {
@@ -340,23 +372,32 @@ function sanitizeAppSettings(raw: unknown): AppSettings {
 }
 
 export function readSettings(): AppSettings {
-  if (!fs.existsSync(settingsFile)) return {} as AppSettings;
+  if (cacheValid(settingsCache, SETTINGS_CACHE_TTL)) {
+    return settingsCache.data;
+  }
+  if (!fs.existsSync(settingsFile)) {
+    settingsCache = { data: {} as AppSettings, time: Date.now() };
+    return {} as AppSettings;
+  }
   const raw = fs.readFileSync(settingsFile, "utf-8");
   try {
     const parsed = JSON.parse(raw || "{}");
     const decrypted = decryptSettings(parsed);
-    return sanitizeAppSettings(decrypted);
+    const sanitized = sanitizeAppSettings(decrypted);
+    settingsCache = { data: sanitized, time: Date.now() };
+    return sanitized;
   } catch {
+    settingsCache = { data: {} as AppSettings, time: Date.now() };
     return {} as AppSettings;
   }
 }
 
 export function writeSettings(next: AppSettings) {
-  // 写入前加密敏感字段（深拷贝避免修改入参）+ 类型清洗
   const sanitized = sanitizeAppSettings(next ?? {});
   const encrypted = encryptSettings(JSON.parse(JSON.stringify(sanitized)));
   const pretty = JSON.stringify(encrypted, null, 2);
   fs.writeFileSync(settingsFile, pretty, "utf-8");
+  settingsCache = { data: sanitized, time: Date.now() };
 }
 
 // ==================== STRM Settings Resolution ====================

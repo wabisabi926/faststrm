@@ -92,7 +92,7 @@ export default function AccountAlertsPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -106,11 +106,11 @@ export default function AccountAlertsPage() {
       </div>
 
       {/* 当前账号状态总览 */}
-      <section className="border rounded-md p-5 space-y-4">
+      <section className="border rounded-md p-4 sm:p-5 space-y-4">
         <h2 className="text-base font-medium">账号状态总览</h2>
         <div className="grid gap-3 md:grid-cols-2">
           {accounts.map((acc) => (
-            <div key={acc.name} className="flex items-center justify-between p-3 border rounded">
+            <div key={acc.name} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 border rounded">
               <div className="flex items-center gap-2">
                 <span className="font-medium">{acc.name}</span>
                 <span className="text-xs text-muted-foreground">{acc.accountType}</span>
@@ -125,7 +125,7 @@ export default function AccountAlertsPage() {
       </section>
 
       {/* 通知配置 */}
-      <section className="border rounded-md p-5 space-y-5">
+      <section className="border rounded-md p-4 sm:p-5 space-y-5">
         <div>
           <div className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5" />
@@ -246,7 +246,7 @@ export default function AccountAlertsPage() {
       </section>
 
       {/* 依赖说明 */}
-      <section className="border rounded-md p-5 bg-muted/30">
+      <section className="border rounded-md p-4 sm:p-5 bg-muted/30">
         <h2 className="text-sm font-medium mb-2">前置条件</h2>
         <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
           <li>需要在「TG 通知」页面配置 Bot Token 和 Chat ID</li>

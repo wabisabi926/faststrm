@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { logger } from "@/lib/logger";
 
 export interface TaskExecutionHistory {
   id: string;
@@ -40,7 +41,7 @@ export function readTaskHistory(): TaskExecutionHistory[] {
     const data = fs.readFileSync(historyFile, "utf-8");
     return JSON.parse(data);
   } catch (error) {
-    console.error("Failed to read task history:", error);
+    logger.error("Failed to read task history:", error);
     return [];
   }
 }
@@ -52,7 +53,7 @@ export function saveTaskHistory(history: TaskExecutionHistory[]): void {
     const limitedHistory = history.slice(-1000);
     fs.writeFileSync(historyFile, JSON.stringify(limitedHistory, null, 2), "utf-8");
   } catch (error) {
-    console.error("Failed to save task history:", error);
+    logger.error("Failed to save task history:", error);
   }
 }
 

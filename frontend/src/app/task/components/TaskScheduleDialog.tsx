@@ -163,7 +163,7 @@ export function TaskScheduleDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent className="max-w-[95vw] sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Clock className="w-5 h-5 text-indigo-600" />
@@ -214,7 +214,7 @@ export function TaskScheduleDialog({
             <Label className="text-sm font-medium text-slate-700 mb-2 block">
               执行方式
             </Label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {(
                 [
                   { v: "interval", label: "间隔执行", icon: Repeat },
@@ -333,7 +333,7 @@ export function TaskScheduleDialog({
               <div className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
                 最近调度记录
               </div>
-              <div className="grid grid-cols-3 gap-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                 <div>
                   <div className="text-slate-500 text-xs mb-0.5">上次执行</div>
                   <div className="font-medium text-slate-800">

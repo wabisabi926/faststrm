@@ -295,7 +295,7 @@ export default function AccountPage() {
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
+              <DialogContent className="max-w-[95vw] sm:max-w-[425px]">
                 <DialogHeader>
                   <DialogTitle>确认删除</DialogTitle>
                   <DialogDescription>
@@ -340,8 +340,8 @@ export default function AccountPage() {
   }
 
   return (
-    <div className="w-full h-full p-6">
-      <div className="flex justify-between items-center mb-6">
+    <div className="mx-auto max-w-7xl space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">账户管理</h1>
           <p className="text-gray-600 mt-1">管理你的网盘账户信息</p>

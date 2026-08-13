@@ -1,6 +1,7 @@
 import axios from "axios";
 import { readSettings } from "./serverUtils";
 import { AccountInfo } from "./115";
+import { logger } from "./logger";
 
 /**
  * 检查 115 Cookie 是否包含必要的字段
@@ -111,11 +112,11 @@ export async function lifeShow(
     open_life: "1",
   }).toString();
 
-  console.log(`[115Life] lifeShow POST ${url}`);
+  logger.info(`[115Life] lifeShow POST ${url}`);
 
   const resp = await axios.post(url, data, { headers, timeout: 10000, validateStatus: () => true });
 
-  console.log(`[115Life] lifeShow 响应:`, JSON.stringify(resp.data).slice(0, 300));
+  logger.info(`[115Life] lifeShow 响应:`, JSON.stringify(resp.data).slice(0, 300));
 
   if (resp.status >= 200 && resp.status < 300) {
     return { state: true, ...resp.data };
@@ -148,7 +149,7 @@ export async function lifeBehaviorDetail(
 
   // 调试：检查 Cookie 长度和前缀
   const cookieKeys = accountInfo.cookie.split(";").map(s => s.trim().split("=")[0]).filter(Boolean);
-  console.log(`[115Life] Cookie 长度: ${accountInfo.cookie.length}, keys: [${cookieKeys.join(", ")}]`);
+  logger.info(`[115Life] Cookie 长度: ${accountInfo.cookie.length}, keys: [${cookieKeys.join(", ")}]`);
 
   // 判断是 web 还是 app（ios/android）
   const isWebApp = app === "web" || app === "desktop" || app === "chrome" || app === "aps" || app === "";
@@ -163,11 +164,11 @@ export async function lifeBehaviorDetail(
   };
   if (date) params.date = date;
 
-  console.log(`[115Life] lifeBehaviorDetail GET ${url} params:`, params);
+  logger.info(`[115Life] lifeBehaviorDetail GET ${url} params:`, params);
 
   const resp = await axios.get(url, { headers, params, timeout: 10000, validateStatus: () => true });
 
-  console.log(`[115Life] lifeBehaviorDetail 响应:`, JSON.stringify(resp.data).slice(0, 500));
+  logger.info(`[115Life] lifeBehaviorDetail 响应:`, JSON.stringify(resp.data).slice(0, 500));
 
   if (resp.status === 404) {
     throw new Error(`HTTP 404: ${url}`);

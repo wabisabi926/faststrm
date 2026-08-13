@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readAccounts, readSettings } from "@/lib/serverUtils";
 import { fs_files, type AccountInfo } from "@/lib/115";
 import { sendTelegramNotification } from "@/lib/telegram";
+import { logger } from "@/lib/logger";
 import axios from "axios";
 
 type AccountStatus = {
@@ -10,11 +11,25 @@ type AccountStatus = {
   message?: string;
 };
 
-const STATUS_CACHE = new Map<string, { status: AccountStatus["status"]; message?: string; ts: number }>();
-const CACHE_TTL_MS = 5 * 60 * 1000;
+// 使用 globalThis 防止 HMR 重置状态
+const _g = globalThis as unknown as {
+  __accountStatusCache?: Map<string, { status: string; message?: string; ts: number }>;
+  __accountStatusHistory?: Map<string, { status: string; updatedAt: number }>;
+  __backgroundCheckTimer?: NodeJS.Timeout | null;
+  __backgroundCheckStarted?: boolean;
+};
 
-// 状态变化历史追踪：记录上一次的检测结果，用于判断状态是否发生变化
-const STATUS_HISTORY = new Map<string, { status: AccountStatus["status"]; updatedAt: number }>();
+if (!_g.__accountStatusCache) _g.__accountStatusCache = new Map();
+if (!_g.__accountStatusHistory) _g.__accountStatusHistory = new Map();
+
+const STATUS_CACHE = _g.__accountStatusCache;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const ACCOUNT_STATUS_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+
+const STATUS_HISTORY = _g.__accountStatusHistory;
+
+let backgroundCheckTimer: NodeJS.Timeout | null = _g.__backgroundCheckTimer ?? null;
+let backgroundCheckStarted = _g.__backgroundCheckStarted ?? false;
 
 /**
  * 发送账户状态变化通知
@@ -70,25 +85,25 @@ async function sendStatusChangeNotification(
         `<b>时间：</b> ${new Date().toLocaleString()}`;
 
       await sendTelegramNotification(notificationMessage, notificationType);
-      console.log(`[ACCOUNT-STATUS] Sent ${prefix} notification for ${accountName}`);
+      logger.info(`[ACCOUNT-STATUS] Sent ${prefix} notification for ${accountName}`);
     }
   } catch (err) {
-    console.error(`[ACCOUNT-STATUS] Failed to send notification for ${accountName}:`, err);
+    logger.error(`[ACCOUNT-STATUS] Failed to send notification for ${accountName}:`, err);
   }
 }
 
 async function check115Account(account: AccountInfo): Promise<AccountStatus> {
   try {
-    console.log(`[ACCOUNT-STATUS] Checking 115 account: ${account.name}, hasCookie: ${!!account.cookie}, cookieLen: ${account.cookie?.length || 0}`);
+    logger.info(`[ACCOUNT-STATUS] Checking 115 account: ${account.name}, hasCookie: ${!!account.cookie}, cookieLen: ${account.cookie?.length || 0}`);
     if (!account.cookie) {
       return { name: account.name, status: "error", message: "Cookie 为空" };
     }
     // fs_files 内部会通过 ensureOk 检查错误，如果 cookie 无效会抛出异常
     const resp = await fs_files(0, { accountInfo: account, limit: 1 });
-    console.log(`[ACCOUNT-STATUS] Response for ${account.name}: hasData=${!!resp?.data?.length}`);
+    logger.info(`[ACCOUNT-STATUS] Response for ${account.name}: hasData=${!!resp?.data?.length}`);
     return { name: account.name, status: "ok", message: "Cookie 有效" };
   } catch (err: unknown) {
-    console.error(`[ACCOUNT-STATUS] Error for ${account.name}:`, err);
+    logger.error(`[ACCOUNT-STATUS] Error for ${account.name}:`, err);
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("401") || msg.includes("cookie") || msg.includes("errno") || msg.includes("API error")) {
       return { name: account.name, status: "error", message: "Cookie 已过期" };
@@ -181,4 +196,84 @@ export async function GET(req: NextRequest) {
   results.sort((a, b) => a.name.localeCompare(b.name));
 
   return NextResponse.json({ results, checkedAt: Date.now() });
+}
+
+/**
+ * 后台账号状态检查：用于无页面访问时的自动监控
+ * 由 initAccountStatusBackgroundMonitor 在应用启动时启动
+ */
+async function runAccountStatusBackgroundCheck(): Promise<void> {
+  const accounts = readAccounts() as unknown as AccountInfo[];
+  const alerts = readSettings().telegram?.accountAlerts;
+
+  if (accounts.length === 0) return;
+
+  // 并行检查所有账号状态
+  const checkPromises = accounts.map(async (account) => {
+    let result: AccountStatus;
+    try {
+      result =
+        account.accountType === "115"
+          ? await check115Account(account)
+          : account.accountType === "openlist"
+          ? await checkOpenListAccount(account)
+          : { name: account.name, status: "unknown", message: "未知账户类型" };
+    } catch (err) {
+      result = {
+        name: account.name,
+        status: "error",
+        message: err instanceof Error ? err.message : "检测异常",
+      };
+    }
+
+    // 更新缓存
+    STATUS_CACHE.set(account.name, { status: result.status, message: result.message, ts: Date.now() });
+
+    // 检查状态变化，触发通知
+    const prevHistory = STATUS_HISTORY.get(result.name);
+    if (!prevHistory || prevHistory.status !== result.status) {
+      if (alerts?.enabled) {
+        await sendStatusChangeNotification(result.name, result.status, result.message);
+      }
+      STATUS_HISTORY.set(result.name, { status: result.status, updatedAt: Date.now() });
+      logger.info(`[ACCOUNT-STATUS] ${account.name}: ${result.status} (${result.message || ""})`);
+    }
+  });
+
+  await Promise.allSettled(checkPromises);
+}
+
+/**
+ * 启动后台账号状态监控定时器
+ * 仅在进程级执行一次（backgroundCheckStarted 守卫）
+ */
+export function startAccountStatusBackgroundMonitor(): void {
+  if (backgroundCheckStarted) return;
+  backgroundCheckStarted = true;
+  _g.__backgroundCheckStarted = true;
+
+  // 延迟 5 秒启动，预热缓存的同时不阻塞启动
+  setTimeout(() => {
+    runAccountStatusBackgroundCheck().catch((err) => {
+      logger.warn("[ACCOUNT-STATUS] Initial background check failed:", err);
+    });
+    backgroundCheckTimer = setInterval(() => {
+      runAccountStatusBackgroundCheck().catch((err) => {
+        logger.warn("[ACCOUNT-STATUS] Background check failed:", err);
+      });
+    }, ACCOUNT_STATUS_CHECK_INTERVAL_MS);
+    _g.__backgroundCheckTimer = backgroundCheckTimer;
+    logger.info(`[ACCOUNT-STATUS] Background monitor started (interval=${ACCOUNT_STATUS_CHECK_INTERVAL_MS}ms)`);
+  }, 5 * 1000);
+}
+
+export function stopAccountStatusBackgroundMonitor(): void {
+  if (backgroundCheckTimer) {
+    clearInterval(backgroundCheckTimer);
+    backgroundCheckTimer = null;
+    _g.__backgroundCheckTimer = null;
+    logger.info("[ACCOUNT-STATUS] Background monitor stopped");
+  }
+  backgroundCheckStarted = false;
+  _g.__backgroundCheckStarted = false;
 }

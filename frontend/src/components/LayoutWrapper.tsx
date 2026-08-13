@@ -38,9 +38,9 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
       <SidebarProvider>
           <AppSidebar />
           <div className="flex flex-col w-full min-h-screen pl-0">
-            <header className="w-full border-b flex items-center gap-3 p-2 flex-wrap">
+            <header className="w-full border-b flex items-center gap-3 p-2 flex-nowrap">
               <SidebarTrigger />
-              <div className="ml-auto flex items-center gap-1">
+              <div className="ml-0 sm:ml-auto flex items-center gap-1">
                 <a
                   href="https://github.com/wabisabi926/faststrm/wiki"
                   target="_blank"

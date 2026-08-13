@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { logger } from "@/lib/logger";
 
 const DEFAULT_SECRET = 'your-super-secret-jwt-key-change-in-production';
 const jwtSecretFile = path.join(process.cwd(), "../config", ".jwt_secret");
@@ -34,9 +35,9 @@ export function loadJwtSecret(): string {
     const dir = path.dirname(jwtSecretFile);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(jwtSecretFile, randomSecret, "utf-8", { mode: 0o600 });
-    console.log(`[JWT] 已自动生成随机密钥并保存到 ${jwtSecretFile}`);
+    logger.info(`[JWT] 已自动生成随机密钥并保存到 ${jwtSecretFile}`);
   } catch (err) {
-    console.warn("[JWT] 无法写入密钥文件，使用临时密钥（重启后失效）:", err);
+    logger.warn("[JWT] 无法写入密钥文件，使用临时密钥（重启后失效）:", err);
   }
 
   cachedSecret = randomSecret;

@@ -292,7 +292,7 @@ export function DirectoryTreeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
+      <DialogContent className="max-w-[95vw] sm:max-w-[600px] max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>选择目录</DialogTitle>
           <DialogDescription>

@@ -2,6 +2,7 @@ import { CronJob } from "cron";
 import { readTasks, saveTasks } from "@/lib/serverUtils";
 import { executeTask, updateTaskScheduleState } from "./taskExecutor";
 import { initAccountRuntimeState } from "./accountRuntimeState";
+import { logger } from "@/lib/logger";
 
 export type ScheduleMode = "interval" | "daily" | "weekly";
 
@@ -74,7 +75,9 @@ function getSchedulerMap(): Map<string, CronJob> {
   return g.__taskSchedulerJobs__;
 }
 
-let schedulerInitialized = false;
+// 使用 globalThis 防止 HMR 重置
+const _tg = globalThis as unknown as { __taskSchedulerInitialized?: boolean };
+let schedulerInitialized = _tg.__taskSchedulerInitialized || false;
 const executingIds = new Set<string>();
 
 export function getSchedulerStatus(): {
@@ -94,6 +97,7 @@ export function getSchedulerStatus(): {
 export async function initTaskScheduler(): Promise<void> {
   if (schedulerInitialized) return;
   schedulerInitialized = true;
+  _tg.__taskSchedulerInitialized = true;
 
   initAccountRuntimeState();
 
@@ -117,7 +121,7 @@ export async function initTaskScheduler(): Promise<void> {
       lastRunAt + _intervalMs(cronExpr) < now - 60_000;
 
     if (isCatchupEligible) {
-      console.log(
+      logger.info(
         `[TaskScheduler] catchup for task ${task.id} (lastRun=${new Date(lastRunAt).toISOString()}, missed)`
       );
       fireTask(task.id, "catchup");
@@ -126,7 +130,7 @@ export async function initTaskScheduler(): Promise<void> {
     _registerJob(task.id, schedule);
   }
 
-  console.log(
+  logger.info(
     `[TaskScheduler] initialized, ${getSchedulerMap().size} task(s) registered`
   );
 }
@@ -177,7 +181,7 @@ function _registerJob(taskId: string, schedule: TaskSchedule): void {
     }
   }
 
-  console.log(
+  logger.info(
     `[TaskScheduler] registered task ${taskId} cron=${cronExpr} nextRun=${next ? new Date(next).toISOString() : "?"}`
   );
 }
@@ -188,13 +192,13 @@ function _unregisterJob(taskId: string): void {
   if (job) {
     try { job.stop(); } catch {}
     jobs.delete(taskId);
-    console.log(`[TaskScheduler] unregistered task ${taskId}`);
+    logger.info(`[TaskScheduler] unregistered task ${taskId}`);
   }
 }
 
 async function fireTask(taskId: string, trigger: "schedule" | "catchup"): Promise<void> {
   if (executingIds.has(taskId)) {
-    console.log(`[TaskScheduler] task ${taskId} is already executing, skip`);
+    logger.debug(`[TaskScheduler] task ${taskId} is already executing, skip`);
     return;
   }
   executingIds.add(taskId);
@@ -230,11 +234,11 @@ async function fireTask(taskId: string, trigger: "schedule" | "catchup"): Promis
 
     const label = trigger === "catchup" ? "[catchup]" : "[schedule]";
     if (result.blocked) {
-      console.log(
+      logger.info(
         `[TaskScheduler] ${label} task ${taskId} blocked (account busy). nextRun=${next ? new Date(next).toISOString() : "?"}`
       );
     } else {
-      console.log(
+      logger.info(
         `[TaskScheduler] ${label} task ${taskId} ${result.success ? "OK" : "FAIL"} ${durationMs}ms. nextRun=${next ? new Date(next).toISOString() : "?"}`
       );
     }
@@ -248,7 +252,7 @@ async function fireTask(taskId: string, trigger: "schedule" | "catchup"): Promis
       lastRunDurationMs: durationMs,
       nextRunAt: next || undefined,
     });
-    console.error(`[TaskScheduler] ${trigger} task ${taskId} crashed:`, err);
+    logger.error(`[TaskScheduler] ${trigger} task ${taskId} crashed:`, err);
   } finally {
     executingIds.delete(taskId);
   }

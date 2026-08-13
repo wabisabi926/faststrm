@@ -22,6 +22,7 @@ import {
   FileText,
   Filter,
 } from "lucide-react";
+import { logger } from "@/lib/logger";
 
 type LifeEventType = "create" | "delete" | "move" | "rename" | "folder-sync";
 
@@ -78,7 +79,7 @@ export default function LifeEventsPage() {
       setItems(res.data.items || []);
     } catch (err) {
       toast.error("获取生活事件日志失败");
-      console.error(err);
+      logger.error(err);
     } finally {
       setLoading(false);
     }

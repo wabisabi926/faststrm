@@ -151,7 +151,7 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
         )}
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="max-w-[95vw] sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>{account ? "编辑账户" : "新增账户"}</DialogTitle>
           <DialogDescription>

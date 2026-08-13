@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { logger } from "./logger";
 
 export interface AccountRuntimeState {
   activeTaskId?: string;
@@ -13,7 +14,15 @@ const FULLSCAN_TIMEOUT_MS = 10 * 60 * 1000; // 10 分钟（之前 1 小时太长
 const MONITOR_RESUME_GRACE_MS = 5 * 60 * 1000;
 
 const MEM_STATE: Map<string, AccountRuntimeState> = new Map();
+
+// 使用 globalThis 防止 HMR 重置初始化状态
+const _g = globalThis as unknown as { __accountRuntimeInitialized?: boolean };
 let initialized = false;
+
+// 同步 globalThis 状态（HMR 恢复）
+if (_g.__accountRuntimeInitialized) {
+  initialized = true;
+}
 
 function readRuntimeFile(): Record<string, AccountRuntimeState> {
   try {
@@ -31,13 +40,14 @@ function writeRuntimeFile() {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(RUNTIME_FILE, JSON.stringify(obj, null, 2), "utf-8");
   } catch (err) {
-    console.error("[AccountRuntime] write failed:", err);
+    logger.error("[AccountRuntime] write failed:", err);
   }
 }
 
 export function initAccountRuntimeState() {
   if (initialized) return;
   initialized = true;
+  _g.__accountRuntimeInitialized = true;
 
   const persisted = readRuntimeFile();
   const now = Date.now();
@@ -54,7 +64,7 @@ export function initAccountRuntimeState() {
       cleaned.activeTaskId = state.activeTaskId;
       cleaned.activeTaskStartAt = state.activeTaskStartAt;
     } else if (state.activeTaskId) {
-      console.log(
+      logger.info(
         `[AccountRuntime] cleanup stale fullscan lock for ${account} (activeTaskId=${state.activeTaskId})`
       );
       needPersistUpdate = true;
@@ -74,9 +84,21 @@ export function initAccountRuntimeState() {
     writeRuntimeFile();
   }
 
-  console.log(
+  logger.info(
     `[AccountRuntime] initialized, ${MEM_STATE.size} account(s) with runtime state`
   );
+
+  // 启动后台账号状态监控（无页面访问时也会检测异常）
+  try {
+    // 动态 import 避免循环依赖
+    import("../app/api/account/status/route").then((mod) => {
+      mod.startAccountStatusBackgroundMonitor();
+    }).catch((err) => {
+      logger.warn("[AccountRuntime] Failed to start account status monitor:", err);
+    });
+  } catch (err) {
+    logger.warn("[AccountRuntime] Failed to start account status monitor:", err);
+  }
 }
 
 export function getAccountRuntimeState(account: string): AccountRuntimeState {
@@ -133,7 +155,7 @@ export function tryEnterFullScan(
   MEM_STATE.set(account, state);
   writeRuntimeFile();
 
-  console.log(`[AccountRuntime] fullscan enter: account=${account} taskId=${taskId}`);
+  logger.info(`[AccountRuntime] fullscan enter: account=${account} taskId=${taskId}`);
   return { ok: true };
 }
 
@@ -160,7 +182,7 @@ export function exitFullScan(account: string): void {
   }
   writeRuntimeFile();
 
-  console.log(`[AccountRuntime] fullscan exit: account=${account}`);
+  logger.info(`[AccountRuntime] fullscan exit: account=${account}`);
 }
 
 export function suspendMonitorForFullScan(account: string): void {
@@ -170,7 +192,7 @@ export function suspendMonitorForFullScan(account: string): void {
   state.monitorSuspendedBy = "fullscan";
   MEM_STATE.set(account, state);
   writeRuntimeFile();
-  console.log(`[AccountRuntime] monitor suspended: account=${account}`);
+  logger.info(`[AccountRuntime] monitor suspended: account=${account}`);
 }
 
 export function tryPollMonitor(account: string): {

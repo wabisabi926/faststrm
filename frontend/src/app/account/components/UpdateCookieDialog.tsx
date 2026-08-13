@@ -79,7 +79,7 @@ export function UpdateCookieDialog({ accountName, trigger, onSuccess }: UpdateCo
         )}
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="max-w-[95vw] sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>更新 Cookie - {accountName}</DialogTitle>
           <DialogDescription>

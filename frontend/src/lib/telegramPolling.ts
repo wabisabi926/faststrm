@@ -2,14 +2,53 @@
 import { createTelegramBot } from "./telegram";
 import { readSettings } from "./serverUtils";
 import { BOT_COMMANDS, handleMessage, handleCallbackQuery, BASE_URL } from "./telegramCommands";
+import { logger } from "./logger";
 
-let pollingInterval: NodeJS.Timeout | null = null;
-let pollingStartTimer: NodeJS.Timeout | null = null;
-let lastUpdateId = 0;
-let isPollingActive = false;
-let currentBotToken: string | null = null;
+// 使用 globalThis 持久化轮询状态，防止 HMR 重置导致状态丢失
+const _pg = globalThis as unknown as {
+  __telegramPolling?: {
+    interval: NodeJS.Timeout | null;
+    startTimer: NodeJS.Timeout | null;
+    lastUpdateId: number;
+    isActive: boolean;
+    isRequestInFlight: boolean;
+    currentBotToken: string | null;
+    menuSetup: boolean;
+  };
+};
+
+if (!_pg.__telegramPolling) {
+  _pg.__telegramPolling = {
+    interval: null,
+    startTimer: null,
+    lastUpdateId: 0,
+    isActive: false,
+    isRequestInFlight: false,
+    currentBotToken: null,
+    menuSetup: false,
+  };
+}
+
+let pollingInterval = _pg.__telegramPolling.interval;
+let pollingStartTimer = _pg.__telegramPolling.startTimer;
+let lastUpdateId = _pg.__telegramPolling.lastUpdateId;
+let isPollingActive = _pg.__telegramPolling.isActive;
+let isRequestInFlight = _pg.__telegramPolling.isRequestInFlight;
+let currentBotToken = _pg.__telegramPolling.currentBotToken;
+let menuSetup = _pg.__telegramPolling.menuSetup;
 let currentBot: ReturnType<typeof createTelegramBot> | null = null;
-let autoInitDone = false;
+
+function syncPollingState() {
+  if (_pg.__telegramPolling) {
+    _pg.__telegramPolling.interval = pollingInterval;
+    _pg.__telegramPolling.startTimer = pollingStartTimer;
+    _pg.__telegramPolling.lastUpdateId = lastUpdateId;
+    _pg.__telegramPolling.isActive = isPollingActive;
+    _pg.__telegramPolling.isRequestInFlight = isRequestInFlight;
+    _pg.__telegramPolling.currentBotToken = currentBotToken;
+    _pg.__telegramPolling.menuSetup = menuSetup;
+  }
+}
 
 function recreateBotIfNeeded(): ReturnType<typeof createTelegramBot> | null {
   const settings = readSettings();
@@ -23,19 +62,26 @@ function recreateBotIfNeeded(): ReturnType<typeof createTelegramBot> | null {
 }
 
 async function setupBotMenu(bot: ReturnType<typeof createTelegramBot>): Promise<void> {
+  if (menuSetup) return;
+  menuSetup = true;
+  syncPollingState();
   try {
     const result = await bot.setMyCommands(BOT_COMMANDS);
     if (result.ok) {
-      console.log("[Telegram] Bot menu commands set successfully");
+      logger.info("[Telegram] Bot menu commands set successfully");
     } else {
-      console.warn("[Telegram] Failed to set bot menu:", result.description);
+      logger.warn("[Telegram] Failed to set bot menu:", result.description);
     }
   } catch (error) {
-    console.warn("[Telegram] setMyCommands error:", error);
+    logger.warn("[Telegram] setMyCommands error:", error);
+    menuSetup = false;
+    syncPollingState();
   }
 }
 
 async function pollingTick() {
+  if (isRequestInFlight) return;
+
   const settings = readSettings();
   const telegram = settings.telegram;
 
@@ -44,9 +90,20 @@ async function pollingTick() {
     return;
   }
 
+  // 运行时自愈：如果标记为 active 但定时器已失效（进程崩溃/HMR 导致），自动重启
+  if (isPollingActive && !pollingInterval && !pollingStartTimer) {
+    logger.warn("[Telegram] Polling active but timer missing, restarting...");
+    isPollingActive = false;
+    syncPollingState();
+    await startPolling();
+    return;
+  }
+
   const bot = recreateBotIfNeeded();
   if (!bot) return;
 
+  isRequestInFlight = true;
+  syncPollingState();
   try {
     const updates = await bot.getUpdates(lastUpdateId + 1, 1, 30);
     if (!updates || updates.length === 0) return;
@@ -63,8 +120,11 @@ async function pollingTick() {
   } catch (error: unknown) {
     const axiosError = error as { response?: { status?: number }; message?: string };
     if (axiosError.response?.status !== 409) {
-      console.warn("Polling error:", axiosError.message || error);
+      logger.warn("Polling error:", axiosError.message || error);
     }
+  } finally {
+    isRequestInFlight = false;
+    syncPollingState();
   }
 }
 
@@ -77,7 +137,7 @@ export async function startPolling(): Promise<boolean> {
   const telegram = settings.telegram;
 
   if (!telegram?.botToken) {
-    console.error("Telegram not configured for polling");
+    logger.error("Telegram not configured for polling");
     return false;
   }
 
@@ -104,22 +164,38 @@ export async function startPolling(): Promise<boolean> {
   await setupBotMenu(bot);
 
   isPollingActive = true;
+  syncPollingState();
 
   pollingStartTimer = setTimeout(() => {
     if (!isPollingActive) return;
     pollingInterval = setInterval(pollingTick, 5000);
+    syncPollingState();
   }, 3000);
+  syncPollingState();
 
   return true;
 }
 
 export async function initTelegramPolling(): Promise<void> {
-  if (autoInitDone) return;
-  autoInitDone = true;
   const settings = readSettings();
   const telegram = settings.telegram;
-  if (telegram?.botToken && telegram.enabled !== false && !telegram.webhookUrl) {
-    console.log("[Telegram] Auto-starting polling (enabled, no webhook)...");
+
+  const hasToken = !!telegram?.botToken;
+  const isEnabled = telegram?.enabled !== false;
+  const noWebhook = !telegram?.webhookUrl || telegram.webhookUrl.trim() === "";
+  const autoPolling = telegram?.autoPolling !== false;
+
+  // 如果没有 autoPolling 或条件不满足，停止轮询（如果正在运行）
+  if (!autoPolling || !hasToken || !isEnabled || !noWebhook) {
+    if (isPollingActive) {
+      logger.info("[Telegram] Polling auto-start disabled or conditions not met, stopping...");
+      stopPolling();
+    }
+    return;
+  }
+
+  if (!isPollingActive) {
+    logger.info("[Telegram] Auto-starting polling (autoPolling=true, enabled, no webhook)...");
     await startPolling();
   }
 }
@@ -140,7 +216,8 @@ export function stopPolling(): boolean {
   }
 
   isPollingActive = false;
-  console.log("Telegram polling stopped");
+  syncPollingState();
+  logger.info("Telegram polling stopped");
   return true;
 }
 
@@ -175,7 +252,7 @@ export async function forceCleanup(): Promise<boolean> {
 
     return true;
   } catch (error) {
-    console.error("Failed to force cleanup:", error);
+    logger.error("Failed to force cleanup:", error);
     return false;
   }
 }
@@ -210,7 +287,7 @@ export async function safeStartPolling(): Promise<boolean> {
 
     return await startPolling();
   } catch (error) {
-    console.error("Failed to safely start polling:", error);
+    logger.error("Failed to safely start polling:", error);
     return false;
   }
 }

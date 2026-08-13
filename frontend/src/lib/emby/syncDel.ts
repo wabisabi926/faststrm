@@ -184,13 +184,22 @@ function matchPathMapping(
   mappings: Array<{ embyPath: string; cloudPath: string; account?: string }>
 ): { embyPath: string; cloudPath: string; account?: string } | null {
   const normalized = path.normalize(embyPath).replace(/\\/g, "/");
+
+  // P1修复：选择最长前缀匹配（最具体的路径），而非按配置顺序取第一个。
+  // 当存在 /media 和 /media/movies 两条映射时，/media/movies/foo 应匹配后者。
+  let bestMatch: { embyPath: string; cloudPath: string; account?: string } | null = null;
+  let bestPrefixLen = -1;
+
   for (const m of mappings) {
     const prefix = path.normalize(m.embyPath).replace(/\\/g, "/");
     if (normalized === prefix || normalized.startsWith(prefix + "/")) {
-      return m;
+      if (prefix.length > bestPrefixLen) {
+        bestPrefixLen = prefix.length;
+        bestMatch = m;
+      }
     }
   }
-  return null;
+  return bestMatch;
 }
 
 function mapEmbyPathToCloud(
