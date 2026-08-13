@@ -6,11 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
-import { Bot, Settings, MessageSquare, CheckCircle, XCircle, AlertCircle, RefreshCw, Play, Square, Users, Plus, Trash2, UserPlus, ShieldAlert, Bell } from "lucide-react";
+import { Bot, MessageSquare, CheckCircle, XCircle, RefreshCw, Play, Square, AlertCircle } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import axiosInstance from "@/lib/axios";
 
 interface TelegramConfig {
@@ -22,32 +19,14 @@ interface TelegramConfig {
 
 interface BotInfo {
   id: number;
-  is_bot: boolean;
   first_name: string;
   username: string;
-  can_join_groups: boolean;
-  can_read_all_group_messages: boolean;
-  supports_inline_queries: boolean;
 }
 
 interface WebhookInfo {
   url: string;
-  has_custom_certificate: boolean;
   pending_update_count: number;
-  last_error_date?: number;
   last_error_message?: string;
-  max_connections?: number;
-  allowed_updates?: string[];
-}
-
-interface TelegramUser {
-  id: number;
-}
-
-interface AccountAlertsConfig {
-  enabled: boolean;
-  onError: boolean;
-  onRecover: boolean;
 }
 
 function maskToken(token: string): string {
@@ -61,9 +40,6 @@ function maskToken(token: string): string {
 }
 
 export default function TelegramNotifyPage() {
-  const [activeTab, setActiveTab] = useState<"bot" | "users">("bot");
-
-  // Bot 配置相关状态
   const [config, setConfig] = useState<TelegramConfig>({});
   const [botInfo, setBotInfo] = useState<BotInfo | null>(null);
   const [webhookInfo, setWebhookInfo] = useState<WebhookInfo | null>(null);
@@ -71,45 +47,16 @@ export default function TelegramNotifyPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [pollingStatus, setPollingStatus] = useState<{ polling: boolean; message: string } | null>(null);
-  // 用户不改 token 就点保存时：用原始明文，不要把 mask 字符串发给后端
   const [originalTokenPlain, setOriginalTokenPlain] = useState<string>("");
   const [tokenModified, setTokenModified] = useState<boolean>(false);
 
-  // 账户状态通知配置状态
-  const [accountAlerts, setAccountAlerts] = useState<AccountAlertsConfig>({
-    enabled: false,
-    onError: true,
-    onRecover: true,
-  });
-  const [alertsLoading, setAlertsLoading] = useState(false);
-  const [alertsSuccess, setAlertsSuccess] = useState<string | null>(null);
-
-  // 用户管理相关状态
-  const [users, setUsers] = useState<TelegramUser[]>([]);
-  const [newUserId, setNewUserId] = useState("");
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [userToDelete, setUserToDelete] = useState<number | null>(null);
-
-  // 页面挂载时仅一次加载 Bot 配置 + 轮询状态 + 账户状态通知配置
   useEffect(() => {
     void loadBotInfo();
     void checkPollingStatus();
-    void loadAccountAlerts();
   }, []);
-
-  // 切换到用户管理 Tab 时加载用户列表
-  useEffect(() => {
-    if (activeTab === "users") {
-      void loadUsers();
-    }
-  }, [activeTab]);
 
   const loadBotInfo = async () => {
     try {
-      // 并行两次请求：
-      //   ①  /api/settings        → 读本地 JSON（毫秒级），立刻回填左侧输入框
-      //   ②  /api/notify/bot      → Telegram 实时信息（较慢），填右侧机器人状态卡
       void (async () => {
         try {
           const settingsResp = await axiosInstance.get("/api/settings");
@@ -145,7 +92,6 @@ export default function TelegramNotifyPage() {
       setError(null);
       setSuccess(null);
 
-      // 如果用户没改 token 输入框：把本地保存的明文 token 发回，不要发 mask 字符串
       const effectiveBotToken = tokenModified ? config.botToken : originalTokenPlain;
 
       const response = await axiosInstance.post("/api/notify/bot", {
@@ -156,8 +102,7 @@ export default function TelegramNotifyPage() {
       });
 
       if (response.data.success) {
-        setSuccess("Telegram 机器人配置成功！");
-        setBotInfo(response.data.bot);
+        setSuccess("配置保存成功！");
         const savedToken = tokenModified && config.botToken ? config.botToken : originalTokenPlain;
         setOriginalTokenPlain(savedToken);
         setTokenModified(false);
@@ -179,17 +124,13 @@ export default function TelegramNotifyPage() {
   };
 
   const handleDelete = async () => {
-    if (!confirm("确定要删除 Telegram 机器人配置吗？")) {
-      return;
-    }
-
+    if (!confirm("确定要删除 Telegram 机器人配置吗？")) return;
     try {
       setLoading(true);
       setError(null);
       setSuccess(null);
-
       await axiosInstance.delete("/api/notify/bot");
-      setSuccess("Telegram 机器人配置已删除！");
+      setSuccess("配置已删除！");
       setBotInfo(null);
       setWebhookInfo(null);
       setConfig({});
@@ -215,9 +156,7 @@ export default function TelegramNotifyPage() {
       setLoading(true);
       setError(null);
       setSuccess(null);
-
       const response = await axiosInstance.post("/api/notify/polling");
-
       if (response.data.success) {
         setSuccess("轮询已启动！");
         await checkPollingStatus();
@@ -235,9 +174,7 @@ export default function TelegramNotifyPage() {
       setLoading(true);
       setError(null);
       setSuccess(null);
-
       const response = await axiosInstance.delete("/api/notify/polling");
-
       if (response.data.success) {
         setSuccess("轮询已停止！");
         await checkPollingStatus();
@@ -250,58 +187,19 @@ export default function TelegramNotifyPage() {
     }
   };
 
-  // 加载账户状态通知配置
-  const loadAccountAlerts = async () => {
-    try {
-      const response = await axiosInstance.get("/api/notify/alerts");
-      if (response.data) {
-        setAccountAlerts({
-          enabled: response.data.enabled ?? false,
-          onError: response.data.onError ?? true,
-          onRecover: response.data.onRecover ?? true,
-        });
-      }
-    } catch (error) {
-      console.error("加载账户状态通知配置失败:", error);
-    }
-  };
-
-  // 保存账户状态通知配置
-  const saveAccountAlerts = async () => {
-    try {
-      setAlertsLoading(true);
-      setAlertsSuccess(null);
-      setError(null);
-
-      const response = await axiosInstance.post("/api/notify/alerts", accountAlerts);
-
-      if (response.data.success) {
-        setAlertsSuccess("账户状态通知配置保存成功！");
-      }
-    } catch (error) {
-      const axiosError = error as { response?: { data?: { error?: string } } };
-      setError(axiosError.response?.data?.error || "保存账户状态通知配置失败");
-    } finally {
-      setAlertsLoading(false);
-    }
-  };
-
   const testBot = async () => {
     if (!config.chatId) {
       setError("请先设置 Chat ID");
       return;
     }
-
     try {
       setLoading(true);
       setError(null);
       setSuccess(null);
-
       await axiosInstance.post("/api/notify/send", {
         message: "🤖 Fast Strm 测试消息！",
         type: "info",
       });
-
       setSuccess("测试消息发送成功！");
     } catch (error) {
       const axiosError = error as { response?: { data?: { error?: string } } };
@@ -311,665 +209,183 @@ export default function TelegramNotifyPage() {
     }
   };
 
-  // 用户管理相关函数
-  const loadUsers = async () => {
-    try {
-      setLoading(true);
-      const response = await axiosInstance.get("/api/notify/users");
-      setUsers(response.data.users || []);
-    } catch (error) {
-      const axiosError = error as { response?: { data?: { error?: string } } };
-      setError(axiosError.response?.data?.error || "加载用户列表失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddUser = async () => {
-    if (!newUserId.trim()) {
-      setError("请输入用户 ID");
-      return;
-    }
-
-    const userId = parseInt(newUserId);
-    if (isNaN(userId)) {
-      setError("请输入有效的用户 ID");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-      setSuccess(null);
-
-      const response = await axiosInstance.post("/api/notify/users", {
-        userId: userId,
-      });
-
-      if (response.data.success) {
-        setSuccess("用户添加成功！");
-        setNewUserId("");
-        setAddDialogOpen(false);
-        await loadUsers();
-      }
-    } catch (error) {
-      const axiosError = error as { response?: { data?: { error?: string } } };
-      setError(axiosError.response?.data?.error || "添加用户失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDeleteUser = async () => {
-    if (!userToDelete) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-      setSuccess(null);
-
-      await axiosInstance.delete(`/api/notify/users?userId=${userToDelete}`);
-
-      setSuccess("用户已删除！");
-      setDeleteDialogOpen(false);
-      setUserToDelete(null);
-      await loadUsers();
-    } catch (error) {
-      const axiosError = error as { response?: { data?: { error?: string } } };
-      setError(axiosError.response?.data?.error || "删除用户失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const openDeleteDialog = (userId: number) => {
-    setUserToDelete(userId);
-    setDeleteDialogOpen(true);
-  };
-
-  const closeDeleteDialog = () => {
-    setUserToDelete(null);
-    setDeleteDialogOpen(false);
-  };
-
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      {/* 页面标题 */}
+    <div className="mx-auto max-w-2xl space-y-5">
       <div>
         <h1 className="text-2xl font-semibold">Telegram 通知</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          配置 Telegram 机器人通知、轮询控制、用户授权及账户状态提醒
+        <p className="text-sm text-muted-foreground mt-0.5">
+          配置 Bot、启动轮询，即可在 Telegram 接收通知
         </p>
       </div>
 
-      {/* Tab 切换 */}
-      <div className="flex gap-1 border-b border-border">
-        <button
-          onClick={() => setActiveTab("bot")}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-            activeTab === "bot"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Settings className="inline-block h-4 w-4 mr-1" />
-          机器人配置
-          {activeTab === "bot" && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
-          )}
-        </button>
-        <button
-          onClick={() => setActiveTab("users")}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-            activeTab === "users"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Users className="inline-block h-4 w-4 mr-1" />
-          用户管理
-          {activeTab === "users" && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
-          )}
-        </button>
-      </div>
-
-      {/* 错误/成功提示 */}
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="py-2">
           <XCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription className="text-sm">{error}</AlertDescription>
         </Alert>
       )}
 
       {success && (
-        <Alert>
+        <Alert className="py-2">
           <CheckCircle className="h-4 w-4" />
-          <AlertDescription>{success}</AlertDescription>
+          <AlertDescription className="text-sm">{success}</AlertDescription>
         </Alert>
       )}
 
-      {/* Bot 配置 Tab 内容 */}
-      {activeTab === "bot" && (
-        <div className="space-y-6">
-          <div className="grid gap-5 md:grid-cols-2">
-            {/* 机器人配置 */}
-            <section className="border rounded-md p-5 space-y-5">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Settings className="h-5 w-5" />
-                  <h2 className="text-base font-medium">机器人配置</h2>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">配置你的 Telegram 机器人</p>
-              </div>
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="botToken">机器人 Token</Label>
-                  <Input
-                    id="botToken"
-                    type="password"
-                    placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-                    value={config.botToken || ""}
-                    onChange={(e) => {
-                      setConfig({ ...config, botToken: e.target.value });
-                      setTokenModified(true);
-                    }}
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    从 @BotFather 获取。格式：数字:35位字符
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="chatId">聊天 ID</Label>
-                  <Input
-                    id="chatId"
-                    placeholder="输入你的聊天 ID"
-                    value={config.chatId || ""}
-                    onChange={(e) => setConfig({ ...config, chatId: e.target.value })}
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    向机器人发送消息并查看日志获取聊天 ID
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="webhookUrl">Webhook URL（可选）</Label>
-                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 h-5 px-1.5 text-[10px] font-medium">
-                      家用 / Nas / 内网 → 留空，用轮询
-                    </Badge>
-                  </div>
-                  <Input
-                    id="webhookUrl"
-                    placeholder="https://<你的公网域名>/api/notify/webhook（仅云服务器场景填写）"
-                    value={config.webhookUrl || ""}
-                    onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
-                  />
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <p>
-                      <span className="font-semibold text-foreground">推荐方案 · 轮询模式（留空）：</span>
-                      无需公网 IP / 域名 / HTTPS，家里 Nas、局域网、Docker 均可直接使用，消息延迟约 5 秒。
-                    </p>
-                    <p>
-                      <span className="font-semibold text-foreground">Webhook 模式（填写）：</span>
-                      仅适合部署在<span className="font-semibold">境外云服务器</span>且有域名 + HTTPS 的场景，可获得毫秒级实时消息。
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="enabled"
-                    checked={config.enabled !== false}
-                    onCheckedChange={(checked) => setConfig({ ...config, enabled: checked === true })}
-                  />
-                  <label
-                    htmlFor="enabled"
-                    className="text-sm font-medium leading-none cursor-pointer"
-                  >
-                    启用通知（任务开始/完成/失败自动推送）
-                  </label>
-                </div>
-
-                <div className="flex space-x-2">
-                  <Button onClick={handleSave} disabled={loading || !config.botToken}>
-                    {loading ? "保存中..." : "保存配置"}
-                  </Button>
-                  {botInfo && (
-                    <Button variant="outline" onClick={handleDelete} disabled={loading}>
-                      删除配置
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            {/* 机器人状态 */}
-            <section className="border rounded-md p-5 space-y-5">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Bot className="h-5 w-5" />
-                  <h2 className="text-base font-medium">机器人状态</h2>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">当前机器人信息和状态</p>
-              </div>
-              <div className="space-y-3">
-                {botInfo ? (
-                  <>
-                    <div className="flex items-center space-x-2">
-                      <Badge variant="outline" className="bg-green-50 text-green-700">
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                        已连接
-                      </Badge>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium">机器人名称：</span>
-                        <span className="text-sm">{botInfo.first_name}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium">用户名：</span>
-                        <span className="text-sm">@{botInfo.username}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium">机器人 ID：</span>
-                        <span className="text-sm">{botInfo.id}</span>
-                      </div>
-                    </div>
-
-                    <Separator />
-
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-medium">功能权限：</h4>
-                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 h-5 px-1.5 text-[10px] font-medium">
-                          仅展示，在 @BotFather 修改
-                        </Badge>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center space-x-2">
-                          {botInfo.can_join_groups ? (
-                            <CheckCircle className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <XCircle className="h-3 w-3 text-red-500" />
-                          )}
-                          <span className="text-xs">可加入群组</span>
-                          <span className="text-[10px] text-muted-foreground ml-auto">/setjoingroups</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          {botInfo.can_read_all_group_messages ? (
-                            <CheckCircle className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <XCircle className="h-3 w-3 text-red-500" />
-                          )}
-                          <span className="text-xs">可读取所有群组消息</span>
-                          <span className="text-[10px] text-muted-foreground ml-auto">/setprivacy → Disable</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          {botInfo.supports_inline_queries ? (
-                            <CheckCircle className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <XCircle className="h-3 w-3 text-red-500" />
-                          )}
-                          <span className="text-xs">支持内联查询</span>
-                          <span className="text-[10px] text-muted-foreground ml-auto">/setinline → Enable</span>
-                        </div>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed pt-1 border-t border-border/60">
-                        💡 <span className="font-medium text-foreground">faststrm 最低要求</span>：只需要「可加入群组」为 ✅ 即可正常收发通知。其余两项默认关闭是 Telegram 的安全隐私策略，
-                        <span className="font-medium text-foreground"> 不建议为了「全打勾」去关闭隐私模式</span>。
-                      </p>
-                    </div>
-
-                    <Button onClick={testBot} disabled={loading} className="w-full">
-                      <MessageSquare className="h-4 w-4 mr-2" />
-                      发送测试消息
-                    </Button>
-                  </>
-                ) : (
-                  <div className="text-center py-8">
-                    <AlertCircle className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                    <p className="text-sm text-muted-foreground">
-                      未配置机器人，请先配置。
-                    </p>
-                  </div>
-                )}
-              </div>
-            </section>
+      {/* 机器人配置 */}
+      <section className="border rounded-md p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Bot className="h-5 w-5" />
+          <h2 className="text-base font-medium">机器人配置</h2>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="botToken">Bot Token</Label>
+            <Input
+              id="botToken"
+              type="password"
+              placeholder="123456789:ABCdef..."
+              value={config.botToken || ""}
+              onChange={(e) => {
+                setConfig({ ...config, botToken: e.target.value });
+                setTokenModified(true);
+              }}
+            />
+            <p className="text-xs text-muted-foreground">从 @BotFather 获取</p>
           </div>
-
-          {/* 轮询控制 */}
-          <section className="border rounded-md p-5 space-y-5">
-            <div>
-              <div className="flex items-center gap-2">
-                <RefreshCw className="h-5 w-5" />
-                <h2 className="text-base font-medium">轮询控制</h2>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">控制机器人接收消息的模式</p>
-            </div>
-            <div className="space-y-3">
-              {pollingStatus && (
-                <div className="flex items-center space-x-2">
-                  <Badge variant={pollingStatus.polling ? "default" : "outline"}>
-                    {pollingStatus.polling ? "轮询中" : "Webhook 模式"}
-                  </Badge>
-                  <span className="text-sm text-muted-foreground">{pollingStatus.message}</span>
-                </div>
-              )}
-
-              <div className="flex space-x-2">
-                <Button
-                  onClick={startPolling}
-                  disabled={loading || (pollingStatus?.polling === true)}
-                  variant="outline"
-                >
-                  <Play className="h-4 w-4 mr-2" />
-                  启动轮询
-                </Button>
-                <Button
-                  onClick={stopPolling}
-                  disabled={loading || (pollingStatus?.polling === false)}
-                  variant="outline"
-                >
-                  <Square className="h-4 w-4 mr-2" />
-                  停止轮询
-                </Button>
-                <Button
-                  onClick={checkPollingStatus}
-                  disabled={loading}
-                  variant="outline"
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  刷新状态
-                </Button>
-              </div>
-
-              <div className="text-sm text-muted-foreground space-y-1">
-                <p><strong>轮询模式：</strong>机器人每 5 秒检查新消息（降低频率以避免冲突）</p>
-                <p><strong>Webhook 模式：</strong>Telegram 直接向服务器发送消息</p>
-              </div>
-            </div>
-          </section>
-
-          {/* Webhook 信息：只有真的配置了 Webhook URL 才展示，轮询模式直接隐藏 */}
-          {webhookInfo?.url && (
-            <section className="border rounded-md p-5 space-y-5">
-              <div>
-                <h2 className="text-base font-medium">Webhook 信息</h2>
-                <p className="text-xs text-muted-foreground mt-1">当前 Webhook 配置和状态</p>
-              </div>
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Webhook URL：</span>
-                    <span className="text-sm font-mono">{webhookInfo.url || "未设置"}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">待处理更新：</span>
-                    <Badge variant={webhookInfo.pending_update_count > 0 ? "destructive" : "outline"}>
-                      {webhookInfo.pending_update_count}
-                    </Badge>
-                  </div>
-                  {webhookInfo.last_error_message && (
-                    <div className="space-y-1">
-                      <span className="text-sm font-medium text-red-600">最后错误：</span>
-                      <p className="text-sm text-red-600">{webhookInfo.last_error_message}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
-          )}
-
-          {/* 账户状态通知配置 */}
-          <section className="border rounded-md p-5 space-y-5">
-            <div>
-              <div className="flex items-center gap-2">
-                <ShieldAlert className="h-5 w-5" />
-                <h2 className="text-base font-medium">账户状态通知</h2>
-                <Badge variant={accountAlerts.enabled ? "default" : "outline"}>
-                  {accountAlerts.enabled ? "已启用" : "未启用"}
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">当账号状态异常或恢复时，自动发送 Telegram 通知</p>
-            </div>
-            <div className="space-y-3">
-              {/* 启用开关 */}
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="alertsEnabled"
-                  checked={accountAlerts.enabled}
-                  onCheckedChange={(checked) =>
-                    setAccountAlerts({ ...accountAlerts, enabled: checked === true })
-                  }
-                />
-                <label
-                  htmlFor="alertsEnabled"
-                  className="text-sm font-medium leading-none cursor-pointer"
-                >
-                  启用账户状态通知
-                </label>
-              </div>
-
-              <Separator />
-
-              {/* 通知选项 */}
-              <div className="grid gap-3 md:grid-cols-2">
-                {/* 异常通知 */}
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="onError"
-                    checked={accountAlerts.onError}
-                    disabled={!accountAlerts.enabled}
-                    onCheckedChange={(checked) =>
-                      setAccountAlerts({ ...accountAlerts, onError: checked === true })
-                    }
-                  />
-                  <label
-                    htmlFor="onError"
-                    className={`text-sm leading-none ${!accountAlerts.enabled ? "text-muted-foreground" : "cursor-pointer"}`}
-                  >
-                    <span className="flex items-center gap-1">
-                      <AlertCircle className="h-3.5 w-3.5 text-red-500" />
-                      账号异常时通知
-                    </span>
-                  </label>
-                </div>
-
-                {/* 恢复通知 */}
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="onRecover"
-                    checked={accountAlerts.onRecover}
-                    disabled={!accountAlerts.enabled}
-                    onCheckedChange={(checked) =>
-                      setAccountAlerts({ ...accountAlerts, onRecover: checked === true })
-                    }
-                  />
-                  <label
-                    htmlFor="onRecover"
-                    className={`text-sm leading-none ${!accountAlerts.enabled ? "text-muted-foreground" : "cursor-pointer"}`}
-                  >
-                    <span className="flex items-center gap-1">
-                      <CheckCircle className="h-3.5 w-3.5 text-green-500" />
-                      账号恢复正常时通知
-                    </span>
-                  </label>
-                </div>
-              </div>
-
-
-
-              {/* 说明 */}
-              <Alert className="bg-blue-50 border-blue-200">
-                <Bell className="h-4 w-4 text-blue-600" />
-                <AlertDescription className="text-xs text-blue-800">
-                  <strong>通知触发条件：</strong>
-                  <br />
-                  • 账号状态从"正常"变为"异常"时发送异常通知
-                  <br />
-                  • 账号状态从"异常"恢复为"正常"时发送恢复通知
-                  <br />
-                  • 每个状态变化只会通知一次，避免重复打扰
-                </AlertDescription>
-              </Alert>
-
-              {/* 保存按钮 */}
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={saveAccountAlerts}
-                  disabled={alertsLoading}
-                  size="sm"
-                >
-                  {alertsLoading ? "保存中..." : "保存通知设置"}
-                </Button>
-                <Button
-                  onClick={() => loadAccountAlerts()}
-                  disabled={alertsLoading}
-                  variant="outline"
-                  size="sm"
-                >
-                  重新加载
-                </Button>
-                {alertsSuccess && (
-                  <span className="text-xs text-green-600 flex items-center gap-1">
-                    <CheckCircle className="h-3.5 w-3.5" />
-                    {alertsSuccess}
-                  </span>
-                )}
-              </div>
-            </div>
-          </section>
+          <div className="space-y-1.5">
+            <Label htmlFor="chatId">Chat ID</Label>
+            <Input
+              id="chatId"
+              placeholder="你的聊天 ID"
+              value={config.chatId || ""}
+              onChange={(e) => setConfig({ ...config, chatId: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">向 Bot 发消息后查看日志获取</p>
+          </div>
         </div>
-      )}
 
-      {/* 用户管理 Tab 内容 */}
-      {activeTab === "users" && (
-        <div className="space-y-6">
-          <section className="border rounded-md p-5 space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <UserPlus className="h-5 w-5" />
-                  <h2 className="text-base font-medium">授权用户</h2>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">管理可访问机器人的用户</p>
-              </div>
-              <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="h-4 w-4 mr-2" />
-                    添加用户
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>添加新用户</DialogTitle>
-                    <DialogDescription>
-                      将新用户添加到授权列表，该用户可以使用所有机器人命令。
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="userId">用户 ID</Label>
-                      <Input
-                        id="userId"
-                        type="number"
-                        placeholder="输入 Telegram 用户 ID"
-                        value={newUserId}
-                        onChange={(e) => setNewUserId(e.target.value)}
-                      />
-                      <p className="text-sm text-muted-foreground">
-                        向机器人发送消息并查看日志获取用户 ID
-                      </p>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
-                      取消
-                    </Button>
-                    <Button onClick={handleAddUser} disabled={loading}>
-                      {loading ? "添加中..." : "添加"}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-            <div className="space-y-3">
-              {users.length === 0 ? (
-                <div className="text-center py-8">
-                  <AlertCircle className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                  <p className="text-sm text-muted-foreground mb-4">
-                    暂无授权用户。
-                  </p>
-                  <Button onClick={() => setAddDialogOpen(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    添加第一个用户
-                  </Button>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>用户 ID</TableHead>
-                      <TableHead>状态</TableHead>
-                      <TableHead>操作</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {users.map((user) => (
-                      <TableRow key={user.id}>
-                        <TableCell className="font-mono">{user.id}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="bg-green-50 text-green-700">
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            已授权
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openDeleteDialog(user.id)}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <Trash2 className="h-4 w-4 mr-1" />
-                            移除
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
-          </section>
-
-          {/* 删除确认对话框 */}
-          <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>删除用户</DialogTitle>
-                <DialogDescription>
-                  确定要从授权列表中移除用户 <code className="bg-muted px-1 rounded">{userToDelete}</code> 吗？
-                  <br />
-                  <br />
-                  此操作无法撤销，该用户将无法使用机器人命令。
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button variant="outline" onClick={closeDeleteDialog}>
-                  取消
-                </Button>
-                <Button variant="destructive" onClick={handleDeleteUser} disabled={loading}>
-                  {loading ? "删除中..." : "删除"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+        <div className="space-y-1.5">
+          <Label htmlFor="webhookUrl">Webhook URL <span className="text-xs text-muted-foreground">（可选，家用留空）</span></Label>
+          <Input
+            id="webhookUrl"
+            placeholder="https://<你的公网域名>/api/notify/webhook"
+            value={config.webhookUrl || ""}
+            onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">留空使用轮询模式（5秒延迟），填写则使用 Webhook（毫秒级）</p>
         </div>
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="enabled"
+              checked={config.enabled !== false}
+              onCheckedChange={(checked) => setConfig({ ...config, enabled: checked === true })}
+            />
+            <label htmlFor="enabled" className="text-sm font-medium leading-none cursor-pointer">
+              启用通知
+            </label>
+          </div>
+          <div className="flex space-x-2">
+            {botInfo && (
+              <Button variant="outline" onClick={handleDelete} disabled={loading} size="sm">
+                删除
+              </Button>
+            )}
+            <Button onClick={handleSave} disabled={loading || !config.botToken} size="sm">
+              {loading ? "保存中..." : "保存配置"}
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      {/* 机器人状态 + 测试 */}
+      {botInfo ? (
+        <section className="border rounded-md p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="bg-green-50 text-green-700">
+                <CheckCircle className="h-3 w-3 mr-1" />
+                已连接
+              </Badge>
+              <span className="text-sm font-medium">@{botInfo.username}</span>
+              <span className="text-xs text-muted-foreground">{botInfo.first_name}</span>
+            </div>
+            <Button onClick={testBot} disabled={loading} size="sm" variant="outline">
+              <MessageSquare className="h-3.5 w-3.5 mr-1" />
+              发送测试
+            </Button>
+          </div>
+        </section>
+      ) : config.botToken ? (
+        <section className="border rounded-md p-4 text-center">
+          <AlertCircle className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
+          <p className="text-sm text-muted-foreground">保存配置后显示 Bot 状态</p>
+        </section>
+      ) : null}
+
+      {/* 轮询控制 */}
+      <section className="border rounded-md p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="h-5 w-5" />
+            <h2 className="text-base font-medium">轮询控制</h2>
+            {pollingStatus && (
+              <Badge variant={pollingStatus.polling ? "default" : "outline"} className="ml-1">
+                {pollingStatus.polling ? "轮询中" : "Webhook"}
+              </Badge>
+            )}
+          </div>
+          <div className="flex space-x-1.5">
+            <Button
+              onClick={startPolling}
+              disabled={loading || pollingStatus?.polling === true}
+              size="sm"
+              variant="outline"
+            >
+              <Play className="h-3.5 w-3.5 mr-1" />
+              启动
+            </Button>
+            <Button
+              onClick={stopPolling}
+              disabled={loading || pollingStatus?.polling === false}
+              size="sm"
+              variant="outline"
+            >
+              <Square className="h-3.5 w-3.5 mr-1" />
+              停止
+            </Button>
+            <Button onClick={checkPollingStatus} disabled={loading} size="sm" variant="outline">
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+        {pollingStatus?.message && (
+          <p className="text-xs text-muted-foreground">{pollingStatus.message}</p>
+        )}
+      </section>
+
+      {/* Webhook 信息 */}
+      {webhookInfo?.url && (
+        <section className="border rounded-md p-4">
+          <h3 className="text-sm font-medium mb-2">Webhook 状态</h3>
+          <div className="space-y-1 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">URL</span>
+              <span className="font-mono text-xs">{webhookInfo.url}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">待处理</span>
+              <Badge variant={webhookInfo.pending_update_count > 0 ? "destructive" : "outline"} className="text-xs">
+                {webhookInfo.pending_update_count}
+              </Badge>
+            </div>
+            {webhookInfo.last_error_message && (
+              <p className="text-xs text-red-600">错误：{webhookInfo.last_error_message}</p>
+            )}
+          </div>
+        </section>
       )}
     </div>
   );

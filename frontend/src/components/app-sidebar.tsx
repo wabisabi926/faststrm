@@ -1,5 +1,5 @@
 "use client"
-import { ListChecks, Inbox, Settings, Github, Bot, History, Activity, Bell } from "lucide-react";
+import { ListChecks, Inbox, Settings, Github, Bot, History, Activity, Bell, ShieldAlert } from "lucide-react";
 import Image from "next/image";
 
 import {
@@ -37,19 +37,14 @@ const items = [
     url: "/settings",
     icon: Settings,
   },
-  {
-    title: "任务历史",
-    url: "/history",
-    icon: History,
-  },
-  {
-    title: "生活事件",
-    url: "/life-events",
-    icon: Activity,
-  },
 ];
 
 const notifyItems = [
+  {
+    title: "账户状态",
+    url: "/account-alerts",
+    icon: ShieldAlert,
+  },
   {
     title: "TG 通知",
     url: "/tg-notify",
@@ -59,6 +54,19 @@ const notifyItems = [
     title: "Emby 通知",
     url: "/emby-notify",
     icon: Bell,
+  },
+];
+
+const logItems = [
+  {
+    title: "任务历史",
+    url: "/history",
+    icon: History,
+  },
+  {
+    title: "生活事件",
+    url: "/life-events",
+    icon: Activity,
   },
 ];
 
@@ -109,6 +117,27 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {notifyItems.map((item) => {
+                const isActive = pathname === item.url;
+                return (
+                  <SidebarMenuItem key={item.title} className={isActive ? "bg-muted" : ""}>
+                    <SidebarMenuButton asChild tooltip={item.title}>
+                      <Link href={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>日志</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {logItems.map((item) => {
                 const isActive = pathname === item.url;
                 return (
                   <SidebarMenuItem key={item.title} className={isActive ? "bg-muted" : ""}>
