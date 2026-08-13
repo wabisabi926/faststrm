@@ -18,7 +18,7 @@ function writeAccounts(data: AccountInfo[]) {
 // 这样异常恢复后能立即触发 TG 恢复通知
 function triggerStatusRecheck(accountName: string) {
   try {
-    const baseUrl = `http://localhost:${process.env.PORT || 3000}`;
+    const baseUrl = process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
     fetch(`${baseUrl}/api/account/status?names=${encodeURIComponent(accountName)}&_t=${Date.now()}`)
       .then(() => console.log(`[QRCODE-LOGIN] Triggered status recheck for ${accountName}`))
       .catch((err) => console.error(`[QRCODE-LOGIN] Status recheck failed:`, err));

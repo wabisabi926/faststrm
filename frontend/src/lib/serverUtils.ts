@@ -420,8 +420,13 @@ export function isTelegramUserAllowed(userId: number): boolean {
     return false;
   }
 
-  // 检查是否在允许用户列表中
-  return telegram.allowedUsers?.includes(userId) || false;
+  // 未配置白名单时默认允许所有用户（个人使用场景）
+  if (!telegram.allowedUsers || telegram.allowedUsers.length === 0) {
+    return true;
+  }
+
+  // 配置了白名单时，只允许列表中的用户
+  return telegram.allowedUsers.includes(userId);
 }
 
 export function addTelegramUser(userId: number): boolean {
