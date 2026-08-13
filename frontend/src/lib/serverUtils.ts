@@ -346,6 +346,22 @@ function sanitizeAppSettings(raw: unknown): AppSettings {
     }
   }
 
+  // 向后兼容：旧版 settings.json 将 strm 路由配置写在顶层而非 strm 子对象下。
+  // 如果 strm 子对象缺失对应 key，但顶层存在，则迁移到 strm 下，使 route.ts 能正确读取。
+  const topLevelStrmKeys = ["forceProxyUaTokens", "accountProxyConcurrencyLimit", "redirectCheckTimeoutMs"] as const;
+  for (const key of topLevelStrmKeys) {
+    if (s[key] !== undefined) {
+      if (!s.strm || typeof s.strm !== "object") {
+        s.strm = {};
+      }
+      const st = s.strm as Record<string, unknown>;
+      if (st[key] === undefined) {
+        st[key] = s[key];
+      }
+      delete s[key];
+    }
+  }
+
   // strm 子配置类型清洗
   if (s.strm && typeof s.strm === "object") {
     const st = s.strm as Record<string, unknown>;
@@ -365,6 +381,14 @@ function sanitizeAppSettings(raw: unknown): AppSettings {
     if (st.redirectCheckTimeoutMs !== undefined) {
       const n = Number(st.redirectCheckTimeoutMs);
       st.redirectCheckTimeoutMs = Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+    }
+  }
+
+  // telegram.autoPolling 默认值注入（仅当 telegram 对象存在但 autoPolling 缺失时）
+  if (s.telegram && typeof s.telegram === "object") {
+    const t = s.telegram as Record<string, unknown>;
+    if (t.autoPolling === undefined) {
+      t.autoPolling = true;
     }
   }
 

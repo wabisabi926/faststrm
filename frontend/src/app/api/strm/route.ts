@@ -11,20 +11,26 @@ const DEFAULT_FORCE_PROXY_UA_TOKENS = Object.freeze(["Infuse", "VidHub", "SenPla
 const DEFAULT_ACCOUNT_PROXY_CONCURRENCY_LIMIT = 8;
 const DEFAULT_REDIRECT_CHECK_TIMEOUT_MS = 5000;
 
-// 读取 strm 路由策略配置（带兜底默认值）
+// 读取 strm 路由策略配置（带兜底默认值 + 向后兼容顶层旧版键）
 function getStrmRouteConfig() {
   const s = readSettings();
   const st = s.strm || {};
   return {
     forceProxyUaTokens: (st.forceProxyUaTokens && st.forceProxyUaTokens.length > 0)
       ? st.forceProxyUaTokens
-      : DEFAULT_FORCE_PROXY_UA_TOKENS,
+      : (s.forceProxyUaTokens && s.forceProxyUaTokens.length > 0)
+        ? s.forceProxyUaTokens
+        : DEFAULT_FORCE_PROXY_UA_TOKENS,
     accountProxyConcurrencyLimit: (st.accountProxyConcurrencyLimit && st.accountProxyConcurrencyLimit > 0)
       ? st.accountProxyConcurrencyLimit
-      : DEFAULT_ACCOUNT_PROXY_CONCURRENCY_LIMIT,
+      : (s.accountProxyConcurrencyLimit && s.accountProxyConcurrencyLimit > 0)
+        ? s.accountProxyConcurrencyLimit
+        : DEFAULT_ACCOUNT_PROXY_CONCURRENCY_LIMIT,
     redirectCheckTimeoutMs: (st.redirectCheckTimeoutMs && st.redirectCheckTimeoutMs > 0)
       ? st.redirectCheckTimeoutMs
-      : DEFAULT_REDIRECT_CHECK_TIMEOUT_MS,
+      : (s.redirectCheckTimeoutMs && s.redirectCheckTimeoutMs > 0)
+        ? s.redirectCheckTimeoutMs
+        : DEFAULT_REDIRECT_CHECK_TIMEOUT_MS,
   };
 }
 

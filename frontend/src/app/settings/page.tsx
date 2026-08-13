@@ -64,9 +64,11 @@ type Settings = {
   enable302?: boolean;
   removeExtraFiles?: boolean;
   // STRM 路由策略配置（302 模式生效）
-  forceProxyUaTokens?: string[];
-  accountProxyConcurrencyLimit?: number;
-  redirectCheckTimeoutMs?: number;
+  strm?: {
+    forceProxyUaTokens?: string[];
+    accountProxyConcurrencyLimit?: number;
+    redirectCheckTimeoutMs?: number;
+  };
   emby?: {
     url?: string;
     apiKey?: string;
@@ -238,7 +240,7 @@ export default function SettingsPage() {
         setData(settings);
         setStrmExtensionsInput((settings.strmExtensions || []).join(", "));
         setDownloadExtensionsInput((settings.downloadExtensions || []).join(", "));
-        setForceProxyUaInput((settings.forceProxyUaTokens || []).join(", "));
+        setForceProxyUaInput((settings.strm?.forceProxyUaTokens || []).join(", "));
 
         // Load life monitor config
         const monitor = settings.lifeMonitor || DEFAULT_MONITOR_CONFIG;
@@ -453,7 +455,10 @@ export default function SettingsPage() {
         ...data,
         strmExtensions,
         downloadExtensions,
-        forceProxyUaTokens,
+        strm: {
+          ...data.strm,
+          forceProxyUaTokens,
+        },
         lifeMonitor: {
           enabled: monitorEnabled,
           accounts: selectedAccounts,
@@ -873,9 +878,9 @@ export default function SettingsPage() {
                       type="number"
                       min="1"
                       max="20"
-                      value={data.accountProxyConcurrencyLimit ?? 8}
+                      value={data.strm?.accountProxyConcurrencyLimit ?? 8}
                       onChange={(e) =>
-                        setData({ ...data, accountProxyConcurrencyLimit: parseInt(e.target.value) || 8 })
+                        setData({ ...data, strm: { ...data.strm, accountProxyConcurrencyLimit: parseInt(e.target.value) || 8 } })
                       }
                     />
                     <p className="text-xs text-muted-foreground">
@@ -889,9 +894,9 @@ export default function SettingsPage() {
                       min="500"
                       max="10000"
                       step="500"
-                      value={data.redirectCheckTimeoutMs ?? 5000}
+                      value={data.strm?.redirectCheckTimeoutMs ?? 5000}
                       onChange={(e) =>
-                        setData({ ...data, redirectCheckTimeoutMs: parseInt(e.target.value) || 5000 })
+                        setData({ ...data, strm: { ...data.strm, redirectCheckTimeoutMs: parseInt(e.target.value) || 5000 } })
                       }
                     />
                     <p className="text-xs text-muted-foreground">
