@@ -527,7 +527,19 @@ async function handleMovieDeleted(item: EmbyWebhookEvent["Item"]): Promise<void>
 }
 
 function handleSeriesEpisodeDeleted(item: EmbyWebhookEvent["Item"]): void {
-  if (!item.SeriesId) return;
+  // P13修复：纯 Series/Season 项没有 SeriesId，原逻辑直接 return 导致通知被丢弃
+  // 改为：无 SeriesId 时走直接通知（不走防抖聚合），保证用户能收到删除通知
+  if (!item.SeriesId) {
+    if (item.Type === "Series" || item.Type === "Season") {
+      const settings = readSettings();
+      if (!settings.emby?.notifyMediaRemoved) return;
+      if (!getTgBotAndChat()) return;
+      const typeLabel = item.Type === "Series" ? "整剧" : "季";
+      const text = `🗑️ <b>${typeLabel}已删除</b>\n<b>标题:</b> ${item.Name || "未知"}`;
+      void sendEmbyText(text);
+    }
+    return;
+  }
   const seriesId = item.SeriesId;
 
   const buffer: EpisodeBuffer = deletedEpisodeBuffer.get(seriesId) || {

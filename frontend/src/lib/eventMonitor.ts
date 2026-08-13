@@ -2546,18 +2546,42 @@ async function oncePoll(account: string): Promise<void> {
         );
 
         if (events.length > 0) {
+          // P12修复：fallback 路径同样应用删除事件熔断，防止绕过安全机制
+          const fbDeleteEventTypes = new Set(DELETE_EVENT_TYPES);
+          const fbDeleteEvents = events.filter(e => fbDeleteEventTypes.has(e.type));
+          const fbDeleteCount = fbDeleteEvents.length;
+          const fbTotalCount = events.length;
+          const fbDeleteRatio = fbTotalCount > 0 ? fbDeleteCount / fbTotalCount : 0;
+
+          let fbEffectiveEvents = events;
+          if (fbDeleteCount > 0 && (fbDeleteCount > MAX_DELETE_EVENTS_PER_POLL || fbDeleteRatio > DELETE_RATIO_THRESHOLD_PER_POLL)) {
+            fbEffectiveEvents = events.filter(e => !fbDeleteEventTypes.has(e.type));
+            console.error(
+              `[LifeMonitor] ⚠️ Fallback 删除事件熔断触发! 删除事件数=${fbDeleteCount}/${fbTotalCount} (比例=${(fbDeleteRatio*100).toFixed(1)}%), ` +
+              `已跳过本次 fallback 的所有删除事件。`
+            );
+            appendLifeEventLog(
+              account,
+              "delete",
+              false,
+              undefined,
+              undefined,
+              `⚠️ Fallback 删除事件熔断: 删除数=${fbDeleteCount}/${fbTotalCount}, 已跳过。请执行全量扫描确认`
+            );
+          }
+
           let processedCount = 0;
           let fallbackErrorCount = 0;
-          for (let i = events.length - 1; i >= 0; i--) {
-            const result = await processEvent(accountInfo as AccountInfo, events[i], config);
+          for (let i = fbEffectiveEvents.length - 1; i >= 0; i--) {
+            const result = await processEvent(accountInfo as AccountInfo, fbEffectiveEvents[i], config);
             processedCount++;
             notifyCallbacks(account, "event", result);
             if (result.action !== "skip") {
               // P1-F: delete 事件已在 handleDeleteEvent 内部记录日志，此处跳过避免重复
-              if (!DELETE_EVENT_TYPES.has(events[i].type)) {
+              if (!DELETE_EVENT_TYPES.has(fbEffectiveEvents[i].type)) {
                 appendLifeEventLog(
                   account,
-                  events[i].type,
+                  fbEffectiveEvents[i].type,
                   result.success,
                   result.filePath,
                   result.localPath,
@@ -2569,7 +2593,7 @@ async function oncePoll(account: string): Promise<void> {
               // skip，不计入错误
             } else if (!result.success || result.action === "error") {
               fallbackErrorCount++;
-              console.error(`[LifeMonitor] Fallback event ${events[i].id} failed: ${result.message}`);
+              console.error(`[LifeMonitor] Fallback event ${fbEffectiveEvents[i].id} failed: ${result.message}`);
             } else {
               scheduleEmbyRefresh(account);
             }

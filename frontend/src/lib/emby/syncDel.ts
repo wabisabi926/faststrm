@@ -260,10 +260,9 @@ function deleteByItemType(
       // 文件路径 → 取父目录
       dirPath = path.dirname(strmPath);
     }
-    if (itemType === "Series") {
-      // Series 取再上一级（Season 的父目录）
-      dirPath = path.dirname(dirPath);
-    }
+    // P11修复：移除 Series 上移一级逻辑
+    // Emby library.deleted 事件对 Series 类型传的 item.Path 已是剧集根目录，
+    // 上移一级会误删媒体库分类目录。直接使用 item.Path 作为删除目标。
 
     // 防误删3：目录文件数校验
     let fileCount = 0;
