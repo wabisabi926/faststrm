@@ -45,6 +45,18 @@ const OLD_JSON_FILE = path.join(CONFIG_DIR, "lifeFilePathDb.json");
 /** SQLite 单次绑定变量上限（默认 999），分块删除时使用 */
 const SQLITE_CHUNK_SIZE = 900;
 
+// ==================== 路径规范化（统一入口） ====================
+
+/**
+ * P1修复：统一 DB 层面的路径规范化，解决读写不一致问题
+ * 规则：去掉前导的 '/'。
+ * 原因：生活事件写入时经常不带前导斜杠，而全量扫描有时会带，
+ * 导致 "电影/xxx" 和 "/电影/xxx" 被当成两个不同路径。
+ */
+function normalizeDbPath(p: string): string {
+  return p.replace(/^\/+/, "");
+}
+
 // ==================== 数据库初始化 ====================
 
 let db: DatabaseType | null = null;
@@ -115,7 +127,15 @@ function migrateFromJsonIfNeeded(database: DatabaseType): void {
         const account = key.substring(0, lastColon);
         const fileIdStr = key.substring(lastColon + 1);
         if (!fileIdStr || !/^\d+$/.test(fileIdStr)) continue;
-        insert.run(account, fileIdStr, entry.path, entry.fileName, String(entry.parentId || 0), entry.pickCode || "", entry.updateTime || 0);
+        insert.run(
+          account,
+          fileIdStr,
+          normalizeDbPath(entry.path),
+          entry.fileName,
+          String(entry.parentId || 0),
+          entry.pickCode || "",
+          entry.updateTime || 0
+        );
       }
     });
 
@@ -154,11 +174,9 @@ export function getFilePathEntry(account: string, fileId: FileId): FilePathEntry
   };
 }
 
-/** 按路径查找记录（用于 302 模式下从路径反查 pickcode）
- *  P2-14: 路径规范化 —— 统一去掉前导 / 再匹配，避免 life events 存 "电影/xxx" 和全量扫描传 "/电影/xxx" 对不上
- */
+/** 按路径查找记录（用于 302 模式下从路径反查 pickcode） */
 export function getFilePathEntryByPath(account: string, filePath: string): FilePathEntry | undefined {
-  const normalizedPath = filePath.replace(/^\/+/, "");
+  const normalizedPath = normalizeDbPath(filePath);
   const row = getDb().prepare(
     "SELECT file_id, path, file_name, parent_id, pickcode, update_time FROM files WHERE account = ? AND path = ?"
   ).get(account, normalizedPath) as
@@ -187,7 +205,15 @@ export function upsertFilePathEntry(account: string, entry: FilePathEntry): void
       parent_id = excluded.parent_id,
       pickcode = excluded.pickcode,
       update_time = excluded.update_time
-  `).run(account, String(entry.fileId), entry.path, entry.fileName, String(entry.parentId), entry.pickCode, entry.updateTime);
+  `).run(
+    account,
+    String(entry.fileId),
+    normalizeDbPath(entry.path),
+    entry.fileName,
+    String(entry.parentId),
+    entry.pickCode,
+    entry.updateTime
+  );
 }
 
 /** 删除单条记录 */
@@ -216,9 +242,9 @@ export function updatePathPrefixBatch(
   oldPrefix: string,
   newPrefix: string
 ): number {
-  // 标准化：去掉末尾的 /
-  const oldP = oldPrefix.replace(/\/+$/, "") || "/";
-  const newP = newPrefix.replace(/\/+$/, "") || "/";
+  // P1修复：统一 normalizeDbPath（去前导 /）+ 去末尾 /，与其他入口保持一致
+  const oldP = normalizeDbPath(oldPrefix).replace(/\/+$/, "") || "/";
+  const newP = normalizeDbPath(newPrefix).replace(/\/+$/, "") || "/";
 
   // 根目录短路（避免全表误改）
   if (oldP === "/") return 0;
@@ -283,7 +309,9 @@ export function removeGhostRecords(
   }
 
   const db = getDb();
-  const prefix = pathPrefix.endsWith("/") ? pathPrefix : pathPrefix + "/";
+  // P1修复：使用 normalizeDbPath 规范化前缀，确保查询与写入一致
+  const normalizedPrefix = normalizeDbPath(pathPrefix);
+  const prefix = normalizedPrefix.endsWith("/") ? normalizedPrefix : normalizedPrefix + "/";
 
   // 查出该前缀下所有 file_id（字符串形式以匹配 Set 比较时归一化）
   const rows = db.prepare(
@@ -373,7 +401,9 @@ export function getEntriesByPathPrefix(
   account: string,
   pathPrefix: string
 ): FilePathEntry[] {
-  const prefix = pathPrefix.endsWith("/") ? pathPrefix : pathPrefix + "/";
+  // P1修复：使用 normalizeDbPath 规范化前缀
+  const normalizedPrefix = normalizeDbPath(pathPrefix);
+  const prefix = normalizedPrefix.endsWith("/") ? normalizedPrefix : normalizedPrefix + "/";
   const rows = getDb().prepare(
     "SELECT file_id, path, file_name, parent_id, pickcode, update_time FROM files WHERE account = ? AND (path = ? OR path LIKE ?)"
   ).all(account, prefix.replace(/\/+$/, ""), `${prefix}%`) as
@@ -395,9 +425,10 @@ export function getEntriesByPathPrefix(
  * @returns 删除的行数
  */
 export function deleteByPath(account: string, filePath: string): number {
+  // P1修复：使用 normalizeDbPath 规范化路径
   const result = getDb().prepare(
     "DELETE FROM files WHERE account = ? AND path = ?"
-  ).run(account, filePath);
+  ).run(account, normalizeDbPath(filePath));
   return result.changes;
 }
 
@@ -407,7 +438,8 @@ export function deleteByPath(account: string, filePath: string): number {
  * @returns 删除的行数
  */
 export function deleteByPathPrefix(account: string, pathPrefix: string): number {
-  const prefix = pathPrefix.replace(/\/+$/, "") || "/";
+  // P1修复：统一 normalizeDbPath（去前导 /）+ 去末尾 /
+  const prefix = normalizeDbPath(pathPrefix).replace(/\/+$/, "") || "/";
   if (prefix === "/") return 0; // 根目录短路，防全表误删
   const result = getDb().prepare(
     "DELETE FROM files WHERE account = ? AND (path = ? OR path LIKE ?)"
@@ -446,7 +478,15 @@ export function upsertFilePathEntryBatch(account: string, entries: FilePathEntry
 
   const batch = getDb().transaction((rows: FilePathEntry[]) => {
     for (const entry of rows) {
-      stmt.run(account, String(entry.fileId), entry.path, entry.fileName, String(entry.parentId), entry.pickCode, entry.updateTime);
+      stmt.run(
+        account,
+        String(entry.fileId),
+        normalizeDbPath(entry.path),
+        entry.fileName,
+        String(entry.parentId),
+        entry.pickCode,
+        entry.updateTime
+      );
     }
   });
 

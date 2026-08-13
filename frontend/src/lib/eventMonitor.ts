@@ -664,9 +664,19 @@ function matchPathMapping(
   pathMappings: LifeMonitorConfig["pathMappings"],
   account?: string
 ): { cloudPath: string; localPath: string; relativePath: string } | null {
-  for (const mapping of pathMappings) {
-    if (mapping.account && account && mapping.account !== account) continue;
+  // P1修复：最长前缀优先匹配
+  // 原始实现按配置顺序匹配，若短映射（/媒体库）在前长映射（/媒体库/电影）在后，
+  // 路径 /媒体库/电影/xxx 会被错误匹配到短映射，导致 localPath 计算错误。
+  // 修复：过滤出账号匹配的映射后，按 cloudPath 长度从长到短排序，再依次匹配。
+  const candidates = pathMappings.filter((mapping) => {
+    if (mapping.account && account && mapping.account !== account) return false;
+    return true;
+  });
+  candidates.sort(
+    (a, b) => b.cloudPath.replace(/\/+$/, "").length - a.cloudPath.replace(/\/+$/, "").length
+  );
 
+  for (const mapping of candidates) {
     // Normalize: strip trailing slashes for consistent matching
     const key = mapping.cloudPath.replace(/\/+$/, "");
     const normalizedKey = key + "/";
