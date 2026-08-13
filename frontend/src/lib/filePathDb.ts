@@ -298,15 +298,32 @@ export function removeGhostRecords(
   if (totalCount === 0) return 0;
 
   // 差集：DB 有但扫描没看到的
-  const ghostIds: string[] = [];
+  // P0修复：保护正数ID（来自生活事件的真实file_id），永不被幽灵清理删除
+  // 原因：占位符用负数ID（-1,-2,...），生活事件用真实正数ID（19位），主键不同导致共存。
+  // 正数ID是文件存在的真实凭据，绝不能因全量扫描而删除。
+  const candidatesNotSeen: string[] = [];
   for (const id of allIds) {
     if (!seenStringSet.has(id)) {
-      ghostIds.push(id);
+      candidatesNotSeen.push(id);
     }
+  }
+  const ghostIds = candidatesNotSeen.filter((id) => Number(id) < 0);
+  const positiveGhostCount = candidatesNotSeen.length - ghostIds.length;
+  if (positiveGhostCount > 0) {
+    console.info(
+      `[filePathDb] 跳过 ${positiveGhostCount} 条正数ID（生活事件真实file_id）的幽灵清理 (account=${account}, prefix=${pathPrefix})`
+    );
   }
 
   const ghostCount = ghostIds.length;
-  if (ghostCount === 0) return 0;
+  if (ghostCount === 0) {
+    if (positiveGhostCount > 0) {
+      console.info(
+        `[filePathDb] 幽灵记录 ${positiveGhostCount} 条均为正数ID，无负数占位符可清理 (account=${account}, prefix=${pathPrefix})`
+      );
+    }
+    return 0;
+  }
 
   // 绝对数量阈值检查
   if (ghostCount > maxAbsoluteCount) {

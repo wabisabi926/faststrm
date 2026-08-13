@@ -2503,14 +2503,26 @@ async function oncePoll(account: string): Promise<void> {
       }
     }
 
-    saveState(account, next_time, next_id);
-    updateState(account, {
-      status: "running",
-      lastFromTime: next_time,
-      lastFromId: next_id,
-      eventsProcessed: (monitorStates.get(account)?.eventsProcessed || 0) + processedCount,
-      lastError: errorCount > 0 ? `${errorCount} events failed` : undefined,
-    });
+    // P1修复：高错误率时不推进游标，允许失败事件在下次轮询重试
+    const allFailed = errorCount > 0 && errorCount >= processedCount;
+    if (!allFailed) {
+      saveState(account, next_time, next_id);
+      updateState(account, {
+        status: "running",
+        lastFromTime: next_time,
+        lastFromId: next_id,
+        eventsProcessed: (monitorStates.get(account)?.eventsProcessed || 0) + processedCount,
+        lastError: errorCount > 0 ? `${errorCount}/${processedCount} events failed` : undefined,
+      });
+    } else {
+      console.warn(
+        `[LifeMonitor] ${account}: 所有 ${processedCount} 事件处理失败，不推进游标以允许重试`
+      );
+      updateState(account, {
+        status: "error",
+        lastError: `All ${processedCount} events failed, cursor not advanced`,
+      });
+    }
 
     // 轻量级一致性检查：每 10 分钟在事件处理成功后自动运行
     maybeRunConsistencyCheck(account, config);
@@ -2535,6 +2547,7 @@ async function oncePoll(account: string): Promise<void> {
 
         if (events.length > 0) {
           let processedCount = 0;
+          let fallbackErrorCount = 0;
           for (let i = events.length - 1; i >= 0; i--) {
             const result = await processEvent(accountInfo as AccountInfo, events[i], config);
             processedCount++;
@@ -2552,18 +2565,36 @@ async function oncePoll(account: string): Promise<void> {
                 );
               }
             }
-            if (result.action !== "skip" && result.success) {
+            if (result.action === "skip") {
+              // skip，不计入错误
+            } else if (!result.success || result.action === "error") {
+              fallbackErrorCount++;
+              console.error(`[LifeMonitor] Fallback event ${events[i].id} failed: ${result.message}`);
+            } else {
               scheduleEmbyRefresh(account);
             }
           }
 
-          saveState(account, next_time, next_id);
-          updateState(account, {
-            status: "running",
-            lastFromTime: next_time,
-            lastFromId: next_id,
-            eventsProcessed: (monitorStates.get(account)?.eventsProcessed || 0) + processedCount,
-          });
+          // P1修复：fallback 路径同样在全量失败时不推进游标
+          const fallbackAllFailed = fallbackErrorCount > 0 && fallbackErrorCount >= processedCount;
+          if (!fallbackAllFailed) {
+            saveState(account, next_time, next_id);
+            updateState(account, {
+              status: "running",
+              lastFromTime: next_time,
+              lastFromId: next_id,
+              eventsProcessed: (monitorStates.get(account)?.eventsProcessed || 0) + processedCount,
+              lastError: fallbackErrorCount > 0 ? `${fallbackErrorCount}/${processedCount} events failed` : undefined,
+            });
+          } else {
+            console.warn(
+              `[LifeMonitor] ${account}: Fallback 所有 ${processedCount} 事件失败，不推进游标`
+            );
+            updateState(account, {
+              status: "error",
+              lastError: `Fallback: all ${processedCount} events failed, cursor not advanced`,
+            });
+          }
           return;
         } else {
           // Fallback 成功但无新事件，保存当前断点

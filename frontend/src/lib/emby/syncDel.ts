@@ -106,13 +106,16 @@ export async function handleSyncDelete(
     return skipResult(item, "strm_not_exists", dryRun);
   }
 
-  // 防误删2：标题校验（仅对 Movie/Episode 做严格校验）
+  // 防误删2：标题校验（仅对 Movie 做严格校验）
+  // P0修复：Episode 的 item.Name 通常是 "第一集" 等中文名，而文件名是 S01E01 格式，
+  // 两者不匹配会导致所有 Episode 删除事件被跳过。因此 Episode 跳过标题校验，
+  // 通过前面的路径存在性校验已足够防误删。
   const stat = fs.statSync(embyPath);
   const isDir = stat.isDirectory();
-  if (!isDir && (itemType === "Movie" || itemType === "Episode") && itemName) {
+  if (!isDir && itemType === "Movie" && itemName) {
     const baseName = path.basename(embyPath, path.extname(embyPath));
     if (!baseName.includes(itemName) && !itemName.includes(baseName)) {
-      console.warn(`[${TAG}] 标题不匹配，防误删跳过: ${baseName} vs ${itemName}`);
+      console.warn(`[${TAG}] 电影标题不匹配，防误删跳过: ${baseName} vs ${itemName}`);
       return skipResult(item, "title_mismatch", dryRun);
     }
   }

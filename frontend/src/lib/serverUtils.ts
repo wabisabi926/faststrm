@@ -373,7 +373,13 @@ export function getStrmExtensions(): string[] {
       e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase()
     );
   } catch {
-    return [".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm"];
+    return [
+      ".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm",
+      ".ts", ".mpg", ".mpeg", ".wmv", ".m4v", ".3gp", ".f4v",
+      ".iso", ".m2ts", ".mts", ".tp", ".trp", ".vob",
+      ".mp3", ".flac", ".aac", ".wav", ".ape", ".ogg", ".m4a", ".wma",
+      ".strm",
+    ];
   }
 }
 

@@ -9,6 +9,7 @@ import {
   buildTree,
   collectFilesAndTopEmptyDirs,
   getLocalTree,
+  getStrmExtensions,
   readAccounts,
   readSettings,
 } from "./serverUtils";
@@ -97,12 +98,6 @@ export interface ExecuteResult {
   };
 }
 
-const MEDIA_EXT_SET = new Set([
-  ".mkv", ".mp4", ".avi", ".mov", ".rmvb", ".flv", ".webm",
-  ".ts", ".mpg", ".mpeg", ".wmv", ".m4v", ".3gp", ".f4v",
-  ".iso", ".strm", ".m2ts", ".mts", ".tp", ".trp", ".vob",
-]);
-
 function mediaToStrm(filePath: string): string {
   const ext = path.extname(filePath);
   if (ext.toLowerCase() === ".strm") return filePath;
@@ -110,7 +105,8 @@ function mediaToStrm(filePath: string): string {
 }
 
 function isMediaExtension(filePath: string): boolean {
-  return MEDIA_EXT_SET.has(path.extname(filePath).toLowerCase());
+  const ext = path.extname(filePath).toLowerCase();
+  return getStrmExtensions().includes(ext);
 }
 
 /**
@@ -195,8 +191,12 @@ async function scanSingleMapping(
       accountInfo,
     });
 
-    // 收集远程文件 ID，用于后续清理 DB 中的幽灵记录
-    const seenFileIds = new Set((data as Array<{ key: number }>).map((n) => n.key));
+    // 收集远程文件 ID（使用负数匹配DB存储格式：-(key+1)），用于后续清理 DB 中的幽灵记录
+    // P0修复：exportDirParse 返回的 key 是本地自增计数器(正数)，而 buildFilePathEntriesFromTree
+    // 将其存为负数 file_id（避免与真实115 file_id冲突），此处取负数以匹配DB中的ID
+    const seenFileIds = new Set(
+        (data as Array<{ key: number }>).map((n) => String(-(n.key + 1)))
+    );
 
     const tree = buildTree(data);
     const remoteFiles: string[] = [];
