@@ -280,6 +280,31 @@ export class TelegramBot {
       return { ok: false, error: `Failed to answer callback query: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
+
+  // 设置 Bot 菜单命令
+  async setMyCommands(commands: Array<{ command: string; description: string }>): Promise<TelegramResponse> {
+    try {
+      const response = await axios.post(`${this.baseUrl}/setMyCommands`, {
+        commands,
+        scope: { type: 'all_private_chats' }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Telegram setMyCommands error:', error);
+      return { ok: false, error: `Failed to set bot commands: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  // 删除 Bot 菜单命令
+  async deleteMyCommands(): Promise<TelegramResponse> {
+    try {
+      const response = await axios.post(`${this.baseUrl}/deleteMyCommands`);
+      return response.data;
+    } catch (error) {
+      console.error('Telegram deleteMyCommands error:', error);
+      return { ok: false, error: `Failed to delete bot commands: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
 }
 
 // 创建机器人实例的工厂函数
