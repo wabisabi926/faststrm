@@ -1,26 +1,57 @@
-**/node_modules
+# ==== Secrets & local runtime state (ALL profile folders) ====
+**/config/*.json
+**/config/.salt
+.config/*.json
+.config/.salt
+.app/config/*.json
+.app/config/.salt
+tmp/config/*.json
+tmp/config/.salt
+config/*.json
+config/.salt
+!.config/*.sample.json
+!.config/*.example.json
+!**/config/*.sample.json
+!**/config/*.example.json
+
+.data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# ==== Go binaries ====
+*.exe
+*.exe~
+*.test
+*.out
+faststrm-go
+faststrm
+
+# ==== Vendor tools binaries (downloaded locally) ====
+bin/*.exe
+bin/tailwindcss
+bin/tailwindcss-*
+
+# ==== fNATS 部署包：二进制命令/图标（manifest 等文本保留）====
+deploy/fnos/**/cmd/config_callback
+deploy/fnos/**/cmd/config_init
+deploy/fnos/**/cmd/install_callback
+deploy/fnos/**/cmd/install_init
+deploy/fnos/**/cmd/main
+deploy/fnos/**/cmd/uninstall_callback
+deploy/fnos/**/cmd/uninstall_init
+deploy/fnos/**/cmd/upgrade_callback
+deploy/fnos/**/cmd/upgrade_init
+deploy/fnos/**/wizard/install
+deploy/fnos/**/wizard/uninstall
+deploy/fnos/**/app/ui/config
+deploy/fnos/**/*.PNG
+
+# ==== General ====
 .DS_Store
+Thumbs.db
 *.log
-**/.env
-**/.env.*
-**/.next
-*.fpk
-cache
-
-# Runtime directories
-config/
-.config/
-logs/
-data/
-strm-test/
-
-# Probe / debug scripts (local diagnostics)
-**/_*probe*.js
-**/_dbprobe*.js
-**/_rawprobe*.js
-
-# Smoke test scripts (local testing)
-**/__smoke_*.mjs
-
-# Generated Wiki HTML export
-wiki_drafts/*.html
+*.tmp
+.idea/
+.vscode/
+tmp/

@@ -1,0 +1,44 @@
+version: "3.9"
+
+# FastStrm-Go 版本编排
+# 策略A：保留原 nginx 8091，Go 后端 8090，由 nginx upstream 切换分流
+services:
+  faststrm-go:
+    build:
+      context: .
+      dockerfile: Dockerfile.go
+    image: wabisabi926/faststrm:go-latest
+    container_name: faststrm-go
+    ports:
+      - "8090:8090"           # Go 后端端口（nginx upstream 指向此）
+      # 如需要独立直连测试，可打开
+      # - "3001:8090"
+    environment:
+      - TZ=Asia/Shanghai
+      - APP_ENV=prod
+      - DATA_DIR=/app/data
+      - CONFIG_DIR=/app/config
+      - DEFAULT_CONFIG_DIR=/app/.config
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8090
+    volumes:
+      - ./strmData:/app/data       # STRM/DB/缓存（与原容器共用同一路径，便于迁移）
+      - ./config:/app/config       # settings.json/config.json（共用原配置）
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 512M        # Go 内存占用显著低于 Node.js，默认减半
+        reservations:
+          memory: 64M

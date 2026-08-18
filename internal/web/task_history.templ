@@ -1,0 +1,123 @@
+package web
+
+// TaskHistoryPage 任务历史页
+// - 顶部筛选：任务 ID / 状态 / 日期范围
+// - 分页表格（每 10s 刷新运行中状态）
+templ TaskHistoryPage() {
+	@AppShell("/history") {
+		<div class="bg-white rounded-xl border border-slate-200 p-5 mb-6">
+			<form
+				hx-get="/api/taskHistory"
+				hx-trigger="submit"
+				hx-swap="none"
+				class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end"
+				id="hist-filter"
+			>
+				<div>
+					<label class="block text-xs text-slate-600 mb-1">任务 ID</label>
+					<input name="taskId" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none" placeholder="可选"/>
+				</div>
+				<div>
+					<label class="block text-xs text-slate-600 mb-1">状态</label>
+					<select name="status" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+						<option value="">全部</option>
+						<option value="running">运行中</option>
+						<option value="completed">成功</option>
+						<option value="failed">失败</option>
+						<option value="cancelled">取消</option>
+					</select>
+				</div>
+				<div>
+					<label class="block text-xs text-slate-600 mb-1">每页数量</label>
+					<select name="size" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+						<option>20</option>
+						<option selected>50</option>
+						<option>100</option>
+					</select>
+				</div>
+				<button type="submit" class="bg-slate-900 hover:bg-slate-800 text-white rounded-md px-4 py-2 text-sm font-medium transition">查询</button>
+			</form>
+		</div>
+
+		<div class="bg-white rounded-xl border border-slate-200 p-5"
+			hx-get="/api/taskHistory?page=1&size=50"
+			hx-trigger="load, every 10s"
+			hx-swap="none"
+			id="hist-panel">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-semibold text-slate-900">执行记录</h3>
+				<span class="text-xs text-slate-500" id="hist-meta">加载中…</span>
+			</div>
+			<div id="hist-list" class="overflow-x-auto">
+				<div class="text-sm text-slate-500">暂无记录。</div>
+			</div>
+			<div id="hist-pagination" class="mt-4 flex items-center justify-between text-xs text-slate-500">
+				<span>--</span>
+				<div class="flex gap-1">
+					<button class="px-3 py-1 rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-50" disabled>上一页</button>
+					<button class="px-3 py-1 rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-50" disabled>下一页</button>
+				</div>
+			</div>
+		</div>
+
+		<script>
+			(function() {
+				function statusBadge(s) {
+					switch(s) {
+						case 'completed': return '<span class="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600">成功</span>';
+						case 'failed': return '<span class="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-600">失败</span>';
+						case 'running': return '<span class="text-[10px] px-2 py-0.5 rounded-full bg-brand-50 text-brand-600">运行中</span>';
+						case 'cancelled': return '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">已取消</span>';
+						default: return '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">' + (s || '-') + '</span>';
+					}
+				}
+				function fmt(t) { if (!t) return '-'; try { return new Date(Number(t)).toLocaleString(); } catch(e) { return t; } }
+				function dur(a, b) { if (!a || !b) return '-'; var s = (Number(b) - Number(a)) / 1000; if (s < 0) s = 0; if (s < 60) return Math.round(s) + 's'; return Math.round(s/60) + 'm ' + Math.round(s%60) + 's'; }
+				function render(data) {
+					var listEl = document.getElementById('hist-list');
+					var metaEl = document.getElementById('hist-meta');
+					var pgEl = document.getElementById('hist-pagination');
+					if (!listEl) return;
+					if (!data || (data.code && data.code !== 200)) { listEl.innerHTML = '<div class="text-sm text-red-600">加载失败</div>'; return; }
+					var wrap = data.data || data;
+					var items = wrap.items || [];
+					var total = wrap.total || items.length;
+					var page = Number(wrap.page || 1);
+					var size = Number(wrap.size || items.length || 50);
+					var pages = Math.max(1, Math.ceil(total / size));
+					if (metaEl) metaEl.textContent = '共 ' + total + ' 条 · 第 ' + page + '/' + pages + ' 页';
+					if (!items.length) { listEl.innerHTML = '<div class="text-sm text-slate-500">暂无记录。</div>'; return; }
+					var html = '<table class="w-full text-sm"><thead class="text-xs text-slate-500 border-b border-slate-200">' +
+						'<tr><th class="text-left py-2 px-2">任务</th><th class="text-left py-2 px-2">账号</th>' +
+						'<th class="text-left py-2 px-2">状态</th><th class="text-left py-2 px-2">开始时间</th>' +
+						'<th class="text-left py-2 px-2">耗时</th><th class="text-left py-2 px-2">详情</th></tr></thead><tbody>';
+					items.forEach(function(h) {
+						html += '<tr class="border-b border-slate-100 last:border-0">' +
+							'<td class="py-2.5 px-2 font-medium text-slate-900">' + (h.taskId || '-') + '</td>' +
+							'<td class="py-2.5 px-2 text-slate-600">' + (h.account || '-') + '</td>' +
+							'<td class="py-2.5 px-2">' + statusBadge(h.status) + '</td>' +
+							'<td class="py-2.5 px-2 text-slate-500 text-xs tabular-nums">' + fmt(h.startedAt) + '</td>' +
+							'<td class="py-2.5 px-2 text-slate-500 text-xs tabular-nums">' + dur(h.startedAt, h.endedAt) + '</td>' +
+							'<td class="py-2.5 px-2 text-xs text-slate-500 truncate max-w-xs" title="' + (h.message || h.error || '') + '">' + (h.message || h.error || '-') + '</td>' +
+							'</tr>';
+					});
+					html += '</tbody></table>';
+					listEl.innerHTML = html;
+					if (pgEl) {
+						pgEl.innerHTML = '<span>共 ' + total + ' 条 · 第 ' + page + '/' + pages + ' 页</span>' +
+							'<div class="flex gap-1">' +
+							'<button ' + (page <= 1 ? 'disabled ' : '') + 'class="px-3 py-1 rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-50" hx-get="/api/taskHistory?page=' + (page - 1) + '&size=' + size + '" hx-swap="none">上一页</button>' +
+							'<button ' + (page >= pages ? 'disabled ' : '') + 'class="px-3 py-1 rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-50" hx-get="/api/taskHistory?page=' + (page + 1) + '&size=' + size + '" hx-swap="none">下一页</button>' +
+							'</div>';
+					}
+				}
+				document.body.addEventListener('htmx:afterRequest', function(evt) {
+					if (!evt.detail.requestConfig) return;
+					var path = evt.detail.requestConfig.path || '';
+					if (path.indexOf('/api/taskHistory') !== 0) return;
+					try { render(JSON.parse(evt.detail.xhr.responseText)); } catch(e) {}
+				});
+			})();
+		</script>
+	}
+}

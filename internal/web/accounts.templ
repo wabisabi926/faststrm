@@ -1,0 +1,452 @@
+package web
+
+// AccountsPage 账号管理页 —— 对齐 faststrm-main 的 /account 页面
+// 包含：添加账号表单 + 扫码登录弹窗 + 账号列表
+templ AccountsPage() {
+	@AppShell("/account") {
+		<!-- 添加账号卡片 -->
+		<div class="bg-white rounded-xl border border-slate-200 p-5 mb-6">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-semibold text-slate-900">添加账号</h3>
+				<button type="button" id="qrcode-login-btn"
+					class="text-xs text-blue-600 hover:underline cursor-pointer">扫码登录 (Beta)</button>
+			</div>
+			<form
+				hx-post="/api/account"
+				hx-swap="none"
+				hx-trigger="submit"
+				class="grid grid-cols-1 md:grid-cols-12 gap-4"
+				id="acct-form"
+			>
+				<div class="md:col-span-2">
+					<label class="block text-xs text-slate-600 mb-1">类型</label>
+					<select name="accountType" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+						<option value="115">115 网盘</option>
+						<option value="aliyun">阿里云盘</option>
+						<option value="quark">夸克网盘</option>
+					</select>
+				</div>
+				<div class="md:col-span-3">
+					<label class="block text-xs text-slate-600 mb-1">账号名</label>
+					<input name="name" required placeholder="如: 115-main" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"/>
+				</div>
+				<div class="md:col-span-5">
+					<label class="block text-xs text-slate-600 mb-1">Cookie</label>
+					<input name="cookie" id="acct-cookie-input" required placeholder="UID=...; CID=...; SEID=..." class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"/>
+				</div>
+				<div class="md:col-span-2 flex items-end">
+					<button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-md px-4 py-2 text-sm font-medium transition">
+						添加
+					</button>
+				</div>
+			</form>
+			<div id="acct-alert" class="mt-3"></div>
+		</div>
+
+		<!-- 账号列表 -->
+		<div class="bg-white rounded-xl border border-slate-200 p-5"
+			hx-get="/api/account" hx-trigger="load, accounts-changed from:body, every 30s" hx-swap="none"
+			id="acct-panel">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-semibold text-slate-900">账号列表</h3>
+				<span class="text-xs text-slate-500" id="acct-meta">加载中…</span>
+			</div>
+			<div id="acct-list" class="overflow-x-auto">
+				<div class="text-sm text-slate-500">暂无账号，请先添加。</div>
+			</div>
+		</div>
+
+		<!-- 扫码登录弹窗 -->
+		<div id="qrcode-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+			<div class="bg-white rounded-xl p-6 w-[420px] max-w-[90vw] shadow-xl">
+				<div class="flex items-center justify-between mb-4">
+					<h3 class="text-lg font-semibold text-slate-900">扫码登录 115 网盘</h3>
+					<button type="button" id="qrcode-close" class="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+				</div>
+
+				<!-- 客户端类型选择 -->
+				<div class="mb-4">
+					<label class="text-sm font-medium mb-1 block">登录客户端</label>
+					<select id="qrcode-client-type" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+						<option value="alipaymini">支付宝小程序 (推荐)</option>
+						<option value="wechatmini">微信小程序</option>
+						<option value="115android">115 安卓</option>
+						<option value="115ios">115 iOS</option>
+						<option value="tv">115 TV</option>
+						<option value="web">115 网页</option>
+						<option value="qandroid">115 管理端</option>
+					</select>
+					<p class="text-xs text-slate-500 mt-1">推荐使用支付宝/微信小程序，不会踢掉现有设备登录</p>
+				</div>
+
+				<!-- 二维码区域 -->
+				<div id="qrcode-area" class="flex flex-col items-center space-y-3 p-4 border border-slate-200 rounded-lg bg-slate-50 min-h-[280px] justify-center">
+					<div class="text-sm text-slate-500">点击下方按钮获取二维码</div>
+				</div>
+
+				<!-- 操作按钮 -->
+				<div class="mt-4 space-y-2">
+					<button type="button" id="qrcode-start-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-md px-4 py-2 text-sm font-medium transition">
+						获取二维码
+					</button>
+					<button type="button" id="qrcode-refresh-btn" class="w-full border border-slate-300 text-slate-700 rounded-md px-4 py-2 text-sm font-medium transition hidden">
+						刷新二维码
+					</button>
+				</div>
+
+				<!-- 提示信息 -->
+				<div class="mt-4 p-3 rounded-md bg-blue-50 border border-blue-100 text-xs text-blue-700">
+					请使用 115 手机客户端扫描二维码登录。二维码 60 秒内有效，过期后可点击刷新。
+				</div>
+			</div>
+		</div>
+
+		<script>
+			(function() {
+				// ========== 扫码登录逻辑 ==========
+				var modal = document.getElementById('qrcode-modal');
+				var startBtn = document.getElementById('qrcode-start-btn');
+				var refreshBtn = document.getElementById('qrcode-refresh-btn');
+				var closeBtn = document.getElementById('qrcode-close');
+				var area = document.getElementById('qrcode-area');
+				var clientSelect = document.getElementById('qrcode-client-type');
+				var countdown = 60;
+				var countdownTimer = null;
+				var pollTimer = null;
+				var currentUid = null;
+				var currentTime = null;
+				var currentSign = null;
+				var currentClientType = 'alipaymini';
+				var expiredFlag = false;
+				var currentBase64 = '';
+
+				function getAuth() {
+					var m = document.cookie.match('(^|;) ?token=([^;]*)');
+					return m ? 'Bearer ' + m[2] : '';
+				}
+
+				function showModal() {
+					modal.classList.remove('hidden');
+					modal.classList.add('flex');
+					// 自动获取二维码（对齐原版 QrCodeLogin autoStart=true）
+					fetchQrcode(clientSelect.value || 'alipaymini');
+				}
+				function hideModal() {
+					modal.classList.add('hidden'); modal.classList.remove('flex');
+					clearTimers();
+					resetArea();
+				}
+
+				function clearTimers() {
+					if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+					if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+				}
+
+				function resetArea() {
+					area.innerHTML = '<div class="text-sm text-slate-500">点击下方按钮获取二维码</div>';
+					startBtn.classList.remove('hidden');
+					refreshBtn.classList.add('hidden');
+					startBtn.disabled = false;
+				}
+
+				function setLoading() {
+					area.innerHTML = '<div class="w-[240px] h-[240px] flex items-center justify-center"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>';
+					startBtn.classList.add('hidden');
+					refreshBtn.classList.add('hidden');
+				}
+
+				function setQrWaiting(base64) {
+					area.innerHTML =
+						'<img src="' + base64 + '" alt="登录二维码" class="w-[240px] h-[240px]"/>' +
+						'<div class="flex items-center gap-2 text-sm">' +
+						'<svg class="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM13 13h2v2h-2zM17 13h2v2h-2zM13 17h2v2h-2zM17 17h2v2h-2z"/></svg>' +
+						'<span class="text-blue-600">等待扫码... <span id="qrcode-countdown">60</span>s</span>' +
+						'</div>';
+					startBtn.classList.add('hidden');
+					refreshBtn.classList.remove('hidden');
+					startBtn.disabled = false;
+					refreshBtn.disabled = false;
+				}
+
+				function setQrScanned(base64) {
+					area.innerHTML =
+						'<img src="' + base64 + '" alt="登录二维码" class="w-[240px] h-[240px] opacity-50"/>' +
+						'<div class="flex items-center gap-2 text-sm">' +
+						'<svg class="w-4 h-4 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>' +
+						'<span class="text-green-600">已扫码，请在手机上确认</span>' +
+						'</div>';
+				}
+
+				function setQrSuccess() {
+					area.innerHTML =
+						'<div class="w-[240px] h-[240px] flex flex-col items-center justify-center space-y-2">' +
+						'<svg class="w-12 h-12 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>' +
+						'<p class="text-sm font-medium text-green-600">登录成功</p>' +
+						'<p class="text-xs text-slate-500">正在获取 Cookie...</p>' +
+						'</div>';
+					refreshBtn.classList.add('hidden');
+				}
+
+				function setQrExpired() {
+					area.innerHTML =
+						'<div class="w-[240px] h-[240px] flex flex-col items-center justify-center space-y-2">' +
+						'<svg class="w-12 h-12 text-orange-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+						'<p class="text-sm font-medium text-orange-600">二维码已过期</p>' +
+						'</div>';
+					startBtn.classList.add('hidden');
+					refreshBtn.classList.remove('hidden');
+				}
+
+				function setQrCancelled() {
+					area.innerHTML =
+						'<div class="w-[240px] h-[240px] flex flex-col items-center justify-center space-y-2">' +
+						'<svg class="w-12 h-12 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>' +
+						'<p class="text-sm font-medium text-slate-600">已取消登录</p>' +
+						'</div>';
+					startBtn.classList.add('hidden');
+					refreshBtn.classList.remove('hidden');
+				}
+
+				function setQrError(msg) {
+					area.innerHTML =
+						'<div class="w-[240px] h-[240px] flex flex-col items-center justify-center space-y-2">' +
+						'<svg class="w-12 h-12 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+						'<p class="text-sm font-medium text-red-600">获取失败</p>' +
+						'<p class="text-xs text-slate-500 text-center max-w-[200px]">' + (msg || '未知错误') + '</p>' +
+						'</div>';
+					startBtn.classList.remove('hidden');
+					refreshBtn.classList.remove('hidden');
+					startBtn.disabled = false;
+					refreshBtn.disabled = false;
+				}
+
+				// 获取二维码
+				function fetchQrcode(clientType) {
+					clearTimers();
+					expiredFlag = false;
+					setLoading();
+					startBtn.disabled = true;
+					refreshBtn.disabled = true;
+
+					fetch('/api/account/qrcode/token?clientType=' + encodeURIComponent(clientType), {
+						headers: { 'Authorization': getAuth() }
+					})
+					.then(function(r) { return r.json(); })
+					.then(function(resp) {
+						if (!resp.success) throw new Error(resp.error || '获取二维码失败');
+						currentUid = resp.uid;
+						currentTime = resp.time;
+						currentSign = resp.sign;
+						currentClientType = clientType;
+
+						setQrWaiting(resp.qrcodeBase64);
+					currentBase64 = resp.qrcodeBase64;
+						countdown = 60;
+						var cdEl = document.getElementById('qrcode-countdown');
+						if (cdEl) cdEl.textContent = countdown;
+
+						countdownTimer = setInterval(function() {
+							countdown--;
+							var cd = document.getElementById('qrcode-countdown');
+							if (cd) cd.textContent = countdown;
+							if (countdown <= 1) {
+								clearInterval(countdownTimer);
+								if (!expiredFlag) {
+									expiredFlag = true;
+									setQrExpired();
+								}
+							}
+						}, 1000);
+
+						// 开始轮询
+						pollStatus(currentUid, currentTime, currentSign, clientType);
+					})
+					.catch(function(err) {
+						setQrError(err.message || '获取二维码失败');
+						startBtn.disabled = false;
+					});
+				}
+
+				// 轮询状态
+				function pollStatus(uid, timeStr, sign, clientType) {
+					if (expiredFlag) return;
+
+					fetch('/api/account/qrcode/status?uid=' + encodeURIComponent(uid) +
+						'&time=' + encodeURIComponent(timeStr) +
+						'&sign=' + encodeURIComponent(sign) +
+						'&clientType=' + encodeURIComponent(clientType),
+						{ headers: { 'Authorization': getAuth() } })
+					.then(function(r) { return r.json(); })
+					.then(function(resp) {
+						if (!resp.success) throw new Error(resp.error || '查询状态失败');
+						var st = resp.status;
+						switch (st) {
+							case 'waiting':
+								pollTimer = setTimeout(function() { pollStatus(uid, timeStr, sign, clientType); }, 1500);
+								break;
+							case 'scanned':
+								// 切换到"已扫码"状态
+								setQrScanned(currentBase64);
+								pollTimer = setTimeout(function() { pollStatus(uid, timeStr, sign, clientType); }, 1500);
+								break;
+							case 'success':
+								clearTimers();
+								setQrSuccess();
+								var cookie = resp.cookie;
+								if (cookie) {
+									fillCookie(cookie);
+								} else {
+									// fallback: 调用 cookie 接口
+									fetch('/api/account/qrcode/cookie', {
+										method: 'POST',
+										headers: { 'Authorization': getAuth(), 'Content-Type': 'application/json' },
+										body: JSON.stringify({ uid: uid, clientType: clientType })
+									})
+									.then(function(r) { return r.json(); })
+									.then(function(cr) {
+										if (cr.success && cr.cookie) {
+											fillCookie(cr.cookie);
+										} else {
+											setQrError(cr.error || '获取 Cookie 失败');
+										}
+									})
+									.catch(function(err) { setQrError(err.message || '获取 Cookie 失败'); });
+								}
+								break;
+							case 'expired':
+								clearTimers();
+								if (!expiredFlag) { expiredFlag = true; setQrExpired(); }
+								break;
+							case 'cancelled':
+								clearTimers();
+								setQrCancelled();
+								break;
+							default:
+								pollTimer = setTimeout(function() { pollStatus(uid, timeStr, sign, clientType); }, 1500);
+								break;
+						}
+					})
+					.catch(function(err) {
+						// 网络错误继续轮询
+						pollTimer = setTimeout(function() { pollStatus(uid, timeStr, sign, clientType); }, 3000);
+					});
+				}
+
+				function fillCookie(cookie) {
+					var input = document.getElementById('acct-cookie-input');
+					if (input) {
+						input.value = cookie;
+						// 滚动到表单
+						input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						input.classList.add('ring-2', 'ring-green-500');
+						setTimeout(function() {
+							input.classList.remove('ring-2', 'ring-green-500');
+						}, 2000);
+					}
+					// 显示成功提示
+					var alertEl = document.getElementById('acct-alert');
+					if (alertEl) {
+						alertEl.innerHTML = '<div class="px-3 py-2 rounded-md bg-green-50 border border-green-200 text-green-700 text-xs">扫码登录成功！Cookie 已填入表单，请填写账号名后点击"添加"</div>';
+					}
+					// 自动关闭弹窗
+					setTimeout(function() { hideModal(); }, 1500);
+				}
+
+				// 事件绑定
+				startBtn.addEventListener('click', function() {
+					fetchQrcode(clientSelect.value || 'alipaymini');
+				});
+				refreshBtn.addEventListener('click', function() {
+					fetchQrcode(currentClientType || clientSelect.value || 'alipaymini');
+				});
+				clientSelect.addEventListener('change', function() {
+					// 切换客户端类型时，如果已有二维码或正在加载，立即重新获取
+					if (currentUid || !startBtn.classList.contains('hidden') === false) {
+						fetchQrcode(clientSelect.value);
+					}
+				});
+				closeBtn.addEventListener('click', hideModal);
+				modal.addEventListener('click', function(e) {
+					if (e.target === modal) hideModal();
+				});
+
+				// 绑定扫码登录按钮
+				document.getElementById('qrcode-login-btn').addEventListener('click', showModal);
+
+				// ========== 账号列表逻辑 ==========
+				function renderList(data) {
+					var listEl = document.getElementById('acct-list');
+					var metaEl = document.getElementById('acct-meta');
+					if (!listEl) return;
+					if (Array.isArray(data) && data.length === 0 && !metaEl) {
+						// skip
+					}
+					var list;
+					if (Array.isArray(data)) {
+						list = data;
+					} else if (data && data.code === 200) {
+						list = (data.data && data.data.accounts) ? data.data.accounts : (data.accounts || []);
+					} else {
+						listEl.innerHTML = '<div class="text-sm text-red-600">加载失败</div>';
+						return;
+					}
+					if (metaEl) metaEl.textContent = '共 ' + list.length + ' 个账号';
+					if (!list.length) {
+						listEl.innerHTML = '<div class="text-sm text-slate-500">暂无账号，请先添加。</div>';
+						return;
+					}
+					var html = '<table class="w-full text-sm"><thead class="text-xs text-slate-500 border-b border-slate-200">' +
+						'<tr><th class="text-left py-2 px-2">名称</th><th class="text-left py-2 px-2">类型</th>' +
+						'<th class="text-left py-2 px-2">状态</th><th class="text-right py-2 px-2">操作</th></tr></thead><tbody>';
+					list.forEach(function(a) {
+						var at = a.accountType || '115';
+						var name = a.name || '-';
+						html += '<tr class="border-b border-slate-100 last:border-0">' +
+							'<td class="py-2.5 px-2 font-medium text-slate-900">' + name + '</td>' +
+							'<td class="py-2.5 px-2 text-slate-600">' + at + '</td>' +
+							'<td class="py-2.5 px-2"><span class="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600">已保存</span></td>' +
+							'<td class="py-2.5 px-2 text-right space-x-2">' +
+							'<button class="text-xs text-slate-600 hover:text-blue-600">编辑</button>' +
+							'<button class="text-xs text-slate-600 hover:text-blue-600">校验Cookie</button>' +
+							'<button hx-delete="/api/account?name=' + encodeURIComponent(name) + '" hx-swap="none" hx-confirm="删除账号 ' + name + '？" class="text-xs text-red-600 hover:text-red-700">删除</button>' +
+							'</td></tr>';
+					});
+					html += '</tbody></table>';
+					listEl.innerHTML = html;
+				}
+
+				document.body.addEventListener('htmx:afterRequest', function(evt) {
+					if (!evt.detail.requestConfig) return;
+					var path = evt.detail.requestConfig.path || '';
+					var method = (evt.detail.requestConfig.verb || 'get').toLowerCase();
+					var alertEl = document.getElementById('acct-alert');
+					try {
+						var data = JSON.parse(evt.detail.xhr.responseText);
+						if (method === 'post' && path === '/api/account') {
+							if (evt.detail.successful && (data.code === 201 || data.code === 200)) {
+								if (alertEl) alertEl.innerHTML = '<div class="px-3 py-2 rounded-md bg-green-50 border border-green-200 text-green-700 text-xs">账号已添加</div>';
+								var f = document.getElementById('acct-form'); if (f) f.reset();
+								var cookieInput = document.getElementById('acct-cookie-input');
+								if (cookieInput) cookieInput.value = '';
+								document.body.dispatchEvent(new CustomEvent('accounts-changed'));
+							} else {
+								var msg = data.error || data.message || '失败';
+								if (alertEl) alertEl.innerHTML = '<div class="px-3 py-2 rounded-md bg-red-50 border border-red-200 text-red-700 text-xs">' + msg + '</div>';
+							}
+						} else if (method === 'delete' && (path.indexOf('/api/account') === 0)) {
+							if (evt.detail.successful) {
+								if (alertEl) alertEl.innerHTML = '<div class="px-3 py-2 rounded-md bg-green-50 border border-green-200 text-green-700 text-xs">账号已删除</div>';
+								document.body.dispatchEvent(new CustomEvent('accounts-changed'));
+							} else {
+								var msg = data.error || '失败';
+								if (alertEl) alertEl.innerHTML = '<div class="px-3 py-2 rounded-md bg-red-50 border border-red-200 text-red-700 text-xs">' + msg + '</div>';
+							}
+						} else if (path === '/api/account' && method === 'get') {
+							renderList(data);
+						}
+					} catch(e) {}
+				});
+			})();
+		</script>
+	}
+}

@@ -1,0 +1,105 @@
+package web
+
+// TgNotifyPage Telegram 通知配置页 —— 对齐 /tg-notify
+templ TgNotifyPage() {
+	@AppShell("/tg-notify") {
+		<div class="mx-auto max-w-3xl space-y-6">
+			@PageHeader("Telegram 通知", "配置 Bot Token 与聊天 ID，接收任务通知") {}
+
+			<div class="card">
+				<div class="card-header">
+					<h2 class="card-title">Bot 配置</h2>
+					<p class="card-desc">通过 @BotFather 创建 Bot 获取 Token</p>
+				</div>
+				<div class="card-content space-y-4">
+					<form id="tg-form" hx-post="/api/notify/bot" hx-swap="none" class="space-y-4">
+						<div>
+							<label class="label" for="tg-token">Bot Token</label>
+							<input id="tg-token" name="botToken" type="password" class="input" placeholder="123456:ABC-DEF..."/>
+						</div>
+						<div>
+							<label class="label" for="tg-chatid">Chat ID</label>
+							<input id="tg-chatid" name="chatId" class="input" placeholder="如: 123456789"/>
+						</div>
+						<div>
+							<label class="label" for="tg-webhook">Webhook URL (可选)</label>
+							<input id="tg-webhook" name="webhookUrl" class="input" placeholder="https://your-domain/api/notify/webhook"/>
+						</div>
+						<div class="flex items-center gap-4">
+							<label class="flex items-center gap-2 text-sm cursor-pointer">
+								<input type="checkbox" name="enabled" class="checkbox" id="tg-enabled"/>
+								启用通知
+							</label>
+							<label class="flex items-center gap-2 text-sm cursor-pointer">
+								<input type="checkbox" name="autoPolling" class="checkbox" id="tg-polling"/>
+								自动长轮询
+							</label>
+						</div>
+						<div class="flex gap-2">
+							<button type="submit" class="btn btn-default">保存配置</button>
+							<button type="button" class="btn btn-outline" onclick="sendTest()">发送测试消息</button>
+						</div>
+					</form>
+					<div id="tg-result"></div>
+				</div>
+			</div>
+
+			<!-- Bot 状态 -->
+			<div class="card">
+				<div class="card-header">
+					<h2 class="card-title">Bot 状态</h2>
+				</div>
+				<div class="card-content">
+					<div id="tg-bot-info" class="text-sm text-muted-foreground">加载中…</div>
+				</div>
+			</div>
+		</div>
+
+		<script>
+			function getAuth() { return 'Bearer ' + (document.cookie.match('(^|;) ?token=([^;]*)')||[])[2]; }
+			function sendTest() {
+				fetch('/api/notify/send', { method: 'POST', headers: { 'Authorization': getAuth(), 'Content-Type': 'application/json' }, body: '{}' })
+					.then(function(r){ return r.json(); })
+					.then(function(d){
+						var el = document.getElementById('tg-result');
+						if (el) el.innerHTML = d.success !== false
+							? '<div class="text-sm text-green-600 mt-2">测试消息已发送</div>'
+							: '<div class="text-sm text-red-600 mt-2">' + (d.error || '发送失败') + '</div>';
+					}).catch(function(){});
+			}
+			(function() {
+				// 加载已有配置
+				fetch('/api/notify/bot', { headers: { 'Authorization': getAuth() } })
+					.then(function(r){ return r.json(); })
+					.then(function(data){
+						if (data.botToken) document.getElementById('tg-token').value = data.botToken;
+						if (data.chatId) document.getElementById('tg-chatid').value = data.chatId;
+						if (data.webhookUrl) document.getElementById('tg-webhook').value = data.webhookUrl;
+						if (data.enabled) document.getElementById('tg-enabled').checked = true;
+						if (data.autoPolling) document.getElementById('tg-polling').checked = true;
+						var info = document.getElementById('tg-bot-info');
+						if (info) {
+							if (data.botInfo) {
+								info.innerHTML = '<div class="flex items-center gap-2"><span class="badge badge-secondary">@' + data.botInfo.username + '</span><span class="text-muted-foreground">' + data.botInfo.first_name + '</span></div>';
+							} else {
+								info.innerHTML = '<span class="text-muted-foreground">未配置 Bot</span>';
+							}
+						}
+					}).catch(function(){});
+
+				document.body.addEventListener('htmx:afterRequest', function(evt) {
+					if (!evt.detail.requestConfig) return;
+					if (evt.detail.requestConfig.path !== '/api/notify/bot') return;
+					var r = document.getElementById('tg-result');
+					if (!r) return;
+					try {
+						var data = JSON.parse(evt.detail.xhr.responseText);
+						r.innerHTML = evt.detail.successful
+							? '<div class="text-sm text-green-600 mt-2">保存成功</div>'
+							: '<div class="text-sm text-red-600 mt-2">' + (data.error || '保存失败') + '</div>';
+					} catch(e) {}
+				});
+			})();
+		</script>
+	}
+}

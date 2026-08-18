@@ -1,0 +1,475 @@
+package web
+
+// SettingsPage 系统设置页（多 tab）
+// 通用 / Emby / Telegram / 下载 / 高级
+templ SettingsPage() {
+	@AppShell("/settings") {
+		<div class="mx-auto max-w-6xl space-y-6">
+			@PageHeader("设置", "系统全局配置，按 tab 分组管理") {}
+
+		<!-- Tabs -->
+		<div class="card">
+			<div class="card-content">
+			<div class="flex flex-wrap gap-1 border-b border-border mb-5">
+				<button onclick="setTab('general')" id="tab-general" class="px-3 py-2 -mb-px border-b-2 border-primary text-primary text-sm font-medium whitespace-nowrap">通用</button>
+				<button onclick="setTab('emby')" id="tab-emby" class="px-3 py-2 -mb-px border-b-2 border-transparent text-muted-foreground hover:text-foreground text-sm font-medium whitespace-nowrap">Emby</button>
+				<button onclick="setTab('telegram')" id="tab-telegram" class="px-3 py-2 -mb-px border-b-2 border-transparent text-muted-foreground hover:text-foreground text-sm font-medium whitespace-nowrap">Telegram</button>
+				<button onclick="setTab('download')" id="tab-download" class="px-3 py-2 -mb-px border-b-2 border-transparent text-muted-foreground hover:text-foreground text-sm font-medium whitespace-nowrap">下载/限流</button>
+				<button onclick="setTab('lifecycle')" id="tab-lifecycle" class="px-3 py-2 -mb-px border-b-2 border-transparent text-muted-foreground hover:text-foreground text-sm font-medium whitespace-nowrap">STRM/生命监控</button>
+				<button onclick="setTab('advanced')" id="tab-advanced" class="px-3 py-2 -mb-px border-b-2 border-transparent text-muted-foreground hover:text-foreground text-sm font-medium whitespace-nowrap">高级</button>
+			</div>
+
+			<div id="alert-settings" class="mb-4"></div>
+
+			<!-- 通用 -->
+			<section id="sec-general" class="space-y-5">
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div>
+						<label class="label">STRM 前缀 (公共访问地址)</label>
+						<input name="strmPrefix" placeholder="http://<nas-ip>:8090/api/strm" class="input font-mono text-xs" form="settings-form"/>
+						<div class="text-[11px] text-muted-foreground mt-1">Emby/Infuse 等播放器通过此 URL 访问 STRM 反代</div>
+					</div>
+					<div>
+						<label class="label">媒体挂载路径 (逗号分隔)</label>
+						<div class="flex items-center gap-2">
+							<input name="mediaMountPath" id="set-mediaMountPath" placeholder="/mnt/media1,/mnt/media2" class="input font-mono text-xs" form="settings-form"/>
+							<button type="button" onclick="openSettingsLocalPicker('set-mediaMountPath', true)" title="选择本地目录并追加"
+								class="btn btn-outline btn-icon shrink-0">
+								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/>
+								</svg>
+							</button>
+						</div>
+					</div>
+					<div class="md:col-span-2 space-y-2">
+						<label class="flex items-center gap-2 text-sm cursor-pointer">
+							<input type="checkbox" name="enablePathEncoding" class="checkbox" form="settings-form"/>
+							启用路径 URL 编码
+						</label>
+						<label class="flex items-center gap-2 text-sm cursor-pointer">
+							<input type="checkbox" name="enable302" class="checkbox" form="settings-form"/>
+							STRM 请求直接 302 跳转到 115 (减少带宽消耗)
+						</label>
+						<label class="flex items-center gap-2 text-sm cursor-pointer">
+							<input type="checkbox" name="removeExtraFiles" class="checkbox" form="settings-form"/>
+							同步时自动清理多余文件
+						</label>
+					</div>
+				</div>
+			</section>
+
+			<!-- Emby -->
+			<section id="sec-emby" class="space-y-5 hidden">
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div>
+						<label class="label">Emby URL</label>
+						<input name="emby.url" placeholder="http://192.168.1.10:8096" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">Emby API Key</label>
+						<input name="emby.apiKey" placeholder="xxxxx" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">Webhook Auth (可选)</label>
+						<input name="emby.webhookAuth" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">Library ID</label>
+						<input name="emby.libraryId" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+				</div>
+				<div class="flex flex-wrap gap-6">
+					<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" name="emby.notifyMediaAdded" class="checkbox" form="settings-form"/> 入库通知</label>
+					<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" name="emby.notifyMediaRemoved" class="checkbox" form="settings-form"/> 删除通知</label>
+					<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" name="emby.notifyPlayback" class="checkbox" form="settings-form"/> 播放通知</label>
+					<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" name="emby.syncDeleteEnabled" class="checkbox" form="settings-form"/> 启用 Emby→115 反向删除同步</label>
+					<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" name="emby.syncDeleteDryRun" class="checkbox" form="settings-form"/> 删除同步 dry-run</label>
+				</div>
+				<div>
+					<button type="button" hx-post="/api/emby/test-connection" hx-swap="none"
+						class="btn btn-outline">测试 Emby 连接</button>
+				</div>
+			</section>
+
+			<!-- Telegram (通知中心的重复部分，这里复用 /api/notify/bot 保存) -->
+			<section id="sec-telegram" class="space-y-5 hidden">
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div>
+						<label class="label">Bot Token</label>
+						<input name="telegram.botToken" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">Chat ID</label>
+						<input name="telegram.chatId" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">Webhook URL</label>
+						<input name="telegram.webhookUrl" placeholder="https://your-domain/api/notify/webhook" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+				</div>
+				<div class="flex flex-wrap gap-6">
+					<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" name="telegram.enabled" class="checkbox" form="settings-form"/> 启用 Telegram</label>
+					<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" name="telegram.autoPolling" class="checkbox" form="settings-form"/> 自动长轮询 (免 webhook)</label>
+				</div>
+			</section>
+
+			<!-- 下载 -->
+			<section id="sec-download" class="space-y-5 hidden">
+				<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+					<div>
+						<label class="label">下载链接速率限制 (每秒)</label>
+						<input name="download.linkMaxPerSecond" type="number" min="0" class="input" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">链接并发</label>
+						<input name="download.linkMaxConcurrent" type="number" min="0" class="input" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">下载文件并发</label>
+						<input name="download.downloadMaxConcurrent" type="number" min="0" class="input" form="settings-form"/>
+					</div>
+				</div>
+			</section>
+
+			<!-- 生命监控 / STRM -->
+			<section id="sec-lifecycle" class="space-y-5 hidden">
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div>
+						<label class="label">Force Proxy UA Token (逗号分隔)</label>
+						<input name="strm.forceProxyUaTokens" placeholder="Infuse, VidHub, SenPlayer" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">账号反代并发上限</label>
+						<input name="strm.accountProxyConcurrencyLimit" type="number" min="1" class="input" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">302 检测超时 (ms)</label>
+						<input name="strm.redirectCheckTimeoutMs" type="number" min="500" class="input" form="settings-form"/>
+					</div>
+				</div>
+			</section>
+
+			<!-- 高级 -->
+			<section id="sec-advanced" class="space-y-5 hidden">
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div>
+						<label class="label">STRM 扩展名 (逗号分隔)</label>
+						<input name="strmExtensions" placeholder="mp4,mkv,avi,mov..." class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">下载元数据扩展名 (逗号分隔)</label>
+						<input name="downloadExtensions" placeholder="srt,ass,nfo,jpg,png" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">User-Agent</label>
+						<input name="user-agent" class="input font-mono text-xs" form="settings-form"/>
+					</div>
+					<div>
+						<label class="label">Internal Token (只读)</label>
+						<input disabled placeholder="自动生成，无需手动填写" class="input bg-muted text-muted-foreground"/>
+					</div>
+				</div>
+				<div class="p-3 bg-destructive/10 border border-destructive/40 rounded-lg">
+					<div class="text-xs text-destructive font-medium mb-2">危险操作</div>
+					<div class="flex gap-2">
+						<button hx-post="/api/cleanup" hx-vals='{"target":"cache"}' hx-swap="none" hx-confirm="确认清空缓存？"
+							class="btn btn-outline btn-sm">清理缓存</button>
+						<button hx-post="/api/cleanup" hx-vals='{"target":"logs"}' hx-swap="none" hx-confirm="确认清空日志？"
+							class="btn btn-outline btn-sm">清理日志</button>
+					</div>
+				</div>
+			</section>
+
+			<div class="flex justify-end mt-6 pt-5 border-t border-border">
+				<button type="submit"
+					onclick="submitFromAllTabs()"
+					class="btn btn-default">保存所有设置</button>
+			</div>
+			</div>
+		</div>
+		</div>
+
+		<!-- 隐藏的统一提交表单：HTMX hx-post /api/settings（聚合所有 tab） -->
+		<form id="settings-form" hx-post="/api/settings" hx-swap="none" style="display:none"></form>
+
+		<script>
+			var tabs = ['general','emby','telegram','download','lifecycle','advanced'];
+			function setTab(name){
+				tabs.forEach(function(t){
+					var tab=document.getElementById('tab-'+t), sec=document.getElementById('sec-'+t);
+					if (!tab||!sec) return;
+					if(t===name){tab.className='px-3 py-2 -mb-px border-b-2 border-primary text-primary text-sm font-medium whitespace-nowrap';sec.classList.remove('hidden');}
+					else{tab.className='px-3 py-2 -mb-px border-b-2 border-transparent text-muted-foreground hover:text-foreground text-sm font-medium whitespace-nowrap';sec.classList.add('hidden');}
+				});
+				location.hash = '#' + name;
+			}
+
+			// ----- 回填辅助 -----
+			function getAuth() { return 'Bearer ' + (document.cookie.match('(^|;) ?token=([^;]*)')||[])[2]; }
+			function qs(name) { return document.querySelector('input[name="' + name + '"]'); }
+			function csv(arr) { return (arr && arr.join) ? arr.join(',') : ''; }
+			function setVal(name, v) {
+				var el = qs(name);
+				if (!el || v === undefined || v === null) return;
+				el.value = String(v);
+			}
+			function setChk(name, v) {
+				var el = qs(name);
+				if (el) el.checked = !!v;
+			}
+			function applySettings(data) {
+				if (!data) return;
+				// General
+				setVal('strmPrefix', data.strmPrefix);
+				setVal('mediaMountPath', csv(data.mediaMountPath));
+				setChk('enablePathEncoding', data.enablePathEncoding);
+				setChk('enable302', data.enable302);
+				setChk('removeExtraFiles', data.removeExtraFiles);
+				// Emby
+				var em = data.emby || {};
+				setVal('emby.url', em.url);
+				setVal('emby.apiKey', em.apiKey);
+				setVal('emby.webhookAuth', em.webhookAuth);
+				setVal('emby.libraryId', em.libraryId);
+				setChk('emby.notifyMediaAdded', em.notifyMediaAdded);
+				setChk('emby.notifyMediaRemoved', em.notifyMediaRemoved);
+				setChk('emby.notifyPlayback', em.notifyPlayback);
+				setChk('emby.syncDeleteEnabled', em.syncDeleteEnabled);
+				setChk('emby.syncDeleteDryRun', em.syncDeleteDryRun);
+				// Telegram
+				var tg = data.telegram || {};
+				setVal('telegram.botToken', tg.botToken);
+				setVal('telegram.chatId', tg.chatId);
+				setVal('telegram.webhookUrl', tg.webhookUrl);
+				setChk('telegram.enabled', tg.enabled);
+				setChk('telegram.autoPolling', tg.autoPolling);
+				// Download
+				var dl = data.download || {};
+				setVal('download.linkMaxPerSecond', dl.linkMaxPerSecond);
+				setVal('download.linkMaxConcurrent', dl.linkMaxConcurrent);
+				setVal('download.downloadMaxConcurrent', dl.downloadMaxConcurrent);
+				// STRM / Lifecycle
+				var sm = data.strm || {};
+				setVal('strm.forceProxyUaTokens', csv(sm.forceProxyUaTokens));
+				setVal('strm.accountProxyConcurrencyLimit', sm.accountProxyConcurrencyLimit);
+				setVal('strm.redirectCheckTimeoutMs', sm.redirectCheckTimeoutMs);
+				// Advanced
+				setVal('strmExtensions', csv(data.strmExtensions));
+				setVal('downloadExtensions', csv(data.downloadExtensions));
+				setVal('user-agent', data['user-agent']);
+			}
+
+			// 从 #hash 恢复 tab + 加载预设值回填
+			window.addEventListener('DOMContentLoaded', function(){
+				var h = location.hash ? location.hash.substring(1) : 'general';
+				if (tabs.indexOf(h) !== -1) setTab(h);
+				fetch('/api/settings', { headers: { 'Authorization': getAuth() } })
+					.then(function(r){ return r.json(); })
+					.then(function(d){
+						// 兼容：直接返回 Settings 结构 或 {data:{settings}}
+						var s = d && (d.strmPrefix !== undefined || d.strmExtensions !== undefined)
+							? d
+							: (d && d.saved ? d.saved : (d && d.data ? d.data : d));
+						applySettings(s);
+					})
+					.catch(function(err){
+						var a = document.getElementById('alert-settings');
+						if (a) a.innerHTML = '<div class="px-3 py-2 rounded-md bg-destructive/10 border border-destructive/40 text-destructive text-xs">加载预设值失败，将使用默认值</div>';
+					});
+			});
+
+			// 跨 tab 收集所有 input 并提交到 /api/settings
+			function submitFromAllTabs(){
+				event && event.preventDefault && event.preventDefault();
+				var form = document.getElementById('settings-form');
+				// 清空原隐藏表单字段
+				while (form.firstChild) form.removeChild(form.firstChild);
+				// 收集所有可见+隐藏 section 的 input/select/textarea
+				var inputs = document.querySelectorAll('input, select, textarea');
+				[].forEach.call(inputs, function(inp){
+					if(inp.disabled || !inp.name) return;
+					var name = inp.name;
+					var val;
+					if(inp.type==='checkbox') val = inp.checked ? 'true' : 'false';
+					else val = inp.value;
+					var hidden = document.createElement('input');
+					hidden.type='hidden'; hidden.name=name; hidden.value=val;
+					form.appendChild(hidden);
+				});
+				// htmx 触发提交
+				if (window.htmx) htmx.trigger(form, 'submit');
+				else form.submit();
+			}
+
+			// 保存/测试结果反馈（/api/settings 为主，同时兼容旧 path）
+			document.body.addEventListener('htmx:afterRequest', function(evt) {
+				if (!evt.detail.requestConfig) return;
+				var path = evt.detail.requestConfig.path || '';
+				var a = document.getElementById('alert-settings');
+				try {
+					var data = evt.detail.xhr.responseText ? JSON.parse(evt.detail.xhr.responseText) : {};
+					var ok = evt.detail.successful && (!data.code || data.code === 200 || data.code === 201);
+					if (path.indexOf('/api/settings') === 0 || path.indexOf('/api/emby/settings') === 0 || path.indexOf('/api/notify/bot') === 0 || path.indexOf('/api/lifeMonitor') === 0 || path.indexOf('/api/cleanup') === 0) {
+						if (a) a.innerHTML = ok
+							? '<div class="px-3 py-2 rounded-md bg-secondary border border-border text-foreground text-xs">' + (data.message || '保存成功') + '</div>'
+							: '<div class="px-3 py-2 rounded-md bg-destructive/10 border border-destructive/40 text-destructive text-xs">失败: '+(data.error||data.message||'未知')+'</div>';
+						// 保存成功后：重新回填空数组和脱敏 token
+						if (ok && path.indexOf('/api/settings') === 0 && data && data.saved) {
+							applySettings(data.saved);
+						}
+					}
+					if (path.indexOf('/api/emby/test-connection') === 0) {
+						if (a) a.innerHTML = ok
+							? '<div class="px-3 py-2 rounded-md bg-secondary border border-border text-foreground text-xs">Emby 连接成功</div>'
+							: '<div class="px-3 py-2 rounded-md bg-destructive/10 border border-destructive/40 text-destructive text-xs">Emby 连接失败: '+(data.error||data.message||'未知')+'</div>';
+					}
+				} catch(e) {}
+			});
+
+			// ============== 本地目录选择（给媒体挂载路径使用） ==============
+			var _settingsLocalState = { targetId: '', append: false, path: '', roots: [] };
+			function openSettingsLocalPicker(targetId, append){
+				_settingsLocalState.targetId = targetId;
+				_settingsLocalState.append = !!append;
+				_settingsLocalState.path = '';
+				var d = document.getElementById('dlg-settings-local');
+				if(d){ d.classList.remove('hidden'); d.classList.add('flex'); }
+				_loadSettingsRoots();
+			}
+			function closeSettingsLocalPicker(){
+				var d = document.getElementById('dlg-settings-local');
+				if(d){ d.classList.add('hidden'); d.classList.remove('flex'); }
+			}
+			function _sls(text){ var e = document.getElementById('settings-local-status'); if(e) e.textContent = text || ''; }
+			function _slcrumbs(text){ var e = document.getElementById('settings-local-crumb'); if(e) e.textContent = text || '(根)'; }
+			function _loadSettingsRoots(){
+				var list = document.getElementById('settings-local-list');
+				if(list) list.innerHTML = '<div class="px-3 py-2 text-xs text-muted-foreground">加载根目录…</div>';
+				fetch('/api/directory/local/list', { headers: { 'Authorization': getAuth() } })
+					.then(function(r){ return r.json(); })
+					.then(function(d){
+						if (!d || d.code !== 200) { if(list) list.innerHTML = '<div class="px-3 py-2 text-xs text-destructive">加载失败</div>'; return; }
+						_sls('选择一个根目录进入');
+						_settingsLocalState.roots = (d.data && d.data.roots) ? d.data.roots : [];
+						_settingsLocalState.path = '';
+						_slcrumbs('(根)');
+						var html = '';
+						if(!_settingsLocalState.roots.length){
+							html = '<div class="px-3 py-2 text-xs text-muted-foreground">无可访问的根目录</div>';
+						} else {
+							_settingsLocalState.roots.forEach(function(r){
+								var safe = String(r || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+								html += '<button type="button" data-root="'+safe+'" class="_sroot w-full text-left px-2.5 py-2 rounded-md hover:bg-primary/10 hover:text-primary flex items-center gap-2 transition-colors">';
+								html += '<svg class="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
+								html += '<span class="truncate text-sm font-mono">'+safe+'</span></button>';
+							});
+						}
+						if(list) list.innerHTML = html;
+						[].forEach.call(list.querySelectorAll('._sroot'), function(b){
+							b.addEventListener('click', function(){ _enterRoot(b.getAttribute('data-root')); });
+						});
+					});
+			}
+			function _enterRoot(root){
+				_settingsLocalState.path = root || '';
+				_slcrumbs(_settingsLocalState.path || '(根)');
+				_listSettingsLocal(_settingsLocalState.path);
+			}
+			function _backSettingsLocal(){
+				if(!_settingsLocalState.path){ return; }
+				var p = _settingsLocalState.path;
+				// Unix: /a/b -> /a ; Windows: C:\a\b -> C:\a
+				var idx;
+				if(p.indexOf('\\') !== -1){
+					idx = p.lastIndexOf('\\');
+				}else{
+					idx = p.lastIndexOf('/');
+				}
+				if(idx <= 0 || idx === (p.length-1)){
+					_loadSettingsRoots(); return;
+				}
+				var parent = p.substring(0, idx);
+				_settingsLocalState.path = parent;
+				_slcrumbs(parent || '(根)');
+				_listSettingsLocal(parent);
+			}
+			function _listSettingsLocal(dir){
+				var list = document.getElementById('settings-local-list');
+				if(list) list.innerHTML = '<div class="px-3 py-2 text-xs text-muted-foreground">加载中…</div>';
+				_sls('');
+				fetch('/api/directory/local/list?root=' + encodeURIComponent(dir||''), { headers: { 'Authorization': getAuth() } })
+					.then(function(r){ return r.json(); })
+					.then(function(d){
+						if (!d || d.code !== 200) { if(list) list.innerHTML = '<div class="px-3 py-2 text-xs text-destructive">加载失败</div>'; _sls(d && d.message ? d.message : ''); return; }
+						var items = (d.data && d.data.content) ? d.data.content : [];
+						_itemsSettingsLocal(items);
+					});
+			}
+			function _itemsSettingsLocal(items){
+				var list = document.getElementById('settings-local-list');
+				if(!list) return;
+				var dirs = items.filter(function(i){ return i && i.is_dir; });
+				if(!dirs.length){
+					list.innerHTML = '<div class="px-3 py-2 text-xs text-muted-foreground">没有子目录</div>';
+					_sls('');
+					return;
+				}
+				var html = '';
+				dirs.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+				dirs.forEach(function(i){
+					var safe = (i.name || '').replace(/'/g,"\\'");
+					html += '<button type="button" data-name="'+safe+'" class="_sdir w-full text-left px-2.5 py-2 rounded-md hover:bg-primary/10 hover:text-primary flex items-center gap-2 transition-colors">';
+					html += '<svg class="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>';
+					html += '<span class="truncate text-sm">'+(i.name||'')+'</span></button>';
+				});
+				list.innerHTML = html;
+				[].forEach.call(list.querySelectorAll('._sdir'), function(b){
+					b.addEventListener('click', function(){
+						var name = b.getAttribute('data-name') || '';
+						var cur = _settingsLocalState.path;
+						var sep = (cur && cur.indexOf('\\') !== -1) ? '\\' : '/';
+						var next = cur ? (cur + sep + name) : name;
+						_settingsLocalState.path = next;
+						_slcrumbs(next);
+						_listSettingsLocal(next);
+					});
+				});
+			}
+			function _confirmSettingsLocal(){
+				var el = document.getElementById(_settingsLocalState.targetId);
+				if (!el) { closeSettingsLocalPicker(); return; }
+				var v = _settingsLocalState.path || '';
+				if (!v) { closeSettingsLocalPicker(); return; }
+				if (_settingsLocalState.append) {
+					var cur = el.value ? String(el.value) : '';
+					var parts = cur.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+					if (parts.indexOf(v) === -1) parts.push(v);
+					el.value = parts.join(',');
+				} else {
+					el.value = v;
+				}
+				closeSettingsLocalPicker();
+			}
+		</script>
+
+		<!-- 本地目录选择 Dialog -->
+		<div id="dlg-settings-local" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4 sm:p-6 md:p-8">
+			<div class="bg-background border border-border rounded-lg shadow-xl w-full overflow-hidden flex flex-col min-h-[22rem]" style="max-width:min(32rem,92vw);max-height:min(80vh,640px);">
+				<div class="flex items-center justify-between px-5 py-3 border-b border-border">
+					<div>
+						<h3 class="font-semibold text-foreground">选择本地目录</h3>
+						<p class="text-xs text-muted-foreground mt-0.5">当前路径：<span id="settings-local-crumb" class="font-mono">(根)</span></p>
+					</div>
+					<button type="button" onclick="closeSettingsLocalPicker()" class="btn btn-icon btn-outline">✕</button>
+				</div>
+				<div class="flex items-center gap-2 px-5 py-2 border-b border-border">
+					<button type="button" onclick="_backSettingsLocal()" class="btn btn-outline btn-sm">← 上级</button>
+					<button type="button" onclick="_loadSettingsRoots()" class="btn btn-outline btn-sm">根目录</button>
+					<div id="settings-local-status" class="text-xs text-muted-foreground flex-1 truncate">准备中…</div>
+					<button type="button" onclick="_confirmSettingsLocal()" class="btn btn-default btn-sm">确定</button>
+				</div>
+				<div id="settings-local-list" class="max-h-[50vh] overflow-y-auto p-2"></div>
+			</div>
+		</div>
+	}
+}

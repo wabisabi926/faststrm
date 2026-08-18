@@ -1,0 +1,456 @@
+package web
+
+// TasksPage 任务管理页
+// - 创建任务卡片（表单：name/account/sourcePath/targetPath/schedule/cron/enabled）
+// - 任务列表（每 10s 刷新）：名称 · 账号 · 调度模式 · 下次执行 · 状态 · 开关 · 操作
+templ TasksPage() {
+	@AppShell("/task") {
+		<div class="mx-auto max-w-6xl space-y-6">
+			@PageHeader("任务", "管理 115 → 本地 STRM 的同步任务") {}
+
+			<!-- 创建/编辑任务 -->
+			<div class="card">
+				<div class="card-header">
+					<h2 class="card-title">创建/编辑任务</h2>
+					<p class="card-desc">填写任务基本信息与源/目标路径，创建后可立即执行或按调度执行</p>
+				</div>
+				<div class="card-content">
+					<form
+						hx-post="/api/task"
+						hx-swap="none"
+						hx-trigger="submit"
+						class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+						id="task-form"
+					>
+						<div>
+							<label class="label" for="task-name">任务名称</label>
+							<input id="task-name" name="name" required placeholder="如: 电影库同步" class="input"/>
+						</div>
+						<div>
+							<label class="label" for="task-account">关联账号</label>
+							<input id="task-account" name="account" required placeholder="如: 115-main" class="input"/>
+						</div>
+						<div>
+							<label class="label" for="task-scheduleMode">调度模式</label>
+							<select id="task-scheduleMode" name="scheduleMode" class="input">
+								<option value="interval">间隔（每 X 分钟）</option>
+								<option value="daily">每日</option>
+								<option value="weekly">每周</option>
+								<option value="manual">手动</option>
+							</select>
+						</div>
+						<div>
+							<label class="label" for="task-scheduleValue">调度值 (cron 或 间隔分钟)</label>
+							<input id="task-scheduleValue" name="scheduleValue" placeholder="如: 30 或 02:00 或 Mon-02:00" class="input"/>
+						</div>
+						<div class="lg:col-span-3">
+							<label class="label" for="task-sourcePath">115 源目录 (绝对路径，如 /我的收藏/电影)</label>
+							<div class="flex items-center gap-2">
+								<input id="task-sourcePath" name="sourcePath" required class="input font-mono text-xs"/>
+								<button type="button" onclick="openRemoteDirPicker()" title="选择 115 远程目录"
+									class="btn btn-outline btn-icon shrink-0">
+									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/>
+									</svg>
+								</button>
+							</div>
+						</div>
+						<div class="lg:col-span-3">
+							<label class="label" for="task-targetPath">本地目标目录 (绝对路径，STRM 写入位置)</label>
+							<div class="flex items-center gap-2">
+								<input id="task-targetPath" name="targetPath" required class="input font-mono text-xs"/>
+								<button type="button" onclick="openLocalDirPicker()" title="选择本地目录"
+									class="btn btn-outline btn-icon shrink-0">
+									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/>
+									</svg>
+								</button>
+							</div>
+						</div>
+						<div class="lg:col-span-3 flex items-center gap-4 pt-2">
+							<label class="flex items-center gap-2 text-sm cursor-pointer">
+								<input type="checkbox" name="enabled" checked class="checkbox"/>
+								创建后启用
+							</label>
+							<button type="submit" class="btn btn-default ml-auto">创建任务并执行</button>
+						</div>
+					</form>
+					<div id="task-alert" class="mt-3"></div>
+				</div>
+			</div>
+
+			<!-- 任务列表 -->
+			<div class="card"
+				hx-get="/api/tasks" hx-trigger="load, tasks-changed from:body, every 10s" hx-swap="none"
+				id="task-panel">
+				<div class="card-header">
+					<div class="flex items-center justify-between">
+						<h2 class="card-title">任务列表</h2>
+						<span class="text-xs text-muted-foreground" id="task-meta">加载中…</span>
+					</div>
+				</div>
+				<div class="card-content pt-3">
+					<div id="task-list" class="overflow-x-auto">
+						<div class="text-sm text-muted-foreground">暂无任务。</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- ===== 远程目录选择 Dialog ===== -->
+		<div id="remote-dir-dialog" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4 sm:p-6 md:p-8" role="dialog" aria-modal="true">
+			<div class="w-full bg-background rounded-lg border border-border shadow-xl flex flex-col min-h-[22rem]" style="max-width:min(32rem,92vw);max-height:min(80vh,640px);">
+				<div class="flex items-center justify-between border-b border-border px-5 py-3">
+					<div>
+						<h3 class="font-semibold text-foreground">选择 115 远程目录</h3>
+						<p class="text-xs text-muted-foreground mt-0.5">当前路径：<span id="remote-crumb" class="font-mono">/</span></p>
+					</div>
+					<button type="button" onclick="closeRemoteDirPicker()" class="btn btn-icon btn-outline">✕</button>
+				</div>
+				<div class="flex items-center gap-2 px-5 py-2 border-b border-border">
+					<button type="button" onclick="remoteDirParent()" class="btn btn-outline btn-sm">⬅ 返回上级</button>
+					<div id="remote-status" class="text-xs text-muted-foreground flex-1 truncate">准备中…</div>
+				</div>
+				<div id="remote-list" class="flex-1 overflow-y-auto px-3 py-2 space-y-1 text-sm">
+					<div class="text-xs text-muted-foreground px-2 py-3 text-center">请先填写"关联账号"再打开选择器。</div>
+				</div>
+				<div class="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+					<button type="button" onclick="closeRemoteDirPicker()" class="btn btn-outline btn-sm">取消</button>
+					<button type="button" onclick="confirmRemoteDir()" class="btn btn-default btn-sm">选择当前目录</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- ===== 本地目录选择 Dialog ===== -->
+		<div id="local-dir-dialog" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4 sm:p-6 md:p-8" role="dialog" aria-modal="true">
+			<div class="w-full bg-background rounded-lg border border-border shadow-xl flex flex-col min-h-[22rem]" style="max-width:min(32rem,92vw);max-height:min(80vh,640px);">
+				<div class="flex items-center justify-between border-b border-border px-5 py-3">
+					<div>
+						<h3 class="font-semibold text-foreground">选择本地目录</h3>
+						<p class="text-xs text-muted-foreground mt-0.5">当前路径：<span id="local-crumb" class="font-mono">(根)</span></p>
+					</div>
+					<button type="button" onclick="closeLocalDirPicker()" class="btn btn-icon btn-outline">✕</button>
+				</div>
+				<div class="flex items-center gap-2 px-5 py-2 border-b border-border">
+					<button type="button" onclick="localDirParent()" class="btn btn-outline btn-sm">⬅ 返回上级</button>
+					<div id="local-status" class="text-xs text-muted-foreground flex-1 truncate">准备中…</div>
+				</div>
+				<div id="local-list" class="flex-1 overflow-y-auto px-3 py-2 space-y-1 text-sm">
+					<div class="text-xs text-muted-foreground px-2 py-3 text-center">加载中…</div>
+				</div>
+				<div class="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+					<button type="button" onclick="closeLocalDirPicker()" class="btn btn-outline btn-sm">取消</button>
+					<button type="button" onclick="confirmLocalDir()" class="btn btn-default btn-sm">选择当前目录</button>
+				</div>
+			</div>
+		</div>
+
+		<script>
+			(function() {
+				function statusBadge(s) {
+					switch(s) {
+						case 'running': return '<span class="badge badge-secondary">运行中</span>';
+						case 'pending': return '<span class="badge badge-outline" style="color:oKLCH(0.75 0.15 80);border-color:oKLCH(0.75 0.15 80)">等待中</span>';
+						case 'completed': return '<span class="badge" style="background:oKLCH(0.7 0.18 145);color:white">已完成</span>';
+						case 'failed': return '<span class="badge badge-destructive">失败</span>';
+						case 'disabled': return '<span class="badge badge-outline">已禁用</span>';
+						default: return '<span class="badge badge-outline">' + (s || '空闲') + '</span>';
+					}
+				}
+				function render(data) {
+					var listEl = document.getElementById('task-list');
+					var metaEl = document.getElementById('task-meta');
+					if (!listEl) return;
+					if (!data || data.code !== 200) { listEl.innerHTML = '<div class="text-sm text-destructive">加载失败</div>'; return; }
+					var list = (data.data && data.data.tasks) ? data.data.tasks : (data.tasks || []);
+					if (metaEl) metaEl.textContent = '共 ' + list.length + ' 个任务';
+					if (!list.length) { listEl.innerHTML = '<div class="text-sm text-muted-foreground">暂无任务。</div>'; return; }
+					var html = '<div class="data-table overflow-x-auto"><table><thead>' +
+						'<tr><th>名称</th><th>账号</th><th>调度</th><th>状态</th><th>启用</th><th class="text-right">操作</th></tr></thead><tbody>';
+					list.forEach(function(t) {
+						var id = t.taskId || t.id || t.name || '';
+						var mode = t.scheduleMode || t.mode || 'manual';
+						var sv = t.scheduleValue || t.cron || '-';
+						var enabled = t.enabled !== false;
+						var s = t.status || 'idle';
+						if (!enabled && s === 'idle') s = 'disabled';
+						html += '<tr>' +
+							'<td class="font-medium">' + (t.name || id) + '</td>' +
+							'<td class="text-muted-foreground">' + (t.account || '-') + '</td>' +
+							'<td class="text-xs text-muted-foreground"><code class="bg-muted px-1.5 py-0.5 rounded">' + mode + '</code> <span class="ml-1">' + sv + '</span></td>' +
+							'<td>' + statusBadge(s) + '</td>' +
+							'<td>' + (enabled ? '✓' : '') + '</td>' +
+							'<td class="text-right space-x-3 whitespace-nowrap">' +
+							'<button hx-post="/api/startTask" hx-vals=\'{"taskId":"' + id + '"}\' hx-swap="none" class="text-xs underline-offset-2 hover:underline text-foreground">立即执行</button>' +
+							'<button hx-post="/api/cancelTask" hx-vals=\'{"taskId":"' + id + '"}\' hx-swap="none" class="text-xs underline-offset-2 hover:underline text-foreground">取消</button>' +
+							'<button hx-delete="/api/task?id=' + encodeURIComponent(id) + '" hx-swap="none" hx-confirm="删除任务 ' + (t.name || id) + '？" class="text-xs text-destructive underline-offset-2 hover:underline">删除</button>' +
+							'</td></tr>';
+					});
+					html += '</tbody></table></div>';
+					listEl.innerHTML = html;
+				}
+				document.body.addEventListener('htmx:afterRequest', function(evt) {
+					if (!evt.detail.requestConfig) return;
+					var path = evt.detail.requestConfig.path || '';
+					var method = (evt.detail.requestConfig.verb || 'get').toLowerCase();
+					var alertEl = document.getElementById('task-alert');
+					try {
+						var raw = evt.detail.xhr.responseText || '';
+						var data = raw ? JSON.parse(raw) : {};
+						if (path === '/api/tasks' && method === 'get') { render(data); return; }
+						if (path === '/api/task' || path === '/api/cancelTask' || path.indexOf('/api/startTask') === 0) {
+							var ok = evt.detail.successful && (!data.code || data.code === 200 || data.code === 201);
+							if (alertEl) {
+								var msg = (data.message || data.error || (ok ? '操作成功' : '操作失败'));
+								alertEl.innerHTML = ok
+									? '<div class="px-3 py-2 rounded-md bg-secondary border border-border text-foreground text-xs">' + msg + '</div>'
+									: '<div class="px-3 py-2 rounded-md text-destructive border border-border text-xs bg-destructive/10">' + msg + '</div>';
+							}
+							document.body.dispatchEvent(new CustomEvent('tasks-changed'));
+						}
+					} catch(e) {}
+				});
+			})();
+		</script>
+
+		<script>
+			// ============ 目录选择器（远程 + 本地） ============
+			(function(){
+				function getAuth(){ return 'Bearer ' + (document.cookie.match('(^|;) ?token=([^;]*)')||[])[2]; }
+				// --- Remote ---
+				var remoteState = { path: '/', account: '' };
+				function showDlg(id){
+					var el = document.getElementById(id);
+					if(!el) return;
+					el.classList.remove('hidden');
+					el.classList.add('flex');
+				}
+				function hideDlg(id){
+					var el = document.getElementById(id);
+					if(!el) return;
+					el.classList.add('hidden');
+					el.classList.remove('flex');
+				}
+				window.openRemoteDirPicker = function(){
+					var acc = (document.getElementById('task-account') || {}).value || '';
+					if(!acc){
+						alert('请先填写"关联账号"，再打开远程目录选择器。');
+						return;
+					}
+					remoteState.account = acc;
+					var exist = (document.getElementById('task-sourcePath') || {}).value || '';
+					remoteState.path = exist && exist.charAt(0) === '/' ? exist : '/';
+					showDlg('remote-dir-dialog');
+					loadRemote();
+				};
+				window.closeRemoteDirPicker = function(){ hideDlg('remote-dir-dialog'); };
+				window.remoteDirParent = function(){
+					if(remoteState.path === '/' || remoteState.path === '') return;
+					var p = remoteState.path.replace(/\/+$/, '');
+					var i = p.lastIndexOf('/');
+					remoteState.path = i <= 0 ? '/' : p.substring(0, i);
+					loadRemote();
+				};
+				window.confirmRemoteDir = function(){
+					var el = document.getElementById('task-sourcePath');
+					if(el) el.value = remoteState.path;
+					hideDlg('remote-dir-dialog');
+				};
+				function setStatus(id, text){ var s = document.getElementById(id); if(s) s.textContent = text; }
+				function renderRemote(list){
+					var box = document.getElementById('remote-list');
+					if(!box) return;
+					var crumb = document.getElementById('remote-crumb');
+					if(crumb) crumb.textContent = remoteState.path;
+					if(!list || !list.length){
+						box.innerHTML = '<div class="text-xs text-muted-foreground px-2 py-6 text-center">(该目录为空)</div>';
+					} else {
+						var html = '';
+						list.forEach(function(n){
+							if(!n || !n.is_dir) return;
+							var name = String(n.name || '');
+							if(!name) return;
+							var safe = name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+							html += '<button type="button" data-name="'+safe+'" class="remote-item w-full text-left px-2.5 py-2 rounded-md hover:bg-primary/10 hover:text-primary flex items-center gap-2 transition-colors">';
+							html += '<svg class="w-4 h-4 shrink-0" style="color:oKLCH(0.75 0.15 80)" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
+							html += '<span class="truncate">'+safe+'</span></button>';
+						});
+						if(html === ''){
+							box.innerHTML = '<div class="text-xs text-muted-foreground px-2 py-6 text-center">(没有子目录，仅显示目录)</div>';
+						} else {
+							box.innerHTML = html;
+							var btns = box.querySelectorAll('button.remote-item');
+							[].forEach.call(btns, function(b){
+								b.addEventListener('click', function(){
+									var name = b.getAttribute('data-name');
+									var base = remoteState.path.replace(/\/+$/, '');
+									remoteState.path = (base === '' ? '' : base) + '/' + name;
+									loadRemote();
+								});
+							});
+						}
+					}
+				}
+				function loadRemote(){
+					var acc = remoteState.account;
+					var path = remoteState.path || '/';
+					setStatus('remote-status', '加载中…');
+					var url = '/api/directory/remote/list?account='+encodeURIComponent(acc)+'&path='+encodeURIComponent(path);
+					fetch(url, { headers: { 'Authorization': getAuth() } })
+						.then(function(r){ return r.json(); })
+						.then(function(d){
+							if(d && d.code === 200 && d.data && Array.isArray(d.data.content)){
+								renderRemote(d.data.content);
+								setStatus('remote-status', '完成');
+							} else {
+								var msg = (d && (d.message || d.error)) || '读取远程目录失败';
+								document.getElementById('remote-list').innerHTML = '<div class="text-xs text-red-600 px-2 py-6 text-center">'+msg+'</div>';
+								setStatus('remote-status', '失败');
+							}
+						})
+						.catch(function(){
+							document.getElementById('remote-list').innerHTML = '<div class="text-xs text-red-600 px-2 py-6 text-center">网络错误</div>';
+							setStatus('remote-status', '失败');
+						});
+				}
+
+				// --- Local ---
+				var localState = { root: '', path: '' };
+				window.openLocalDirPicker = function(){
+					var exist = (document.getElementById('task-targetPath') || {}).value || '';
+					if(exist){
+						localState.root = exist;
+						localState.path = exist;
+					} else {
+						localState.root = '';
+						localState.path = '';
+					}
+					showDlg('local-dir-dialog');
+					loadLocal();
+				};
+				window.closeLocalDirPicker = function(){ hideDlg('local-dir-dialog'); };
+				window.localDirParent = function(){
+					if(!localState.path){ return; }
+					// 去掉末尾分隔符
+					var p = localState.path.replace(/[\\/]+$/, '');
+					// 若是盘符根（如 C:\ 或 /），直接回根列表
+					if(/^[a-zA-Z]:\\?$/.test(p) || p === '' || p === '/'){
+						localState.path = ''; localState.root = '';
+						loadLocal(); return;
+					}
+					var iSlash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+					if(iSlash <= 0){
+						// Windows: C:\foo → C:\
+						var m = p.match(/^[a-zA-Z]:\\?/);
+						if(m){ localState.path = m[0]; localState.root = m[0]; }
+						else { localState.path = ''; localState.root = ''; }
+					} else {
+						localState.path = p.substring(0, iSlash);
+						localState.root = localState.path;
+					}
+					loadLocal();
+				};
+				window.confirmLocalDir = function(){
+					var el = document.getElementById('task-targetPath');
+					if(!el) return;
+					if(!localState.path){
+						alert('请先选择一个目录');
+						return;
+					}
+					el.value = localState.path;
+					hideDlg('local-dir-dialog');
+				};
+				function renderLocalRoots(roots){
+					var box = document.getElementById('local-list');
+					if(!box) return;
+					var crumb = document.getElementById('local-crumb');
+					if(crumb) crumb.textContent = '(选择根盘符/目录)';
+					if(!roots || !roots.length){
+						box.innerHTML = '<div class="text-xs text-muted-foreground px-2 py-6 text-center">(没有可用的根路径)</div>';
+						return;
+					}
+					var html = '';
+					roots.forEach(function(r){
+						var safe = String(r).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+						html += '<button type="button" data-root="'+safe+'" class="local-root-item w-full text-left px-2.5 py-2 rounded-md hover:bg-primary/10 hover:text-primary flex items-center gap-2 transition-colors">';
+						html += '<svg class="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
+						html += '<span class="font-mono truncate">'+safe+'</span></button>';
+					});
+					box.innerHTML = html;
+					[].forEach.call(box.querySelectorAll('button.local-root-item'), function(b){
+						b.addEventListener('click', function(){
+							var root = b.getAttribute('data-root');
+							localState.path = root;
+							localState.root = root;
+							loadLocal();
+						});
+					});
+				}
+				function renderLocalContent(list){
+					var box = document.getElementById('local-list');
+					if(!box) return;
+					var crumb = document.getElementById('local-crumb');
+					if(crumb) crumb.textContent = localState.path || '(根)';
+					var onlyDirs = (list || []).filter(function(n){ return n && n.is_dir; });
+					if(!onlyDirs.length){
+						box.innerHTML = '<div class="text-xs text-muted-foreground px-2 py-6 text-center">(没有子目录)</div>';
+						return;
+					}
+					var html = '';
+					onlyDirs.forEach(function(n){
+						var name = String(n.name || '');
+						if(!name) return;
+						var safe = name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+						html += '<button type="button" data-name="'+safe+'" class="local-item w-full text-left px-2.5 py-2 rounded-md hover:bg-primary/10 hover:text-primary flex items-center gap-2 transition-colors">';
+						html += '<svg class="w-4 h-4 shrink-0" style="color:oKLCH(0.75 0.15 80)" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
+						html += '<span class="truncate">'+safe+'</span></button>';
+					});
+					box.innerHTML = html;
+					[].forEach.call(box.querySelectorAll('button.local-item'), function(b){
+						b.addEventListener('click', function(){
+							var name = b.getAttribute('data-name');
+							var base = localState.path.replace(/[\\/]+$/, '');
+							// 根据当前 base 含不含反斜杠决定分隔符
+							var sep = (base.indexOf('\\') !== -1 || (base.length >= 2 && base.charAt(1) === ':')) ? '\\' : '/';
+							localState.path = base + sep + name;
+							localState.root = localState.path;
+							loadLocal();
+						});
+					});
+				}
+				function loadLocal(){
+					setStatus('local-status', '加载中…');
+					var url = '/api/directory/local/list';
+					if(localState.root){
+						url += '?root=' + encodeURIComponent(localState.root);
+					}
+					fetch(url, { headers: { 'Authorization': getAuth() } })
+						.then(function(r){ return r.json(); })
+						.then(function(d){
+							if(d && d.code === 200 && d.data){
+								if(Array.isArray(d.data.roots)){
+									// 初始根列表
+									renderLocalRoots(d.data.roots);
+									setStatus('local-status', '选择根目录');
+								} else if(Array.isArray(d.data.content)){
+									renderLocalContent(d.data.content);
+									setStatus('local-status', '完成');
+								} else {
+									document.getElementById('local-list').innerHTML = '<div class="text-xs text-red-600 px-2 py-6 text-center">响应格式错误</div>';
+									setStatus('local-status', '失败');
+								}
+							} else {
+								var msg = (d && (d.message || d.error)) || '读取本地目录失败';
+								document.getElementById('local-list').innerHTML = '<div class="text-xs text-red-600 px-2 py-6 text-center">'+msg+'</div>';
+								setStatus('local-status', '失败');
+							}
+						})
+						.catch(function(){
+							document.getElementById('local-list').innerHTML = '<div class="text-xs text-red-600 px-2 py-6 text-center">网络错误</div>';
+							setStatus('local-status', '失败');
+						});
+				}
+			})();
+		</script>
+	}
+}
