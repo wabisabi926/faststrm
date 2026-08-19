@@ -25,8 +25,8 @@ STRM 生成是 Fast Strm 的核心功能：扫描 115 网盘目录树，为每�
 ### STRM 前缀两种模式
 
 **302 模式**（推荐，`enable302: true`）：
-- `strmPrefix = http://服务器:3000/api/strm`
-- STRM 内容：`http://服务器:3000/api/strm?account=xxx&pickcode=xxx&file_name=xxx`
+- `strmPrefix = http://服务器:8090/api/strm`
+- STRM 内容：`http://服务器:8090/api/strm?account=xxx&pickcode=xxx&file_name=xxx`
 - 播放时走 [路由策略](STRM-路由策略) 决策
 - 优点：可在路由层做 force-proxy、并发限流、可达性预检
 - **依赖 pickcode**：302 模式必须有 `pickcode` 才能生成有效 STRM
@@ -82,7 +82,7 @@ TG 通知
 每行一个 URL，UTF-8 编码：
 
 ```
-http://192.168.1.100:3000/api/strm?account=我的115&pickcode=xxxx&file_name=小王子.mkv
+http://192.168.1.100:8090/api/strm?account=我的115&pickcode=xxxx&file_name=小王子.mkv
 ```
 
 - `account`：账号名

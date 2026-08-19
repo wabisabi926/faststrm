@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/wabisabi926/faststrm/refs/heads/main/frontend/public/logo.png" alt="Fast Strm Logo" width="200" height="200">
+  <img src="https://raw.githubusercontent.com/wabisabi926/faststrm/refs/heads/go/frontend/public/logo.png" alt="Fast Strm Logo" width="200" height="200">
 </div>
 
 # Fast Strm
@@ -20,7 +20,7 @@
 >
 > ✅ **异常主动通知** — Cookie 过期、账号异常，Telegram 第一时间推送，不用自己盯着看
 >
-> ✅ **Docker 一键启动** — 一行命令搞定，5 分钟内看完第一部电影
+> ✅ **Go 单二进制** — 纯 Go 架构，部署只需一个文件，内存占用低，启动快
 
 </div>
 
@@ -37,7 +37,7 @@
 | 🔀 | **智能路由** | 302 直连优先 + 静默降级代理；Infuse/VidHub/SenPlayer 自动强制代理，路由参数可在线配置 |
 | 🗑️ | **Emby 删除同步** | 监听 `library.deleted` 事件自动清理 STRM，三道防误删保护 |
 | 🤖 | **TG Bot 交互** | 支持 Telegram Bot 通知与一键操作（对账 / 清理 / 状态） |
-| 🧩 | **轻量可扩展** | 架构清晰，易于二次开发与定制 |
+| 🏗️ | **Go 原生架构** | Go + go-zero 单二进制，前端 SPA 通过 `go:embed` 嵌入，零运行时依赖 |
 
 ---
 
@@ -48,8 +48,8 @@ Telegram 用户群：[t.me/+J6csNlBG6q1iYjBl](https://t.me/+J6csNlBG6q1iYjBl) ·
 ## 📦 快速开始
 
 ```bash
-# 克隆并启动
-git clone https://github.com/wabisabi926/faststrm.git
+# 克隆（go 分支为准）
+git clone -b go https://github.com/wabisabi926/faststrm.git
 cd faststrm
 docker-compose up -d
 
@@ -57,19 +57,45 @@ docker-compose up -d
 docker pull wabisabi926/faststrm:latest
 docker run -d \
   --name faststrm \
-  -p 3000:3000 \
+  -p 8090:8090 \
   -v ./config:/app/config \
   -v ./data:/app/data \
-  -v ./logs:/app/logs \
   -v /path/to/your/strm:/app/data/strm \
   -e TZ=Asia/Shanghai \
+  -e APP_ENV=prod \
   --restart unless-stopped \
   wabisabi926/faststrm:latest
 ```
 
-启动后访问 `http://localhost:3000`，默认账号密码：**admin / admin**
+启动后访问 `http://localhost:8090`，默认账号密码：**admin / admin**
 
 > ⚠️ 首次登录请立即修改默认密码！
+
+---
+
+## 🏗️ 架构说明
+
+FastStrm v0.8.7 采用纯 Go 架构：
+
+```
+┌─────────────────────────────────────────────────┐
+│              FastStrm (Go 单二进制)               │
+│  ┌───────────────┐  ┌─────────────────────────┐  │
+│  │  go-zero HTTP  │  │  embed.FS (前端 SPA)   │  │
+│  │  REST API      │  │  Vite + React 构建产物 │  │
+│  └───────────────┘  └─────────────────────────┘  │
+│         ↑ 都由 Go 进程直接处理，无需 Nginx         │
+└─────────────────────────────────────────────────┘
+         ↑
+    单端口: 8090
+    单二进制: faststrm
+```
+
+- **后端**：Go + go-zero，纯 HTTP API
+- **前端**：Vite + React SPA，通过 `//go:embed` 嵌入二进制
+- **数据库**：SQLite（本地嵌入式）
+- **配置存储**：JSON 文件加密存储
+- **部署**：一个 `faststrm` 二进制 + 配置目录，无需 Node.js、Nginx、PM2
 
 ---
 
@@ -90,15 +116,11 @@ docker run -d \
 ## 📝 最新版本 (v0.8.7)
 
 - **🏗️ 全栈 Go 架构迁移**：移除 Next.js 依赖，前端改为 Vite + React，由 Go `go:embed` 直接托管静态文件，部署只需一个二进制文件
+- **🐛 Bug 修复**：扫码登录客户端类型、账户重命名、任务列表、User-Agent 预加载等多项修复
 - **📱 移动端全面适配**：所有页面响应式优化，修复移动端文字竖排、按钮溢出、表格横向滚动等问题
-- **🔧 Bug 修复**：
-  - 修复账户重命名报「Account not found」错误
-  - 修复任务列表获取失败（tasks.json 格式校验）
-  - 修复 Telegram 通知错误提示中文化
-  - 修复设置页 User-Agent 未预加载
-  - 修复媒体挂载路径同步逻辑（Go 后端实现）
-- **🌐 中文化**：DataTable 空状态改为「暂无数据」，设置页标签中文化
-- **🔙 TG 通知页保留英文标签**：Bot Token、Chat ID、Webhook URL 等保留原英文命名
+- **🌐 界面中文化**：DataTable 空状态改为「暂无数据」，错误提示中文化
+- **🔗 媒体挂载路径同步迁移至 Go**：Go 后端实现 `mediaMountSync` 逻辑，前端直连 Go API
+- **🔄 端口统一**：从 3000 端口变更为 8090，单端口托管前端 SPA 和 API
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 

@@ -40,14 +40,13 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.8.5 已发布**
+> **🎉 v0.8.7 已发布 — 全栈 Go 架构迁移**
 >
-> - 🔒 **P0 安全修复**：修复 `/api/strmCleanup/*` 认证绕过漏洞（middleware 路径匹配从 `startsWith` 改为精确匹配）
-> - 🔒 **P0 JWT 密钥安全**：移除硬编码默认密钥，改为环境变量 → 持久化文件 → 自动生成随机密钥三级解析，生产环境拒绝默认密钥启动
-> - 🚀 **服务自启动**：定时任务调度器和 Telegram 轮询在服务启动时自动初始化，无需手动触发
-> - 🔧 **TG Bot 内部调用优化**：`/scan`、`/cleanup` 命令改为直接调用服务层，不再通过 HTTP 绕过 JWT 认证
-> - 🔧 **TG Webhook 安全**：支持 `secret_token` 验证
-> - 📦 **依赖升级**：Next.js 15.4.8 → 15.5.23，axios 等安全漏洞修复
+> - 🏗️ **Go 重构**：彻底移除 Next.js，改为 Go + go-zero 单二进制架构，前端 Vite+React 通过 `go:embed` 嵌入
+> - 🔄 **端口统一**：从 3000 端口变更为 8090，单端口托管前端 SPA 和 API
+> - 🐛 **Bug 修复**：扫码登录、账户重命名、任务列表等多项修复
+> - 📱 **移动端适配**：所有页面响应式优化
+> - 🌐 **中文化**：界面文案统一中文
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---
@@ -243,7 +242,7 @@
                            │                  │
                            ▼                  ▼
                   ┌─────────────────────────────┐
-                  │     Fast Strm (:3000)        │
+                  │     Fast Strm (:8090)        │
                   │  ┌─────────┐  ┌───────────┐  │
                   │  │ 路由引擎 │  │  STRM 生成 │  │
                   │  └─────────┘  └───────────┘  │
@@ -263,12 +262,12 @@
 ### Docker Compose（推荐）
 
 ```bash
-git clone https://github.com/wabisabi926/faststrm.git
+git clone -b go https://github.com/wabisabi926/faststrm.git
 cd faststrm
 docker-compose up -d
 ```
 
-启动后访问：`http://<你的IP>:3000`，默认账号密码：**admin / admin**（首次登录请立即修改）。
+启动后访问：`http://<你的IP>:8090`，默认账号密码：**admin / admin**（首次登录请立即修改）。
 
 > 📖 完整部署流程（目录挂载、端口说明、升级）：[安装部署](安装部署)
 

@@ -1,7 +1,6 @@
 # ==== Secrets & local runtime state (ALL profile folders) ====
 **/config/*.json
 **/config/.salt
-.config/*.json
 .config/.salt
 .app/config/*.json
 .app/config/.salt

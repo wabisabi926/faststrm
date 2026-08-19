@@ -1,18 +1,17 @@
 version: "3.9"
 
-# FastStrm-Go 版本编排
-# 策略A：保留原 nginx 8091，Go 后端 8090，由 nginx upstream 切换分流
+# FastStrm-Go Docker Compose (开发/测试用)
+# 纯 Go 架构：单二进制运行，前端 SPA 通过 embed.FS 嵌入
+# 与 docker-compose.yml 的区别：memory 限制更宽松，便于开发调试
 services:
-  faststrm-go:
+  faststrm:
     build:
       context: .
-      dockerfile: Dockerfile.go
+      dockerfile: Dockerfile
     image: wabisabi926/faststrm:go-latest
     container_name: faststrm-go
     ports:
-      - "8090:8090"           # Go 后端端口（nginx upstream 指向此）
-      # 如需要独立直连测试，可打开
-      # - "3001:8090"
+      - "8090:8090"
     environment:
       - TZ=Asia/Shanghai
       - APP_ENV=prod
@@ -22,8 +21,8 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8090
     volumes:
-      - ./strmData:/app/data       # STRM/DB/缓存（与原容器共用同一路径，便于迁移）
-      - ./config:/app/config       # settings.json/config.json（共用原配置）
+      - ./strmData:/app/data
+      - ./config:/app/config
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -31,7 +30,7 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -39,6 +38,6 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M        # Go 内存占用显著低于 Node.js，默认减半
+          memory: 1024M
         reservations:
-          memory: 64M
+          memory: 128M

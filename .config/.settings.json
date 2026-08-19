@@ -1,0 +1,66 @@
+{
+  "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/116.0.5845.89 Mobile/15E148 Safari/604.1",
+  "internalToken": "",
+  "strmExtensions": [
+    ".mp4", ".mkv", ".avi", ".mov", ".rmvb", ".webm", ".flv",
+    ".m3u8", ".mp3", ".flac", ".wav", ".aac", ".ogg", ".m4a", ".ts", ".m2ts"
+  ],
+  "downloadExtensions": [".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"],
+  "mediaMountPath": [],
+  "strmPrefix": "",
+  "enablePathEncoding": false,
+  "enable302": false,
+  "removeExtraFiles": false,
+  "download": {},
+  "strm": {
+    "forceProxyUaTokens": ["Infuse", "VidHub", "SenPlayer", "SenPlayerHD"],
+    "accountProxyConcurrencyLimit": 8,
+    "redirectCheckTimeoutMs": 5000
+  },
+  "emby": {
+    "url": "",
+    "apiKey": "",
+    "notifyMediaAdded": false,
+    "notifyMediaRemoved": false,
+    "notifyPlayback": false,
+    "playbackShowProgress": false,
+    "playbackShowOverview": false,
+    "webhookAuth": "",
+    "libraryId": "",
+    "syncDeleteEnabled": false,
+    "syncDeletePathMappings": null,
+    "syncDeleteNotify": false,
+    "syncDeleteDryRun": false
+  },
+  "telegram": {
+    "botToken": "",
+    "chatId": "",
+    "webhookUrl": "",
+    "enabled": false,
+    "allowedUsers": null,
+    "accountAlerts": {
+      "enabled": true,
+      "onError": true,
+      "onRecover": true
+    }
+  },
+  "lifeMonitor": {
+    "enabled": false,
+    "accounts": [],
+    "pollInterval": 30,
+    "pathMappings": [],
+    "removeEmptyDirs": true,
+    "eventTypes": {
+      "create": true,
+      "remove": true,
+      "rename": true,
+      "move": true
+    },
+    "strmPrefix": "",
+    "enablePathEncoding": false,
+    "enable302": false,
+    "minFileSize": 0,
+    "firstPullMode": "latest",
+    "moveMediaMode": "local_move"
+  }
+}

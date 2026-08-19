@@ -1,19 +1,27 @@
 version: "3.9"
 
+# FastStrm-Go Docker Compose
+# 纯 Go 架构：单二进制运行，前端 SPA 通过 embed.FS 嵌入
 services:
   faststrm:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: wabisabi926/faststrm:latest
     container_name: faststrm
     ports:
-      - "3000:3000"
-      - "8091:8091"
+      - "8090:8090"
     environment:
-      - NODE_ENV=production
+      - TZ=Asia/Shanghai
+      - APP_ENV=prod
+      - DATA_DIR=/app/data
+      - CONFIG_DIR=/app/config
+      - DEFAULT_CONFIG_DIR=/app/.config
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8090
     volumes:
       - ./strmData:/app/data
       - ./config:/app/config
-      - ./emby2Alist/nginx/log:/var/log/nginx
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -23,6 +31,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1024M
+          memory: 512M
         reservations:
-          memory: 256M
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

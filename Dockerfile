@@ -1,71 +1,56 @@
 # =============================================
 # Fast Strm Dockerfile
 # 维护者: wabisabi926
-# 说明: 多阶段构建，生产环境使用
+# 说明: Go 多阶段构建，单二进制运行，零依赖
 # =============================================
 
-# ---------- 阶段1: 构建前端 ----------
-FROM node:22-alpine AS builder
-WORKDIR /app/frontend
+# ---------- 阶段1: 构建 Go 二进制 ----------
+FROM golang:1.23-alpine AS builder
 
-# 安装原生模块编译依赖 (better-sqlite3 需要 python3/make/g++)
-RUN apk add --no-cache python3 make g++
+ENV TZ=Asia/Shanghai \
+    GOPROXY=https://goproxy.cn,direct \
+    GOSUMDB=off \
+    CGO_ENABLED=0
 
-# 安装构建依赖
-COPY frontend/package*.json ./
-COPY frontend/yarn.lock ./
-RUN yarn install --frozen-lockfile
+WORKDIR /src
 
-# 构建前端
-COPY frontend/ ./
-RUN yarn build
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+ARG BUILD_DATE
+
+RUN GOOS=linux GOARCH=${TARGETARCH} \
+    go build -trimpath \
+    -ldflags="-s -w -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${VERSION}' -X 'main.BuildDate=${BUILD_DATE}'" \
+    -o /out/faststrm ./cmd/server/
 
 # ---------- 阶段2: 生产运行 ----------
-FROM node:22-alpine AS runner
+FROM alpine:3.19
+
+ENV TZ=Asia/Shanghai \
+    PATH=/app:$PATH
+
+RUN apk add --no-cache tzdata ca-certificates wget && \
+    cp /usr/share/zoneinfo/${TZ} /etc/localtime && \
+    echo ${TZ} > /etc/timezone
+
 WORKDIR /app
 
-# 安装 nginx (alpine 自带 njs 模块)
-RUN apk add --no-cache nginx nginx-mod-http-js tzdata
+COPY --from=builder /out/faststrm .
+COPY docker-entrypoint.sh .
+COPY .config/ ./.config/
+RUN chmod +x faststrm docker-entrypoint.sh
 
-# 设置时区
-ENV TZ=Asia/Shanghai
-RUN cp /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+RUN addgroup -g 12331 faststrm && \
+    adduser -D -u 12331 -G faststrm faststrm
 
-# 拷贝 Next.js standalone 产物
-COPY --from=builder /app/frontend/.next/standalone ./frontend
-COPY --from=builder /app/frontend/.next/static ./frontend/.next/static
-COPY --from=builder /app/frontend/public ./frontend/public
+VOLUME ["/app/config", "/app/data"]
 
-# 拷贝 nginx 配置
-COPY emby2Alist/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY emby2Alist/nginx/conf.d /etc/nginx/conf.d
+EXPOSE 8090
 
-# 拷贝默认配置
-COPY .config /app/.config
-
-# 创建必要目录
-RUN mkdir -p /var/cache/nginx/emby/images \
-    /var/cache/nginx/emby/subtitles \
-    /var/cache/nginx/client_temp \
-    /var/log/nginx \
-    /app/config
-
-# 拷贝启动脚本
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
-
-# 暴露端口: 3000(前端UI), 8091(emby接口)
-EXPOSE 3000 8091
-
-# 环境变量
-ENV NODE_ENV=production
-ENV PORT=8000
-ENV HOSTNAME=0.0.0.0
-
-# 启动入口
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["node", "/app/frontend/server.js"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["/app/faststrm"]

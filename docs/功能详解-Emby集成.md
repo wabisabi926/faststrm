@@ -32,7 +32,7 @@ Fast Strm 与 Emby 的集成包含三部分：媒体库刷新、Webhook 通知�
 
 1. Emby → 设置 → 高级 → 插件 → 安装「Webhooks」
 2. 添加 Webhook：
-   - URL：`http://faststrm地址:3000/api/emby/webhook`
+   - URL：`http://faststrm地址:8090/api/emby/webhook`
    - 事件勾选：项目新增、项目删除、播放开始、播放结束
 3. （可选）在 faststrm 配置 `webhookAuth` 令牌，Emby Webhook URL 加 `?token=xxx`
 

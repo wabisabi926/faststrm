@@ -159,7 +159,7 @@
 ### 302 模式（enable302=true）
 
 ```
-http://192.168.50.250:3000/api/strm?account=小号&pickcode=abc123def456GHI78&file_name=电影.mkv
+http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&file_name=电影.mkv
 ```
 
 - `account`：账号名
