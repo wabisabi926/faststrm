@@ -44,6 +44,10 @@ if ! command -v fnpack >/dev/null 2>&1; then
   exit 1
 fi
 
+# 确保 Go 依赖就位（CI runner 是干净环境，显式 go mod download 避免 go build 隐式拉依赖失败直接炸 set -e）
+echo "==> go mod download"
+go mod download
+
 # 确保前端构建产物已就位 (internal/web/spa) —— embed 嵌入不需要额外动作
 if [ ! -f "${ROOT_DIR}/internal/web/spa/index.html" ]; then
   echo "WARN: internal/web/spa/index.html 未找到，请先构建前端 (cd frontend && npm i && npm run build)" >&2
@@ -75,8 +79,17 @@ for ARCH in "${ARCHES[@]}"; do
   if [ -n "$(ls -A "${TEMPLATE_SRC}" 2>/dev/null)" ]; then
     cp -R "${TEMPLATE_SRC}/." "${STAGE}/"
   fi
-  # 确保子目录都存在（cmd/wizard/app）
-  mkdir -p "${STAGE}/app" "${STAGE}/cmd" "${STAGE}/wizard"
+  # 确保子目录都存在（cmd/wizard/app/ui/images，避免 git 空目录/大小写丢失问题）
+  mkdir -p "${STAGE}/app" "${STAGE}/cmd" "${STAGE}/wizard" \
+           "${STAGE}/app/ui" "${STAGE}/app/ui/images"
+
+  # 调试：staging 骨架拷贝完就打一份目录清单（出问题时一眼看出 ICON.PNG/ui/ 是否到位）
+  echo "==> [${ARCH}] staging contents after skeleton copy:"
+  ls -la "${STAGE}" || true
+  echo "--- app dir contents:"
+  ls -la "${STAGE}/app" || true
+  echo "--- app/ui dir contents (desktop_uidir check):"
+  ls -la "${STAGE}/app/ui" || true
 
   MANIFEST="${STAGE}/manifest"
   APP_DIR="${STAGE}/app"
@@ -155,8 +168,20 @@ for ARCH in "${ARCHES[@]}"; do
   fi
 
   # --- 3. fnpack 打包（对齐 qmediasync：cd 到 staging 目录直接 fnpack build） ---
+  # 打包前再打一次 staging 目录清单 + 二进制存在性确认，防止 CI 上 exit 1 时看不到原因
+  echo "==> [${ARCH}] staging contents right before fnpack build:"
+  ls -la "${STAGE}" || true
+  ls -la "${STAGE}/app" || true
+  [ -f "${STAGE}/app/faststrm" ] && echo "    app/faststrm binary size: $(du -h "${STAGE}/app/faststrm" | cut -f1)" || echo "    !! app/faststrm binary MISSING"
+
   echo "==> [${ARCH}] fnpack build in ${STAGE}"
-  (cd "${STAGE}" && fnpack build)
+  (cd "${STAGE}" && fnpack build 2>&1)
+  FNPACK_RC=$?
+  if [ "${FNPACK_RC}" -ne 0 ]; then
+    echo "ERROR: fnpack build exited with code ${FNPACK_RC}. Dumping last 40 lines of staging contents + nested:" >&2
+    ls -laR "${STAGE}" >&2 || true
+    exit "${FNPACK_RC}"
+  fi
 
   FPK="${STAGE}/faststrm.fpk"
   if [ ! -f "${FPK}" ]; then
