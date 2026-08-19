@@ -12,7 +12,8 @@ type HealthResponse struct {
 	Version string `json:"version"`
 }
 
-const appVersion = "0.8.7"
+// appVersion 通过 ldflags 在构建时注入，默认值兜底
+var appVersion = "dev"
 
 // Health 健康检查
 func Health(w http.ResponseWriter, r *http.Request) {

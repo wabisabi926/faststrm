@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,7 +11,15 @@ import (
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
+// 以下变量通过 ldflags 在构建时注入：
+//   go build -ldflags="-X 'main.version=v0.8.7' -X 'main.BuildDate=2026-08-19'"
+var (
+	version   = "dev"
+	BuildDate = "unknown"
+)
+
 func main() {
+	fmt.Printf("faststrm %s (built %s)\n", version, BuildDate)
 	// 1. 初始化应用（建目录/拷贝默认配置/密码哈希/token）
 	defaultRoot := getDefaultRoot()
 	cfg, err := config.InitApp(defaultRoot)

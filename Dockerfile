@@ -5,12 +5,15 @@
 # =============================================
 
 # ---------- 阶段1: 构建 Go 二进制 ----------
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 ENV TZ=Asia/Shanghai \
-    GOPROXY=https://goproxy.cn,direct \
-    GOSUMDB=off \
     CGO_ENABLED=0
+
+# GOPROXY 默认使用官方海外代理；国内构建可通过 --build-arg 覆盖，例如
+#   docker build --build-arg GOPROXY=https://goproxy.cn,direct .
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY} GOSUMDB=off
 
 WORKDIR /src
 
@@ -25,7 +28,10 @@ ARG BUILD_DATE
 
 RUN GOOS=linux GOARCH=${TARGETARCH} \
     go build -trimpath \
-    -ldflags="-s -w -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${VERSION}' -X 'main.BuildDate=${BUILD_DATE}'" \
+    -ldflags="-s -w \
+      -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${VERSION}' \
+      -X 'main.version=${VERSION}' \
+      -X 'main.BuildDate=${BUILD_DATE}'" \
     -o /out/faststrm ./cmd/server/
 
 # ---------- 阶段2: 生产运行 ----------
