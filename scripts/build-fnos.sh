@@ -52,8 +52,8 @@ fi
 
 for ARCH in "${ARCHES[@]}"; do
   case "$ARCH" in
-    amd64) GOARCH=amd64 ; EXPECT_PLATFORM="x86_64" ;;
-    arm64) GOARCH=arm64 ; EXPECT_PLATFORM="arm"    ;;
+    amd64) GOARCH=amd64 ; EXPECT_PLATFORM="x86_64" ; FIELD_NAME="arch"     ;;
+    arm64) GOARCH=arm64 ; EXPECT_PLATFORM="arm"    ; FIELD_NAME="platform" ;;
     *) echo "Unknown arch: $ARCH"; exit 1 ;;
   esac
 
@@ -85,13 +85,15 @@ for ARCH in "${ARCHES[@]}"; do
   chmod 755 "${APP_DIR}" "${CMD_DIR}" "${WIZARD_DIR}" 2>/dev/null || true
 
   # --- 1a. manifest 平台字段 & 版本号一致性校验（永远不回写 git 源文件） ---
+  #     fNOS amd64 使用 `arch` 字段；arm64 使用 `platform` 字段（用户纠正）。
+  #     qmediasync 里 amd64 写 `platform=x86_64` 是错的，不要照抄。
   if [ ! -f "${MANIFEST}" ]; then
     echo "ERROR: manifest missing at ${MANIFEST} (is FNOS skeleton complete?)" >&2
     exit 1
   fi
-  ACTUAL_PLATFORM="$(grep '^platform' "${MANIFEST}" | awk -F= '{gsub(/[[:space:]]/,"",$2); print $2}')"
+  ACTUAL_PLATFORM="$(grep "^${FIELD_NAME}" "${MANIFEST}" | awk -F= '{gsub(/[[:space:]]/,"",$2); print $2}')"
   if [ "${ACTUAL_PLATFORM}" != "${EXPECT_PLATFORM}" ]; then
-    echo "MISMATCH: ${ARCH} manifest platform=${ACTUAL_PLATFORM}, expected ${EXPECT_PLATFORM}" >&2
+    echo "MISMATCH: ${ARCH} manifest ${FIELD_NAME}=${ACTUAL_PLATFORM}, expected ${EXPECT_PLATFORM}" >&2
     exit 1
   fi
   # 在 staging manifest 中同步版本号（TAG 优先）

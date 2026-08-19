@@ -28,7 +28,7 @@ type NavItem struct {
 // appVersion 显示在 sidebar footer
 // 通过 ldflags 在构建时注入：-X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${VERSION}'
 // 默认值兜底为开发版本
-var appVersion = "0.8.9"
+var appVersion = "0.8.9.1"
 
 // navGroups 与原始前端完全一致：主菜单 / 通知 / 日志
 func navGroups() []SidebarGroup {
