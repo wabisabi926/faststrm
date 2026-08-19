@@ -830,7 +830,7 @@ export default function SettingsPage() {
                 onChange={(e) =>
                   setData({ ...data, strmPrefix: e.target.value })
                 }
-                placeholder="http://localhost:3000"
+                placeholder="http://localhost:8090"
               />
               <p className="text-xs text-muted-foreground">
                 STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。302 模式下自动追加 <code>/api/strm</code>，无需手动添加。

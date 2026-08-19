@@ -61,7 +61,6 @@ frontend/node_modules/
 frontend/dist/
 frontend/vite.config.js
 frontend/vite.config.d.ts
-frontend/tsconfig.node.json
 
 # ==== Runtime ====
 logs/

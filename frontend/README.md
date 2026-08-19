@@ -1,36 +1,24 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FastStrm Frontend（Vite + React）
 
-## Getting Started
+纯 Vite + React + TypeScript 构建的 FastStrm Web UI，生产时由 Go 后端通过 `go:embed` 嵌入到单二进制里，与 API 同源共用 `8090` 端口提供服务；开发模式下 Vite 独立启动做 HMR 热更新。
 
-First, run the development server:
+## 开发模式
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+默认监听 <http://localhost:5173>，`/api/*` 请求会自动反向代理到 Go 后端 <http://localhost:8090>。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 构建并嵌入 Go
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+# 产物输出到 ../internal/web/spa/（vite.config.ts outDir）
+# Go 构建时通过 //go:embed 嵌入该目录
+```
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+端口约定：
+- **开发模式**：浏览器访问 `5173`（Vite HMR）+ API 代理到 `8090`（Go）
+- **生产模式**：单二进制，只访问 `8090`（页面和 API 同源）

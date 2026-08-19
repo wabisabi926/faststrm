@@ -253,7 +253,10 @@ export default function EmbyNotifyPage() {
     updateSetting("syncDeletePathMappings", mappings);
   };
 
-  const webhookUrl = typeof window !== "undefined" ? `${window.location.origin}/api/emby/webhook` : "http://localhost:3000/api/emby/webhook";
+  // FastStrm 是纯浏览器 SPA，无 SSR：组件渲染时 window 永远存在，
+  // 直接用 location.origin 跟随当前访问端口（开发 5173 / 生产 8090 都正确），
+  // 不再回退到旧版本中写死的历史默认端口。
+  const webhookUrl = `${window.location.origin}/api/emby/webhook`;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

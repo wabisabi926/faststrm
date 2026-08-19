@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    // tsc -b project references 必须允许 emit；用 emitDeclarationOnly + 临时 outDir 保证
+    // vite.config.ts 类型检查通过的同时不在仓库里留下多余的 .js 产物。
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./node_modules/.cache/tsconfig-node"
+  },
+  "include": ["vite.config.ts"]
+}
