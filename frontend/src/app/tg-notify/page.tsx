@@ -323,7 +323,7 @@ export default function TelegramNotifyPage() {
         <section className="border rounded-md p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="bg-green-50 text-green-700">
+              <Badge variant="outline" className="bg-green-500/20 text-green-400">
                 <CheckCircle className="h-3 w-3 mr-1" />
                 已连接
               </Badge>
@@ -400,7 +400,7 @@ export default function TelegramNotifyPage() {
               </Badge>
             </div>
             {webhookInfo.last_error_message && (
-              <p className="text-xs text-red-600">错误：{webhookInfo.last_error_message}</p>
+              <p className="text-xs text-red-500">错误：{webhookInfo.last_error_message}</p>
             )}
           </div>
         </section>

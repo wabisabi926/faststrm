@@ -15,12 +15,11 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 import Link from "next/link";
-import { usePathname } from "next/navigation"; // 新增
+import { usePathname } from "next/navigation";
 import frontendPkg from "../../package.json" assert { type: "json" };
 type PackageJson = { version?: string } & Record<string, unknown>;
 const appVersion = (frontendPkg as PackageJson).version ?? "";
 
-// Menu items.
 const items = [
   {
     title: "账户",
@@ -76,7 +75,7 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarContent>
         <div className="p-4 border-b border-border/50">
-          <div className="flex items-center gap-3">
+          <Link href="/task" className="flex items-center gap-3 group">
             <Image
               src="/logo.png"
               alt="Fast Strm Logo"
@@ -85,10 +84,10 @@ export function AppSidebar() {
               className="flex-shrink-0"
             />
             <div className="flex flex-col">
-              <span className="text-xl font-bold text-foreground">Fast Strm</span>
+              <span className="text-lg font-bold text-foreground">Fast Strm</span>
               <span className="text-xs text-muted-foreground">更快、更强、更硬</span>
             </div>
-          </div>
+          </Link>
         </div>
         <SidebarGroup>
           <SidebarGroupLabel>主菜单</SidebarGroupLabel>
@@ -97,10 +96,14 @@ export function AppSidebar() {
               {items.map((item) => {
                 const isActive = pathname === item.url;
                 return (
-                  <SidebarMenuItem key={item.title} className={isActive ? "bg-muted" : ""}>
-                    <SidebarMenuButton asChild tooltip={item.title}>
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton 
+                      asChild 
+                      tooltip={item.title}
+                      isActive={isActive}
+                    >
                       <Link href={item.url}>
-                        <item.icon />
+                        <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -118,10 +121,14 @@ export function AppSidebar() {
               {notifyItems.map((item) => {
                 const isActive = pathname === item.url;
                 return (
-                  <SidebarMenuItem key={item.title} className={isActive ? "bg-muted" : ""}>
-                    <SidebarMenuButton asChild tooltip={item.title}>
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton 
+                      asChild 
+                      tooltip={item.title}
+                      isActive={isActive}
+                    >
                       <Link href={item.url}>
-                        <item.icon />
+                        <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -139,10 +146,14 @@ export function AppSidebar() {
               {logItems.map((item) => {
                 const isActive = pathname === item.url;
                 return (
-                  <SidebarMenuItem key={item.title} className={isActive ? "bg-muted" : ""}>
-                    <SidebarMenuButton asChild tooltip={item.title}>
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton 
+                      asChild 
+                      tooltip={item.title}
+                      isActive={isActive}
+                    >
                       <Link href={item.url}>
-                        <item.icon />
+                        <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -160,7 +171,7 @@ export function AppSidebar() {
             href="https://github.com/wabisabi926/faststrm"
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:justify-center"
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors group-data-[collapsible=icon]:justify-center"
           >
             <Github className="h-4 w-4" />
             <span className="group-data-[collapsible=icon]:hidden">GitHub</span>

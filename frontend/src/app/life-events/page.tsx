@@ -38,11 +38,11 @@ interface LifeEventLog {
 }
 
 const TYPE_LABELS: Record<LifeEventType, { label: string; color: string }> = {
-  create: { label: "创建", color: "bg-green-100 text-green-800" },
-  delete: { label: "删除", color: "bg-red-100 text-red-800" },
-  move: { label: "移动", color: "bg-blue-100 text-blue-800" },
-  rename: { label: "重命名", color: "bg-purple-100 text-purple-800" },
-  "folder-sync": { label: "文件夹同步", color: "bg-orange-100 text-orange-800" },
+  create: { label: "创建", color: "bg-green-500/20 text-green-400" },
+  delete: { label: "删除", color: "bg-red-500/20 text-red-400" },
+  move: { label: "移动", color: "bg-blue-500/20 text-blue-400" },
+  rename: { label: "重命名", color: "bg-purple-500/20 text-purple-400" },
+  "folder-sync": { label: "文件夹同步", color: "bg-orange-500/20 text-orange-400" },
 };
 
 function formatTime(ts: number) {
@@ -203,11 +203,11 @@ export default function LifeEventsPage() {
         <span>
           共 <strong>{items.length}</strong> 条
         </span>
-        <span className="flex items-center gap-1 text-green-600">
+        <span className="flex items-center gap-1 text-green-500">
           <CheckCircle className="h-3.5 w-3.5" />
           成功 {successCount}
         </span>
-        <span className="flex items-center gap-1 text-red-600">
+        <span className="flex items-center gap-1 text-red-500">
           <XCircle className="h-3.5 w-3.5" />
           失败 {failCount}
         </span>
@@ -216,13 +216,13 @@ export default function LifeEventsPage() {
       {loading && items.length === 0 ? (
         <Card>
           <CardContent className="flex items-center justify-center h-32">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-foreground"></div>
           </CardContent>
         </Card>
       ) : items.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center h-40">
-            <FileText className="h-10 w-10 text-gray-300 mb-2" />
+            <FileText className="h-10 w-10 text-muted-foreground/60 mb-2" />
             <p className="text-muted-foreground">暂无生活事件日志</p>
             <p className="text-xs text-muted-foreground mt-1">
               启动生活事件监控后，新事件会自动记录在这里
@@ -258,7 +258,7 @@ export default function LifeEventsPage() {
                         <Badge
                           className={
                             TYPE_LABELS[item.eventType]?.color ||
-                            "bg-gray-100 text-gray-800"
+                            "bg-muted text-muted-foreground"
                           }
                         >
                           {TYPE_LABELS[item.eventType]?.label || item.eventType}
@@ -266,9 +266,9 @@ export default function LifeEventsPage() {
                       </TableCell>
                       <TableCell>
                         {item.success ? (
-                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <CheckCircle className="h-4 w-4 text-green-500" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-red-600" />
+                          <XCircle className="h-4 w-4 text-red-500" />
                         )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-md truncate" title={item.message}>

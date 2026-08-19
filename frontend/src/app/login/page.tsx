@@ -36,8 +36,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex h-screen items-center justify-center bg-gray-100">
-      <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-lg">
+    <div className="flex h-screen items-center justify-center bg-background">
+      <div className="w-full max-w-md bg-card text-card-foreground p-8 rounded-2xl shadow-lg border border-border">
         <div className="flex flex-col items-center mb-6">
           <Image
             src="/logo.png"
@@ -49,6 +49,7 @@ export default function LoginPage() {
             priority
           />
           <h1 className="text-2xl font-bold text-center">登录</h1>
+          <p className="text-sm text-muted-foreground mt-1">Fast Strm 管理系统</p>
         </div>
 
         <Form {...form}>

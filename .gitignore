@@ -9,6 +9,7 @@ tmp/config/*.json
 tmp/config/.salt
 config/*.json
 config/.salt
+config/.jwt_secret
 !.config/*.sample.json
 !.config/*.example.json
 !**/config/*.sample.json

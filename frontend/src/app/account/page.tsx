@@ -114,7 +114,7 @@ export default function AccountPage() {
       header: "账户名称",
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
-          <User className="w-4 h-4 text-gray-500" />
+          <User className="w-4 h-4 text-muted-foreground" />
           <span className="font-medium">{row.original.name}</span>
         </div>
       ),
@@ -140,10 +140,10 @@ export default function AccountPage() {
           
           return (
             <div className="flex items-center gap-2">
-              <Key className="w-4 h-4 text-gray-500" />
+              <Key className="w-4 h-4 text-muted-foreground" />
               <code 
                 title={cookie} 
-                className="text-xs bg-gray-100 px-2 py-1 rounded max-w-xs truncate block"
+                className="text-xs bg-muted px-2 py-1 rounded max-w-xs truncate block"
               >
                 {shortCookie}
               </code>
@@ -153,20 +153,20 @@ export default function AccountPage() {
           return (
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-xs">
-                <User className="w-3 h-3 text-gray-500" />
-                <span className="text-gray-600">用户:</span>
-                <code className="bg-gray-100 px-1 rounded">{account.account}</code>
+                <User className="w-3 h-3 text-muted-foreground" />
+                <span className="text-muted-foreground">用户:</span>
+                <code className="bg-muted px-1 rounded">{account.account}</code>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                <Key className="w-3 h-3 text-gray-500" />
-                <span className="text-gray-600">密码:</span>
-                <code className="bg-gray-100 px-1 rounded">
+                <Key className="w-3 h-3 text-muted-foreground" />
+                <span className="text-muted-foreground">密码:</span>
+                <code className="bg-muted px-1 rounded">
                   {"*".repeat(Math.min(account.password?.length ?? 0, 8))}
                 </code>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                <span className="text-gray-600">URL:</span>
-                <code className="bg-gray-100 px-1 rounded text-blue-600">
+                <span className="text-muted-foreground">URL:</span>
+                <code className="bg-muted px-1 rounded text-blue-500">
                   {account.url}
                 </code>
               </div>
@@ -174,7 +174,7 @@ export default function AccountPage() {
           );
         }
         
-        return <span className="text-gray-400">-</span>;
+        return <span className="text-muted-foreground">-</span>;
       },
     },
     {
@@ -199,7 +199,7 @@ export default function AccountPage() {
         
         if (!status) {
           return (
-            <div className="flex items-center gap-1.5 text-gray-400">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               <span className="text-xs">检测中...</span>
             </div>
@@ -210,17 +210,17 @@ export default function AccountPage() {
           ok: {
             icon: <CheckCircle className="w-3.5 h-3.5 text-green-500" />,
             label: "正常",
-            cls: "text-green-600",
+            cls: "text-green-500",
           },
           error: {
             icon: <AlertTriangle className="w-3.5 h-3.5 text-red-500" />,
             label: "异常",
-            cls: "text-red-600",
+            cls: "text-red-500",
           },
           unknown: {
-            icon: <HelpCircle className="w-3.5 h-3.5 text-gray-400" />,
+            icon: <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />,
             label: "未知",
-            cls: "text-gray-500",
+            cls: "text-muted-foreground",
           },
         };
 
@@ -289,7 +289,7 @@ export default function AccountPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                  className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-500/10"
                   title="删除账户"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -344,7 +344,7 @@ export default function AccountPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">账户管理</h1>
-          <p className="text-gray-600 mt-1">管理你的网盘账户信息</p>
+          <p className="text-muted-foreground mt-1">管理你的网盘账户信息</p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -368,10 +368,10 @@ export default function AccountPage() {
       </div>
       
       {data.length === 0 ? (
-        <div className="text-center py-12 bg-gray-50 rounded-lg">
-          <AlertCircle className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-4 text-lg font-medium text-gray-900">暂无账户</h3>
-          <p className="mt-2 text-gray-600">点击上方按钮添加你的第一个账户</p>
+        <div className="text-center py-12 bg-muted/30 rounded-lg border border-border">
+          <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground" />
+          <h3 className="mt-4 text-lg font-medium">暂无账户</h3>
+          <p className="mt-2 text-muted-foreground">点击上方按钮添加你的第一个账户</p>
         </div>
       ) : (
         <DataTable columns={columns} data={data} />

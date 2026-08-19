@@ -84,7 +84,7 @@ export default function AccountAlertsPage() {
 
   const getStatusBadge = (status: string) => {
     if (status === "active" || status === "正常") {
-      return <Badge className="bg-green-500">正常</Badge>;
+      return <Badge className="bg-green-500/20 text-green-400">正常</Badge>;
     } else if (status === "error" || status === "异常") {
       return <Badge variant="destructive">异常</Badge>;
     }
@@ -204,9 +204,9 @@ export default function AccountAlertsPage() {
           </div>
 
           {/* 说明 */}
-          <Alert className="bg-blue-50 border-blue-200">
-            <Bell className="h-4 w-4 text-blue-600" />
-            <AlertDescription className="text-xs text-blue-800">
+          <Alert className="bg-blue-500/10 border-blue-500/20">
+            <Bell className="h-4 w-4 text-blue-400" />
+            <AlertDescription className="text-xs text-blue-300">
               <strong>通知触发条件：</strong>
               <br />
               • 账号状态从"正常"变为"异常"时发送异常通知
@@ -236,7 +236,7 @@ export default function AccountAlertsPage() {
               重新加载
             </Button>
             {alertsSuccess && (
-              <span className="text-xs text-green-600 flex items-center gap-1">
+              <span className="text-xs text-green-500 flex items-center gap-1">
                 <CheckCircle className="h-3.5 w-3.5" />
                 {alertsSuccess}
               </span>

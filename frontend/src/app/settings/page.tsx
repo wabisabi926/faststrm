@@ -1032,12 +1032,12 @@ export default function SettingsPage() {
                         {mountDryRun.diff.changed ? (
                           <>
                             {mountDryRun.diff.added.length > 0 && (
-                              <span className="px-2 py-0.5 rounded border bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                              <span className="px-2 py-0.5 rounded border bg-green-500/20 text-green-400 border-green-500/30">
                                 +{mountDryRun.diff.added.length} 待新增
                               </span>
                             )}
                             {mountDryRun.diff.removed.length > 0 && (
-                              <span className="px-2 py-0.5 rounded border bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                              <span className="px-2 py-0.5 rounded border bg-red-500/20 text-red-400 border-red-500/30">
                                 -{mountDryRun.diff.removed.length} 待删除
                               </span>
                             )}
@@ -1054,7 +1054,7 @@ export default function SettingsPage() {
 
                       {mountDryRun.diff.removed.length > 0 && (
                         <details className="text-xs">
-                          <summary className="cursor-pointer text-red-600 dark:text-red-400">
+                          <summary className="cursor-pointer text-red-400">
                             以下 {mountDryRun.diff.removed.length} 条在 settings.json 中存在，但已不再被任何引用方需要
                           </summary>
                           <ul className="mt-2 space-y-1 pl-4 list-disc font-mono break-all">
@@ -1078,10 +1078,10 @@ export default function SettingsPage() {
                                 className={
                                   "px-1.5 py-0.5 rounded text-[11px] border " +
                                   (row.source === "global_302"
-                                    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 border-indigo-200"
+                                    ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30"
                                     : row.source === "task"
-                                      ? "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300 border-sky-200"
-                                      : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200")
+                                      ? "bg-sky-500/20 text-sky-400 border-sky-500/30"
+                                      : "bg-amber-500/20 text-amber-400 border-amber-500/30")
                                 }
                               >
                                 {row.sourceLabel}
@@ -1097,7 +1097,7 @@ export default function SettingsPage() {
                                 </span>
                               )}
                               {added && (
-                                <span className="text-[11px] px-1.5 py-0.5 rounded border bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300 border-green-200">
+                                <span className="text-[11px] px-1.5 py-0.5 rounded border bg-green-500/20 text-green-400 border-green-500/30">
                                   待新增
                                 </span>
                               )}
@@ -1115,8 +1115,8 @@ export default function SettingsPage() {
                       className={
                         "rounded border px-3 py-2 text-xs " +
                         (lastSyncApply.error || lastSyncApply.nginx?.ok === false
-                          ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
-                          : "bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300")
+                          ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                          : "bg-slate-500/10 border-slate-500/30 text-slate-400")
                       }
                     >
                       <div className="font-medium mb-1">最近一次同步结果</div>
@@ -1562,10 +1562,10 @@ export default function SettingsPage() {
                           <span className="text-sm font-medium">{state.account}</span>
                           <span className={`text-xs px-2 py-0.5 rounded ${
                             state.running
-                              ? "bg-green-100 text-green-800"
+                              ? "bg-green-500/20 text-green-400"
                               : state.pending
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-gray-100 text-gray-800"
+                                ? "bg-yellow-500/20 text-yellow-400"
+                                : "bg-muted text-muted-foreground"
                           }`}>
                             {state.running ? "运行中" : state.pending ? "待保存配置" : "已停止"}
                           </span>

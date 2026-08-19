@@ -57,27 +57,27 @@ export type Task = {
 // 状态图标和颜色映射
 const getStatusConfig = (status: Task["status"]) => {
   const configs = {
-    pending: { icon: AlertCircle, color: "bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-800", label: "待处理" },
-    processing: { icon: AlertCircle, color: "bg-blue-100 text-blue-800 hover:bg-blue-200 hover:text-blue-900", label: "处理中" },
-    success: { icon: CheckCircle, color: "bg-green-100 text-green-800 hover:bg-green-200 hover:text-green-900", label: "成功" },
-    failed: { icon: XCircle, color: "bg-red-100 text-red-800 hover:bg-red-200 hover:text-red-900", label: "失败" }
+    pending: { icon: AlertCircle, color: "bg-slate-500/20 text-slate-300 hover:bg-slate-500/30", label: "待处理" },
+    processing: { icon: AlertCircle, color: "bg-blue-500/20 text-blue-300 hover:bg-blue-500/30", label: "处理中" },
+    success: { icon: CheckCircle, color: "bg-green-500/20 text-green-300 hover:bg-green-500/30", label: "成功" },
+    failed: { icon: XCircle, color: "bg-red-500/20 text-red-300 hover:bg-red-500/30", label: "失败" }
   };
-  return configs[status] || { icon: CheckCircle, color: "bg-gray-200 text-gray-700 border border-gray-300 hover:bg-gray-300 hover:text-gray-900", label: "空闲" };
+  return configs[status] || { icon: CheckCircle, color: "bg-muted text-muted-foreground border border-border hover:bg-muted/80", label: "空闲" };
 };
 
 // UI 样式常量
 const BUTTON_STYLES = {
-  disabled: "opacity-30 cursor-not-allowed bg-gray-100 hover:bg-gray-100",
-  enabled: "hover:bg-green-50 hover:text-green-600",
-  loading: "text-blue-600",
+  disabled: "opacity-30 cursor-not-allowed bg-muted hover:bg-muted",
+  enabled: "hover:bg-green-500/10 hover:text-green-500",
+  loading: "text-blue-500",
   icon: {
-    disabled: "text-gray-400",
-    enabled: "text-gray-600"
+    disabled: "text-muted-foreground",
+    enabled: "text-foreground"
   }
 } as const;
 
 const ACCOUNT_STYLES = {
-  busy: "border-orange-300 bg-orange-50 text-orange-700",
+  busy: "border-orange-500/30 bg-orange-500/10 text-orange-500",
   normal: ""
 } as const;
 
@@ -260,7 +260,7 @@ export default function Home() {
       accessorKey: "id", 
       header: "任务ID",
       cell: ({ row }) => (
-        <code className="text-xs bg-gray-100 px-2 py-1 rounded">
+        <code className="text-xs bg-muted px-2 py-1 rounded">
           {row.original.id.slice(0, 8)}...
         </code>
       )
@@ -297,11 +297,14 @@ export default function Home() {
     { 
       accessorKey: "originPath", 
       header: "远程路径",
-      cell: ({ row }) => (
-        <span className="text-sm text-gray-600 max-w-xs truncate block">
-          {row.original.originPath}
-        </span>
-      )
+      cell: ({ row }) => {
+        const task = row.original;
+        return (
+          <span className="text-sm text-muted-foreground max-w-xs truncate block">
+            {row.original.originPath}
+          </span>
+        );
+      }
     },
     { 
       accessorKey: "targetPath", 
@@ -310,7 +313,7 @@ export default function Home() {
         const task = row.original;
         return (
           <div className="group flex items-center gap-2 max-w-xs">
-            <span className="text-sm text-gray-600 truncate flex-1">
+            <span className="text-sm text-muted-foreground truncate flex-1">
               {task.targetPath}
             </span>
             <Dialog 
@@ -321,7 +324,7 @@ export default function Home() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 w-7 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all duration-200 flex-shrink-0"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all duration-200 flex-shrink-0"
                   title="清空目录"
                 >
                   <FolderX className="w-4 h-4" />
@@ -448,17 +451,15 @@ export default function Home() {
         return (
           <div className="flex gap-1">
             <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => startTask(task.id)}
-              disabled={isDisabled}
-              className={`h-8 w-8 p-0 ${
-                isDisabled 
-                  ? BUTTON_STYLES.disabled 
-                  : task.status === "processing"
-                    ? "bg-blue-50 hover:bg-blue-100" 
-                    : BUTTON_STYLES.enabled
-              }`}
+                  variant="ghost"
+                  size="sm"
+                  className={`h-8 w-8 p-0 ${
+                    isDisabled 
+                      ? BUTTON_STYLES.disabled 
+                      : task.status === "processing"
+                        ? "bg-blue-500/20 hover:bg-blue-500/30" 
+                        : BUTTON_STYLES.enabled
+                  }`}
               title={
                 isStarting ? `${STATUS_LABELS.starting}...` :
                 task.status === "processing" ? "任务运行中" :
@@ -542,7 +543,7 @@ export default function Home() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                  className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-500/10"
                   title="删除任务"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -619,7 +620,7 @@ export default function Home() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">任务管理</h1>
-          <p className="text-gray-600 mt-1">管理和监控你的下载任务</p>
+          <p className="text-muted-foreground mt-1">管理和监控你的下载任务</p>
         </div>
         <div className="flex gap-2">
           <Button 
@@ -645,10 +646,10 @@ export default function Home() {
       </div>
       
       {data.length === 0 ? (
-        <div className="text-center py-12 bg-gray-50 rounded-lg">
-          <AlertCircle className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-4 text-lg font-medium text-gray-900">暂无任务</h3>
-          <p className="mt-2 text-gray-600">点击上方按钮创建你的第一个任务</p>
+        <div className="text-center py-12 bg-muted/30 rounded-lg border border-border">
+          <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground" />
+          <h3 className="mt-4 text-lg font-medium">暂无任务</h3>
+          <p className="mt-2 text-muted-foreground">点击上方按钮创建你的第一个任务</p>
         </div>
       ) : (
         <DataTable columns={columns} data={data} />

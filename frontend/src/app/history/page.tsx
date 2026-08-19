@@ -46,10 +46,10 @@ interface TaskExecutionHistory {
 // 状态图标和颜色映射
 const getStatusConfig = (status: TaskExecutionHistory["status"]) => {
   const configs = {
-    running: { icon: Clock, color: "bg-blue-100 text-blue-800", label: "运行中" },
-    completed: { icon: CheckCircle, color: "bg-green-100 text-green-800", label: "已完成" },
-    failed: { icon: XCircle, color: "bg-red-100 text-red-800", label: "失败" },
-    cancelled: { icon: AlertCircle, color: "bg-yellow-100 text-yellow-800", label: "已取消" },
+    running: { icon: Clock, color: "bg-blue-500/20 text-blue-400", label: "运行中" },
+    completed: { icon: CheckCircle, color: "bg-green-500/20 text-green-400", label: "已完成" },
+    failed: { icon: XCircle, color: "bg-red-500/20 text-red-400", label: "失败" },
+    cancelled: { icon: AlertCircle, color: "bg-yellow-500/20 text-yellow-400", label: "已取消" },
   };
   return configs[status];
 };
@@ -136,8 +136,8 @@ export default function TaskHistoryPage() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto"></div>
-          <p className="mt-2 text-gray-600">加载中...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-foreground mx-auto"></div>
+          <p className="mt-2 text-muted-foreground">加载中...</p>
         </div>
       </div>
     );
@@ -166,8 +166,8 @@ export default function TaskHistoryPage() {
         <Card>
           <CardContent className="flex items-center justify-center h-32">
             <div className="text-center">
-              <FileText className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-              <p className="text-gray-600">暂无任务执行历史</p>
+              <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+              <p className="text-muted-foreground">暂无任务执行历史</p>
             </div>
           </CardContent>
         </Card>
@@ -226,13 +226,13 @@ export default function TaskHistoryPage() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <div className="flex items-center space-x-2 text-sm">
-                        <Calendar className="h-4 w-4 text-gray-500" />
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">开始时间:</span>
                         <span>{formatTime(execution.startTime)}</span>
                       </div>
                       {execution.endTime && (
                         <div className="flex items-center space-x-2 text-sm">
-                          <Clock className="h-4 w-4 text-gray-500" />
+                          <Clock className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">执行时长:</span>
                           <span>{getDuration(execution.startTime, execution.endTime)}</span>
                         </div>
@@ -241,13 +241,13 @@ export default function TaskHistoryPage() {
                     
                     <div className="space-y-2">
                       <div className="flex items-center space-x-2 text-sm">
-                        <Download className="h-4 w-4 text-gray-500" />
+                        <Download className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">下载文件:</span>
                         <span>{execution.summary.downloadedFiles}/{execution.summary.totalFiles}</span>
                       </div>
                       {execution.taskInfo.removeExtraFiles && (
                         <div className="flex items-center space-x-2 text-sm">
-                          <Trash className="h-4 w-4 text-gray-500" />
+                          <Trash className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">删除文件:</span>
                           <span>{execution.summary.deletedFiles}</span>
                         </div>
@@ -257,10 +257,10 @@ export default function TaskHistoryPage() {
                     <div className="space-y-2">
                       <div className="text-sm">
                         <span className="font-medium">目标路径:</span>
-                        <span className="ml-2 text-gray-600">{execution.taskInfo.targetPath}</span>
+                        <span className="ml-2 text-muted-foreground">{execution.taskInfo.targetPath}</span>
                       </div>
                       {execution.summary.errorMessage && (
-                        <div className="text-sm text-red-600">
+                        <div className="text-sm text-red-500">
                           <span className="font-medium">错误信息:</span>
                           <span className="ml-2">{execution.summary.errorMessage}</span>
                         </div>

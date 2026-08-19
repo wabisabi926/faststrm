@@ -480,19 +480,19 @@ export default function EmbyNotifyPage() {
               在 Emby Webhook 设置中勾选以下事件：
             </p>
             <div className="flex flex-wrap gap-2">
-              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+              <code className="bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs">
                 媒体入库 (library.new)
               </code>
-              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+              <code className="bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs">
                 媒体删除 (library.deleted)
               </code>
-              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+              <code className="bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs">
                 播放开始 (playback.start)
               </code>
-              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+              <code className="bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs">
                 播放暂停 (playback.pause)
               </code>
-              <code className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 px-2 py-1 rounded text-xs">
+              <code className="bg-green-500/20 text-green-400 px-2 py-1 rounded text-xs">
                 播放结束 (playback.stop)
               </code>
             </div>
