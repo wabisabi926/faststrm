@@ -1,1 +1,13 @@
-http://127.0.0.1:8090
+{
+    ".url": {
+        "faststrm.Application": {
+            "title": "faststrm",
+            "icon": "images/icon_{0}.png",
+            "type": "url",
+            "protocol": "",
+            "port": "8090",
+            "url": "/",
+            "allUsers": false
+        }
+    }
+}
