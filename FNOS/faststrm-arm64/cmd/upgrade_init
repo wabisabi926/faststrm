@@ -1,0 +1,15 @@
+#!/bin/bash
+# upgrade_init：升级前回调
+# - 先把老进程停掉，释放 app 目录，避免替换二进制时被占用
+set +e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(dirname "${SCRIPT_DIR}")"
+
+for p in "${APP_ROOT}/app/faststrm" "${APP_ROOT}/app/faststrm-linux-amd64" "${APP_ROOT}/app/faststrm-linux-arm64"; do
+  if [ -n "$p" ]; then
+    pkill -f "^${p} " 2>/dev/null || true
+    pkill -xf "${p}"   2>/dev/null || true
+  fi
+done
+sleep 1
+exit 0

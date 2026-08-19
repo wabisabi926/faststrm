@@ -82,8 +82,32 @@ jobs:
       contents: write   # 写 Release Assets
 
     steps:
+    - name: Get current time
+      id: time
+      run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    # ---- 对齐 qmediasync：fnos-release 自己构建 SPA + 前端嵌入到 Go binary
+    #      (不依赖 native-release job 的产物，两个 job 并行独立可跑)
+    - name: Set up Node.js (构建前端 SPA 嵌入 Go embed)
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Build frontend SPA (Vite) 并嵌入 Go embed
+      env:
+        NODE_OPTIONS: --max-old-space-size=4096
+      run: |
+        set -euo pipefail
+        VERSION_CLEAN="${GITHUB_REF_NAME#v}"
+        cd frontend
+        npm ci
+        node -e "const fs=require('fs'); const p='./package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.version='$VERSION_CLEAN'; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\n');"
+        npm run build
+        echo "frontend build ok, internal/web/spa contents:"
+        ls -la ../internal/web/spa/
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -108,6 +132,8 @@ jobs:
     - name: Build fNOS .fpk (all arches)
       env:
         GOPROXY: https://proxy.golang.org,direct
+        APP_VERSION: ${{ github.ref_name }}
+        PUBLISH_DATE: ${{ steps.time.outputs.date }}
       run: |
         set -euo pipefail
         chmod +x ./scripts/build-fnos.sh

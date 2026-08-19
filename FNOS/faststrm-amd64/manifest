@@ -1,8 +1,8 @@
 appname               = faststrm
-version = 0.8.8
+version = 0.8.9
 display_name          = FastStrm
 desc                  = 115 网盘 STRM 生成器（Go Edition）。监控 115 Life 事件，定时扫描导出目录，生成 Emby/Infuse 可用的 .strm 文件，接入 Emby Webhook 与 Telegram 通知。纯 Go 单二进制，零运行时依赖。
-platform  = arm
+platform              = x86_64
 source       = thirdparty
 maintainer    = wabisabi926
 maintainer_url = https://github.com/wabisabi926/faststrm
@@ -11,6 +11,7 @@ distributor_url= https://github.com/wabisabi926/faststrm
 desktop_applaunchname=faststrm.Application
 service_port=8090
 checkport=true
+desktop_uidir         = ui
 # 运行时目录声明 (fNOS 识别后会创建对应可写目录并通过 FNOS_APP_*_DIR 透传)
 # 即使 fNOS 版本不识别，这些字段会被忽略，不影响功能；
 # 启动脚本 cmd/main 里有三级 fallback 兜底保证至少能启动。

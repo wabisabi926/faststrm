@@ -1,0 +1,16 @@
+#!/bin/bash
+
+### Called after the user uninstalls the application.
+
+# Check if the user wants to delete the application data.
+if [ "$wizard_delete_data" = "yes" ]; then
+    # Wipe fNOS persistent data dirs (config/data/logs) — only when user explicitly opts in
+    rm -rf "${TRIM_PKGETC:-/app_data/faststrm/config}" \
+           "${TRIM_DATA_SHARE_PATHS:+${TRIM_DATA_SHARE_PATHS}/data}" \
+           2>/dev/null || true
+    # Also clean our fallback temp dir (just in case user has no fNOS env passthrough)
+    safe_name="faststrm-$(id -u 2>/dev/null || echo 0)"
+    rm -rf "/tmp/${safe_name}" 2>/dev/null || true
+fi
+
+exit 0

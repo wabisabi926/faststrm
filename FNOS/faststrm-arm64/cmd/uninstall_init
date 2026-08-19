@@ -1,0 +1,18 @@
+#!/bin/bash
+# uninstall_init：用户点击卸载（还未真正删除文件）时触发
+# 这里先尝试杀掉还在跑的 faststrm 进程，避免卸载时 app 目录仍被占用
+set +e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(dirname "${SCRIPT_DIR}")"
+
+# 保守做法：只杀明确以 APP_ROOT/app 目录为前缀启动的进程，避免误杀
+for p in "${APP_ROOT}/app/faststrm" "${APP_ROOT}/app/faststrm-linux-amd64" "${APP_ROOT}/app/faststrm-linux-arm64"; do
+  if [ -n "$p" ]; then
+    pkill -f "^${p} " 2>/dev/null || true
+    pkill -xf "${p}"   2>/dev/null || true
+  fi
+done
+
+sleep 1
+exit 0

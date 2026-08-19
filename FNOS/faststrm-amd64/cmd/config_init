@@ -1,0 +1,4 @@
+#!/bin/bash
+
+### Called BEFORE the user changes environment variables on the application settings page.
+exit 0

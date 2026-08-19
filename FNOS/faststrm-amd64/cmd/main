@@ -1,0 +1,120 @@
+#!/bin/bash
+# -*- coding: utf-8 -*-
+# FNOS FastStrm 启动脚本（主入口）
+# - 通过三级 fallback 保证 APP_ROOT 只读时仍有可写目录
+# - 读取 CONFIG_DIR / DEFAULT_CONFIG_DIR 两个已知入口（fNOS 规范）
+# - 把 CONFIG_DIR 强制落到可写目录后再启动 Go 程序，避免写入失败后静默退出
+# 变量名采用 FASTSTRM / FNOS_ 前缀，避免回调脚本内容被主脚本展开污染。
+
+set +e  # 启动脚本不做 `set -e`，避免第三方库调用失败导致应用无法启动
+
+# ---------------------------------------------------------------------------
+# 基础目录
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"             # cmd/
+APP_ROOT="$(dirname "${SCRIPT_DIR}")"                   # 应用根目录 (含 app/cmd/wizard)
+
+# ---------------------------------------------------------------------------
+# 三级 fallback 可写目录解析
+#   优先级：用户自定义 env → 已知 fNOS 透传路径 → APP_ROOT 子目录 → /tmp/uid 兜底
+# ---------------------------------------------------------------------------
+__fn_writeable_dir() {
+  local want="$1" fallback="$2" usage="$3"
+  local from_env=""
+  eval "from_env=\"\${${want}:-}\""
+  if [ -n "${from_env}" ]; then
+    mkdir -p "${from_env}" 2>/dev/null || true
+    if [ -d "${from_env}" ] && [ -w "${from_env}" ]; then
+      printf "%s" "${from_env}"
+      return 0
+    fi
+  fi
+  local under_app="${APP_ROOT}/${fallback}"
+  mkdir -p "${under_app}" 2>/dev/null || true
+  if [ -d "${under_app}" ] && [ -w "${under_app}" ]; then
+    printf "%s" "${under_app}"
+    return 0
+  fi
+  local safe_name="faststrm-$(id -u 2>/dev/null || echo 0)"
+  local last="/tmp/${safe_name}/${fallback}"
+  mkdir -p "${last}" 2>/dev/null || true
+  if [ -d "${last}" ] && [ -w "${last}" ]; then
+    printf "%s" "${last}"
+    return 0
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# 解析 CONFIG_DIR / DATA_DIR / LOGS_DIR / RUN_DIR
+#   - fNOS 会通过 环境变量透传：FNOS_APP_CONFIG_DIR / FNOS_APP_DATA_DIR / FNOS_APP_LOGS_DIR / FNOS_APP_RUN_DIR
+#   - 兼容已有的 TRIM_* 变量与用户自定义 CONFIG_DIR / DEFAULT_CONFIG_DIR
+# ---------------------------------------------------------------------------
+FASTSTRM_CONFIG_DIR="$(  __fn_writeable_dir "FASTSTRM_CONFIG_DIR"   "config" "配置"  2>/dev/null \
+                      || __fn_writeable_dir "CONFIG_DIR"            "config" "配置"  2>/dev/null \
+                      || __fn_writeable_dir "DEFAULT_CONFIG_DIR"    "config" "配置"  2>/dev/null \
+                      || __fn_writeable_dir "FNOS_APP_CONFIG_DIR"   "config" "配置"  2>/dev/null \
+                      || __fn_writeable_dir "TRIM_PKGETC"           "config" "配置"  2>/dev/null \
+                      || echo "${APP_ROOT}/config" )"
+
+FASTSTRM_DATA_DIR="$(    __fn_writeable_dir "FASTSTRM_DATA_DIR"    "data"   "数据"   2>/dev/null \
+                      || __fn_writeable_dir "FNOS_APP_DATA_DIR"    "data"   "数据"   2>/dev/null \
+                      || echo "${APP_ROOT}/data" )"
+
+FASTSTRM_LOGS_DIR="$(    __fn_writeable_dir "FASTSTRM_LOGS_DIR"    "logs"   "日志"   2>/dev/null \
+                      || __fn_writeable_dir "FNOS_APP_LOGS_DIR"    "logs"   "日志"   2>/dev/null \
+                      || echo "${APP_ROOT}/logs" )"
+
+FASTSTRM_RUN_DIR="$(     __fn_writeable_dir "FASTSTRM_RUN_DIR"     "run"    "运行"   2>/dev/null \
+                      || __fn_writeable_dir "FNOS_APP_RUN_DIR"     "run"    "运行"   2>/dev/null \
+                      || echo "${APP_ROOT}/run" )"
+
+mkdir -p "${FASTSTRM_CONFIG_DIR}" "${FASTSTRM_DATA_DIR}" \
+         "${FASTSTRM_LOGS_DIR}"   "${FASTSTRM_RUN_DIR}" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 运行时环境变量：出口规范，给 Go 侧消费
+#   CONFIG_DIR / DEFAULT_CONFIG_DIR：fNOS 应用配置入口
+#   LOGS_DIR / RUN_DIR              ：日志、pid 与 sockets
+#   FASTSTRM_EXPORT_DIR / FASTSTRM_SOURCE_DIR：用户可在 fNOS 配置面板上挂载
+# ---------------------------------------------------------------------------
+export CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
+export DEFAULT_CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
+export DATA_DIR="${FASTSTRM_DATA_DIR}"
+export LOGS_DIR="${FASTSTRM_LOGS_DIR}"
+export RUN_DIR="${FASTSTRM_RUN_DIR}"
+
+# ---------------------------------------------------------------------------
+# 默认配置文件：首次启动时把 config.yml 放到可写 CONFIG_DIR，让用户可在 fNOS 配置面板编辑
+# ---------------------------------------------------------------------------
+if [ ! -f "${FASTSTRM_CONFIG_DIR}/config.yml" ]; then
+  if [ -f "${APP_ROOT}/config.yml" ]; then
+    cp -f "${APP_ROOT}/config.yml" "${FASTSTRM_CONFIG_DIR}/config.yml" 2>/dev/null || true
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 二进制定位（兼容旧版路径 app/faststrm 以及直接在 app/ 目录）
+# ---------------------------------------------------------------------------
+BIN="${APP_ROOT}/app/faststrm"
+if [ ! -x "${BIN}" ]; then BIN="${APP_ROOT}/app/faststrm-linux-amd64"; fi
+if [ ! -x "${BIN}" ]; then BIN="${APP_ROOT}/app/faststrm-linux-arm64"; fi
+if [ ! -x "${BIN}" ]; then BIN="${APP_ROOT}/bin/faststrm"; fi
+if [ ! -x "${BIN}" ]; then
+  echo "[cmd/main] faststrm binary not found in app/ or bin/ (APP_ROOT=${APP_ROOT})"
+  exit 2
+fi
+chmod +x "${BIN}" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 启动
+# ---------------------------------------------------------------------------
+STD_LOG="${FASTSTRM_LOGS_DIR}/app.out.log"
+ERR_LOG="${FASTSTRM_LOGS_DIR}/app.err.log"
+
+cd "${APP_ROOT}" || true
+echo "[cmd/main] starting faststrm, CONFIG_DIR=${CONFIG_DIR} LOGS_DIR=${LOGS_DIR} BIN=${BIN}" \
+  >>"${STD_LOG}" 2>&1
+
+exec "${BIN}" run --config "${FASTSTRM_CONFIG_DIR}/config.yml" \
+  >>"${STD_LOG}" 2>>"${ERR_LOG}"

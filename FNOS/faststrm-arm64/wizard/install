@@ -1,0 +1,19 @@
+[
+    {
+        "stepTitle": "欢迎安装 FastStrm",
+        "items": [
+            {
+                "type": "tips",
+                "helpText": "FastStrm 是一款免费开源的 115 网盘 STRM 生成器，纯 Go 单二进制，零运行时依赖。"
+            },
+            {
+                "type": "tips",
+                "helpText": "支持监控 115 Life 事件、定时扫描导出目录、生成 Emby/Infuse 可用的 .strm 文件、接入 Emby Webhook 与 Telegram 通知。"
+            },
+            {
+                "type": "tips",
+                "helpText": "默认服务端口：8090；默认管理员账号：admin / admin123（首次登录后请立即在「设置」里修改）。"
+            }
+        ]
+    }
+]

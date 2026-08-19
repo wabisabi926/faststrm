@@ -1,0 +1,10 @@
+#!/bin/bash
+
+### Called AFTER the user changes environment variables on the application settings page.
+# FastStrm reads its runtime config from CONFIG_DIR / DEFAULT_CONFIG_DIR env vars
+# on next restart — no hot-reload endpoint is required here, simply exit 0.
+#
+# If fNOS passes TRIM_DATA_ACCESSIBLE_PATHS for media directories you can trigger
+# a rescan by calling the Go backend, otherwise changes are picked up on restart.
+# curl -X POST "http://127.0.0.1:${TRIM_SERVICE_PORT:-8090}/api/settings/reload" || true
+exit 0
