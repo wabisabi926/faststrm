@@ -86,8 +86,8 @@ for ARCH in "${ARCHES[@]}"; do
   if [ -n "$(ls -A "${TEMPLATE_SRC}" 2>/dev/null)" ]; then
     cp -R "${TEMPLATE_SRC}/." "${STAGE}/"
   fi
-  # 确保子目录都存在（cmd/wizard/app/ui/images，避免 git 空目录/大小写丢失问题）
-  mkdir -p "${STAGE}/app" "${STAGE}/cmd" "${STAGE}/wizard" \
+  # 确保子目录都存在（cmd/wizard/app/ui/images/config，避免 git 空目录/大小写丢失问题）
+  mkdir -p "${STAGE}/app" "${STAGE}/cmd" "${STAGE}/wizard" "${STAGE}/config" \
            "${STAGE}/app/ui" "${STAGE}/app/ui/images"
 
   # 调试：staging 骨架拷贝完就打一份目录清单（出问题时一眼看出 ICON.PNG/ui/ 是否到位）

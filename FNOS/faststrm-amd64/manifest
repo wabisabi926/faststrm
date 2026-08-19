@@ -1,5 +1,5 @@
 appname               = faststrm
-version = 0.8.9.3
+version = 0.8.9.4
 display_name          = FastStrm
 desc                  = 115 网盘 STRM 生成器（Go Edition）。监控 115 Life 事件，定时扫描导出目录，生成 Emby/Infuse 可用的 .strm 文件，接入 Emby Webhook 与 Telegram 通知。纯 Go 单二进制，零运行时依赖。
 arch                  = x86_64
