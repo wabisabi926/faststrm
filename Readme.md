@@ -80,7 +80,7 @@ FastStrm 提供 3 种官方分发方式，任选其一：
 | 方式 | 适用场景 | 下载地址 / 命令 |
 |:----:|----------|-----------------|
 | 🐳 **Docker**（最通用） | Linux / NAS / macOS / Windows，已有 Docker 环境 | `docker pull wabisabi926/faststrm:latest` |
-| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-0.8.7.fpk`](https://github.com/wabisabi926/faststrm/releases) |
+| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-0.8.8.fpk`](https://github.com/wabisabi926/faststrm/releases) |
 | 🖥️ **源码 / 单二进制** | 想自己编译或跑在普通 Linux 主机 | `git clone -b go https://github.com/wabisabi926/faststrm && cd faststrm && go build ./cmd/server/` |
 
 > 📘 飞牛打包、定制、运行目录和排错详见 [docs/飞牛打包部署.md](docs/飞牛打包部署.md)
@@ -89,7 +89,7 @@ FastStrm 提供 3 种官方分发方式，任选其一：
 
 ## 🏗️ 架构说明
 
-FastStrm v0.8.7 采用纯 Go 架构：
+FastStrm v0.8.8 采用纯 Go 架构：
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -127,14 +127,13 @@ FastStrm v0.8.7 采用纯 Go 架构：
 
 ---
 
-## 📝 最新版本 (v0.8.7)
+## 📝 最新版本 (v0.8.8)
 
-- **🏗️ 全栈 Go 架构迁移**：移除 Next.js 依赖，前端改为 Vite + React，由 Go `go:embed` 直接托管静态文件，部署只需一个二进制文件
-- **🐛 Bug 修复**：扫码登录客户端类型、账户重命名、任务列表、User-Agent 预加载等多项修复
-- **📱 移动端全面适配**：所有页面响应式优化，修复移动端文字竖排、按钮溢出、表格横向滚动等问题
-- **🌐 界面中文化**：DataTable 空状态改为「暂无数据」，错误提示中文化
-- **🔗 媒体挂载路径同步迁移至 Go**：Go 后端实现 `mediaMountSync` 逻辑，前端直连 Go API
-- **🔄 端口统一**：从 3000 端口变更为 8090，单端口托管前端 SPA 和 API
+- **🚀 全平台一次性自动打包（对齐 qmediasync 模式）**：打 `v0.8.8` tag 后 GitHub Actions 自动产出 Windows amd64 zip、Linux amd64/arm64 原生二进制、多架构 Docker 镜像、飞牛 fnOS amd64/arm64 .fpk，全部一次性上传到 Release Assets
+- **🐛 飞牛 CI 致命修复**：清理 `faststrm-demo` 残留的 submodule gitlink（修复 actions/checkout submodule foreach exit 128 导致 CI 直接挂的问题）；build-fnos.sh 修复 APP_ROOT 只读权限 fallback + 变量污染问题（字面量 heredoc 注入公共函数）
+- **🏷️ 版本号全链路可注入**：侧边栏 footer `appVersion` 改为 var（原 const 无法 ldflags 注入），构建时同步注入 `/api/health`、`--version`、侧边栏、FNOS manifest 4 处版本；fNOS manifest / package.json / 默认值 全部同步 0.8.7 → 0.8.8
+- **🧹 Go 重构残余清理**：删除 Next.js 遗留（next-env.d.ts、next.svg、vercel.svg、.next 缓存、旧 server.exe/faststrm.exe）；删除整个 `emby2Alist/` 旧 Nginx+NJS 反代 demo（共 44 个文件 / 7209 行，Go 架构已无依赖）
+- **🔧 端口 & 前端构建修复**：Vite dev server 端口 5173 / 生产 8090 分离；前端硬编码 `localhost:3000` 全部清除（Emby Webhook 改用 `window.location.origin`、settings 占位符改 8090）；创建 `tsconfig.node.json` 让 `tsc -b` 通过，构建稳定
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
