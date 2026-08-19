@@ -1,6 +1,4 @@
-"use client";
-
-import { usePathname } from "next/navigation";
+import { useLocation, useNavigate } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Settings, BookOpen, LogOut, User, Sun, Moon } from "lucide-react";
@@ -13,12 +11,12 @@ import {
   MenubarTrigger,
   MenubarSeparator,
 } from "@/components/ui/menubar";
-import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 
 export default function LayoutWrapper({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const router = useRouter();
+  const location = useLocation();
+  const pathname = location.pathname;
+  const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [isDark, setIsDark] = useState(false);
 
@@ -50,7 +48,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
     }
     clearToken();
     clearUsername();
-    router.push("/login");
+    navigate("/login");
   };
 
   const toggleTheme = () => {
@@ -113,7 +111,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
                 </Menubar>
               </div>
             </header>
-            <main className="flex-1 p-4 md:p-6 bg-background">
+            <main className="flex-1 p-3 sm:p-4 md:p-6 bg-background min-w-0 overflow-x-hidden">
               {children}
             </main>
           </div>

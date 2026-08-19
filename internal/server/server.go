@@ -50,7 +50,7 @@ func Run(cfg *config.AppConfig) error {
 		},
 	}
 
-	server := rest.MustNewServer(restCfg)
+	server := rest.MustNewServer(restCfg, rest.WithNotFoundHandler(web.SPAHandler()))
 	defer server.Stop()
 
 	// 初始化依赖
@@ -278,6 +278,30 @@ func RegisterRoutes(
 		{Method: http.MethodPost, Path: "/api/settings", Handler: corsJWT(handler.HandleSettingsPOST(embyDeps))},
 	})
 
+	// ==================== 媒体挂载路径同步 ====================
+	mediaMountDeps := handler.MediaMountDeps{
+		SettingsStore: settingsStore,
+		AccountStore:  accountStore,
+		TasksStore:    tasksStore,
+	}
+	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/api/mediaMountSync", Handler: corsJWT(handler.HandleMediaMountSyncGET(mediaMountDeps))},
+		{Method: http.MethodPost, Path: "/api/mediaMountSync", Handler: corsJWT(handler.HandleMediaMountSyncPOST(mediaMountDeps))},
+	})
+
+	// ==================== STRM 清理 & 扫描 ====================
+	strmCleanupDeps := handler.StrmCleanupDeps{
+		SettingsStore: settingsStore,
+		AccountStore:  accountStore,
+		ClientFactory: func(name string) (*client115.Client, error) {
+			return client115.NewClient(""), nil
+		},
+	}
+	server.AddRoutes([]rest.Route{
+		{Method: http.MethodPost, Path: "/api/strmCleanup/scan", Handler: corsJWT(handler.HandleStrmCleanupScanPOST(strmCleanupDeps))},
+		{Method: http.MethodPost, Path: "/api/strmCleanup/execute", Handler: corsJWT(handler.HandleStrmCleanupExecutePOST(strmCleanupDeps))},
+	})
+
 	// ==================== 阶段6: 生活监控 + 事件日志 ====================
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/lifeMonitor", Handler: corsJWT(handler.HandleLifeMonitorGET(lifeMonitorDeps))},
@@ -286,29 +310,9 @@ func RegisterRoutes(
 		{Method: http.MethodDelete, Path: "/api/lifeEvents", Handler: corsJWT(handler.HandleLifeEventsDELETE(lifeMonitorDeps))},
 	})
 
-	// ==================== 阶段8: Web UI（Templ + HTMX + Tailwind） ====================
-	// 路径严格对齐原始 Next.js 前端（frontend/src/app/ 目录名）
-	webDeps := web.WebDeps{TokenIssuer: issuer}
-	authMW := web.AuthRequiredMiddleware(issuer)
-	server.AddRoutes([]rest.Route{
-		// 静态资源（embed.FS，无外部依赖）
-		{Method: http.MethodGet, Path: "/static/:file", Handler: web.StaticHandler()},
-		// 登录页（公开）
-		{Method: http.MethodGet, Path: "/login", Handler: web.HandleLoginPage()},
-		// 根路径：根据登录态重定向（已登录 → /account）
-		{Method: http.MethodGet, Path: "/", Handler: web.HandleIndex(webDeps)},
-		// ---- 主菜单 ----
-		{Method: http.MethodGet, Path: "/account",  Handler: authMW(web.HandleAccountsPage(webDeps))},
-		{Method: http.MethodGet, Path: "/task",     Handler: authMW(web.HandleTasksPage(webDeps))},
-		{Method: http.MethodGet, Path: "/settings", Handler: authMW(web.HandleSettingsPage(webDeps))},
-		// ---- 通知 ----
-		{Method: http.MethodGet, Path: "/account-alerts", Handler: authMW(web.HandleAccountAlertsPage(webDeps))},
-		{Method: http.MethodGet, Path: "/tg-notify",      Handler: authMW(web.HandleTgNotifyPage(webDeps))},
-		{Method: http.MethodGet, Path: "/emby-notify",    Handler: authMW(web.HandleEmbyNotifyPage(webDeps))},
-		// ---- 日志 ----
-		{Method: http.MethodGet, Path: "/history",     Handler: authMW(web.HandleTaskHistoryPage(webDeps))},
-		{Method: http.MethodGet, Path: "/life-events", Handler: authMW(web.HandleLifeEventsPage(webDeps))},
-	})
+	// ==================== 阶段8: Web UI（Vite + React SPA） ====================
+	// 所有非 API 路由由 NotFoundHandler (web.SPAHandler) 处理
+	// API 路由优先匹配，未匹配的 GET 请求自动 fallback 到 SPA
 }
 
 // ==================== 阶段6 依赖装配 ====================

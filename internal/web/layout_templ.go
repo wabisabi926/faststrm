@@ -26,7 +26,7 @@ type NavItem struct {
 }
 
 // appVersion 显示在 sidebar footer
-const appVersion = "0.1.0"
+const appVersion = "0.8.7"
 
 // navGroups 与原始前端完全一致：主菜单 / 通知 / 日志
 func navGroups() []SidebarGroup {

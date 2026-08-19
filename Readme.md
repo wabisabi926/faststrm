@@ -87,13 +87,18 @@ docker run -d \
 
 ---
 
-## 📝 最新版本 (v0.8.6)
+## 📝 最新版本 (v0.8.7)
 
-- **🔧 Telegram 轮询自启动**：新增 `autoPolling` 配置项，服务启动时自动启动轮询，支持运行时自愈（防止崩溃/HMR 导致轮询挂起）
-- **🎨 移动端 UI 优化**：表格横向溢出修复、Dialog 宽度适配、网格响应式、页面居中对齐统一
-- **� 统一日志系统**：新增 `logger.ts` 日志基础设施，迁移 ~80 处 console 调用，高频日志降噪
-- **🏗️ 代码架构优化**：大文件拆分（eventMonitor/strmCleanup/notifier），新增健康检查端点 `/api/health`
-- **� TG 通知 UI 增强**：新增「启动时自动轮询」复选框，修复保存后状态丢失问题
+- **🏗️ 全栈 Go 架构迁移**：移除 Next.js 依赖，前端改为 Vite + React，由 Go `go:embed` 直接托管静态文件，部署只需一个二进制文件
+- **📱 移动端全面适配**：所有页面响应式优化，修复移动端文字竖排、按钮溢出、表格横向滚动等问题
+- **🔧 Bug 修复**：
+  - 修复账户重命名报「Account not found」错误
+  - 修复任务列表获取失败（tasks.json 格式校验）
+  - 修复 Telegram 通知错误提示中文化
+  - 修复设置页 User-Agent 未预加载
+  - 修复媒体挂载路径同步逻辑（Go 后端实现）
+- **🌐 中文化**：DataTable 空状态改为「暂无数据」，设置页标签中文化
+- **🔙 TG 通知页保留英文标签**：Bot Token、Chat ID、Webhook URL 等保留原英文命名
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 

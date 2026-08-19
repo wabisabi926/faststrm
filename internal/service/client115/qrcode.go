@@ -98,7 +98,8 @@ func NewClient(userAgent string) *Client {
 // ==================== 扫码登录三阶段 ====================
 
 // GetQrcodeToken 阶段1：获取二维码 token
-// GET https://qrcodeapi.115.com/api/1.0/{app}/1.0/token/
+// GET https://qrcodeapi.115.com/api/1.0/{clientType}/1.0/token/
+// clientType 决定了二维码的客户端类型（alipaymini, wechatmini, 115android 等）
 func (c *Client) GetQrcodeToken(clientType string) (*QrCodeTokenResp, error) {
 	if !isValidClientType(clientType) {
 		clientType = "alipaymini"
@@ -213,8 +214,8 @@ func (c *Client) GetQrcodeStatus(uid, timeStr, sign, clientType string) (*QrCode
 }
 
 // GetQrcodeResult 阶段3：用 uid 换 cookie
-// POST https://passportapi.115.com/app/1.0/{app}/1.0/login/qrcode/
-// body: account={uid}
+// POST https://passportapi.115.com/app/1.0/{clientType}/1.0/login/qrcode/
+// body: app={clientType}&account={uid}
 // 返回标准 cookie 字符串：key1=value1; key2=value2; ...
 func (c *Client) GetQrcodeResult(uid, clientType string) (string, error) {
 	if !isValidClientType(clientType) {
@@ -222,7 +223,8 @@ func (c *Client) GetQrcodeResult(uid, clientType string) (string, error) {
 	}
 
 	urlStr := fmt.Sprintf("https://passportapi.115.com/app/1.0/%s/1.0/login/qrcode/", clientType)
-	formBody := "account=" + url.QueryEscape(uid)
+	// POST body 必须同时传 app 和 account 参数（对齐 p115client）
+	formBody := "app=" + clientType + "&account=" + url.QueryEscape(uid)
 
 	req, err := http.NewRequest("POST", urlStr, strings.NewReader(formBody))
 	if err != nil {

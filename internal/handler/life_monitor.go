@@ -38,8 +38,10 @@ func HandleLifeMonitorGET(deps LifeMonitorDeps) http.HandlerFunc {
 		if deps.Monitor != nil {
 			states = deps.Monitor.Status()
 		}
-		if states == nil {
-			states = map[string]monitor.AccountMonitorStatus{}
+		// 转为数组，前端期望数组而非 map
+		stateList := make([]monitor.AccountMonitorStatus, 0, len(states))
+		for _, s := range states {
+			stateList = append(stateList, s)
 		}
 		// accounts 为当前监控配置中的账号列表
 		accounts := config.Accounts
@@ -48,7 +50,7 @@ func HandleLifeMonitorGET(deps LifeMonitorDeps) http.HandlerFunc {
 		}
 		httpx.OkJson(w, map[string]any{
 			"config":   config,
-			"states":   states,
+			"states":   stateList,
 			"accounts": accounts,
 		})
 	}

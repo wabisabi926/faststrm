@@ -1,47 +1,36 @@
 import axios from 'axios';
 
-// 获取存储的token
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
 function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
   return localStorage.getItem('auth-token');
 }
 
-// 设置token
 export function setToken(token: string): void {
-  if (typeof window === 'undefined') return;
   localStorage.setItem('auth-token', token);
 }
 
-// 清除token
 export function clearToken(): void {
-  if (typeof window === 'undefined') return;
   localStorage.removeItem('auth-token');
 }
 
-// 存储用户名
 export function setUsername(username: string): void {
-  if (typeof window === 'undefined') return;
   localStorage.setItem('auth-username', username);
 }
 
-// 获取当前用户名
 export function getUsername(): string | null {
-  if (typeof window === 'undefined') return null;
   return localStorage.getItem('auth-username');
 }
 
-// 清除用户名
 export function clearUsername(): void {
-  if (typeof window === 'undefined') return;
   localStorage.removeItem('auth-username');
 }
 
-// 创建axios实例
 export const axiosInstance = axios.create({
+  baseURL: API_BASE_URL,
   timeout: 30000,
 });
 
-// 请求拦截器：自动添加token
 axiosInstance.interceptors.request.use(
   (config) => {
     const token = getToken();
@@ -55,16 +44,13 @@ axiosInstance.interceptors.request.use(
   }
 );
 
-// 响应拦截器：处理401错误
 axiosInstance.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       clearToken();
       clearUsername();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
+      window.location.href = '/login';
     }
     return Promise.reject(error);
   }

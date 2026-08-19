@@ -1,6 +1,4 @@
-"use client"
 import { ListChecks, Inbox, Settings, Github, Bot, History, Activity, Bell, ShieldAlert } from "lucide-react";
-import Image from "next/image";
 
 import {
   Sidebar,
@@ -14,9 +12,8 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import frontendPkg from "../../package.json" assert { type: "json" };
+import { Link, useLocation } from "react-router-dom";
+import frontendPkg from "../../package.json";
 type PackageJson = { version?: string } & Record<string, unknown>;
 const appVersion = (frontendPkg as PackageJson).version ?? "";
 
@@ -70,13 +67,14 @@ const logItems = [
 ];
 
 export function AppSidebar() {
-  const pathname = usePathname();
+  const location = useLocation();
+  const pathname = location.pathname;
   return (
     <Sidebar collapsible="icon">
       <SidebarContent>
         <div className="p-4 border-b border-border/50">
-          <Link href="/task" className="flex items-center gap-3 group">
-            <Image
+          <Link to="/task" className="flex items-center gap-3 group">
+            <img
               src="/logo.png"
               alt="Fast Strm Logo"
               width={36}
@@ -102,7 +100,7 @@ export function AppSidebar() {
                       tooltip={item.title}
                       isActive={isActive}
                     >
-                      <Link href={item.url}>
+                      <Link to={item.url}>
                         <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
                       </Link>
@@ -127,7 +125,7 @@ export function AppSidebar() {
                       tooltip={item.title}
                       isActive={isActive}
                     >
-                      <Link href={item.url}>
+                      <Link to={item.url}>
                         <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
                       </Link>
@@ -152,7 +150,7 @@ export function AppSidebar() {
                       tooltip={item.title}
                       isActive={isActive}
                     >
-                      <Link href={item.url}>
+                      <Link to={item.url}>
                         <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
                       </Link>

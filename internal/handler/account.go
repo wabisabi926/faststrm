@@ -123,12 +123,13 @@ func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 
 // UpdateAccountRequest 更新账号请求
 type UpdateAccountRequest struct {
-	Name        string `json:"name"`
-	AccountType string `json:"accountType"`
-	Cookie      string `json:"cookie"`
-	Account     string `json:"account"`
-	Password    string `json:"password"`
-	URL         string `json:"url"`
+	Name         string `json:"name"`
+	OriginalName string `json:"originalName"`
+	AccountType  string `json:"accountType"`
+	Cookie       string `json:"cookie"`
+	Account      string `json:"account"`
+	Password     string `json:"password"`
+	URL          string `json:"url"`
 }
 
 // UpdateAccount PUT /api/account 更新账号
@@ -141,18 +142,18 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 		}
 
 		if req.Name == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "账户名称不能为空"})
 			return
 		}
 
 		// 根据账户类型验证（如果提供了 accountType）
 		if req.AccountType == "115" && req.Cookie == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "cookie is required for 115 accounts"})
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "115 账户必须提供 Cookie"})
 			return
 		}
 		if req.AccountType == "openlist" {
 			if req.Account == "" || req.Password == "" || req.URL == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "account, password, and url are required for openlist accounts"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "openlist 账户必须提供账号、密码和服务器地址"})
 				return
 			}
 		}
@@ -163,17 +164,25 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 			return
 		}
 
+		// 用 originalName 查找账户（重命名场景），fallback 用新名称
+		lookupName := req.OriginalName
+		if lookupName == "" {
+			lookupName = req.Name
+		}
 		idx := -1
 		for i, a := range accounts {
-			if a.Name == req.Name {
+			if a.Name == lookupName {
 				idx = i
 				break
 			}
 		}
 		if idx == -1 {
-			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "Account not found"})
+			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
 			return
 		}
+
+		// 更新账户名称（如果改了名）
+		accounts[idx].Name = req.Name
 
 		// 合并更新（非空字段覆盖）
 		if req.Cookie != "" {
@@ -227,7 +236,7 @@ func DeleteAccount(accountStore *store.AccountStore) http.HandlerFunc {
 		}
 
 		if !found {
-			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "Account not found"})
+			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
 			return
 		}
 

@@ -41,8 +41,9 @@ func HandleTaskHistory(deps TaskHistoryDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		httpx.WriteJson(w, http.StatusOK, map[string]any{
-			"items": items,
-		})
+		if items == nil {
+			items = []db.TaskExecution{}
+		}
+		httpx.WriteJson(w, http.StatusOK, items)
 	}
 }

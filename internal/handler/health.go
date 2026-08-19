@@ -12,7 +12,7 @@ type HealthResponse struct {
 	Version string `json:"version"`
 }
 
-const appVersion = "0.1.0-go-m1"
+const appVersion = "0.8.7"
 
 // Health 健康检查
 func Health(w http.ResponseWriter, r *http.Request) {

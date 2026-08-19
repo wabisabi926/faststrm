@@ -1,7 +1,5 @@
-"use client";
-
 import { useEffect, useState } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 interface ClientAuthProviderProps {
   children: React.ReactNode;
@@ -9,8 +7,9 @@ interface ClientAuthProviderProps {
 
 export default function ClientAuthProvider({ children }: ClientAuthProviderProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const router = useRouter();
-  const pathname = usePathname();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const pathname = location.pathname;
 
   useEffect(() => {
     // 检查是否是登录页面或公共页面
@@ -26,7 +25,7 @@ export default function ClientAuthProvider({ children }: ClientAuthProviderProps
     const token = localStorage.getItem('auth-token');
     
     if (!token) {
-      router.push('/login');
+      navigate('/login');
       return;
     }
 
@@ -34,27 +33,30 @@ export default function ClientAuthProvider({ children }: ClientAuthProviderProps
     const tokenParts = token.split('.');
     if (tokenParts.length !== 3) {
       localStorage.removeItem('auth-token');
-      router.push('/login');
+      navigate('/login');
       return;
     }
 
     // 检查token是否过期
     try {
-      const payload = JSON.parse(atob(tokenParts[1]));
+      // JWT 使用 URL-safe base64，需要转换为标准 base64
+      const base64 = tokenParts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+      const payload = JSON.parse(atob(padded));
       const now = Math.floor(Date.now() / 1000);
 
       if (payload.exp && payload.exp < now) {
         localStorage.removeItem('auth-token');
-        router.push('/login');
+        navigate('/login');
         return;
       }
 
       setIsAuthenticated(true);
     } catch {
       localStorage.removeItem('auth-token');
-      router.push('/login');
+      navigate('/login');
     }
-  }, [pathname, router]);
+  }, [pathname, navigate]);
 
   // 显示加载状态，直到认证检查完成
   if (isAuthenticated === null) {

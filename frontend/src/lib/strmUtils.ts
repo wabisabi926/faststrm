@@ -1,5 +1,3 @@
-import * as path from "path";
-
 export interface ResolvedStrmSettings {
   strmPrefix: string;
   enablePathEncoding: boolean;
@@ -53,9 +51,9 @@ export function resolveStrmSettings(
 }
 
 export function getStrmFileName(fileName: string): string {
-  const ext = path.extname(fileName);
-  if (!ext) return fileName + ".strm";
-  return fileName.replace(new RegExp(ext + "$", "i"), ".strm");
+  const lastDot = fileName.lastIndexOf(".");
+  if (lastDot === -1) return fileName + ".strm";
+  return fileName.substring(0, lastDot) + ".strm";
 }
 
 export function generateStrmContent(

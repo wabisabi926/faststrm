@@ -151,7 +151,7 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 			return
 		}
 		if req.BotToken == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "botToken is required"})
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请提供机器人令牌"})
 			return
 		}
 
@@ -159,8 +159,8 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		sep := strings.Index(req.BotToken, ":")
 		if sep <= 0 || sep == len(req.BotToken)-1 {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
-				"error":   "Invalid bot token format",
-				"details": "Bot token should be in format: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+				"error":   "机器人令牌格式无效",
+				"details": "令牌格式应为: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
 			})
 			return
 		}
@@ -172,9 +172,17 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		botInfo, err := probe.GetMe(ctx)
 		if err != nil {
 			logger.S().Warnf("[notify/bot POST] getMe validation failed: %v", err)
+			// 根据错误类型给出中文友好提示
+			errMsg := "机器人令牌无效"
+			errDetail := err.Error()
+			if strings.Contains(errDetail, "code=404") {
+				errMsg = "机器人令牌无效（机器人不存在或令牌错误）"
+			} else if strings.Contains(errDetail, "code=401") {
+				errMsg = "机器人令牌已被吊销，请重新获取"
+			}
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
-				"error":   "Invalid bot token",
-				"details": err.Error(),
+				"error":   errMsg,
+				"details": errDetail,
 			})
 			return
 		}
@@ -722,7 +730,7 @@ func HandleTelegramWebhook(deps NotifyDeps) http.HandlerFunc {
 		settings, err := deps.SettingsStore.ReadSettings()
 		if err != nil {
 			logger.S().Errorf("[notify/webhook] read settings: %v", err)
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "服务器内部错误"})
 			return
 		}
 		tg := settings.Telegram
