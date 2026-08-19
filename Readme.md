@@ -73,6 +73,20 @@ docker run -d \
 
 ---
 
+## 🛠️ 下载 / 安装方式
+
+FastStrm 提供 3 种官方分发方式，任选其一：
+
+| 方式 | 适用场景 | 下载地址 / 命令 |
+|:----:|----------|-----------------|
+| 🐳 **Docker**（最通用） | Linux / NAS / macOS / Windows，已有 Docker 环境 | `docker pull wabisabi926/faststrm:latest` |
+| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-0.8.7.fpk`](https://github.com/wabisabi926/faststrm/releases) |
+| 🖥️ **源码 / 单二进制** | 想自己编译或跑在普通 Linux 主机 | `git clone -b go https://github.com/wabisabi926/faststrm && cd faststrm && go build ./cmd/server/` |
+
+> 📘 飞牛打包、定制、运行目录和排错详见 [docs/飞牛打包部署.md](docs/飞牛打包部署.md)
+
+---
+
 ## 🏗️ 架构说明
 
 FastStrm v0.8.7 采用纯 Go 架构：

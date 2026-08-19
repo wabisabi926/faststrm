@@ -8,9 +8,11 @@ on:
 env:
   REGISTRY: docker.io
   IMAGE_NAME: ${{ github.repository }}
+  FNPACK_URL: https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64
 
 jobs:
-  release:
+  # ---- Job 1: Docker 镜像构建 + 推送到 Docker Hub ----
+  docker-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -73,8 +75,96 @@ jobs:
           BUILD_DATE=${{ github.event.head_commit.timestamp }}
           GOPROXY=https://proxy.golang.org,direct
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+  # ---- Job 2: 飞牛 fNOS .fpk 包 (amd64 + arm64) ----
+  fnos-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 写 Release Assets
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+        cache: true
+
+    - name: Install fnpack (飞牛官方打包工具)
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.local/bin"
+        curl -fSL --retry 3 "${{ env.FNPACK_URL }}" -o "$HOME/.local/bin/fnpack"
+        chmod +x "$HOME/.local/bin/fnpack"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        fnpack --version || fnpack help || true  # 仅打印版本信息，不同版本 subcommand 可能有差异
+
+    - name: Verify Go & fnpack
+      run: |
+        echo "go version: $(go version)"
+        echo "fnpack path: $(command -v fnpack || true)"
+
+    - name: Build fNOS .fpk (all arches)
+      env:
+        GOPROXY: https://proxy.golang.org,direct
+      run: |
+        set -euo pipefail
+        chmod +x ./scripts/build-fnos.sh
+        ./scripts/build-fnos.sh all
+
+    - name: List dist artifacts
+      run: ls -lh dist/
+
+    - name: Upload .fpk to GitHub Release Assets
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        TAG="${{ github.ref_name }}"
+        # 安装/更新 GitHub CLI (runner 自带的 gh 已经足够新)
+        gh --version
+        # 先确保 Release 已经创建 (如果 docker-release job 还没创建好就会失败，gh release create --clobber 不支持)
+        # 这里用 create-if-not-exists 的惯用手法：create 失败时忽略，然后上传
+        gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+          gh release create "$TAG" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Release $TAG" \
+            --generate-notes
+
+        # 上传所有 .fpk 和 VERSION 目录打包成 zip
+        cd dist
+        for FPK in ./*.fpk; do
+          [ -f "$FPK" ] || continue
+          echo "Uploading $FPK ..."
+          gh release upload "$TAG" "$FPK" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+        done
+
+        # 同时把解压后的安装目录也打成 zip 方便用户下载
+        for DIR in ./faststrm-*/; do
+          [ -d "$DIR" ] || continue
+          BASENAME="$(basename "$DIR")"
+          ZIP="${BASENAME}.zip"
+          (cd "$DIR" && zip -q -r "../${ZIP}" .)
+          echo "Uploading $ZIP ..."
+          gh release upload "$TAG" "$ZIP" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+        done
+
+  # ---- Job 3: 创建 Release (兜底, 仅在 docker-release 和 fnos-release 之后创建 Release 页面) ----
+  # Docker Hub 镜像和 fNOS .fpk 都上传完成后, 保证 Release 存在且包含 release notes
+  github-release:
+    needs: [docker-release, fnos-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Create / update GitHub Release (notes only)
+      uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
@@ -83,3 +173,4 @@ jobs:
         draft: false
         prerelease: false
         generate_release_notes: true
+        append_body: false
