@@ -1,22 +1,42 @@
 #!/bin/bash
 # -*- coding: utf-8 -*-
-# FNOS FastStrm 启动脚本（主入口）
-# - 通过三级 fallback 保证 APP_ROOT 只读时仍有可写目录
-# - 读取 CONFIG_DIR / DEFAULT_CONFIG_DIR 两个已知入口（fNOS 规范）
-# - 把 CONFIG_DIR 强制落到可写目录后再启动 Go 程序，避免写入失败后静默退出
-# 变量名采用 FASTSTRM / FNOS_ 前缀，避免回调脚本内容被主脚本展开污染。
+# FNOS FastStrm 主入口（严格对齐 qmediasync：start / stop / status 三段式）
+#
+# fNOS 约定：
+#   cmd/main start  —— 立刻 return 0，应用进程在后台跑，把 PID 写入 pidfile
+#   cmd/main stop   —— 读 pidfile，发 TERM (再 KILL)
+#   cmd/main status —— running 退出码 0，not running 退出码 3
+#
+# 环境变量（fNOS 注入，和 qmediasync 保持同一套 TRIM_ 规范名）：
+#   TRIM_APPDEST : 应用安装目录（含 app/cmd/config/wizard 等子目录）
+#   TRIM_PKGVAR  : 应用"可变数据目录"（可写，放 logs/pid/面板可见的 config.yml）
+#   TRIM_UID     : 应用实例唯一 ID（预留）
 
-set +e  # 启动脚本不做 `set -e`，避免第三方库调用失败导致应用无法启动
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
 
 # ---------------------------------------------------------------------------
-# 基础目录
+# 工具函数
 # ---------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"             # cmd/
-APP_ROOT="$(dirname "${SCRIPT_DIR}")"                   # 应用根目录 (含 app/cmd/wizard)
+log_msg() {
+    local msg="$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    # 同时写到 fNOS 日志面板（stdout）+ 持久化 info.log
+    echo "${msg}"
+    echo "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
+}
+
+check_process() {
+    local pid=$1
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+        return 0   # 进程存在
+    else
+        return 1   # 进程不存在
+    fi
+}
 
 # ---------------------------------------------------------------------------
-# 三级 fallback 可写目录解析
-#   优先级：用户自定义 env → 已知 fNOS 透传路径 → APP_ROOT 子目录 → /tmp/uid 兜底
+# 可写目录三级 fallback（APP_ROOT 不可写时兜底 /tmp/faststrm-{uid}）
+#   优先用 fNOS 注入的 TRIM_PKGVAR 子目录
 # ---------------------------------------------------------------------------
 __fn_writeable_dir() {
   local want="$1" fallback="$2" usage="$3"
@@ -29,12 +49,21 @@ __fn_writeable_dir() {
       return 0
     fi
   fi
-  local under_app="${APP_ROOT}/${fallback}"
+  # TRIM_PKGVAR 下的子目录（fNOS 官方可变目录，100% 可写）
+  local under_trim="${TRIM_PKGVAR}/${fallback}"
+  mkdir -p "${under_trim}" 2>/dev/null || true
+  if [ -d "${under_trim}" ] && [ -w "${under_trim}" ]; then
+    printf "%s" "${under_trim}"
+    return 0
+  fi
+  # 退而求其次：安装目录下的子目录（有时 mount 成只读会失败）
+  local under_app="${TRIM_APPDEST}/${fallback}"
   mkdir -p "${under_app}" 2>/dev/null || true
   if [ -d "${under_app}" ] && [ -w "${under_app}" ]; then
     printf "%s" "${under_app}"
     return 0
   fi
+  # 最后兜底 /tmp
   local safe_name="faststrm-$(id -u 2>/dev/null || echo 0)"
   local last="/tmp/${safe_name}/${fallback}"
   mkdir -p "${last}" 2>/dev/null || true
@@ -46,75 +75,168 @@ __fn_writeable_dir() {
 }
 
 # ---------------------------------------------------------------------------
-# 解析 CONFIG_DIR / DATA_DIR / LOGS_DIR / RUN_DIR
-#   - fNOS 会通过 环境变量透传：FNOS_APP_CONFIG_DIR / FNOS_APP_DATA_DIR / FNOS_APP_LOGS_DIR / FNOS_APP_RUN_DIR
-#   - 兼容已有的 TRIM_* 变量与用户自定义 CONFIG_DIR / DEFAULT_CONFIG_DIR
+# 启动：返回 0=成功启动或已启动。
 # ---------------------------------------------------------------------------
-FASTSTRM_CONFIG_DIR="$(  __fn_writeable_dir "FASTSTRM_CONFIG_DIR"   "config" "配置"  2>/dev/null \
-                      || __fn_writeable_dir "CONFIG_DIR"            "config" "配置"  2>/dev/null \
-                      || __fn_writeable_dir "DEFAULT_CONFIG_DIR"    "config" "配置"  2>/dev/null \
-                      || __fn_writeable_dir "FNOS_APP_CONFIG_DIR"   "config" "配置"  2>/dev/null \
-                      || __fn_writeable_dir "TRIM_PKGETC"           "config" "配置"  2>/dev/null \
-                      || echo "${APP_ROOT}/config" )"
+start_process() {
+    if status >/dev/null 2>&1; then
+        log_msg "应用已在运行，跳过重复启动 (PID 文件=${PID_FILE})"
+        return 0
+    fi
 
-FASTSTRM_DATA_DIR="$(    __fn_writeable_dir "FASTSTRM_DATA_DIR"    "data"   "数据"   2>/dev/null \
-                      || __fn_writeable_dir "FNOS_APP_DATA_DIR"    "data"   "数据"   2>/dev/null \
-                      || echo "${APP_ROOT}/data" )"
+    log_msg "应用启动中 ... (TRIM_APPDEST=${TRIM_APPDEST}, TRIM_PKGVAR=${TRIM_PKGVAR})"
 
-FASTSTRM_LOGS_DIR="$(    __fn_writeable_dir "FASTSTRM_LOGS_DIR"    "logs"   "日志"   2>/dev/null \
-                      || __fn_writeable_dir "FNOS_APP_LOGS_DIR"    "logs"   "日志"   2>/dev/null \
-                      || echo "${APP_ROOT}/logs" )"
+    # --- 解析可写的 config/data/logs/run 目录（用官方 TRIM_PKGVAR 优先） ---
+    FASTSTRM_CONFIG_DIR="$(  __fn_writeable_dir "CONFIG_DIR"           "config" "配置" 2>/dev/null \
+                         || __fn_writeable_dir "DEFAULT_CONFIG_DIR"   "config" "配置" 2>/dev/null \
+                         || __fn_writeable_dir "FNOS_APP_CONFIG_DIR"  "config" "配置" 2>/dev/null \
+                         || echo "${TRIM_PKGVAR}/config" )"
+    FASTSTRM_DATA_DIR="$(    __fn_writeable_dir "DATA_DIR"             "data"   "数据"  2>/dev/null \
+                         || __fn_writeable_dir "FNOS_APP_DATA_DIR"    "data"   "数据"  2>/dev/null \
+                         || echo "${TRIM_PKGVAR}/data" )"
+    FASTSTRM_LOGS_DIR="$(    __fn_writeable_dir "LOGS_DIR"             "logs"   "日志"  2>/dev/null \
+                         || __fn_writeable_dir "FNOS_APP_LOGS_DIR"    "logs"   "日志"  2>/dev/null \
+                         || echo "${TRIM_PKGVAR}/logs" )"
 
-FASTSTRM_RUN_DIR="$(     __fn_writeable_dir "FASTSTRM_RUN_DIR"     "run"    "运行"   2>/dev/null \
-                      || __fn_writeable_dir "FNOS_APP_RUN_DIR"     "run"    "运行"   2>/dev/null \
-                      || echo "${APP_ROOT}/run" )"
+    mkdir -p "${FASTSTRM_CONFIG_DIR}" "${FASTSTRM_DATA_DIR}" "${FASTSTRM_LOGS_DIR}" 2>/dev/null || true
+    mkdir -p "$(dirname "${LOG_FILE}")" "$(dirname "${PID_FILE}")" 2>/dev/null || true
 
-mkdir -p "${FASTSTRM_CONFIG_DIR}" "${FASTSTRM_DATA_DIR}" \
-         "${FASTSTRM_LOGS_DIR}"   "${FASTSTRM_RUN_DIR}" 2>/dev/null || true
+    # --- 首次启动：把模板 config.yml 复制到可写 CONFIG_DIR（保证面板能编辑） ---
+    if [ ! -f "${FASTSTRM_CONFIG_DIR}/config.yml" ]; then
+      if [ -f "${TRIM_APPDEST}/config.yml" ]; then
+        cp -f "${TRIM_APPDEST}/config.yml" "${FASTSTRM_CONFIG_DIR}/config.yml" 2>/dev/null || true
+        log_msg "已复制默认 config.yml 到 ${FASTSTRM_CONFIG_DIR}/config.yml"
+      fi
+    fi
+
+    # --- 二进制定位（amd64/arm64 统一命名 app/faststrm） ---
+    BIN="${TRIM_APPDEST}/app/faststrm"
+    if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/app/faststrm-linux-amd64"; fi
+    if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/app/faststrm-linux-arm64"; fi
+    if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/bin/faststrm"; fi
+    if [ ! -x "${BIN}" ]; then
+        log_msg "ERROR: faststrm 二进制未找到 (TRIM_APPDEST=${TRIM_APPDEST})"
+        return 1
+    fi
+    chmod +x "${BIN}" 2>/dev/null || true
+
+    # --- 启动：后台运行，stdout/stderr 分别落盘，记录 PID ---
+    STD_LOG="${FASTSTRM_LOGS_DIR}/app.out.log"
+    ERR_LOG="${FASTSTRM_LOGS_DIR}/app.err.log"
+
+    cd "${TRIM_APPDEST}" || true
+    export CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
+    export DEFAULT_CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
+    export DATA_DIR="${FASTSTRM_DATA_DIR}"
+    export LOGS_DIR="${FASTSTRM_LOGS_DIR}"
+
+    log_msg "启动命令: ${BIN} run --config ${FASTSTRM_CONFIG_DIR}/config.yml"
+    log_msg " stdout -> ${STD_LOG}"
+    log_msg " stderr -> ${ERR_LOG}"
+
+    nohup "${BIN}" run --config "${FASTSTRM_CONFIG_DIR}/config.yml" \
+        >>"${STD_LOG}" 2>>"${ERR_LOG}" </dev/null &
+    CHILD_PID=$!
+
+    if [ -z "${CHILD_PID}" ]; then
+        log_msg "ERROR: 启动进程失败，PID 为空"
+        return 1
+    fi
+
+    # 写入 PID 文件（格式：仅一行数字，便于后续 kill/status）
+    printf "%s" "${CHILD_PID}" > "${PID_FILE}"
+    log_msg "已启动，PID=${CHILD_PID}，PID_FILE=${PID_FILE}"
+
+    # 短暂等待 1.5s，确认 binary 没立刻崩溃（端口起不起来常见秒退）
+    sleep 1
+    if ! check_process "${CHILD_PID}"; then
+        log_msg "WARNING: 启动后进程 (PID=${CHILD_PID}) 已退出。请查看 ${ERR_LOG} 与 ${STD_LOG}"
+        cat "${ERR_LOG}" 2>/dev/null | tail -n 20 >> "${LOG_FILE}" || true
+        rm -f "${PID_FILE}"
+        # 但我们不 return 1 —— 让用户在面板上点启动能观察到"启动后秒退"状态，方便排查
+        return 0
+    fi
+    log_msg "启动后 1s 健康检查通过，进程仍存活。"
+    return 0
+}
 
 # ---------------------------------------------------------------------------
-# 运行时环境变量：出口规范，给 Go 侧消费
-#   CONFIG_DIR / DEFAULT_CONFIG_DIR：fNOS 应用配置入口
-#   LOGS_DIR / RUN_DIR              ：日志、pid 与 sockets
-#   FASTSTRM_EXPORT_DIR / FASTSTRM_SOURCE_DIR：用户可在 fNOS 配置面板上挂载
+# 停止：发 TERM 等待 10s，不行再 KILL
 # ---------------------------------------------------------------------------
-export CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
-export DEFAULT_CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
-export DATA_DIR="${FASTSTRM_DATA_DIR}"
-export LOGS_DIR="${FASTSTRM_LOGS_DIR}"
-export RUN_DIR="${FASTSTRM_RUN_DIR}"
+stop_process() {
+    log_msg "Stopping process ..."
+
+    if [ -r "${PID_FILE}" ]; then
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        log_msg "pid=${pid}"
+        if ! check_process "${pid}"; then
+            rm -f "${PID_FILE}"
+            log_msg "remove pid file (process already gone)"
+            return 0
+        fi
+
+        log_msg "send TERM signal to PID:${pid}..."
+        kill -TERM ${pid} >> "${LOG_FILE}" 2>&1
+
+        local count=0
+        while check_process "${pid}" && [ $count -lt 10 ]; do
+            sleep 1
+            count=$((count + 1))
+            log_msg "waiting process terminal... (${count}s/10s)"
+        done
+
+        if check_process "${pid}"; then
+            log_msg "send KILL signal to PID:${pid}..."
+            kill -KILL "${pid}"
+            sleep 1
+            rm -f "${PID_FILE}"
+            log_msg "process killed by SIGKILL"
+        else
+            rm -f "${PID_FILE}"
+            log_msg "process terminated (TERM) cleanly"
+        fi
+    else
+        log_msg "PID_FILE=${PID_FILE} 不存在或不可读，无需停止。"
+    fi
+    return 0
+}
 
 # ---------------------------------------------------------------------------
-# 默认配置文件：首次启动时把 config.yml 放到可写 CONFIG_DIR，让用户可在 fNOS 配置面板编辑
+# status: running -> exit 0；not running -> exit 3 (fNOS 规范)
 # ---------------------------------------------------------------------------
-if [ ! -f "${FASTSTRM_CONFIG_DIR}/config.yml" ]; then
-  if [ -f "${APP_ROOT}/config.yml" ]; then
-    cp -f "${APP_ROOT}/config.yml" "${FASTSTRM_CONFIG_DIR}/config.yml" 2>/dev/null || true
-  fi
-fi
+status() {
+    if [ -f "${PID_FILE}" ]; then
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if check_process "${pid}"; then
+            return 0
+        else
+            # pidfile 残留 -> 清理
+            rm -f "${PID_FILE}"
+        fi
+    fi
+    return 3
+}
 
 # ---------------------------------------------------------------------------
-# 二进制定位（兼容旧版路径 app/faststrm 以及直接在 app/ 目录）
+# 主分发
 # ---------------------------------------------------------------------------
-BIN="${APP_ROOT}/app/faststrm"
-if [ ! -x "${BIN}" ]; then BIN="${APP_ROOT}/app/faststrm-linux-amd64"; fi
-if [ ! -x "${BIN}" ]; then BIN="${APP_ROOT}/app/faststrm-linux-arm64"; fi
-if [ ! -x "${BIN}" ]; then BIN="${APP_ROOT}/bin/faststrm"; fi
-if [ ! -x "${BIN}" ]; then
-  echo "[cmd/main] faststrm binary not found in app/ or bin/ (APP_ROOT=${APP_ROOT})"
-  exit 2
-fi
-chmod +x "${BIN}" 2>/dev/null || true
-
-# ---------------------------------------------------------------------------
-# 启动
-# ---------------------------------------------------------------------------
-STD_LOG="${FASTSTRM_LOGS_DIR}/app.out.log"
-ERR_LOG="${FASTSTRM_LOGS_DIR}/app.err.log"
-
-cd "${APP_ROOT}" || true
-echo "[cmd/main] starting faststrm, CONFIG_DIR=${CONFIG_DIR} LOGS_DIR=${LOGS_DIR} BIN=${BIN}" \
-  >>"${STD_LOG}" 2>&1
-
-exec "${BIN}" run --config "${FASTSTRM_CONFIG_DIR}/config.yml" \
-  >>"${STD_LOG}" 2>>"${ERR_LOG}"
+case $1 in
+start)
+    start_process
+    exit $?
+    ;;
+stop)
+    stop_process
+    exit $?
+    ;;
+status)
+    if status; then
+        exit 0
+    else
+        exit 3
+    fi
+    ;;
+*)
+    echo "Usage: $0 {start|stop|status}"
+    exit 1
+    ;;
+esac
