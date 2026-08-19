@@ -154,10 +154,128 @@ jobs:
             --clobber
         done
 
-  # ---- Job 3: 创建 Release (兜底, 仅在 docker-release 和 fnos-release 之后创建 Release 页面) ----
-  # Docker Hub 镜像和 fNOS .fpk 都上传完成后, 保证 Release 存在且包含 release notes
+  # ---- Job 2.5: 原生独立二进制 (Windows amd64 + Linux amd64 / arm64) ----
+  # 对齐 qmediasync 的一次性打包模式：tag 一推，全平台二进制自动出现在 Release Assets
+  native-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Get current time
+      id: time
+      run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js (构建前端 SPA 嵌入到 Go embed)
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+        cache: true
+
+    - name: Build frontend SPA (Vite) 并嵌入 Go embed
+      env:
+        NODE_OPTIONS: --max-old-space-size=4096
+      run: |
+        set -euo pipefail
+        VERSION_CLEAN="${GITHUB_REF_NAME#v}"
+        cd frontend
+        npm ci
+        node -e "const fs=require('fs'); const p='./package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.version='$VERSION_CLEAN'; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\n');"
+        npm run build
+        echo "frontend build ok, internal/web/spa 内容："
+        ls -la ../internal/web/spa/
+
+    - name: Build Windows amd64 (zip with SPA + 默认 config)
+      env:
+        GOPROXY: https://proxy.golang.org,direct
+        APP_VERSION: ${{ github.ref_name }}
+        PUBLISH_DATE: ${{ steps.time.outputs.date }}
+      run: |
+        set -euo pipefail
+        go mod download
+        OUT_DIR="faststrm_windows_amd64"
+        mkdir -p "$OUT_DIR"
+        CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+          go build -trimpath \
+            -ldflags="-H=windowsgui -s -w \
+              -X 'main.version=${APP_VERSION}' \
+              -X 'main.BuildDate=${PUBLISH_DATE}' \
+              -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${APP_VERSION}' \
+              -X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${APP_VERSION}'" \
+            -o "${OUT_DIR}/faststrm.exe" ./cmd/server/
+        # 打包：二进制 + 一份示例 config
+        cp -r internal/web "${OUT_DIR}/web" 2>/dev/null || true
+        (cd "${OUT_DIR}" && zip -q -r "../${OUT_DIR}.zip" .)
+        ls -lh "${OUT_DIR}.zip"
+
+    - name: Build Linux amd64
+      env:
+        GOPROXY: https://proxy.golang.org,direct
+        APP_VERSION: ${{ github.ref_name }}
+        PUBLISH_DATE: ${{ steps.time.outputs.date }}
+      run: |
+        set -euo pipefail
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+          go build -trimpath \
+            -ldflags="-s -w \
+              -X 'main.version=${APP_VERSION}' \
+              -X 'main.BuildDate=${PUBLISH_DATE}' \
+              -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${APP_VERSION}' \
+              -X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${APP_VERSION}'" \
+            -o "faststrm_linux_amd64" ./cmd/server/
+        ls -lh "faststrm_linux_amd64"
+
+    - name: Build Linux arm64
+      env:
+        GOPROXY: https://proxy.golang.org,direct
+        APP_VERSION: ${{ github.ref_name }}
+        PUBLISH_DATE: ${{ steps.time.outputs.date }}
+      run: |
+        set -euo pipefail
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+          go build -trimpath \
+            -ldflags="-s -w \
+              -X 'main.version=${APP_VERSION}' \
+              -X 'main.BuildDate=${PUBLISH_DATE}' \
+              -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${APP_VERSION}' \
+              -X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${APP_VERSION}'" \
+            -o "faststrm_linux_arm64" ./cmd/server/
+        ls -lh "faststrm_linux_arm64"
+
+    - name: List native artifacts
+      run: ls -lh faststrm_windows_amd64.zip faststrm_linux_amd64 faststrm_linux_arm64
+
+    - name: Upload native binaries to GitHub Release Assets
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        TAG="${{ github.ref_name }}"
+        gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+          gh release create "$TAG" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Release $TAG" \
+            --generate-notes
+        for ART in faststrm_windows_amd64.zip faststrm_linux_amd64 faststrm_linux_arm64; do
+          [ -f "$ART" ] || continue
+          echo "Uploading $ART ..."
+          gh release upload "$TAG" "$ART" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+        done
+
+  # ---- Job 3: 创建 Release (兜底, 在 docker-release / fnos-release / native-release 之后) ----
+  # Docker Hub 镜像 + fNOS .fpk + Win/Linux 原生二进制 全部上传完成后, 保证 Release 存在且包含 release notes
   github-release:
-    needs: [docker-release, fnos-release]
+    needs: [docker-release, fnos-release, native-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write

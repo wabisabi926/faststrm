@@ -30,6 +30,7 @@ RUN GOOS=linux GOARCH=${TARGETARCH} \
     go build -trimpath \
     -ldflags="-s -w \
       -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${VERSION}' \
+      -X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${VERSION}' \
       -X 'main.version=${VERSION}' \
       -X 'main.BuildDate=${BUILD_DATE}'" \
     -o /out/faststrm ./cmd/server/
