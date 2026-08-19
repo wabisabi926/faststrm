@@ -15,6 +15,13 @@
 #         dist/faststrm-{arch}-{version} (解压后的安装目录)
 set -euo pipefail
 
+# --- CI 调试模式：默认开启行号级命令追踪，炸的时候一眼定位到哪一行 exit 1 ---
+#     如需关闭：BUILD_FNOS_QUIET=1 ./scripts/build-fnos.sh
+if [ "${BUILD_FNOS_QUIET:-0}" != "1" ]; then
+  export PS4='+ [${BASH_SOURCE}:${LINENO}] '
+  set -x
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
@@ -174,12 +181,24 @@ for ARCH in "${ARCHES[@]}"; do
   ls -la "${STAGE}/app" || true
   [ -f "${STAGE}/app/faststrm" ] && echo "    app/faststrm binary size: $(du -h "${STAGE}/app/faststrm" | cut -f1)" || echo "    !! app/faststrm binary MISSING"
 
+  # fnpack build：set +e 包裹 + tee 存完整 log，失败后把 fnpack 自己的报错完整吐出来
+  #     （set -e 下 fnpack exit 1 会直接炸，导致 fnpack 自身的错误信息可能只输出一半）
   echo "==> [${ARCH}] fnpack build in ${STAGE}"
-  (cd "${STAGE}" && fnpack build 2>&1)
+  FNPACK_LOG="${STAGE}/.fnpack-build.log"
+  set +e
+  (cd "${STAGE}" && fnpack build) >"${FNPACK_LOG}" 2>&1
   FNPACK_RC=$?
+  set -e
+  # 无论成功失败，把 fnpack 输出 echo 到 CI 日志（用户能直接看到 fnpack 说了什么）
+  echo "==> [${ARCH}] fnpack stdout+stderr (rc=${FNPACK_RC}):"
+  cat "${FNPACK_LOG}" || true
   if [ "${FNPACK_RC}" -ne 0 ]; then
-    echo "ERROR: fnpack build exited with code ${FNPACK_RC}. Dumping last 40 lines of staging contents + nested:" >&2
+    echo "ERROR: fnpack build exited with code ${FNPACK_RC}. Full recursive staging dump follows:" >&2
     ls -laR "${STAGE}" >&2 || true
+    echo "=======================================" >&2
+    echo "= manifest file contents (for review) =" >&2
+    echo "=======================================" >&2
+    cat "${MANIFEST}" >&2 || true
     exit "${FNPACK_RC}"
   fi
 
