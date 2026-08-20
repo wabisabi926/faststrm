@@ -223,6 +223,7 @@ for ARCH in "${ARCHES[@]}"; do
 
   # 同时保留一份解压后的目录在 dist 下，方便用户手工查看/定制
   # (仅在本地构建时保留，CI 环境下清理掉避免 Release Asset 冗余)
+  STAGE_COPY=""
   if [ "${BUILD_FNOS_KEEP_STAGE:-0}" = "1" ]; then
     STAGE_COPY="${DIST_DIR}/faststrm-${ARCH}-${VERSION}"
     rm -rf "${STAGE_COPY}"
@@ -242,7 +243,7 @@ for ARCH in "${ARCHES[@]}"; do
 
   SIZE="$(du -h "${PKG_PATH}" | cut -f1)"
   echo "    built -> ${PKG_PATH} (${SIZE})"
-  echo "    stage copy -> ${STAGE_COPY}"
+  [ -n "${STAGE_COPY}" ] && echo "    stage copy -> ${STAGE_COPY}"
 
   # 清 trap，手动删 tmp staging (避免下次迭代 trap 冲突)
   trap - RETURN
