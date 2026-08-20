@@ -72,26 +72,36 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 			})
 			return
 		}
-		content := make([]DirTreeNode, 0, len(entries.Data))
-		for _, e := range entries.Data {
+		frontendNodes := make([]map[string]any, 0, len(entries.Data))
+		for i, e := range entries.Data {
 			fc, _ := strconvAtoi64(anyToString(e.FC))
 			isDir := fc > 0 || (e.PickCode == "" && e.Size == 0)
-			content = append(content, DirTreeNode{
-				Key:      int(fc),
-				Name:     e.Name,
-				IsDir:    isDir,
-				Size:     e.Size,
-				PickCode: e.PickCode,
-			})
-		}
-		frontendNodes := make([]map[string]any, 0, len(content))
-		for _, n := range content {
+			// 使用序号作为 id（保证唯一性，前端用 id 做 React key 和展开状态追踪）
+			// 同时提取 e.CID 作为目录跳转的 category ID
+			cidVal, _ := strconvAtoi64(anyToString(e.CID))
+			fidVal, _ := strconvAtoi64(anyToString(e.FID))
+			uniqueID := int64(i + 1)
+			if isDir {
+				// 目录优先用 cid，保证稳定性
+				if cidVal > 0 {
+					uniqueID = cidVal
+				} else if fc > 0 {
+					uniqueID = fc
+				}
+			} else {
+				// 文件用 fid
+				if fidVal > 0 {
+					uniqueID = fidVal
+				}
+			}
 			frontendNodes = append(frontendNodes, map[string]any{
-				"id":       n.Key,
-				"name":     n.Name,
-				"isDir":    n.IsDir,
-				"size":     n.Size,
-				"pickCode": n.PickCode,
+				"id":       uniqueID,
+				"name":     e.Name,
+				"isDir":    isDir,
+				"size":     e.Size,
+				"pickCode": e.PickCode,
+				"cid":      cidVal,
+				"fid":      fidVal,
 			})
 		}
 		httpx.WriteJson(w, http.StatusOK, map[string]any{
