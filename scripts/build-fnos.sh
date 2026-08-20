@@ -63,7 +63,7 @@ fi
 
 for ARCH in "${ARCHES[@]}"; do
   case "$ARCH" in
-    amd64) GOARCH=amd64 ; EXPECT_PLATFORM="x86_64" ; FIELD_NAME="arch"     ;;
+    amd64) GOARCH=amd64 ; EXPECT_PLATFORM="x86"    ; FIELD_NAME="platform" ;;
     arm64) GOARCH=arm64 ; EXPECT_PLATFORM="arm"    ; FIELD_NAME="platform" ;;
     *) echo "Unknown arch: $ARCH"; exit 1 ;;
   esac
@@ -105,8 +105,8 @@ for ARCH in "${ARCHES[@]}"; do
   chmod 755 "${APP_DIR}" "${CMD_DIR}" "${WIZARD_DIR}" 2>/dev/null || true
 
   # --- 1a. manifest 平台字段 & 版本号一致性校验（永远不回写 git 源文件） ---
-  #     fNOS amd64 使用 `arch` 字段；arm64 使用 `platform` 字段（用户纠正）。
-  #     qmediasync 里 amd64 写 `platform=x86_64` 是错的，不要照抄。
+  #     fNOS 新版规范统一使用 `platform` 字段：amd64=x86，arm64=arm。
+  #     旧版 `arch=x86_64` 已废弃；qmediasync 里 amd64 写 `platform=x86_64` 是错的。
   if [ ! -f "${MANIFEST}" ]; then
     echo "ERROR: manifest missing at ${MANIFEST} (is FNOS skeleton complete?)" >&2
     exit 1
