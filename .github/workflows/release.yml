@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Extract release notes
       id: notes
@@ -60,7 +60,7 @@ jobs:
         cat release_notes.md
 
     - name: Upload release notes artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: release-notes
         path: release_notes.md
@@ -75,10 +75,10 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
         node-version: 20
 
@@ -141,10 +141,10 @@ jobs:
       run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
 
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Node.js (构建前端 SPA 嵌入 Go embed)
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
         node-version: 20
 
@@ -162,7 +162,7 @@ jobs:
         ls -la ../internal/web/spa/
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25'
         cache: true
@@ -195,7 +195,7 @@ jobs:
       run: ls -lh dist/
 
     - name: Upload .fpk packages as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: fnos-packages
         path: dist/*.fpk
@@ -211,15 +211,15 @@ jobs:
       run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
 
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Node.js (构建前端 SPA 嵌入到 Go embed)
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
         node-version: 20
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25'
         cache: true
@@ -297,7 +297,7 @@ jobs:
       run: ls -lh faststrm_windows_amd64.zip faststrm_linux_amd64 faststrm_linux_arm64
 
     - name: Upload native binaries as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: native-binaries
         path: |
@@ -314,19 +314,19 @@ jobs:
 
     steps:
     - name: Download release-notes artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: release-notes
         path: artifacts/release-notes
 
     - name: Download fnos-packages artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: fnos-packages
         path: artifacts/fnos-packages
 
     - name: Download native-binaries artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: native-binaries
         path: artifacts/native-binaries
