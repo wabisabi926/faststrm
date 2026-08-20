@@ -2,7 +2,7 @@ name: Sync Wiki
 
 on:
   push:
-    branches: [main]
+    branches: [go]
     paths:
       - "wiki_drafts/**"
       - "scripts/sync-wiki.mjs"
