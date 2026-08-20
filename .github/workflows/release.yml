@@ -313,15 +313,23 @@ jobs:
       contents: write
 
     steps:
-    - name: Download all artifacts
+    - name: Download release-notes artifact
       uses: actions/download-artifact@v4
       with:
-        path: artifacts
-        pattern: |
-          release-notes
-          fnos-packages
-          native-binaries
-        merge-multiple: false
+        name: release-notes
+        path: artifacts/release-notes
+
+    - name: Download fnos-packages artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: fnos-packages
+        path: artifacts/fnos-packages
+
+    - name: Download native-binaries artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: native-binaries
+        path: artifacts/native-binaries
 
     - name: List all downloaded artifacts
       run: find artifacts -type f -ls
