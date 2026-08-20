@@ -60,7 +60,7 @@ jobs:
         cat release_notes.md
 
     - name: Upload release notes artifact
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: release-notes
         path: release_notes.md
@@ -195,7 +195,7 @@ jobs:
       run: ls -lh dist/
 
     - name: Upload .fpk packages as artifact
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: fnos-packages
         path: dist/*.fpk
@@ -297,7 +297,7 @@ jobs:
       run: ls -lh faststrm_windows_amd64.zip faststrm_linux_amd64 faststrm_linux_arm64
 
     - name: Upload native binaries as artifact
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: native-binaries
         path: |
@@ -314,19 +314,19 @@ jobs:
 
     steps:
     - name: Download release-notes artifact
-      uses: actions/download-artifact@v5
+      uses: actions/download-artifact@v8
       with:
         name: release-notes
         path: artifacts/release-notes
 
     - name: Download fnos-packages artifact
-      uses: actions/download-artifact@v5
+      uses: actions/download-artifact@v8
       with:
         name: fnos-packages
         path: artifacts/fnos-packages
 
     - name: Download native-binaries artifact
-      uses: actions/download-artifact@v5
+      uses: actions/download-artifact@v8
       with:
         name: native-binaries
         path: artifacts/native-binaries
