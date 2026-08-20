@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/wabisabi926/faststrm/internal/model"
+	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // SettingsStore settings.json 读写（不加密，因为是通用配置，不含用户密钥字段）
@@ -23,19 +24,21 @@ func NewSettingsStore(salt, configDir string) *SettingsStore {
 	}
 }
 
-// ReadSettings 读取 Settings，不存在则返回默认值
+// ReadSettings 读取 Settings，不存在或权限不足则返回默认值
 func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return model.DefaultSettings(), nil
 		}
-		return nil, err
+		logger.S().Warnf("[SettingsStore] ReadSettings failed: %v, returning defaults", err)
+		return model.DefaultSettings(), nil
 	}
 	var out model.Settings
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &out); err != nil {
-			return nil, err
+			logger.S().Warnf("[SettingsStore] ReadSettings json unmarshal failed: %v, returning defaults", err)
+			return model.DefaultSettings(), nil
 		}
 	}
 	// 填充默认值（确保空字段有默认）

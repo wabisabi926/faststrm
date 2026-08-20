@@ -126,8 +126,9 @@ start_process() {
     # --- 环境变量：和 cmd/server/main.go getDefaultRoot 对齐 ---
     # Go 后端使用 config.InitApp(defaultRoot) 管理一套纯 JSON 配置：
     #   config.json / account.json / tasks.json / settings.json
-    # CONFIG_DIR：用户可写配置目录（Go 侧 getDefaultRoot fallback 到此）
-    # DEFAULT_CONFIG_DIR：只读默认模板目录（fNOS FPK 不含 .config 模板，不设置此变量）
+    # DEFAULT_CONFIG_DIR：只读默认模板目录（含 .config.json/.settings.json 等模板）
+    # CONFIG_DIR：用户可写配置目录（运行时生成 config.json/settings.json 等）
+    export DEFAULT_CONFIG_DIR="${TRIM_APPDEST}/.config"
     export CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
     export DATA_DIR="${FASTSTRM_DATA_DIR}"
     export LOGS_DIR="${FASTSTRM_LOGS_DIR}"

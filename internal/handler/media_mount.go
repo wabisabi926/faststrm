@@ -5,8 +5,11 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/mediasync"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/task"
+	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 type MediaMountDeps struct {
@@ -19,14 +22,18 @@ func HandleMediaMountSyncGET(deps MediaMountDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		settings, err := deps.SettingsStore.ReadSettings()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			logger.S().Warnf("[MediaMountSyncGET] ReadSettings failed: %v, using defaults", err)
+			settings = &model.Settings{}
 		}
 		accounts := deps.AccountStore.List()
-		tasks, err := deps.TasksStore.ReadTasks()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		var tasks []task.Task
+		if deps.TasksStore != nil {
+			read, terr := deps.TasksStore.ReadTasks()
+			if terr != nil {
+				logger.S().Warnf("[MediaMountSyncGET] ReadTasks failed: %v, returning empty list", terr)
+			} else {
+				tasks = read
+			}
 		}
 
 		input := mediasync.ComputeInput{
@@ -66,14 +73,18 @@ func HandleMediaMountSyncPOST(deps MediaMountDeps) http.HandlerFunc {
 
 		settings, err := deps.SettingsStore.ReadSettings()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			logger.S().Warnf("[MediaMountSyncPOST] ReadSettings failed: %v, using defaults", err)
+			settings = &model.Settings{}
 		}
 		accounts := deps.AccountStore.List()
-		tasks, err := deps.TasksStore.ReadTasks()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		var tasks []task.Task
+		if deps.TasksStore != nil {
+			read, terr := deps.TasksStore.ReadTasks()
+			if terr != nil {
+				logger.S().Warnf("[MediaMountSyncPOST] ReadTasks failed: %v, returning empty list", terr)
+			} else {
+				tasks = read
+			}
 		}
 
 		input := mediasync.ComputeInput{
