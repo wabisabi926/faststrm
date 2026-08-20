@@ -1,5 +1,5 @@
 appname               = faststrm
-version = 0.9.1
+version = 0.9.3
 display_name          = FastStrm
 desc                  = 115 网盘 STRM 自动生成器。监控网盘变动实时生成 STRM，支持 Emby/Jellyfin/Infuse 直连播放，内置 Telegram 通知与 Emby 自动刷库。
 platform              = x86
@@ -16,3 +16,4 @@ service_config_dir = /app_data/faststrm/config
 service_data_dir   = /app_data/faststrm/data
 service_log_dir    = /app_data/faststrm/logs
 service_run_dir    = /app_data/faststrm/run
+

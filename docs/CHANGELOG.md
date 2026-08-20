@@ -1,5 +1,18 @@
 # FastStrm 变更日志
 
+## v0.9.3 (2026-08-20)
+
+### 紧急修复
+
+- **FNOS cmd/main**: 添加 `DEFAULT_CONFIG_DIR` 环境变量指向 `.config` 模板目录，修复 fNOS 环境下应用无法启动的问题
+- **directory.go**: 将本地目录列表接口从 GET 改为 POST，支持 JSON body 参数 `basePath`；修复响应中 `id` 字段使用完整路径而非索引
+- **directory.go**: 优化 `defaultRoots()` 函数，优先返回 fNOS 环境变量目录和常见挂载点（/mnt、/media、/home 等）
+- **directory.go**: 远程目录列表修复 `id` 唯一性问题，目录优先用 `cid`，文件用 `fid`，兜底用序号
+- **task.go**: `HandleListTasks` 增加 nil 检查和容错处理，`ReadTasks` 失败时返回空列表而非 500 错误
+- **media_mount.go**: `HandleMediaMountSyncGET/POST` 在 `ReadSettings` 或 `ReadTasks` 失败时降级到默认值/空列表，不再返回 500 错误
+- **settings.go**: `ReadSettings` 权限不足或 JSON 解析失败时返回默认配置而非报错
+- **directory.go**: 添加路径穿越防护（filepath.Clean、filepath.IsAbs、os.Stat）
+
 ## v0.9.2 (2026-08-20)
 
 ### Bug 修复
