@@ -80,7 +80,7 @@ FastStrm 提供 3 种官方分发方式，任选其一：
 | 方式 | 适用场景 | 下载地址 / 命令 |
 |:----:|----------|-----------------|
 | 🐳 **Docker**（最通用） | Linux / NAS / macOS / Windows，已有 Docker 环境 | `docker pull wabisabi926/faststrm:latest` |
-| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-0.9.1.fpk`](https://github.com/wabisabi926/faststrm/releases) |
+| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-0.9.4.fpk`](https://github.com/wabisabi926/faststrm/releases) |
 | 🖥️ **源码 / 单二进制** | 想自己编译或跑在普通 Linux 主机 | `git clone -b go https://github.com/wabisabi926/faststrm && cd faststrm && go build ./cmd/server/` |
 
 > 📘 飞牛打包、定制、运行目录和排错详见 [docs/飞牛打包部署.md](docs/飞牛打包部署.md)
@@ -127,16 +127,15 @@ FastStrm v0.9.1 采用纯 Go 架构：
 
 ---
 
-## 📝 最新版本 (v0.9.1)
+## 📝 最新版本 (v0.9.4)
 
-- **🔥 启动与数据兼容性全量修复**：响应 v0.8.9.7 审查报告，修复 FPK 二进制路径多一层 `app/`、Shell 脚本 CRLF、`tasks.json` 文件名不一致、SQLite 路径迁移缺失、amd64 manifest 架构字段等所有 P0/P1 问题
-- **🔧 配置语义拆分**：拆分 `CONFIG_DIR`（用户可写）和 `DEFAULT_CONFIG_DIR`（只读模板）；FPK `cmd/main` 移除 `--config` flag 污染；秒退时写 `TRIM_TEMP_LOGFILE` 并返回非零
-- **🐛 飞牛生命周期脚本深度修复**：uninstall_init/upgrade_init 改为读 PID_FILE 杀进程（原 `pkill -f "^${p} "` 无法匹配 nohup 启动的进程）；install_callback 的可写目录 fallback 与 main 对齐；uninstall_callback 补全 `TRIM_PKGVAR/{config,data,logs,run}` 清理
-- **🏷️ Docker Hub 标签策略修复**：metadata 增加 `type=raw,value=${{ github.ref_name }}`，让 `v0.8.9.7` 这类四段版本号也能生成同名 Docker Hub tag
-- **🧹 Go 重构残余清理（继承 v0.8.8）**：删除 Next.js 遗留、`emby2Alist/` 旧 Nginx+NJS 反代 demo、`faststrm-demo` submodule gitlink
+- **🔥 紧急修复：路径浏览 & 账户状态**：修复远程路径根目录处理、isDir 判断逻辑、前端 CID 导航；优化本地路径在 fNOS 环境下的探测和权限校验；新增账户状态页面图标和刷新功能
+- **📂 远程路径浏览**：根目录直接使用 cid=0、修复 fc > 0 && fid == 0 判断、前端改为 CID 参数导航
+- **📁 本地路径浏览**：fNOS 环境变量探测（TRIM_DATA_ACCESSIBLE_PATHS、TRIM_DATA_SHARE_PATHS）、路径权限校验、Windows 盘符枚举
+- **✅ 账户状态页面**：调用 /api/account/status 接口、显示状态图标、支持手动刷新
+- **🏷️ 版本号全链路同步**：main.go / package.json / manifest 统一更新
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
-
 ---
 
 ## 📄 许可证

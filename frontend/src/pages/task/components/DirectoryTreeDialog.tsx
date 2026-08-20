@@ -25,8 +25,11 @@ interface TreeNode {
   name: string;
   id: number;
   isDir: boolean;
-  hasChildren?: boolean; // 标记是否有子目录（API返回的）
-  children?: TreeNode[]; // 已加载的子节点
+  cid?: number;
+  fid?: number;
+  path?: string;
+  hasChildren?: boolean;
+  children?: TreeNode[];
 }
 
 interface DirectoryTreeDialogProps {
@@ -34,7 +37,7 @@ interface DirectoryTreeDialogProps {
   onOpenChange: (open: boolean) => void;
   account: string;
   onSelect: (path: string) => void;
-  onSelectWithTargetPath?: (originPath: string, targetPath: string) => void; // 同时设置远程和本地路径的回调
+  onSelectWithTargetPath?: (originPath: string, targetPath: string) => void;
 }
 
 export function DirectoryTreeDialog({
@@ -55,15 +58,14 @@ export function DirectoryTreeDialog({
   const [selectedPath, setSelectedPath] = React.useState<string>("");
   const [showAutoFillDialog, setShowAutoFillDialog] = React.useState(false);
 
-  // 加载目录树
   const loadTree = React.useCallback(
-    async (path: string = "") => {
+    async (cid: string = "0") => {
       if (!account) return;
 
       setLoading(true);
       try {
         const response = await axiosInstance.get("/api/directory/remote/list", {
-          params: { account, path },
+          params: { account, cid },
         });
 
         if (response.data.code === 200) {
@@ -82,53 +84,50 @@ export function DirectoryTreeDialog({
     [account]
   );
 
-  // 当对话框打开时加载根目录
   React.useEffect(() => {
     if (open && account) {
-      loadTree("");
+      loadTree("0");
       setExpandedNodes(new Set());
       setSelectedPath("");
     }
   }, [open, account, loadTree]);
 
-  // 展开/折叠节点
   const toggleNode = async (node: TreeNode, parentPath: string = "") => {
     const currentPath = parentPath
       ? `${parentPath}/${node.name}`
       : node.name;
 
     if (expandedNodes.has(node.id)) {
-      // 折叠
       setExpandedNodes((prev) => {
         const next = new Set(prev);
         next.delete(node.id);
         return next;
       });
     } else {
-      // 展开 - 如果还没有加载子节点，先加载
-      // 如果children属性不存在，说明还没有加载过
       if (node.children === undefined) {
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
+          const nodeCid = node.cid !== undefined ? String(node.cid) : "0";
           const response = await axiosInstance.get("/api/directory/remote/list", {
-            params: { account, path: currentPath },
+            params: { account, cid: nodeCid },
           });
 
           if (response.data.code === 200) {
-            const children = response.data.data || [];
+            const children: TreeNode[] = (response.data.data || []).map((child: any) => ({
+              ...child,
+              path: currentPath ? `${currentPath}/${child.name}` : child.name,
+            }));
             const updatedTree = updateTreeNode(tree, node.id, {
               ...node,
-              children: children, // 即使为空数组也设置，表示已加载过
+              children: children,
             });
             setTree(updatedTree);
-            // 如果有子节点，自动展开
             if (children.length > 0) {
               setExpandedNodes((prev) => new Set(prev).add(node.id));
             }
           }
         } catch (error) {
           console.error("Error loading children:", error);
-          // 加载失败时，设置children为空数组，表示已尝试加载
           const updatedTree = updateTreeNode(tree, node.id, {
             ...node,
             children: [],
@@ -142,13 +141,11 @@ export function DirectoryTreeDialog({
           });
         }
       } else {
-        // 已经加载过，直接展开
         setExpandedNodes((prev) => new Set(prev).add(node.id));
       }
     }
   };
 
-  // 更新树节点
   const updateTreeNode = (
     nodes: TreeNode[],
     targetId: number,
@@ -168,62 +165,50 @@ export function DirectoryTreeDialog({
     });
   };
 
-  // 选择路径
   const handleSelect = (path: string) => {
     setSelectedPath(path);
   };
 
-  // 确认选择
   const handleConfirm = () => {
     if (!selectedPath) return;
-    
-    // 如果有回调函数，总是显示确认对话框
+
     if (onSelectWithTargetPath) {
       setShowAutoFillDialog(true);
       return;
     }
-    
-    // 否则直接选择
+
     onSelect(selectedPath);
     onOpenChange(false);
   };
 
-  // 自动填充确认
   const handleAutoFillConfirm = () => {
     if (!selectedPath || !onSelectWithTargetPath) return;
-    
-    // 自动填充本地路径：默认使用远程路径本身（用户可修改）
+
     onSelectWithTargetPath(selectedPath, selectedPath);
     setShowAutoFillDialog(false);
     onOpenChange(false);
   };
 
-  // 不自动填充
   const handleAutoFillCancel = () => {
     if (!selectedPath) return;
-    
-    // 只设置远程路径，不设置本地路径
+
     onSelect(selectedPath);
     setShowAutoFillDialog(false);
     onOpenChange(false);
   };
 
-  // 渲染树节点
   const renderTreeNode = (
     node: TreeNode,
     parentPath: string = "",
     level: number = 0
   ): React.ReactNode => {
-    // 构建当前路径，根目录时parentPath为空字符串
     const currentPath = parentPath
       ? `${parentPath}/${node.name}`
       : node.name;
     const isExpanded = expandedNodes.has(node.id);
     const isLoading = loadingNodes.has(node.id);
     const isSelected = selectedPath === currentPath;
-    // 如果children为undefined，表示还没有加载过
     const hasLoadedChildren = node.children !== undefined;
-    // 是否有子节点可以显示
     const hasChildrenToShow = hasLoadedChildren && node.children && node.children.length > 0;
 
     return (
@@ -234,16 +219,13 @@ export function DirectoryTreeDialog({
           }`}
           style={{ paddingLeft: `${level * 20 + 8}px` }}
           onClick={(e) => {
-            // 点击图标区域时展开/折叠
             const target = e.target as HTMLElement;
             if (target.closest('.chevron-icon') || target.closest('.folder-icon')) {
               if (node.isDir) {
                 toggleNode(node, parentPath);
               }
             } else {
-              // 点击其他区域时选择路径
               handleSelect(currentPath);
-              // 如果是目录，也展开/折叠
               if (node.isDir) {
                 toggleNode(node, parentPath);
               }
@@ -261,10 +243,8 @@ export function DirectoryTreeDialog({
                   <ChevronRight className="w-4 h-4 text-gray-400 chevron-icon" />
                 )
               ) : hasLoadedChildren && !hasChildrenToShow ? (
-                // 已加载但没有子目录，显示空图标
                 <div className="w-4 h-4" />
               ) : (
-                // 未加载，显示展开图标（表示可以展开）
                 <ChevronRight className="w-4 h-4 text-gray-400 chevron-icon" />
               )}
               <Folder className="w-4 h-4 text-blue-500 folder-icon" />
@@ -326,7 +306,6 @@ export function DirectoryTreeDialog({
         </DialogFooter>
       </DialogContent>
 
-      {/* 自动填充本地路径确认对话框 */}
       <AlertDialog open={showAutoFillDialog} onOpenChange={setShowAutoFillDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>

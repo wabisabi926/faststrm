@@ -269,9 +269,12 @@ func (c *Client) FsFiles(
 		return nil, fmt.Errorf("parse fs_files response: %w (body=%s)", err, truncate(body, 512))
 	}
 	// 标记目录
+	// 115 web API: fc 字段为子项数量（目录>0，文件为1或0）
+	// 正确判断：fc > 0 且 fid 为 0 → 目录
 	for i := range resp.Data {
 		fc, _ := toInt64(resp.Data[i].FC)
-		resp.Data[i].IsDir = resp.Data[i].Size == 0 && fc > 0
+		fid, _ := toInt64(resp.Data[i].FID)
+		resp.Data[i].IsDir = fc > 0 && fid == 0
 	}
 	return &resp, nil
 }
@@ -285,6 +288,12 @@ func (c *Client) FsDirGetID(
 ) (int64, error) {
 	if cookie == "" {
 		return 0, fmt.Errorf("cookie is empty")
+	}
+	// 路径格式处理：确保以 / 开头，去除末尾的 /
+	path = strings.ReplaceAll(path, "\\", "/")
+	path = strings.TrimSuffix(path, "/")
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
 	}
 	endpoint := "https://webapi.115.com/files/getid?path=" + url.QueryEscape(path)
 	body, err := c.request115(ctx, http.MethodGet, endpoint, "", RequestOptions{

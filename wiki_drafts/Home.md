@@ -20,14 +20,13 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.9.3 已发布 — 紧急修复：fNOS 启动 & 路径浏览 & 任务列表**
+> **🎉 v0.9.4 已发布 — 紧急修复：路径浏览 & 账户状态**
 >
-> - 🔧 **fNOS 启动修复**：添加 `DEFAULT_CONFIG_DIR` 环境变量，修复飞牛环境下应用无法启动的问题
-> - 📂 **本地/网盘路径浏览**：将目录列表接口改为 POST、修复 ID 唯一性、优化 fNOS 默认根路径
-> - ✅ **任务列表容错**：`ReadTasks` 失败时返回空列表而非 500 错误，不再弹出「获取任务列表失败」
-> - ✅ **媒体挂载路径**：`ReadSettings` 失败时降级到默认值，不再显示「未加载数据」
-> - 🛡️ **安全加固**：路径穿越防护、JSON 解析容错
-> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases/tag/v0.9.3)
+> - 📂 **远程路径浏览修复**：根目录直接使用 cid=0、修复 `isDir` 判断逻辑、前端改为 CID 导航
+> - 📁 **本地路径浏览修复**：优化 fNOS 环境变量探测、添加路径权限校验、Windows 盘符枚举
+> - ✅ **账户状态页面**：添加状态检查、显示状态图标、支持手动刷新
+> - 🏷️ **版本号全链路同步**：main.go / package.json / manifest 统一更新为 0.9.4
+> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases/tag/v0.9.4)
 ---
 
 ## 🚩 目录导航
@@ -94,4 +93,4 @@
 
 欢迎提交 [Issue](https://github.com/wabisabi926/faststrm/issues) 和 [Pull Request](https://github.com/wabisabi926/faststrm/pulls) 来改进这个项目。
 
-<!-- v0.9.3 sync trigger -->
+<!-- v0.9.4 sync trigger -->

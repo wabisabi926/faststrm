@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -32,12 +33,14 @@ type DirTreeNode struct {
 }
 
 // HandleRemoteDirList GET /api/directory/remote/list
-// query: account, path (optional), refresh
+// query: account, path (optional), cid (optional), refresh
+// 优先使用 cid 直接导航（对齐 qmediasync 方式），path 作为后备方案
 func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		accountName := q.Get("account")
 		path := q.Get("path")
+		cidParam := q.Get("cid")
 		if accountName == "" {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "account required"})
 			return
@@ -47,49 +50,106 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "account not found"})
 			return
 		}
-		if path == "" {
-			path = "/"
-		}
-		cid, err := deps.Client115.FsDirGetID(r.Context(), path, account.Cookie)
-		if err != nil {
-			httpx.WriteJson(w, http.StatusBadGateway, map[string]string{
-				"error": "fs_dir_getid failed: " + err.Error(),
-			})
-			return
-		}
-		entries, err := deps.Client115.FsFiles(r.Context(), itoa64(cid), 1000, 0, account.Cookie)
-		if err != nil {
-			httpx.WriteJson(w, http.StatusBadGateway, map[string]string{
-				"error": "fs_files failed: " + err.Error(),
-			})
-			return
-		}
-		if !entries.State {
+
+		if account.Cookie == "" {
 			httpx.WriteJson(w, http.StatusOK, map[string]any{
-				"code":    500,
-				"message": "fs_files state=false",
+				"code":    401,
+				"message": "Cookie未设置，请先登录115账号",
 				"data":    []map[string]any{},
 			})
 			return
 		}
+
+		// 确定 CID：优先使用 cid 参数，其次用 path 转换
+		var cid int64
+		if cidParam != "" {
+			// 直接用 CID（对齐 qmediasync 的 parentId 方式）
+			cidVal, err := strconvAtoi64(cidParam)
+			if err != nil {
+				// 尝试作为字符串 "0" 处理
+				cid = 0
+			} else {
+				cid = cidVal
+			}
+		} else if path == "" || path == "/" || path == "0" || path == "." {
+			// 根目录直接用 cid=0
+			cid = 0
+		} else {
+			// 清理路径，确保格式正确
+			// 115 API 的 getid 需要路径以 / 开头
+			cleanedPath := strings.TrimPrefix(path, "/")
+			cleanedPath = strings.TrimSuffix(cleanedPath, "/")
+			if cleanedPath == "" {
+				cid = 0
+			} else {
+				if !strings.HasPrefix(cleanedPath, "/") {
+					cleanedPath = "/" + cleanedPath
+				}
+				var err error
+				cid, err = deps.Client115.FsDirGetID(r.Context(), cleanedPath, account.Cookie)
+				if err != nil {
+					httpx.WriteJson(w, http.StatusOK, map[string]any{
+						"code":    500,
+						"message": "获取目录ID失败: " + err.Error(),
+						"data":    []map[string]any{},
+					})
+					return
+				}
+			}
+		}
+
+		entries, err := deps.Client115.FsFiles(r.Context(), itoa64(cid), 1000, 0, account.Cookie)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    500,
+				"message": "获取文件列表失败: " + err.Error(),
+				"data":    []map[string]any{},
+			})
+			return
+		}
+		if !entries.State {
+			errMsg := "115 API返回错误，请检查Cookie是否有效"
+			if entries.ErrMsg != "" {
+				errMsg = entries.ErrMsg
+			}
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    500,
+				"message": errMsg,
+				"data":    []map[string]any{},
+			})
+			return
+		}
+
+		// 如果是根目录，且返回为空，可能Cookie无效
+		if cid == 0 && len(entries.Data) == 0 {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    200,
+				"message": "",
+				"data":    []map[string]any{},
+			})
+			return
+		}
+
 		frontendNodes := make([]map[string]any, 0, len(entries.Data))
 		for i, e := range entries.Data {
 			fc, _ := strconvAtoi64(anyToString(e.FC))
-			isDir := fc > 0 || (e.PickCode == "" && e.Size == 0)
-			// 使用序号作为 id（保证唯一性，前端用 id 做 React key 和展开状态追踪）
-			// 同时提取 e.CID 作为目录跳转的 category ID
+			// 修正 isDir 判断：fc > 0 表示有子项数，是目录；否则看 pickCode 和 size
+			isDir := fc > 0
+			if !isDir {
+				pc := anyToString(e.PickCode)
+				sz, _ := strconvAtoi64(anyToString(e.Size))
+				isDir = pc == "" && sz == 0
+			}
 			cidVal, _ := strconvAtoi64(anyToString(e.CID))
 			fidVal, _ := strconvAtoi64(anyToString(e.FID))
 			uniqueID := int64(i + 1)
 			if isDir {
-				// 目录优先用 cid，保证稳定性
 				if cidVal > 0 {
 					uniqueID = cidVal
 				} else if fc > 0 {
 					uniqueID = fc
 				}
 			} else {
-				// 文件用 fid
 				if fidVal > 0 {
 					uniqueID = fidVal
 				}
@@ -115,11 +175,14 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 // HandleLocalDirList POST /api/directory/local/list
 // Body: { basePath: string } - basePath 为空时返回默认根路径列表
 // 也兼容 GET ?root=xxx 查询参数
+// 参考 qmediasync 实现：
+//   Windows: 使用 gopsutil/disk 枚举盘符
+//   fNOS环境: 使用 TRIM_DATA_ACCESSIBLE_PATHS + TRIM_DATA_SHARE_PATHS 白名单
+//   其他Linux: 返回 / 根目录及常见挂载点
 func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var root string
 
-		// 优先从 POST JSON body 读取 basePath
 		if r.Method == http.MethodPost {
 			var body struct {
 				BasePath string `json:"basePath"`
@@ -133,18 +196,20 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 			}
 		}
 
-		// 兼容 GET query 参数
 		if root == "" {
 			root = r.URL.Query().Get("root")
 		}
 
+		isFnOS := detectFnOS()
+
 		if root == "" {
-			roots := defaultRoots()
+			// 根路径 - 返回可用的根目录列表
+			roots := defaultRoots(isFnOS)
 			frontendNodes := make([]map[string]any, 0, len(roots))
-			for _, r := range roots {
+			for _, rt := range roots {
 				frontendNodes = append(frontendNodes, map[string]any{
-					"id":    r,
-					"name":  r,
+					"id":    rt,
+					"name":  rt,
 					"isDir": true,
 				})
 			}
@@ -156,7 +221,19 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 			return
 		}
 
-		// 清理路径，防止路径穿越
+		// fNOS 环境下校验路径白名单
+		if isFnOS {
+			allowedPaths := getAllowedPaths()
+			if !isPathAllowed(root, allowedPaths) {
+				httpx.WriteJson(w, http.StatusOK, map[string]any{
+					"code":    403,
+					"message": "无权限访问该目录，路径必须在允许的范围内",
+					"data":    []map[string]any{},
+				})
+				return
+			}
+		}
+
 		cleaned := filepath.Clean(root)
 		if !filepath.IsAbs(cleaned) {
 			httpx.WriteJson(w, http.StatusOK, map[string]any{
@@ -169,9 +246,13 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 
 		info, err := os.Stat(cleaned)
 		if err != nil || !info.IsDir() {
+			errMsg := "path not accessible"
+			if err != nil {
+				errMsg += ": " + err.Error()
+			}
 			httpx.WriteJson(w, http.StatusOK, map[string]any{
 				"code":    500,
-				"message": "path not accessible: " + err.Error(),
+				"message": errMsg,
 				"data":    []map[string]any{},
 			})
 			return
@@ -200,8 +281,8 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 			}
 			node := localNode{name: name, isDir: e.IsDir()}
 			if !e.IsDir() {
-				if info, err := e.Info(); err == nil {
-					node.size = info.Size()
+				if finfo, err := e.Info(); err == nil {
+					node.size = finfo.Size()
 				}
 			}
 			nodes = append(nodes, node)
@@ -232,19 +313,52 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 	}
 }
 
-// defaultRoots 返回可用根路径列表
-// Windows: 枚举盘符
-// fNOS/容器: 返回数据目录、配置目录、常见挂载点
-// 其他 Linux: 返回 /mnt、/media、/home 等常见目录
-func defaultRoots() []string {
-	if os.PathSeparator == '\\' {
-		roots := []string{}
-		for _, drive := range "CDEFGHIJKLMNOPQRS" {
-			d := string(drive) + ":\\"
-			if _, err := os.Stat(d); err == nil {
-				roots = append(roots, d)
-			}
+// detectFnOS 检测是否为飞牛 fNOS 环境
+// 参考 qmediasync: 通过 TRIM_DATA_ACCESSIBLE_PATHS 环境变量判断
+func detectFnOS() bool {
+	return os.Getenv("TRIM_DATA_ACCESSIBLE_PATHS") != "" ||
+		os.Getenv("TRIM_DATA_SHARE_PATHS") != "" ||
+		os.Getenv("FNOS_APP_DATA_DIR") != "" ||
+		os.Getenv("FNOS_APP_CONFIG_DIR") != ""
+}
+
+// getAllowedPaths 返回 fNOS 环境下允许访问的路径列表
+func getAllowedPaths() []string {
+	var paths []string
+	accessiblePaths := os.Getenv("TRIM_DATA_ACCESSIBLE_PATHS")
+	sharePaths := os.Getenv("TRIM_DATA_SHARE_PATHS")
+	for _, p := range strings.Split(accessiblePaths+":"+sharePaths, ":") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			paths = append(paths, p)
 		}
+	}
+	return paths
+}
+
+// isPathAllowed 检查路径是否在允许的白名单目录内
+func isPathAllowed(targetPath string, allowedPaths []string) bool {
+	cleanPath := filepath.Clean(targetPath)
+	for _, ap := range allowedPaths {
+		ap = strings.TrimSpace(filepath.Clean(ap))
+		if ap == "" {
+			continue
+		}
+		if cleanPath == ap || strings.HasPrefix(cleanPath, ap+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// defaultRoots 返回可用根路径列表
+// Windows: 使用 gopsutil/disk 枚举盘符（如不可用则回退到盘符扫描）
+// fNOS环境: 优先 TRIM_DATA_ACCESSIBLE_PATHS + TRIM_DATA_SHARE_PATHS
+// 其他Linux: 返回 / 根目录及常见挂载点
+func defaultRoots(isFnOS bool) []string {
+	if os.PathSeparator == '\\' {
+		// Windows: 尝试使用 gopsutil/disk
+		roots := getWindowsDrives()
 		if len(roots) == 0 {
 			roots = []string{"C:\\"}
 		}
@@ -254,25 +368,23 @@ func defaultRoots() []string {
 	// Linux / fNOS 环境
 	var roots []string
 
-	// 1. fNOS 环境变量暴露的目录
-	fnosDirs := []string{
-		os.Getenv("FNOS_APP_DATA_DIR"),
-		os.Getenv("FNOS_APP_CONFIG_DIR"),
-		os.Getenv("FNOS_APP_LOG_DIR"),
-		os.Getenv("DATA_DIR"),
-		os.Getenv("DEFAULT_CONFIG_DIR"),
-	}
-	for _, d := range fnosDirs {
-		if d == "" {
-			continue
+	if isFnOS {
+		// 飞牛环境：直接用系统注入的路径
+		allowedPaths := getAllowedPaths()
+		for _, p := range allowedPaths {
+			if info, err := os.Stat(p); err == nil && info.IsDir() {
+				roots = appendUnique(roots, p)
+			}
 		}
-		if info, err := os.Stat(d); err == nil && info.IsDir() {
-			roots = appendUnique(roots, d)
+		if len(roots) == 0 {
+			roots = append(roots, "/")
 		}
+		return roots
 	}
 
-	// 2. 常见挂载点
+	// 非飞牛 Linux 环境：常见挂载点
 	commonDirs := []string{
+		"/",
 		"/mnt",
 		"/media",
 		"/home",
@@ -282,6 +394,7 @@ func defaultRoots() []string {
 		"/app",
 		"/root",
 		"/tmp",
+		"/storage",
 	}
 	for _, d := range commonDirs {
 		if info, err := os.Stat(d); err == nil && info.IsDir() {
@@ -289,11 +402,60 @@ func defaultRoots() []string {
 		}
 	}
 
-	// 3. 如果以上都没有，返回 /
 	if len(roots) == 0 {
 		roots = []string{"/"}
 	}
 
+	return roots
+}
+
+// diskPartition 模拟 gopsutil/disk.Partition 结构
+type diskPartition struct {
+	Mountpoint string
+}
+
+// diskPartitions 获取磁盘分区列表
+// 在没有 gopsutil 依赖时返回空列表，回退到盘符扫描
+func diskPartitions(all bool) ([]diskPartition, error) {
+	// 简单实现：直接扫描 Windows 盘符
+	// 如果未来需要更详细的分区信息，可以引入 gopsutil
+	if runtime.GOOS != "windows" {
+		return nil, nil
+	}
+	var partitions []diskPartition
+	for _, drive := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
+		d := string(drive) + ":\\"
+		if _, err := os.Stat(d); err == nil {
+			partitions = append(partitions, diskPartition{Mountpoint: d})
+		}
+	}
+	return partitions, nil
+}
+
+// getWindowsDrives 获取 Windows 盘符列表
+// 参考 qmediasync: 使用 gopsutil/disk 枚举盘符
+func getWindowsDrives() []string {
+	partitions, err := diskPartitions(false)
+	if err == nil && len(partitions) > 0 {
+		roots := make([]string, 0, len(partitions))
+		for _, p := range partitions {
+			if _, err := os.Stat(p.Mountpoint); err == nil {
+				roots = appendUnique(roots, p.Mountpoint)
+			}
+		}
+		if len(roots) > 0 {
+			return roots
+		}
+	}
+
+	// 回退：扫描所有盘符
+	roots := []string{}
+	for _, drive := range "CDEFGHIJKLMNOPQRSTUVWXYZ" {
+		d := string(drive) + ":\\"
+		if _, err := os.Stat(d); err == nil {
+			roots = append(roots, d)
+		}
+	}
 	return roots
 }
 

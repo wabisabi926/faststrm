@@ -1,11 +1,21 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { ShieldAlert, CheckCircle, AlertCircle, Bell, RefreshCw } from "lucide-react";
+import {
+  ShieldAlert,
+  CheckCircle,
+  AlertCircle,
+  AlertTriangle,
+  HelpCircle,
+  Bell,
+  RefreshCw,
+  Loader2,
+} from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import axiosInstance from "@/lib/axios";
+import { toast } from "sonner";
 
 interface AccountAlertsConfig {
   enabled: boolean;
@@ -13,13 +23,19 @@ interface AccountAlertsConfig {
   onRecover: boolean;
 }
 
-interface AccountStatus {
+interface AccountStatusInfo {
   name: string;
   accountType: string;
   status: string;
   lastChecked?: string;
   message?: string;
 }
+
+type AccountStatusResult = {
+  name: string;
+  status: "ok" | "error" | "unknown";
+  message?: string;
+};
 
 export default function AccountAlertsPage() {
   const [accountAlerts, setAccountAlerts] = useState<AccountAlertsConfig>({
@@ -30,12 +46,9 @@ export default function AccountAlertsPage() {
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alertsSuccess, setAlertsSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [accounts, setAccounts] = useState<AccountStatus[]>([]);
-
-  useEffect(() => {
-    void loadAccountAlerts();
-    void loadAccounts();
-  }, []);
+  const [accounts, setAccounts] = useState<AccountStatusInfo[]>([]);
+  const [statusMap, setStatusMap] = useState<Record<string, AccountStatusResult>>({});
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
 
   const loadAccountAlerts = async () => {
     try {
@@ -61,6 +74,33 @@ export default function AccountAlertsPage() {
     }
   };
 
+  const checkStatus = useCallback(async () => {
+    try {
+      setIsCheckingStatus(true);
+      const res = await axiosInstance.get("/api/account/status");
+      const map: Record<string, AccountStatusResult> = {};
+      for (const s of res.data.results) {
+        map[s.name] = s;
+      }
+      setStatusMap(map);
+    } catch {
+      toast.error("检测账户状态失败");
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAccountAlerts();
+    void loadAccounts();
+  }, []);
+
+  useEffect(() => {
+    if (accounts.length > 0) {
+      checkStatus();
+    }
+  }, [accounts.length, checkStatus]);
+
   const saveAccountAlerts = async () => {
     try {
       setAlertsLoading(true);
@@ -80,13 +120,58 @@ export default function AccountAlertsPage() {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    if (status === "active" || status === "正常") {
-      return <Badge className="bg-green-500/20 text-green-400">正常</Badge>;
-    } else if (status === "error" || status === "异常") {
-      return <Badge variant="destructive">异常</Badge>;
+  const renderStatusBadge = (accountName: string) => {
+    const status = statusMap[accountName];
+
+    if (!status) {
+      return (
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          <span className="text-xs">检测中...</span>
+        </div>
+      );
     }
-    return <Badge variant="secondary">{status}</Badge>;
+
+    const config: Record<string, { icon: JSX.Element; label: string; cls: string }> = {
+      ok: {
+        icon: <CheckCircle className="w-3.5 h-3.5 text-green-500" />,
+        label: "正常",
+        cls: "text-green-500",
+      },
+      error: {
+        icon: <AlertTriangle className="w-3.5 h-3.5 text-red-500" />,
+        label: "异常",
+        cls: "text-red-500",
+      },
+      unknown: {
+        icon: <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />,
+        label: "未知",
+        cls: "text-muted-foreground",
+      },
+    };
+
+    const c = config[status.status] || config.unknown;
+    const displayMessage =
+      status.message && status.message.length > 30
+        ? status.message.slice(0, 30) + "..."
+        : status.message;
+
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1.5" title={status.message || c.label}>
+          {c.icon}
+          <span className={`text-xs font-medium ${c.cls}`}>{c.label}</span>
+        </div>
+        {displayMessage && (
+          <span
+            className="text-xs text-muted-foreground truncate max-w-[200px]"
+            title={status.message}
+          >
+            {displayMessage}
+          </span>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -101,28 +186,48 @@ export default function AccountAlertsPage() {
             监听 115 账号 Cookie 状态，异常或恢复时自动推送通知
           </p>
         </div>
+        <Button
+          variant="outline"
+          onClick={() => checkStatus()}
+          disabled={isCheckingStatus}
+          size="sm"
+          className="shrink-0"
+        >
+          <RefreshCw className={`w-4 h-4 mr-2 ${isCheckingStatus ? "animate-spin" : ""}`} />
+          {isCheckingStatus ? "检测中..." : "检测状态"}
+        </Button>
       </div>
 
-      {/* 当前账号状态总览 */}
       <section className="border rounded-md p-4 sm:p-5 space-y-4">
-        <h2 className="text-base font-medium">账号状态总览</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-medium">账号状态总览</h2>
+          <span className="text-xs text-muted-foreground">
+            共 {accounts.length} 个账号
+          </span>
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
           {accounts.map((acc) => (
-            <div key={acc.name} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 border rounded">
+            <div
+              key={acc.name}
+              className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 border rounded"
+            >
               <div className="flex items-center gap-2 min-w-0">
                 <span className="font-medium break-words">{acc.name}</span>
-                <span className="text-xs text-muted-foreground shrink-0">{acc.accountType}</span>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {acc.accountType}
+                </span>
               </div>
-              {getStatusBadge(acc.status)}
+              {renderStatusBadge(acc.name)}
             </div>
           ))}
           {accounts.length === 0 && (
-            <p className="text-sm text-muted-foreground">暂无账号，请先在「账户」页面添加</p>
+            <p className="text-sm text-muted-foreground">
+              暂无账号，请先在「账户」页面添加
+            </p>
           )}
         </div>
       </section>
 
-      {/* 通知配置 */}
       <section className="border rounded-md p-4 sm:p-5 space-y-5">
         <div>
           <div className="flex items-center gap-2">
@@ -137,7 +242,6 @@ export default function AccountAlertsPage() {
           </p>
         </div>
         <div className="space-y-3">
-          {/* 启用开关 */}
           <div className="flex items-center space-x-2">
             <Checkbox
               id="alertsEnabled"
@@ -156,9 +260,7 @@ export default function AccountAlertsPage() {
 
           <Separator />
 
-          {/* 通知选项 */}
           <div className="grid gap-3 md:grid-cols-2">
-            {/* 异常通知 */}
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="onError"
@@ -170,7 +272,9 @@ export default function AccountAlertsPage() {
               />
               <label
                 htmlFor="onError"
-                className={`text-sm leading-none ${!accountAlerts.enabled ? "text-muted-foreground" : "cursor-pointer"}`}
+                className={`text-sm leading-none ${
+                  !accountAlerts.enabled ? "text-muted-foreground" : "cursor-pointer"
+                }`}
               >
                 <span className="flex items-center gap-1">
                   <AlertCircle className="h-3.5 w-3.5 text-red-500" />
@@ -179,7 +283,6 @@ export default function AccountAlertsPage() {
               </label>
             </div>
 
-            {/* 恢复通知 */}
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="onRecover"
@@ -191,7 +294,9 @@ export default function AccountAlertsPage() {
               />
               <label
                 htmlFor="onRecover"
-                className={`text-sm leading-none ${!accountAlerts.enabled ? "text-muted-foreground" : "cursor-pointer"}`}
+                className={`text-sm leading-none ${
+                  !accountAlerts.enabled ? "text-muted-foreground" : "cursor-pointer"
+                }`}
               >
                 <span className="flex items-center gap-1">
                   <CheckCircle className="h-3.5 w-3.5 text-green-500" />
@@ -201,7 +306,6 @@ export default function AccountAlertsPage() {
             </div>
           </div>
 
-          {/* 说明 */}
           <Alert className="bg-blue-500/10 border-blue-500/20">
             <Bell className="h-4 w-4 text-blue-400" />
             <AlertDescription className="text-xs text-blue-300">
@@ -215,7 +319,13 @@ export default function AccountAlertsPage() {
             </AlertDescription>
           </Alert>
 
-          {/* 保存按钮 */}
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="text-xs">{error}</AlertDescription>
+            </Alert>
+          )}
+
           <div className="flex flex-wrap items-center gap-2">
             <Button
               onClick={saveAccountAlerts}
@@ -243,7 +353,6 @@ export default function AccountAlertsPage() {
         </div>
       </section>
 
-      {/* 依赖说明 */}
       <section className="border rounded-md p-4 sm:p-5 bg-muted/30">
         <h2 className="text-sm font-medium mb-2">前置条件</h2>
         <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
