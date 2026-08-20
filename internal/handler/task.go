@@ -105,17 +105,32 @@ func HandleCancelTask(deps TaskHandlerDeps) http.HandlerFunc {
 // HandleListTasks GET /api/tasks
 func HandleListTasks(deps TaskHandlerDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tasks, err := deps.TasksStore.ReadTasks()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
+		var tasks []task.Task
+		if deps.TasksStore != nil {
+			read, err := deps.TasksStore.ReadTasks()
+			if err != nil {
+				logger.S().Warnf("[HandleListTasks] ReadTasks failed: %v, returning empty list", err)
+			} else {
+				tasks = read
+			}
 		}
-		// 附带每个任务的运行时状态与调度器状态
-		running := deps.Runtime.RunningTasks()
-		schedStatus := deps.Scheduler.Status()
+		var running map[string]*task.RuntimeState
+		if deps.Runtime != nil {
+			running = deps.Runtime.RunningTasks()
+		} else {
+			running = make(map[string]*task.RuntimeState)
+		}
+		var schedStatus task.SchedulerStatus
+		if deps.Scheduler != nil {
+			schedStatus = deps.Scheduler.Status()
+		}
 		schedNext := make(map[string]any, len(schedStatus.Tasks))
 		for _, t := range schedStatus.Tasks {
-			schedNext[t["taskId"].(string)] = map[string]any{
+			tid, _ := t["taskId"].(string)
+			if tid == "" {
+				continue
+			}
+			schedNext[tid] = map[string]any{
 				"cron":      t["cron"],
 				"nextRunAt": t["nextRunAt"],
 			}
@@ -123,7 +138,7 @@ func HandleListTasks(deps TaskHandlerDeps) http.HandlerFunc {
 		type enriched struct {
 			task.Task
 			Runtime      *task.RuntimeState `json:"runtime,omitempty"`
-			ScheduleNext any               `json:"scheduleNext,omitempty"`
+			ScheduleNext any                `json:"scheduleNext,omitempty"`
 		}
 		out := make([]enriched, 0, len(tasks))
 		for _, t := range tasks {
@@ -137,8 +152,8 @@ func HandleListTasks(deps TaskHandlerDeps) http.HandlerFunc {
 			out = append(out, en)
 		}
 		httpx.WriteJson(w, http.StatusOK, map[string]any{
-			"tasks":              out,
-			"scheduler":          schedStatus,
+			"tasks":     out,
+			"scheduler": schedStatus,
 		})
 	}
 }

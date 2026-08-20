@@ -54,26 +54,38 @@ func (s *TasksStore) ReadTasks() ([]task.Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 创建默认文件（若不存在）
-	if _, err := os.Stat(s.path); errors.Is(err, os.ErrNotExist) {
-		if werr := ensureDir(filepath.Dir(s.path)); werr != nil {
-			return nil, werr
+	info, statErr := os.Stat(s.path)
+	if statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) {
+			if werr := ensureDir(filepath.Dir(s.path)); werr != nil {
+				logger.S().Warnf("[ReadTasks] ensureDir failed: %v", werr)
+				return []task.Task{}, nil
+			}
+			if werr := os.WriteFile(s.path, []byte("[]\n"), 0o600); werr != nil {
+				logger.S().Warnf("[ReadTasks] create default file failed: %v", werr)
+				return []task.Task{}, nil
+			}
+			return []task.Task{}, nil
 		}
-		if werr := os.WriteFile(s.path, []byte("[]\n"), 0o600); werr != nil {
-			return nil, werr
-		}
+		logger.S().Warnf("[ReadTasks] stat failed: %v", statErr)
+		return []task.Task{}, nil
+	}
+	if info.IsDir() {
+		logger.S().Warnf("[ReadTasks] path is a directory: %s", s.path)
 		return []task.Task{}, nil
 	}
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		return nil, err
+		logger.S().Warnf("[ReadTasks] read failed: %v", err)
+		return []task.Task{}, nil
 	}
 	var persisted []persistedTask
 	if len(bytesTrimSpace(raw)) == 0 {
 		return []task.Task{}, nil
 	}
 	if err := json.Unmarshal(raw, &persisted); err != nil {
-		return nil, err
+		logger.S().Warnf("[ReadTasks] json unmarshal failed: %v, returning empty list", err)
+		return []task.Task{}, nil
 	}
 	out := make([]task.Task, 0, len(persisted))
 	for _, p := range persisted {
