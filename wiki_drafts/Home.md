@@ -20,13 +20,13 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.9.4 已发布 — 紧急修复：路径浏览 & 账户状态**
+> **🎉 v0.9.5 已发布 — 跨平台本地目录浏览大修（飞牛 fNOS / Docker / Linux / Windows）**
 >
-> - 📂 **远程路径浏览修复**：根目录直接使用 cid=0、修复 `isDir` 判断逻辑、前端改为 CID 导航
-> - 📁 **本地路径浏览修复**：优化 fNOS 环境变量探测、添加路径权限校验、Windows 盘符枚举
-> - ✅ **账户状态页面**：添加状态检查、显示状态图标、支持手动刷新
-> - 🏷️ **版本号全链路同步**：main.go / package.json / manifest 统一更新为 0.9.4
-> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases/tag/v0.9.4)
+> - � **后端 4 级优先根列表**：`FASTSTRM_LOCAL_DIR_ROOTS` 显式覆盖 → Linux `/proc/mounts` 真实挂载点 → fNOS 白名单 ∪ NAS 常见卷根 → 硬编码兜底；fNOS 路径白名单默认宽松模式，避免误 403
+> - � **FNOS manifest 对齐 qmediasync**：新增 `share_dirs` 声明，用户勾选共享文件夹后会真正 bind mount 进应用沙箱
+> - 🎛️ **前端对话框兜底通道**：本地目录选择器新增手动路径输入框 + Enter/跳转按钮 + 校验状态反馈，根列表不全时可直接粘贴已知路径
+> - �️ **CI：升级 GitHub Actions 到 Node 24 native**（checkout@v5 / setup-node@v5 / setup-go@v6 / upload+download-artifact@v5），消除 Node 20 弃用告警
+> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases/tag/v0.9.5)
 ---
 
 ## 🚩 目录导航
@@ -93,4 +93,4 @@
 
 欢迎提交 [Issue](https://github.com/wabisabi926/faststrm/issues) 和 [Pull Request](https://github.com/wabisabi926/faststrm/pulls) 来改进这个项目。
 
-<!-- v0.9.4 sync trigger -->
+<!-- v0.9.5 sync trigger -->

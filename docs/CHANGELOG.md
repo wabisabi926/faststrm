@@ -1,5 +1,31 @@
 # FastStrm 变更日志
 
+## v0.9.5 (2026-08-20)
+
+### 跨平台本地目录浏览大修（飞牛 fNOS / Docker / Linux / Windows）
+
+针对 v0.9.4 在飞牛 fNOS 沙箱下"只能看到 @appshare 一个目录、无法选择媒体文件夹"的 P0 问题彻底修复。
+
+- **directory.go**: 重写 `defaultRoots` 为 4 级优先根列表（`FASTSTRM_LOCAL_DIR_ROOTS` 显式覆盖 → Linux `/proc/mounts` 真实挂载点 → fNOS 白名单 ∪ NAS 常见卷根 → 硬编码兜底）；`isPathAllowed` fNOS 默认宽松，除非显式设置 `FASTSTRM_FNOS_STRICT_PATH=1`，否则一律放行只打 warning；新增 `readRealMountpoints()` 跨平台安全读取挂载点，过滤 proc/sysfs/devpts/cgroup/overlay/tmpfs 虚拟 FS
+- **manifest (amd64/arm64)**: 新增 `share_dirs = /vol1,/volume1,/mnt/user,/mnt/ssd,/mnt/cache,/mnt/disk,/share,/public,/home` 字段，对齐 qmediasync 共享路径声明规范；用户在飞牛管理后台勾选共享文件夹后会真正 bind mount 进沙箱并写入 `TRIM_DATA_SHARE_PATHS`
+- **LocalDirectoryTreeDialog.tsx**: 顶部新增手动路径输入框（等宽字体 + Enter 提交）+ 「跳转」按钮（带 loading / 禁用态）；三路校验状态反馈（✅ ok / ❌ err / 💡 idle）；选择树节点同步回填输入框；对话框关闭自动清理状态
+
+### CI 升级
+
+- 升级 GitHub Actions 到 Node 24 native：`actions/checkout@v5` / `setup-node@v5` / `setup-go@v6` / `upload-artifact@v5` / `download-artifact@v5`（共 17 处替换，消除 Node.js 20 弃用告警）
+
+### 版本号全链路同步 0.9.5
+
+- `cmd/server/main.go`、`frontend/package.json`、`FNOS/faststrm-amd64/manifest`、`FNOS/faststrm-arm64/manifest`
+
+### 文档与 wiki 同步
+
+- `Readme.md` 最新版本段落与下载链接同步到 v0.9.5
+- `docs/CHANGELOG.md` 新增 v0.9.5 章节
+- `wiki_drafts/Home.md` 版本公告更新为 v0.9.5
+- `wiki_drafts/版本更新日志.md` 新增 v0.9.5 完整章节
+- `.gitignore` 补充 `.config/*.json` 规则
+
 ## v0.9.4 (2026-08-20)
 
 ### 紧急修复：路径浏览 & 账户状态
