@@ -14,10 +14,11 @@ import (
 
 // CommandHandler Bot 命令处理器，依赖 store 层读取配置/任务/账号
 type CommandHandler struct {
-	bot      *TelegramBot
-	settings *store.SettingsStore
-	tasks    *store.TasksStore
-	accounts *store.AccountStore
+	bot         *TelegramBot
+	settings    *store.SettingsStore
+	tasks       *store.TasksStore
+	accounts    *store.AccountStore
+	menuActions MenuActions
 }
 
 // NewCommandHandler 创建命令处理器
@@ -28,6 +29,11 @@ func NewCommandHandler(bot *TelegramBot, settings *store.SettingsStore, tasks *s
 		tasks:    tasks,
 		accounts: accounts,
 	}
+}
+
+// SetMenuActions 注入菜单动作接口实现
+func (h *CommandHandler) SetMenuActions(actions MenuActions) {
+	h.menuActions = actions
 }
 
 // BotCommandList 返回 Bot 菜单命令列表
@@ -98,7 +104,9 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 	}
 
 	switch cmd {
-	case "/start", "/help":
+	case "/start":
+		return h.ShowMainMenuForChat(ctx, chatID)
+	case "/help":
 		return h.handleHelp(ctx, chatID, username)
 	case "/status":
 		return h.handleStatus(ctx, chatID)
@@ -124,6 +132,13 @@ func (h *CommandHandler) HandleCallbackQuery(ctx context.Context, cq CallbackQue
 
 	if err := h.bot.AnswerCallbackQuery(ctx, cq.ID, "处理中..."); err != nil {
 		logger.S().Warnf("answerCallbackQuery failed: %v", err)
+	}
+
+	menuPrefixes := []string{"menu_", "mon_", "task_", "emby_", "strm_", "task_exec", "task_cancel", "mon_event:", "mon_detail:"}
+	for _, prefix := range menuPrefixes {
+		if strings.HasPrefix(cq.Data, prefix) {
+			return h.RouteMenuCallback(ctx, cq)
+		}
 	}
 
 	switch cq.Data {
@@ -159,40 +174,112 @@ func (h *CommandHandler) handleHelp(ctx context.Context, chatID, username string
 	return h.bot.SendMessage(ctx, chatID, text, "HTML")
 }
 
-// handleStatus 显示系统状态：任务数 + 账号 Cookie 状态 + 当前时间
+// handleStatus 显示完整系统状态（账号 + 监控 + 任务 + Emby + 事件开关）
 func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error {
-	accounts, err := h.accounts.ReadAccounts()
-	if err != nil {
-		logger.S().Warnf("read accounts for status failed: %v", err)
-	}
-	tasks, err := h.tasks.ReadTasks()
-	if err != nil {
-		logger.S().Warnf("read tasks for status failed: %v", err)
-	}
-
 	var sb strings.Builder
-	sb.WriteString("<b>📊 系统状态</b>\n\n")
-	sb.WriteString("<b>🎬 任务</b>\n")
-	sb.WriteString(fmt.Sprintf("• 任务数: %d\n\n", len(tasks)))
+	sb.WriteString("<b>📊 系统状态概览</b>\n\n")
 
-	sb.WriteString("<b>👥 账号状态</b>\n")
-	if len(accounts) == 0 {
-		sb.WriteString("暂无账号\n")
+	// 通过 menuActions 获取聚合状态（优先）
+	if h.menuActions != nil {
+		if status, err := h.menuActions.GetSystemStatus(); err == nil {
+			// 账号状态
+			if accounts, ok := status["accounts"].([]map[string]any); ok && len(accounts) > 0 {
+				sb.WriteString("<b>👥 账号</b>\n")
+				for _, acc := range accounts {
+					name, _ := acc["name"].(string)
+					hasCookie, _ := acc["hasCookie"].(bool)
+					emoji := "⚠️"
+					cookieState := "未设置"
+					if hasCookie {
+						emoji = "✅"
+						cookieState = "有效"
+					}
+					sb.WriteString(fmt.Sprintf("  %s <b>%s</b> — %s\n", emoji, name, cookieState))
+				}
+				sb.WriteString("\n")
+			}
+
+			// 监控状态
+			if monitors, ok := status["monitors"].([]map[string]any); ok {
+				sb.WriteString("<b>📺 监控</b>\n")
+				if len(monitors) == 0 {
+					sb.WriteString("  暂无账号监控\n")
+				} else {
+					for _, m := range monitors {
+						acc, _ := m["account"].(string)
+						running, _ := m["running"].(bool)
+						emoji := "⏸️"
+						state := "已停止"
+						if running {
+							emoji = "▶️"
+							state = "运行中"
+						}
+						sb.WriteString(fmt.Sprintf("  %s <b>%s</b> — %s\n", emoji, acc, state))
+					}
+				}
+				sb.WriteString("\n")
+			}
+
+			// 运行中任务
+			if runningTasks, ok := status["runningTasks"].([]map[string]any); ok {
+				sb.WriteString(fmt.Sprintf("<b>🎬 运行中任务</b> (%d)\n", len(runningTasks)))
+				if len(runningTasks) == 0 {
+					sb.WriteString("  无\n")
+				} else {
+					for _, t := range runningTasks {
+						name, _ := t["name"].(string)
+						progress, _ := t["progress"].(string)
+						sb.WriteString(fmt.Sprintf("  • %s — %s\n", name, progress))
+					}
+				}
+				sb.WriteString("\n")
+			}
+
+			// Emby 状态
+			if emby, ok := status["emby"].(map[string]any); ok {
+				sb.WriteString("<b>🎞️ Emby</b>\n")
+				connected, _ := emby["connected"].(bool)
+				if connected {
+					sb.WriteString("  ✅ 已连接\n")
+				} else {
+					sb.WriteString("  ⚠️ 未连接\n")
+				}
+				sb.WriteString("\n")
+			}
+		}
 	} else {
+		// 回退：直接从 store 读取
+		accounts := h.accounts.List()
+		tasks, err := h.tasks.ReadTasks()
+		if err != nil {
+			logger.S().Warnf("read tasks for status failed: %v", err)
+		}
+		sb.WriteString("<b>👥 账号</b>\n")
 		for _, acc := range accounts {
 			hasCookie := acc.Cookie != ""
 			emoji := "⚠️"
-			if hasCookie {
-				emoji = "✅"
-			}
 			cookieState := "未设置"
 			if hasCookie {
+				emoji = "✅"
 				cookieState = "有效"
 			}
-			sb.WriteString(fmt.Sprintf("  %s <b>%s</b> — Cookie: %s\n", emoji, acc.Name, cookieState))
+			sb.WriteString(fmt.Sprintf("  %s <b>%s</b> — %s\n", emoji, acc.Name, cookieState))
 		}
+		sb.WriteString(fmt.Sprintf("\n<b>🎬 任务</b>: %d 个\n\n", len(tasks)))
 	}
-	sb.WriteString(fmt.Sprintf("\n<b>⏰ 时间:</b> %s", time.Now().Format("2006-01-02 15:04:05")))
+
+	// 事件开关状态（从 settings 读取）
+	if s, err := h.settings.ReadSettings(); err == nil {
+		sb.WriteString("<b>🔔 事件开关</b>\n")
+		et := s.LifeMonitor.EventTypes
+		sb.WriteString(fmt.Sprintf("  创建: %s | 删除: %s | 移动: %s | 重命名: %s\n",
+			boolToText(et.Create, "✅", "❌"),
+			boolToText(et.Remove, "✅", "❌"),
+			boolToText(et.Move, "✅", "❌"),
+			boolToText(et.Rename, "✅", "❌")))
+	}
+
+	sb.WriteString(fmt.Sprintf("\n<b>⏰ %s</b>", nowFormatted()))
 	return h.bot.SendMessage(ctx, chatID, sb.String(), "HTML")
 }
 
@@ -210,11 +297,7 @@ func (h *CommandHandler) handleCleanupPlaceholder(ctx context.Context, chatID st
 
 // handleAccounts 列出已配置账号及其 Cookie 状态
 func (h *CommandHandler) handleAccounts(ctx context.Context, chatID string) error {
-	accounts, err := h.accounts.ReadAccounts()
-	if err != nil {
-		logger.S().Errorf("read accounts failed: %v", err)
-		return h.bot.SendMessage(ctx, chatID, fmt.Sprintf("❌ 获取账号列表失败: %v", err), "HTML")
-	}
+	accounts := h.accounts.List()
 	if len(accounts) == 0 {
 		return h.bot.SendMessage(ctx, chatID, "👥 <b>账号列表</b>\n\n暂无账号，请在 Web UI 添加。", "HTML")
 	}
@@ -246,3 +329,10 @@ func (h *CommandHandler) allowedUsers(ctx context.Context) ([]int64, error) {
 	}
 	return s.Telegram.AllowedUsers, nil
 }
+
+// nowFormatted 返回当前时间的格式化字符串
+func nowFormatted() string {
+	return time.Now().Format("2006-01-02 15:04:05")
+}
+
+

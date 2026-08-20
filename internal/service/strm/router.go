@@ -17,7 +17,6 @@ import (
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
-	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -417,21 +416,6 @@ func ResolveDownloadUrl(
 	return meta, nil
 }
 
-// ==================== 辅助：从 store 中找账号 ====================
-
-// FindAccount115 从 accountStore 中按 name 查找 115 类型账户
-func FindAccount115(as *store.AccountStore, name string) *model.AccountInfo {
-	accounts, err := as.ReadAccounts()
-	if err != nil {
-		return nil
-	}
-	for i := range accounts {
-		if accounts[i].Name == name && accounts[i].AccountType == "115" {
-			return &accounts[i]
-		}
-	}
-	return nil
-}
 
 // StrmRouteConfig 从 config 中取 STRM 路由策略（兜底默认）
 func StrmRouteConfig(cfg *config.AppConfig) struct {
@@ -469,3 +453,5 @@ func toJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+

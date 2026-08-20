@@ -11,15 +11,32 @@ import (
 
 // ==================== 依赖抽象接口（避免循环 import store） ====================
 
-// AccountReader 读取账号列表（由 store.AccountStore 实现）
+// AccountReader 读取账号（由 store.AccountStore 实现）
 type AccountReader interface {
-	ReadAccounts() ([]model.AccountInfo, error)
+	Get(name string) *model.AccountInfo
 }
 
 // TasksReaderWriter 任务读写（由 store.TasksStore 实现）
 type TasksReaderWriter interface {
 	ReadTasks() ([]Task, error)
 	SaveTasks(tasks []Task) error
+}
+
+// StrmCacheWriter STRM 生成缓存写入抽象（避免循环 import store）
+// 方法签名对齐 store.StrmCacheStore.Save
+type StrmCacheWriter interface {
+	Save(entry StrmCacheEntryLike) error
+}
+
+// StrmCacheEntryLike 缓存条目最小契约
+type StrmCacheEntryLike struct {
+	UUID       string   `json:"uuid"`
+	TaskID     string   `json:"taskId"`
+	Target     string   `json:"target"`
+	Account    string   `json:"account"`
+	RelPaths   []string `json:"relPaths"`
+	LocalPaths []string `json:"localPaths"`
+	CreatedAt  int64    `json:"createdAt"`
 }
 
 // Status 任务状态
@@ -257,3 +274,4 @@ type SettingsStore interface {
 	ReadSettings() (*model.Settings, error)
 	SaveSettings(s *model.Settings) error
 }
+

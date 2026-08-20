@@ -9,7 +9,6 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/store"
-	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
@@ -42,7 +41,7 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "account required"})
 			return
 		}
-		account := strm.FindAccount115(deps.AccountStore, accountName)
+		account := deps.AccountStore.Get(accountName)
 		if account == nil {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "account not found"})
 			return
@@ -69,7 +68,7 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusOK, map[string]any{
 				"code":    500,
 				"message": "fs_files state=false",
-				"data":    map[string]any{"content": []DirTreeNode{}},
+				"data":    []map[string]any{},
 			})
 			return
 		}
@@ -78,16 +77,28 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 			fc, _ := strconvAtoi64(anyToString(e.FC))
 			isDir := fc > 0 || (e.PickCode == "" && e.Size == 0)
 			content = append(content, DirTreeNode{
+				Key:      int(fc),
 				Name:     e.Name,
 				IsDir:    isDir,
 				Size:     e.Size,
 				PickCode: e.PickCode,
 			})
 		}
+		// 转换为前端期望的格式: {id, name, isDir, size, pickCode}
+		frontendNodes := make([]map[string]any, 0, len(content))
+		for _, n := range content {
+			frontendNodes = append(frontendNodes, map[string]any{
+				"id":       n.Key,
+				"name":     n.Name,
+				"isDir":    n.IsDir,
+				"size":     n.Size,
+				"pickCode": n.PickCode,
+			})
+		}
 		httpx.WriteJson(w, http.StatusOK, map[string]any{
 			"code":    200,
 			"message": "",
-			"data":    map[string]any{"content": content},
+			"data":    frontendNodes,
 		})
 	}
 }
@@ -99,10 +110,19 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 		root := r.URL.Query().Get("root")
 		if root == "" {
 			// 默认根：Windows 列盘符；类 Unix /
+			roots := defaultRoots()
+			frontendNodes := make([]map[string]any, 0, len(roots))
+			for _, r := range roots {
+				frontendNodes = append(frontendNodes, map[string]any{
+					"id":    r,
+					"name":  r,
+					"isDir": true,
+				})
+			}
 			httpx.WriteJson(w, http.StatusOK, map[string]any{
 				"code":    200,
 				"message": "",
-				"data":    map[string]any{"roots": defaultRoots()},
+				"data":    frontendNodes,
 			})
 			return
 		}
@@ -111,7 +131,7 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusOK, map[string]any{
 				"code":    500,
 				"message": err.Error(),
-				"data":    map[string]any{"content": []DirTreeNode{}},
+				"data":    []map[string]any{},
 			})
 			return
 		}
@@ -136,10 +156,20 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 			}
 			return strings.ToLower(content[i].Name) < strings.ToLower(content[j].Name)
 		})
+		// 转换为前端期望的格式: {id, name, isDir, size}
+		frontendNodes := make([]map[string]any, 0, len(content))
+		for i, n := range content {
+			frontendNodes = append(frontendNodes, map[string]any{
+				"id":    i,
+				"name":  n.Name,
+				"isDir": n.IsDir,
+				"size":  n.Size,
+			})
+		}
 		httpx.WriteJson(w, http.StatusOK, map[string]any{
 			"code":    200,
 			"message": "",
-			"data":    map[string]any{"content": content},
+			"data":    frontendNodes,
 		})
 	}
 }
@@ -210,3 +240,5 @@ func strconvInt64(n int64) string {
 	}
 	return string(buf[i:])
 }
+
+

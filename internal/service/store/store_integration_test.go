@@ -24,7 +24,7 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 	salt := "phase3_test_salt_value_32bytes__" // 32 bytes
 
 	t.Run("AccountStore round-trip with encryption", func(t *testing.T) {
-		as := NewAccountStore(salt, cfgDir)
+		as, _ := NewAccountStore(salt, cfgDir)
 		accounts := []model.AccountInfo{
 			{Account: "alice@115.com", Password: "p@ssw0rd", Cookie: "cookie_a=xxx; UID=u1", Name: "Alice"},
 			{Account: "bob@115.com",   Password: "",        Cookie: "cookie_b=yyy; UID=u2", Name: "Bob"}, // 空密码不加密
@@ -69,7 +69,7 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 		}
 
 		// 模拟"重启"：用新 Store 实例读同样文件 → 持久化一致
-		as2 := NewAccountStore(salt, cfgDir)
+		as2, _ := NewAccountStore(salt, cfgDir)
 		back2, err := as2.ReadAccounts()
 		if err != nil { t.Fatalf("restart ReadAccounts err: %v", err) }
 		if len(back2) != 2 { t.Errorf("restart accounts len want 2, got %d", len(back2)) }
@@ -223,3 +223,4 @@ func mustFind(t *testing.T, ts *TasksStore, id string) *task.Task {
 	t.Fatalf("task id=%q not found", id)
 	return nil
 }
+

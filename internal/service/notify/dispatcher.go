@@ -1,5 +1,3 @@
-// Package notify 的 dispatcher 子模块：统一通知分发器。
-// 对齐 frontend/src/lib/emby/notifierSender.ts 中"先校验 Telegram 配置，再裸发"的发送模式。
 package notify
 
 import (
@@ -10,43 +8,36 @@ import (
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
-// Dispatcher 统一通知分发器，路由到 Telegram 和（可选）外部 webhook
 type Dispatcher struct {
-	tg         *TelegramBot
-	webhookURL string
-	enabled    bool
-	botToken   string
-	chatID     string
+	tg      *TelegramBot
+	webhook *WebhookSender
+	enabled bool
+	botToken string
+	chatID  string
 }
 
-// NewDispatcher 创建 Dispatcher
 func NewDispatcher(tg *TelegramBot) *Dispatcher {
 	d := &Dispatcher{tg: tg}
 	if tg != nil {
 		d.botToken = tg.botToken
 		d.chatID = tg.chatID
-		// 默认按"配置完整即启用"判断，可通过 SetEnabled 覆盖
 		d.enabled = tg.botToken != "" && tg.chatID != ""
 	}
 	return d
 }
 
-// SetEnabled 显式设置 Telegram 通知是否启用
 func (d *Dispatcher) SetEnabled(enabled bool) {
 	d.enabled = enabled
 }
 
-// SetWebhook 设置可选的 webhook URL（用于在 Telegram 之外做额外分发）
 func (d *Dispatcher) SetWebhook(url string) {
-	d.webhookURL = url
+	d.webhook = NewWebhookSender(url)
 }
 
-// isConfigured 检查 Telegram 是否配置完整（enabled + botToken + chatID 同时满足）
 func (d *Dispatcher) isConfigured() bool {
 	return d.tg != nil && d.enabled && d.botToken != "" && d.chatID != ""
 }
 
-// Notify 发送纯文本通知到 Telegram；未配置时静默跳过（对齐 TS 行为）
 func (d *Dispatcher) Notify(ctx context.Context, message string) error {
 	if !d.isConfigured() {
 		logger.S().Debug("Telegram not configured (missing botToken or chatID), skipping notification")
@@ -56,10 +47,10 @@ func (d *Dispatcher) Notify(ctx context.Context, message string) error {
 		logger.S().Errorf("Failed to send Telegram notification: %v", err)
 		return err
 	}
+	d.sendWebhookText(ctx, message)
 	return nil
 }
 
-// NotifyWithPhoto 发送带图片（URL）的通知到 Telegram
 func (d *Dispatcher) NotifyWithPhoto(ctx context.Context, caption, photoURL string) error {
 	if !d.isConfigured() {
 		logger.S().Debug("Telegram not configured, skipping photo send")
@@ -69,48 +60,103 @@ func (d *Dispatcher) NotifyWithPhoto(ctx context.Context, caption, photoURL stri
 		logger.S().Errorf("Failed to send Telegram photo: %v", err)
 		return err
 	}
+	d.sendWebhookText(ctx, caption)
 	return nil
 }
 
-// NotifyTaskStatus 格式化并发送任务状态消息
-// 格式: 🎬 任务: {name}\n📊 状态: {status}\n📝 {detail}
 func (d *Dispatcher) NotifyTaskStatus(ctx context.Context, taskName, status, detail string) error {
 	return d.Notify(ctx, FormatTaskStatusMessage(taskName, status, detail))
 }
 
-// NotifyDownloadComplete 格式化并发送下载完成消息
-// 格式: ✅ 下载完成\n🎬 任务: {name}\n📁 文件数: {downloaded}/{total}\n⏱ 耗时: {duration}
 func (d *Dispatcher) NotifyDownloadComplete(ctx context.Context, taskName string, totalFiles, downloaded int, durationMs int64) error {
 	return d.Notify(ctx, FormatDownloadCompleteMessage(taskName, totalFiles, downloaded, durationMs))
 }
 
-// NotifyError 格式化并发送错误消息
-// 格式: ❌ 错误\n🎬 任务: {name}\n📝 {errMsg}
 func (d *Dispatcher) NotifyError(ctx context.Context, taskName, errMsg string) error {
 	return d.Notify(ctx, FormatErrorMessage(taskName, errMsg))
 }
 
-// FormatTaskStatusMessage 格式化任务状态消息
-// 格式: 🎬 任务: {name}\n📊 状态: {status}\n📝 {detail}
+func (d *Dispatcher) Dispatch(ctx context.Context, n *Notification) error {
+	if !d.isConfigured() {
+		logger.S().Debug("Telegram not configured, skipping dispatch")
+		return nil
+	}
+
+	if n.ImageFile != "" || n.ImageURL != "" {
+		if err := d.tg.SendPhoto(ctx, d.chatID, n.Content, n.ImageURL); err != nil {
+			logger.S().Warnf("Dispatch photo failed, fallback to text: %v", err)
+			d.sendWebhookNotification(ctx, n)
+			return d.tg.SendNotification(ctx, n.Content)
+		}
+		d.sendWebhookNotification(ctx, n)
+		return nil
+	}
+
+	buttons := d.buildInlineKeyboard(n)
+	if len(buttons) > 0 {
+		if err := d.tg.SendMessageWithButtons(ctx, d.chatID, n.Content, buttons); err != nil {
+			logger.S().Warnf("Dispatch with buttons failed, fallback to text: %v", err)
+			d.sendWebhookNotification(ctx, n)
+			return d.tg.SendNotification(ctx, n.Content)
+		}
+		d.sendWebhookNotification(ctx, n)
+		return nil
+	}
+
+	d.sendWebhookNotification(ctx, n)
+	return d.tg.SendNotification(ctx, n.Content)
+}
+
+func (d *Dispatcher) sendWebhookText(ctx context.Context, message string) {
+	if d.webhook == nil {
+		return
+	}
+	if err := d.webhook.Send(ctx, message); err != nil {
+		logger.S().Warnf("Webhook notification failed (non-critical): %v", err)
+	}
+}
+
+func (d *Dispatcher) sendWebhookNotification(ctx context.Context, n *Notification) {
+	if d.webhook == nil {
+		return
+	}
+	if err := d.webhook.SendNotification(ctx, n); err != nil {
+		logger.S().Warnf("Webhook notification failed (non-critical): %v", err)
+	}
+}
+
+func (d *Dispatcher) buildInlineKeyboard(n *Notification) [][]InlineKeyboardButton {
+	if n == nil || n.Metadata == nil {
+		return nil
+	}
+	switch n.Type {
+	case TypeSTRMCreate, TypeSTRMDelete, TypeSTRMMove, TypeSTRMRename:
+		kind := n.Metadata["kind"]
+		if kind == "movie" || kind == "tv" || kind == "series" {
+			return [][]InlineKeyboardButton{
+				{
+					{Text: "🔄 刷新 Emby 媒体库", CallbackData: "refresh_emby:" + kind},
+					{Text: "🔍 查看详情", CallbackData: "detail_strm:" + n.Metadata["cloud_path"]},
+				},
+			}
+		}
+	}
+	return nil
+}
+
 func FormatTaskStatusMessage(taskName, status, detail string) string {
 	return fmt.Sprintf("🎬 任务: %s\n📊 状态: %s\n📝 %s", taskName, status, detail)
 }
 
-// FormatDownloadCompleteMessage 格式化下载完成消息
-// 格式: ✅ 下载完成\n🎬 任务: {name}\n📁 文件数: {downloaded}/{total}\n⏱ 耗时: {duration}
 func FormatDownloadCompleteMessage(taskName string, totalFiles, downloaded int, durationMs int64) string {
 	return fmt.Sprintf("✅ 下载完成\n🎬 任务: %s\n📁 文件数: %d/%d\n⏱ 耗时: %s",
 		taskName, downloaded, totalFiles, formatDuration(durationMs))
 }
 
-// FormatErrorMessage 格式化错误消息
-// 格式: ❌ 错误\n🎬 任务: {name}\n📝 {errMsg}
 func FormatErrorMessage(taskName, errMsg string) string {
 	return fmt.Sprintf("❌ 错误\n🎬 任务: %s\n📝 %s", taskName, errMsg)
 }
 
-// formatDuration 将毫秒耗时格式化为可读字符串
-// <1s 显示 ms；<1min 显示 "x.xs"；否则使用 Go Duration 字符串（如 "1m30s"、"1h2m3s"）
 func formatDuration(ms int64) string {
 	if ms < 1000 {
 		return fmt.Sprintf("%dms", ms)

@@ -7,16 +7,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
 )
+
+// taskCompleteThreshold 任务完成判定阈值（99.995%）
+const taskCompleteThreshold = 99.995
+
+// defaultStrmWorkers STRM 写入默认并发数
+const defaultStrmWorkers = 20
 
 // ExecutorDeps 执行器依赖
 type ExecutorDeps struct {
@@ -25,6 +33,7 @@ type ExecutorDeps struct {
 	SettingsStore SettingsStore
 	SQLiteDB      *sql.DB
 	TasksStore    TasksReaderWriter
+	StrmCache     StrmCacheWriter
 	BaseURL       string // 用于拼接 strmPrefix（302模式下可留空）
 	PublicBaseURL string // 公开可访问的 baseUrl（302 模式用户可配置）
 }
@@ -61,11 +70,11 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	defer rt.Exit(task.Account)
 
 	// 3) 注册为运行态（拿到 cancel 用于支持取消）
-	runCtx, _ := rt.Register(task)
+	runCtx, cancel := rt.Register(task)
+	defer cancel()
 	go func() {
 		<-runCtx.Done()
 	}()
-	defer rt.Unregister(task.ID)
 
 	sseServer := sse.GetServer()
 	taskStart := time.Now()
@@ -82,7 +91,10 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	}
 
 	// 5) 合并全局 settings + 任务覆盖得到最终 strm 配置
-	settings, _ := deps.SettingsStore.ReadSettings()
+	settings, err := deps.SettingsStore.ReadSettings()
+	if err != nil {
+		// best-effort: fall back to defaults if read fails
+	}
 	if settings == nil {
 		settings = model.DefaultSettings()
 	}
@@ -167,9 +179,19 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	perFilePct := newPerFilePercent(totalFiles)
 	downloaded := new(int64)
 
-	// ---- 写 STRM 文件 ----
-	strmWorkers := 20
+	// ---- 写 STRM 文件（并发数可通过 settings 配置） ----
+	strmWorkers := defaultStrmWorkers
+	if settings.Download.StrmMaxConcurrent != nil && *settings.Download.StrmMaxConcurrent > 0 {
+		strmWorkers = *settings.Download.StrmMaxConcurrent
+		if strmWorkers <= 0 {
+			strmWorkers = defaultStrmWorkers
+		}
+	}
 	strmFiles := filterKind(fileEntries, kindStrm)
+	cacheEntryUUID := uuid.New().String()
+	cacheRelPaths := make([]string, 0, len(strmFiles))
+	cacheLocalPaths := make([]string, 0, len(strmFiles))
+	var cacheMu sync.Mutex
 	if len(strmFiles) > 0 {
 		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("writing %d strm files (concurrency=%d)", len(strmFiles), strmWorkers))
 		wg := sync.WaitGroup{}
@@ -194,6 +216,10 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("write %s: %v", savePath, cerr))
 					return
 				}
+				cacheMu.Lock()
+				cacheRelPaths = append(cacheRelPaths, f.RelPath+".strm")
+				cacheLocalPaths = append(cacheLocalPaths, savePath)
+				cacheMu.Unlock()
 				perFilePct.Mark(f.CloudPath, 100)
 				atomic.AddInt64(downloaded, 1)
 				done, overall := perFilePct.Overall(totalFiles)
@@ -208,19 +234,23 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		wg.Wait()
 	}
 
-	// ---- 真实下载文件（设置了 downloadExtensions 才做） ----
-	dlFiles := filterKind(fileEntries, kindDownload)
-	if len(dlFiles) > 0 {
-		dlWorkers := 10
-		if settings.Download.DownloadMaxConcurrent != nil && *settings.Download.DownloadMaxConcurrent > 0 {
-			dlWorkers = *settings.Download.DownloadMaxConcurrent
-			if dlWorkers <= 0 {
-				dlWorkers = 10
+	// ---- 真实下载文件（设置了 downloadExtensions 且启用自动下载才做） ----
+	if !settings.Download.AutoDownloadMetadata {
+		sseServer.EmitLog(task.ID, "info", "自动下载元数据已关闭，跳过 nfo/jpg/png 等文件下载")
+	} else {
+		dlFiles := filterKind(fileEntries, kindDownload)
+		if len(dlFiles) > 0 {
+			dlWorkers := 10
+			if settings.Download.DownloadMaxConcurrent != nil && *settings.Download.DownloadMaxConcurrent > 0 {
+				dlWorkers = *settings.Download.DownloadMaxConcurrent
+				if dlWorkers <= 0 {
+					dlWorkers = 10
+				}
 			}
+			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("downloading %d files (concurrency=%d)", len(dlFiles), dlWorkers))
+			runDownloads(runCtx, task.ID, dlFiles, task.TargetPath, task.Account, account.Cookie, deps.Client115,
+				dlWorkers, perFilePct, downloaded, totalFiles, rt, sseServer)
 		}
-		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("downloading %d files (concurrency=%d)", len(dlFiles), dlWorkers))
-		runDownloads(runCtx, task.ID, dlFiles, task.TargetPath, task.Account, account.Cookie, deps.Client115,
-			dlWorkers, perFilePct, downloaded, totalFiles, rt, sseServer)
 	}
 
 	// ---- 11) removeExtraFiles：清理本地多余文件 ----
@@ -232,6 +262,28 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		} else {
 			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = deleted })
 			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("removed %d extra files", deleted))
+		}
+	}
+
+	// 11.5) 保存 STRM 生成缓存（供清理使用）
+	if deps.StrmCache != nil && len(cacheRelPaths) > 0 {
+		cacheMu.Lock()
+		relSnapshot := append([]string(nil), cacheRelPaths...)
+		localSnapshot := append([]string(nil), cacheLocalPaths...)
+		cacheMu.Unlock()
+		sort.Strings(relSnapshot)
+		sort.Strings(localSnapshot)
+		if err := deps.StrmCache.Save(StrmCacheEntryLike{
+			UUID:       cacheEntryUUID,
+			TaskID:     task.ID,
+			Target:     task.TargetPath,
+			Account:    task.Account,
+			RelPaths:   relSnapshot,
+			LocalPaths: localSnapshot,
+		}); err != nil {
+			sseServer.EmitLog(task.ID, "warn", "save strm cache failed: "+err.Error())
+		} else {
+			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("saved strm cache uuid=%s entries=%d", cacheEntryUUID, len(relSnapshot)))
 		}
 	}
 
@@ -296,16 +348,7 @@ func filterKind(items []*fileItem, k fileKind) []*fileItem {
 }
 
 func findAccount(s AccountReader, name string) *model.AccountInfo {
-	accounts, err := s.ReadAccounts()
-	if err != nil {
-		return nil
-	}
-	for i := range accounts {
-		if accounts[i].Name == name {
-			return &accounts[i]
-		}
-	}
-	return nil
+	return s.Get(name)
 }
 
 func itoa(v int64) string {
@@ -320,7 +363,10 @@ func ensureDir(dir string) error {
 }
 
 func jsonLine(v any) string {
-	b, _ := json.Marshal(v)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
 	return string(b)
 }
 
@@ -368,6 +414,6 @@ func (p *perFilePercent) Overall(total int) (bool, string) {
 	// 未标记的文件按 0 算
 	sum += (total - cnt) * 0
 	overall := float64(sum) / float64(total)
-	done := overall >= 99.995
+	done := overall >= taskCompleteThreshold
 	return done, fmt.Sprintf("%.2f", overall)
 }

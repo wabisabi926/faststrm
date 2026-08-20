@@ -93,7 +93,7 @@ export function LocalDirectoryTreeDialog({
         });
 
         if (response.data.code === 200) {
-          const children = response.data.data || [];
+          const children = (response.data.data || []).map((n: any) => ({ ...n, id: String(n.id) }));
           const updatedTree = updateTreeNode(tree, node.id, {
             ...node,
             children: children,

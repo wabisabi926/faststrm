@@ -39,7 +39,7 @@ func HandleFsGet(opts StrmOptions) http.HandlerFunc {
 			return
 		}
 
-		account := strm.FindAccount115(opts.AccountStore, accountName)
+		account := opts.AccountStore.Get(accountName)
 		if account == nil {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{
 				"error": "Account not found: " + accountName,
@@ -86,3 +86,4 @@ func itoa(n int64) string {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	httpx.WriteJson(w, status, v)
 }
+

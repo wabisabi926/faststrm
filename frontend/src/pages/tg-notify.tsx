@@ -321,7 +321,7 @@ export default function TelegramNotifyPage() {
         <section className="border rounded-md p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="bg-green-500/20 text-green-400">
+              <Badge variant="outline" className="bg-muted text-muted-foreground">
                 <CheckCircle className="h-3 w-3 mr-1" />
                 已连接
               </Badge>

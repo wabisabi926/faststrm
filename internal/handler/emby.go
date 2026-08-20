@@ -288,10 +288,10 @@ func HandleEmbyTestConnection(deps EmbyDeps) http.HandlerFunc {
 	}
 }
 
-// ==================== 聚合 Settings（通用/下载/STRM/高级 + Emby + Telegram） ====================
+// ==================== 聚合 Settings（通用/下载/STRM/高级 + Emby + Telegram + LifeMonitor） ====================
 
-// HandleSettingsGET GET /api/settings 返回 settings 聚合视图（提供给设置页 6 个 tab 回填）
-// 敏感字段：Emby.APIKey 脱敏，Telegram.BotToken 脱敏，InternalToken 不返回（前端输入框为只读占位）
+// HandleSettingsGET GET /api/settings 返回 settings 聚合视图（提供给设置页 tab 回填）
+// 敏感字段：Emby.APIKey 脱敏，Telegram.BotToken 脱敏，InternalToken 不返回
 func HandleSettingsGET(deps EmbyDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		settings, err := deps.SettingsStore.ReadSettings()
@@ -310,103 +310,31 @@ func HandleSettingsGET(deps EmbyDeps) http.HandlerFunc {
 	}
 }
 
-// settingsFormPost 扁平化 form 字段（与 settings.templ 的 input.name 一一对应）
-// 数组字段：以英文逗号分隔；空字符串表示留空（空数组）
-// 指针类型数字字段（download）：空字符串 → nil（保留默认）
-// 注意：对于 BotToken/APIKey 若接收到的是脱敏值（含 ***）则保持原值不覆写
-type settingsFormPost struct {
-	// General
-	StrmPrefix       string `form:"strmPrefix" json:"strmPrefix"`
-	MediaMountPath   string `form:"mediaMountPath" json:"mediaMountPath"`
-	EnablePathEnc    string `form:"enablePathEncoding" json:"enablePathEncoding"`
-	Enable302        string `form:"enable302" json:"enable302"`
-	RemoveExtraFiles string `form:"removeExtraFiles" json:"removeExtraFiles"`
-	// Emby
-	EmbyURL               string `form:"emby.url" json:"emby.url"`
-	EmbyAPIKey            string `form:"emby.apiKey" json:"emby.apiKey"`
-	EmbyWebhookAuth       string `form:"emby.webhookAuth" json:"emby.webhookAuth"`
-	EmbyLibraryID         string `form:"emby.libraryId" json:"emby.libraryId"`
-	EmbyNotifyAdded       string `form:"emby.notifyMediaAdded" json:"emby.notifyMediaAdded"`
-	EmbyNotifyRemoved     string `form:"emby.notifyMediaRemoved" json:"emby.notifyMediaRemoved"`
-	EmbyNotifyPlayback    string `form:"emby.notifyPlayback" json:"emby.notifyPlayback"`
-	EmbySyncDeleteEnabled string `form:"emby.syncDeleteEnabled" json:"emby.syncDeleteEnabled"`
-	EmbySyncDeleteDryRun  string `form:"emby.syncDeleteDryRun" json:"emby.syncDeleteDryRun"`
-	// Telegram
-	TgBotToken    string `form:"telegram.botToken" json:"telegram.botToken"`
-	TgChatID      string `form:"telegram.chatId" json:"telegram.chatId"`
-	TgWebhookURL  string `form:"telegram.webhookUrl" json:"telegram.webhookUrl"`
-	TgEnabled     string `form:"telegram.enabled" json:"telegram.enabled"`
-	TgAutoPolling string `form:"telegram.autoPolling" json:"telegram.autoPolling"`
-	// Download
-	DownloadLinkMaxPerSec     string `form:"download.linkMaxPerSecond" json:"download.linkMaxPerSecond"`
-	DownloadLinkMaxConcurrent string `form:"download.linkMaxConcurrent" json:"download.linkMaxConcurrent"`
-	DownloadMaxConcurrent     string `form:"download.downloadMaxConcurrent" json:"download.downloadMaxConcurrent"`
-	// STRM
-	StrmForceProxyUaTokens       string `form:"strm.forceProxyUaTokens" json:"strm.forceProxyUaTokens"`
-	StrmAccountProxyConcurrency  string `form:"strm.accountProxyConcurrencyLimit" json:"strm.accountProxyConcurrencyLimit"`
-	StrmRedirectCheckTimeoutMs   string `form:"strm.redirectCheckTimeoutMs" json:"strm.redirectCheckTimeoutMs"`
-	// Advanced
-	StrmExtensions     string `form:"strmExtensions" json:"strmExtensions"`
-	DownloadExtensions string `form:"downloadExtensions" json:"downloadExtensions"`
-	UserAgent          string `form:"user-agent" json:"user-agent"`
-}
-
-// parseCSV 解析英文逗号分隔字符串，去除空项
-func parseCSV(s string) []string {
-	if s == "" {
-		return []string{}
-	}
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// parseBoolStr "true"/"1"/"on" → true, 其他 → false
-func parseBoolStr(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "true", "1", "on", "yes":
-		return true
-	}
-	return false
-}
-
-// parseIntPtr 空串→nil；否则按十进制解析；解析失败返回 0 的指针并记录 warning（这里静默降级为 0 指针）
-func parseIntPtr(s string) *int {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	var v int
-	if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
-		return nil
-	}
-	return &v
-}
-
-// parseInt 解析失败返回 0
-func parseInt(s string) int {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0
-	}
-	var v int
-	if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
-		return 0
-	}
-	return v
+// settingsPostBody 前端 Settings 页提交的嵌套 JSON 结构
+// 与 model.Settings 的 JSON 标签对齐，兼容 React SPA 的保存格式
+type settingsPostBody struct {
+	UserAgent          string                    `json:"user-agent"`
+	StrmExtensions     []string                  `json:"strmExtensions"`
+	DownloadExtensions []string                  `json:"downloadExtensions"`
+	MediaMountPath     []string                  `json:"mediaMountPath"`
+	StrmPrefix         string                    `json:"strmPrefix"`
+	EnablePathEncoding bool                      `json:"enablePathEncoding"`
+	Enable302          bool                      `json:"enable302"`
+	RemoveExtraFiles   bool                      `json:"removeExtraFiles"`
+	Download           *model.DownloadSettings   `json:"download"`
+	Strm               *model.StrmSettings       `json:"strm"`
+	Emby               *model.EmbySettings       `json:"emby"`
+	Telegram           *model.TelegramSettings   `json:"telegram"`
+	LifeMonitor        *model.LifeMonitorSettings `json:"lifeMonitor"`
 }
 
 // containsAsterisk 判定是否是脱敏值（含 *）
 func containsAsterisk(s string) bool { return strings.Contains(s, "*") }
 
-// HandleSettingsPOST POST /api/settings 扁平 form 提交（settings.templ 跨 tab 汇总提交）
-// 支持 Content-Type: application/json 与 application/x-www-form-urlencoded / multipart/form-data
+// HandleSettingsPOST POST /api/settings 接受 React SPA 的嵌套 JSON 提交
+// 前端通过 saveData 发送完整设置（含 strm/lifeMonitor/download/emby/telegram 嵌套对象）
+// 后端解码后与现有设置合并：字符串非空才覆盖、数组直接覆盖、敏感字段脱敏值跳过
+// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
 func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		settings, err := deps.SettingsStore.ReadSettings()
@@ -416,135 +344,139 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			return
 		}
 
-		var p settingsFormPost
-		ct := r.Header.Get("Content-Type")
-		isJSON := strings.Contains(ct, "application/json")
+		var body settingsPostBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			logger.S().Warnf("[settings POST] JSON decode failed: %v", err)
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
+			return
+		}
 
-		if isJSON {
-			if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
-				return
+		// ====== 通用字段 ======
+		if body.UserAgent != "" {
+			settings.UserAgent = strings.TrimSpace(body.UserAgent)
+		}
+		if body.StrmPrefix != "" {
+			settings.StrmPrefix = strings.TrimSpace(body.StrmPrefix)
+		}
+		if len(body.StrmExtensions) > 0 {
+			settings.StrmExtensions = body.StrmExtensions
+		}
+		if len(body.DownloadExtensions) > 0 {
+			settings.DownloadExtensions = body.DownloadExtensions
+		}
+		// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
+
+		// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
+		settings.EnablePathEncoding = body.EnablePathEncoding
+		settings.Enable302 = body.Enable302
+		settings.RemoveExtraFiles = body.RemoveExtraFiles
+
+		// ====== Download 嵌套对象 ======
+		if body.Download != nil {
+			if body.Download.LinkMaxPerSecond != nil {
+				settings.Download.LinkMaxPerSecond = body.Download.LinkMaxPerSecond
 			}
-		} else {
-			if err := r.ParseForm(); err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "表单解析失败"})
-				return
+			if body.Download.LinkMaxConcurrent != nil {
+				settings.Download.LinkMaxConcurrent = body.Download.LinkMaxConcurrent
 			}
-			p = settingsFormPost{
-				StrmPrefix:       r.FormValue("strmPrefix"),
-				MediaMountPath:   r.FormValue("mediaMountPath"),
-				EnablePathEnc:    r.FormValue("enablePathEncoding"),
-				Enable302:        r.FormValue("enable302"),
-				RemoveExtraFiles: r.FormValue("removeExtraFiles"),
+			if body.Download.DownloadMaxConcurrent != nil {
+				settings.Download.DownloadMaxConcurrent = body.Download.DownloadMaxConcurrent
+			}
+			settings.Download.AutoDownloadMetadata = body.Download.AutoDownloadMetadata
+		}
 
-				EmbyURL:               r.FormValue("emby.url"),
-				EmbyAPIKey:            r.FormValue("emby.apiKey"),
-				EmbyWebhookAuth:       r.FormValue("emby.webhookAuth"),
-				EmbyLibraryID:         r.FormValue("emby.libraryId"),
-				EmbyNotifyAdded:       r.FormValue("emby.notifyMediaAdded"),
-				EmbyNotifyRemoved:     r.FormValue("emby.notifyMediaRemoved"),
-				EmbyNotifyPlayback:    r.FormValue("emby.notifyPlayback"),
-				EmbySyncDeleteEnabled: r.FormValue("emby.syncDeleteEnabled"),
-				EmbySyncDeleteDryRun:  r.FormValue("emby.syncDeleteDryRun"),
-
-				TgBotToken:    r.FormValue("telegram.botToken"),
-				TgChatID:      r.FormValue("telegram.chatId"),
-				TgWebhookURL:  r.FormValue("telegram.webhookUrl"),
-				TgEnabled:     r.FormValue("telegram.enabled"),
-				TgAutoPolling: r.FormValue("telegram.autoPolling"),
-
-				DownloadLinkMaxPerSec:     r.FormValue("download.linkMaxPerSecond"),
-				DownloadLinkMaxConcurrent: r.FormValue("download.linkMaxConcurrent"),
-				DownloadMaxConcurrent:     r.FormValue("download.downloadMaxConcurrent"),
-
-				StrmForceProxyUaTokens:      r.FormValue("strm.forceProxyUaTokens"),
-				StrmAccountProxyConcurrency: r.FormValue("strm.accountProxyConcurrencyLimit"),
-				StrmRedirectCheckTimeoutMs:  r.FormValue("strm.redirectCheckTimeoutMs"),
-
-				StrmExtensions:     r.FormValue("strmExtensions"),
-				DownloadExtensions: r.FormValue("downloadExtensions"),
-				UserAgent:          r.FormValue("user-agent"),
+		// ====== STRM 嵌套对象 ======
+		if body.Strm != nil {
+			if len(body.Strm.ForceProxyUaTokens) > 0 {
+				settings.Strm.ForceProxyUaTokens = body.Strm.ForceProxyUaTokens
+			}
+			if body.Strm.AccountProxyConcurrencyLimit > 0 {
+				settings.Strm.AccountProxyConcurrencyLimit = body.Strm.AccountProxyConcurrencyLimit
+			}
+			if body.Strm.RedirectCheckTimeoutMs >= 500 {
+				settings.Strm.RedirectCheckTimeoutMs = body.Strm.RedirectCheckTimeoutMs
 			}
 		}
 
-		// ====== General ======
-		if p.StrmPrefix != "" {
-			settings.StrmPrefix = strings.TrimSpace(p.StrmPrefix)
-		}
-		// 数组字段：非空才覆盖（用户若清空表示留空数组）
-		if r.Form != nil {
-			// 对 form 提交：仅当 name 在表单里出现过才覆盖（通过 FormValue + Content-Type 判断）
-		}
-		// 简化：用户从 settings 页提交时，凡是"没改"的值也会被 submitFromAllTabs 收集；
-		// 但逗号分隔的"数组"字段，回填时已按 settings 原值 join，因此再提交回来是等价的。
-		settings.MediaMountPath = parseCSV(p.MediaMountPath)
-		settings.EnablePathEncoding = parseBoolStr(p.EnablePathEnc)
-		settings.Enable302 = parseBoolStr(p.Enable302)
-		settings.RemoveExtraFiles = parseBoolStr(p.RemoveExtraFiles)
-
-		// ====== Emby ======
-		if p.EmbyURL != "" {
-			settings.Emby.URL = strings.TrimSpace(p.EmbyURL)
-		}
-		if p.EmbyAPIKey != "" && !containsAsterisk(p.EmbyAPIKey) {
-			settings.Emby.APIKey = strings.TrimSpace(p.EmbyAPIKey)
-		}
-		if p.EmbyWebhookAuth != "" {
-			settings.Emby.WebhookAuth = strings.TrimSpace(p.EmbyWebhookAuth)
-		}
-		if p.EmbyLibraryID != "" {
-			settings.Emby.LibraryID = strings.TrimSpace(p.EmbyLibraryID)
-		}
-		settings.Emby.NotifyMediaAdded = parseBoolStr(p.EmbyNotifyAdded)
-		settings.Emby.NotifyMediaRemoved = parseBoolStr(p.EmbyNotifyRemoved)
-		settings.Emby.NotifyPlayback = parseBoolStr(p.EmbyNotifyPlayback)
-		settings.Emby.SyncDeleteEnabled = parseBoolStr(p.EmbySyncDeleteEnabled)
-		settings.Emby.SyncDeleteDryRun = parseBoolStr(p.EmbySyncDeleteDryRun)
-
-		// ====== Telegram ======
-		if p.TgBotToken != "" && !containsAsterisk(p.TgBotToken) {
-			settings.Telegram.BotToken = strings.TrimSpace(p.TgBotToken)
-		}
-		if p.TgChatID != "" {
-			settings.Telegram.ChatID = strings.TrimSpace(p.TgChatID)
-		}
-		if p.TgWebhookURL != "" {
-			settings.Telegram.WebhookURL = strings.TrimSpace(p.TgWebhookURL)
-		}
-		settings.Telegram.Enabled = parseBoolStr(p.TgEnabled)
-		settings.Telegram.AutoPolling = parseBoolStr(p.TgAutoPolling)
-
-		// ====== Download ======
-		if v := parseIntPtr(p.DownloadLinkMaxPerSec); v != nil {
-			settings.Download.LinkMaxPerSecond = v
-		}
-		if v := parseIntPtr(p.DownloadLinkMaxConcurrent); v != nil {
-			settings.Download.LinkMaxConcurrent = v
-		}
-		if v := parseIntPtr(p.DownloadMaxConcurrent); v != nil {
-			settings.Download.DownloadMaxConcurrent = v
+		// ====== Emby 嵌套对象 ======
+		if body.Emby != nil {
+			em := settings.Emby
+			if body.Emby.URL != "" {
+				em.URL = strings.TrimSpace(body.Emby.URL)
+			}
+			if body.Emby.APIKey != "" && !containsAsterisk(body.Emby.APIKey) {
+				em.APIKey = strings.TrimSpace(body.Emby.APIKey)
+			}
+			if body.Emby.WebhookAuth != "" && !containsAsterisk(body.Emby.WebhookAuth) {
+				em.WebhookAuth = strings.TrimSpace(body.Emby.WebhookAuth)
+			}
+			if body.Emby.LibraryID != "" {
+				em.LibraryID = strings.TrimSpace(body.Emby.LibraryID)
+			}
+			em.NotifyMediaAdded = body.Emby.NotifyMediaAdded
+			em.NotifyMediaRemoved = body.Emby.NotifyMediaRemoved
+			em.NotifyPlayback = body.Emby.NotifyPlayback
+			em.PlaybackShowProgress = body.Emby.PlaybackShowProgress
+			em.PlaybackShowOverview = body.Emby.PlaybackShowOverview
+			em.SyncDeleteEnabled = body.Emby.SyncDeleteEnabled
+			em.SyncDeleteDryRun = body.Emby.SyncDeleteDryRun
+			if body.Emby.SyncDeletePathMappings != nil {
+				em.SyncDeletePathMappings = body.Emby.SyncDeletePathMappings
+			}
+			settings.Emby = em
 		}
 
-		// ====== STRM ======
-		if p.StrmForceProxyUaTokens != "" {
-			settings.Strm.ForceProxyUaTokens = parseCSV(p.StrmForceProxyUaTokens)
-		}
-		if v := parseInt(p.StrmAccountProxyConcurrency); v > 0 {
-			settings.Strm.AccountProxyConcurrencyLimit = v
-		}
-		if v := parseInt(p.StrmRedirectCheckTimeoutMs); v >= 500 {
-			settings.Strm.RedirectCheckTimeoutMs = v
+		// ====== Telegram 嵌套对象 ======
+		if body.Telegram != nil {
+			tg := settings.Telegram
+			if body.Telegram.BotToken != "" && !containsAsterisk(body.Telegram.BotToken) {
+				tg.BotToken = strings.TrimSpace(body.Telegram.BotToken)
+			}
+			if body.Telegram.ChatID != "" {
+				tg.ChatID = strings.TrimSpace(body.Telegram.ChatID)
+			}
+			if body.Telegram.WebhookURL != "" {
+				tg.WebhookURL = strings.TrimSpace(body.Telegram.WebhookURL)
+			}
+			tg.Enabled = body.Telegram.Enabled
+			tg.AutoPolling = body.Telegram.AutoPolling
+			if body.Telegram.AllowedUsers != nil {
+				tg.AllowedUsers = body.Telegram.AllowedUsers
+			}
+			if body.Telegram.AccountAlerts != nil {
+				tg.AccountAlerts = body.Telegram.AccountAlerts
+			}
+			settings.Telegram = tg
 		}
 
-		// ====== Advanced ======
-		if p.StrmExtensions != "" {
-			settings.StrmExtensions = parseCSV(p.StrmExtensions)
-		}
-		if p.DownloadExtensions != "" {
-			settings.DownloadExtensions = parseCSV(p.DownloadExtensions)
-		}
-		if p.UserAgent != "" {
-			settings.UserAgent = strings.TrimSpace(p.UserAgent)
+		// ====== LifeMonitor 嵌套对象 ======
+		if body.LifeMonitor != nil {
+			lm := settings.LifeMonitor
+			lm.Enabled = body.LifeMonitor.Enabled
+			if body.LifeMonitor.Accounts != nil {
+				lm.Accounts = body.LifeMonitor.Accounts
+			}
+			if body.LifeMonitor.PollInterval > 0 {
+				lm.PollInterval = body.LifeMonitor.PollInterval
+			}
+			if body.LifeMonitor.PathMappings != nil {
+				lm.PathMappings = body.LifeMonitor.PathMappings
+			}
+			lm.RemoveEmptyDirs = body.LifeMonitor.RemoveEmptyDirs
+			lm.EventTypes = body.LifeMonitor.EventTypes
+			lm.MinFileSize = body.LifeMonitor.MinFileSize
+			if body.LifeMonitor.FirstPullMode != "" {
+				lm.FirstPullMode = body.LifeMonitor.FirstPullMode
+			}
+			if body.LifeMonitor.MoveMediaMode != "" {
+				lm.MoveMediaMode = body.LifeMonitor.MoveMediaMode
+			}
+			if body.LifeMonitor.StrmPrefix != "" {
+				lm.StrmPrefix = body.LifeMonitor.StrmPrefix
+			}
+			lm.EnablePathEncoding = body.LifeMonitor.EnablePathEncoding
+			lm.Enable302 = body.LifeMonitor.Enable302
+			settings.LifeMonitor = lm
 		}
 
 		if err := deps.SettingsStore.SaveSettings(settings); err != nil {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wabisabi926/faststrm/internal/model"
@@ -16,6 +17,49 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+
+// ==================== 懒加载 PollingManager ====================
+// 解决启动时未配置 BotToken 导致 PollingManager 为 nil 的问题
+
+var (
+    sharedPollingMgr *notify.PollingManager
+    sharedCmdHandler *notify.CommandHandler
+    sharedDispatcher *notify.Dispatcher
+    sharedMu          sync.Mutex
+)
+
+// getPollingMgr 获取或创建共享 PollingManager
+func getPollingMgr(bot *notify.TelegramBot) *notify.PollingManager {
+    sharedMu.Lock()
+    defer sharedMu.Unlock()
+    if sharedPollingMgr == nil {
+        sharedPollingMgr = notify.NewPollingManager(bot)
+    }
+    return sharedPollingMgr
+}
+
+// getCmdHandler 获取或创建共享 CommandHandler
+func getCmdHandler(bot *notify.TelegramBot, settingsStore *store.SettingsStore, tasksStore *store.TasksStore, accountStore *store.AccountStore) *notify.CommandHandler {
+    sharedMu.Lock()
+    defer sharedMu.Unlock()
+    if sharedCmdHandler == nil {
+        sharedCmdHandler = notify.NewCommandHandler(bot, settingsStore, tasksStore, accountStore)
+    }
+    return sharedCmdHandler
+}
+
+// resetSharedPolling 重置共享实例（BotToken 变更时调用）
+func resetSharedPolling() {
+    sharedMu.Lock()
+    defer sharedMu.Unlock()
+    if sharedPollingMgr != nil {
+        sharedPollingMgr.Stop()
+        sharedPollingMgr = nil
+    }
+    sharedCmdHandler = nil
+}
+
+
 // NotifyDeps Telegram 通知相关 handler 依赖
 type NotifyDeps struct {
 	SettingsStore  *store.SettingsStore
@@ -23,6 +67,8 @@ type NotifyDeps struct {
 	TelegramBot    *notify.TelegramBot
 	PollingManager *notify.PollingManager
 	CommandHandler *notify.CommandHandler
+	TasksStore     *store.TasksStore
+	AccountStore   *store.AccountStore
 }
 
 // ==================== 辅助 ====================
@@ -217,6 +263,8 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 			newTg.ChatID = old.ChatID
 		}
 		settings.Telegram = newTg
+		// 重置共享轮询管理器，下次请求时会用新 BotToken 创建
+		resetSharedPolling()
 
 		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
 			logger.S().Errorf("[notify/bot POST] save settings: %v", err)
@@ -267,6 +315,8 @@ func HandleNotifyBotDELETE(deps NotifyDeps) http.HandlerFunc {
 			}
 		}
 
+		// 重置共享轮询管理器
+		resetSharedPolling()
 		// 保留 allowedUsers / accountAlerts 子配置，仅清空 bot 本体相关字段
 		settings.Telegram = model.TelegramSettings{
 			AllowedUsers:  tg.AllowedUsers,
@@ -301,8 +351,16 @@ func HandleNotifyPollingGET(deps NotifyDeps) http.HandlerFunc {
 		}
 
 		running := false
-		if deps.PollingManager != nil {
-			running = deps.PollingManager.IsRunning()
+		pollingMgr := deps.PollingManager
+		if pollingMgr == nil {
+			bot := deps.botFromSettings(tg)
+			if bot == nil {
+				bot = notify.NewTelegramBot(tg.BotToken, tg.ChatID)
+			}
+			pollingMgr = getPollingMgr(bot)
+		}
+		if pollingMgr != nil {
+			running = pollingMgr.IsRunning()
 		}
 
 		var webhookInfo *notify.WebhookInfo
@@ -339,14 +397,18 @@ func HandleNotifyPollingPOST(deps NotifyDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "Telegram 未配置"})
 			return
 		}
-		if deps.PollingManager == nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "PollingManager 未初始化"})
-			return
-		}
-
+		// 懒初始化 PollingManager
+		pollingMgr := deps.PollingManager
 		bot := deps.botFromSettings(tg)
 		if bot == nil {
 			bot = notify.NewTelegramBot(tg.BotToken, tg.ChatID)
+		}
+		if pollingMgr == nil {
+			pollingMgr = getPollingMgr(bot)
+		}
+		if pollingMgr == nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "PollingManager 未初始化"})
+			return
 		}
 
 		// 删除现有 webhook（轮询模式与 webhook 互斥）
@@ -357,8 +419,12 @@ func HandleNotifyPollingPOST(deps NotifyDeps) http.HandlerFunc {
 		}
 
 		// 启动轮询：将 update 分发给 CommandHandler
+		cmdHandler := deps.CommandHandler
+		if cmdHandler == nil {
+			cmdHandler = getCmdHandler(bot, deps.SettingsStore, deps.TasksStore, deps.AccountStore)
+		}
 		handlerFn := func(ctx context.Context, update notify.Update) error {
-			if deps.CommandHandler == nil {
+			if cmdHandler == nil {
 				return nil
 			}
 			if update.Message != nil {
@@ -369,7 +435,7 @@ func HandleNotifyPollingPOST(deps NotifyDeps) http.HandlerFunc {
 			}
 			return nil
 		}
-		if err := deps.PollingManager.Start(context.Background(), handlerFn); err != nil {
+		if err := pollingMgr.Start(context.Background(), handlerFn); err != nil {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
 				"error":   "启动轮询失败",
 				"details": err.Error(),
@@ -397,12 +463,20 @@ func HandleNotifyPollingDELETE(deps NotifyDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "Telegram 未配置"})
 			return
 		}
-		if deps.PollingManager == nil {
+		pollingMgr := deps.PollingManager
+		if pollingMgr == nil {
+			bot := deps.botFromSettings(tg)
+			if bot == nil {
+				bot = notify.NewTelegramBot(tg.BotToken, tg.ChatID)
+			}
+			pollingMgr = getPollingMgr(bot)
+		}
+		if pollingMgr == nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "PollingManager 未初始化"})
 			return
 		}
 
-		deps.PollingManager.Stop()
+		pollingMgr.Stop()
 
 		// 若配置中存在 webhook URL，则恢复 webhook
 		if tg.WebhookURL != "" {

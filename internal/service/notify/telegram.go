@@ -389,6 +389,39 @@ func (b *TelegramBot) EditMessageText(ctx context.Context, chatID string, messag
 	return nil
 }
 
+
+// EditMessageReplyMarkup 编辑已发送消息的回复键盘（POST /editMessageReplyMarkup）
+func (b *TelegramBot) EditMessageReplyMarkup(ctx context.Context, chatID string, messageID int64, buttons [][]InlineKeyboardButton) error {
+	body := map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"reply_markup": map[string]any{
+			"inline_keyboard": buttons,
+		},
+	}
+	if _, err := b.doJSON(ctx, "editMessageReplyMarkup", body); err != nil {
+		return err
+	}
+	return nil
+}
+
+// EditMessageTextWithButtons 编辑消息文本和按钮（POST /editMessageText）
+func (b *TelegramBot) EditMessageTextWithButtons(ctx context.Context, chatID string, messageID int64, text string, buttons [][]InlineKeyboardButton) error {
+	body := map[string]any{
+		"chat_id":      chatID,
+		"message_id":   messageID,
+		"text":         text,
+		"parse_mode":   "HTML",
+		"reply_markup": map[string]any{
+			"inline_keyboard": buttons,
+		},
+	}
+	if _, err := b.doJSON(ctx, "editMessageText", body); err != nil {
+		return err
+	}
+	return nil
+}
+
 // SendMessageWithButtons 发送带内联键盘按钮的消息（POST /sendMessage，带 reply_markup）
 func (b *TelegramBot) SendMessageWithButtons(ctx context.Context, chatID string, text string, buttons [][]InlineKeyboardButton) error {
 	body := map[string]any{

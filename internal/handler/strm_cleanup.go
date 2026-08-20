@@ -21,12 +21,16 @@ type StrmCleanupDeps struct {
 	SettingsStore *store.SettingsStore
 	AccountStore  *store.AccountStore
 	ClientFactory func(name string) (*client115.Client, error)
+	TasksStore    *store.TasksStore
+	StrmCache     *store.StrmCacheStore
 }
 
 type MappingScanRequest struct {
 	Account   string `json:"account"`
 	CloudPath string `json:"cloudPath"`
 	LocalPath string `json:"localPath"`
+	UseCache  bool   `json:"useCache,omitempty"`
+	CacheUUID string `json:"cacheUuid,omitempty"`
 }
 
 type StaleStrm struct {
@@ -105,11 +109,7 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 			return
 		}
 
-		accounts, err := deps.AccountStore.ReadAccounts()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
+	accounts := deps.AccountStore.List()
 
 		mappings := body.Mappings
 		if body.UseSettingsDefaults || len(mappings) == 0 {
@@ -131,8 +131,13 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 
 		results := make([]MappingScanResult, 0, len(mappings))
 		for _, m := range mappings {
-			result := scanMapping(r.Context(), m, deps, accountMap)
-			results = append(results, result)
+			if m.UseCache && deps.StrmCache != nil && deps.TasksStore != nil {
+				result := scanMappingWithCacheFallback(r.Context(), m, deps, accountMap)
+				results = append(results, result)
+			} else {
+				result := scanMapping(r.Context(), m, deps, accountMap)
+				results = append(results, result)
+			}
 		}
 
 		resp := ScanResponse{
@@ -160,11 +165,7 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 			return
 		}
 
-		accounts, err := deps.AccountStore.ReadAccounts()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
+	accounts := deps.AccountStore.List()
 
 		accountMap := make(map[string]string)
 		for _, acc := range accounts {
@@ -256,6 +257,84 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 	}
 
 	return result
+}
+
+func scanMappingFromCache(m MappingScanRequest, entry *store.StrmCacheEntry) MappingScanResult {
+	result := MappingScanResult{
+		Account:   m.Account,
+		CloudPath: m.CloudPath,
+		LocalPath: m.LocalPath,
+	}
+	if entry == nil || len(entry.LocalPaths) == 0 {
+		result.Error = "empty cache"
+		return result
+	}
+	cachedSet := make(map[string]struct{}, len(entry.LocalPaths))
+	for _, p := range entry.LocalPaths {
+		cachedSet[filepath.Clean(p)] = struct{}{}
+	}
+	localFiles := listLocalStrmFiles(m.LocalPath)
+	result.LocalStrmCount = len(localFiles)
+	result.RemoteFileCount = len(entry.LocalPaths)
+	// full -> relName (用于结果回显)
+	actualLocalRel := make(map[string]string, len(localFiles))
+	for relName := range localFiles {
+		full := filepath.Clean(filepath.Join(m.LocalPath, relName))
+		actualLocalRel[full] = relName
+	}
+	for cleanPath := range actualLocalRel {
+		if _, ok := cachedSet[cleanPath]; !ok {
+			result.StaleStrms = append(result.StaleStrms, StaleStrm{
+				RelPath: actualLocalRel[cleanPath],
+				Size:    0,
+			})
+		}
+	}
+	for _, cachedPath := range entry.LocalPaths {
+		cleanPath := filepath.Clean(cachedPath)
+		if _, exists := actualLocalRel[cleanPath]; !exists {
+			rel, _ := filepath.Rel(m.LocalPath, cachedPath)
+			result.MissingStrms = append(result.MissingStrms, MissingStrm{
+				RelPath: rel,
+				Size:    0,
+			})
+		}
+	}
+	return result
+}
+
+func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps, accountMap map[string]string) MappingScanResult {
+	if deps.StrmCache == nil || deps.TasksStore == nil {
+		return scanMapping(ctx, m, deps, accountMap)
+	}
+	tasks, err := deps.TasksStore.ReadTasks()
+	if err != nil {
+		return scanMapping(ctx, m, deps, accountMap)
+	}
+	var matchedTaskID string
+	for _, t := range tasks {
+		if t.Account == m.Account && t.TargetPath == m.LocalPath {
+			matchedTaskID = t.ID
+			break
+		}
+	}
+	if matchedTaskID == "" {
+		r := MappingScanResult{Account: m.Account, CloudPath: m.CloudPath, LocalPath: m.LocalPath}
+		r.Error = "no matching task for mapping, fallback to network scan"
+		return scanMapping(ctx, m, deps, accountMap)
+	}
+	var entry *store.StrmCacheEntry
+	if m.CacheUUID != "" {
+		entry = deps.StrmCache.Get(m.CacheUUID)
+	} else {
+		entry = deps.StrmCache.LatestByTaskID(matchedTaskID)
+	}
+	if entry == nil {
+		r := MappingScanResult{Account: m.Account, CloudPath: m.CloudPath, LocalPath: m.LocalPath}
+		r.Error = "no cache, fallback to network scan"
+		return scanMapping(ctx, m, deps, accountMap)
+	}
+	return scanMappingFromCache(m, entry)
 }
 
 func listAllCloudFiles(ctx context.Context, client *client115.Client, cookie string, cid int64) ([]client115.FsFileEntry, error) {
@@ -387,3 +466,4 @@ func removeEmptyDirs(root string, removed *[]string) {
 		}
 	}
 }
+

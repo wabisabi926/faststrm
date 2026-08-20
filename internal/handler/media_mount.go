@@ -2,9 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
-	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/mediasync"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 )
@@ -22,11 +22,7 @@ func HandleMediaMountSyncGET(deps MediaMountDeps) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		accounts, err := deps.AccountStore.ReadAccounts()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		accounts := deps.AccountStore.List()
 		tasks, err := deps.TasksStore.ReadTasks()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -63,18 +59,17 @@ func HandleMediaMountSyncPOST(deps MediaMountDeps) http.HandlerFunc {
 		var body struct {
 			SkipNginxReload bool `json:"skipNginxReload"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		settings, err := deps.SettingsStore.ReadSettings()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		accounts, err := deps.AccountStore.ReadAccounts()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		accounts := deps.AccountStore.List()
 		tasks, err := deps.TasksStore.ReadTasks()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -121,9 +116,8 @@ func HandleMediaMountSyncPOST(deps MediaMountDeps) http.HandlerFunc {
 		resp := mediasync.NewSyncResult(cr, added, removed, kept, changed, nginxResult)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			log.Printf("[mediaMount] encode response failed: %v", err)
+		}
 	}
 }
-
-// Ensure unused import is used
-var _ = model.DefaultSettings

@@ -18,10 +18,17 @@ const CLIENT_OPTIONS = [
   { value: "alipaymini", label: "支付宝小程序", recommended: true },
   { value: "wechatmini", label: "微信小程序" },
   { value: "115android", label: "115 安卓" },
+  { value: "android", label: "安卓原生" },
   { value: "115ios", label: "115 iOS" },
+  { value: "ios", label: "iOS 原生" },
+  { value: "115ipad", label: "115 iPad" },
   { value: "tv", label: "115 TV" },
-  { value: "web", label: "115 网页（会踢掉网页登录）" },
   { value: "qandroid", label: "115 管理端" },
+  { value: "os_windows", label: "Windows 客户端" },
+  { value: "os_mac", label: "Mac 客户端" },
+  { value: "os_linux", label: "Linux 客户端" },
+  { value: "harmony", label: "鸿蒙" },
+  { value: "web", label: "115 网页（会踢掉网页登录）" },
 ];
 
 type QrStatus = "idle" | "loading" | "waiting" | "scanned" | "success" | "expired" | "cancelled" | "error";
@@ -221,7 +228,7 @@ export function QrCodeLogin({ onSuccess, autoStart = false }: QrCodeLoginProps) 
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          推荐使用支付宝/微信小程序，不会踢掉现有设备登录
+          推荐使用支付宝/微信小程序（不会踢掉现有设备）；Web 端会踢掉已有网页登录
         </p>
       </div>
 

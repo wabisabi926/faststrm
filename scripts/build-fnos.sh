@@ -222,18 +222,23 @@ for ARCH in "${ARCHES[@]}"; do
   cp "${FPK}" "${PKG_PATH}"
 
   # 同时保留一份解压后的目录在 dist 下，方便用户手工查看/定制
-  STAGE_COPY="${DIST_DIR}/faststrm-${ARCH}-${VERSION}"
-  rm -rf "${STAGE_COPY}"
-  cp -R "${STAGE}" "${STAGE_COPY}"
-  find "${STAGE_COPY}" -type d -exec chmod 755 {} +
-  find "${STAGE_COPY}" -type f -exec chmod u+rw,go+r {} +
-  if [ -d "${STAGE_COPY}/cmd" ]; then
-    chmod 755 "${STAGE_COPY}/cmd"/* 2>/dev/null || true
+  # (仅在本地构建时保留，CI 环境下清理掉避免 Release Asset 冗余)
+  if [ "${BUILD_FNOS_KEEP_STAGE:-0}" = "1" ]; then
+    STAGE_COPY="${DIST_DIR}/faststrm-${ARCH}-${VERSION}"
+    rm -rf "${STAGE_COPY}"
+    cp -R "${STAGE}" "${STAGE_COPY}"
+    find "${STAGE_COPY}" -type d -exec chmod 755 {} +
+    find "${STAGE_COPY}" -type f -exec chmod u+rw,go+r {} +
+    if [ -d "${STAGE_COPY}/cmd" ]; then
+      chmod 755 "${STAGE_COPY}/cmd"/* 2>/dev/null || true
+    fi
+    [ -f "${STAGE_COPY}/app/entrypoint.sh" ] && chmod 755 "${STAGE_COPY}/app/entrypoint.sh" || true
+    [ -f "${STAGE_COPY}/app/faststrm"      ] && chmod 755 "${STAGE_COPY}/app/faststrm"      || true
+    echo "${VERSION}" > "${STAGE_COPY}/VERSION"
+    chmod 644 "${STAGE_COPY}/VERSION" "${STAGE_COPY}/manifest" 2>/dev/null || true
+  else
+    echo "    (skipping stage copy, set BUILD_FNOS_KEEP_STAGE=1 to keep)"
   fi
-  [ -f "${STAGE_COPY}/app/entrypoint.sh" ] && chmod 755 "${STAGE_COPY}/app/entrypoint.sh" || true
-  [ -f "${STAGE_COPY}/app/faststrm"      ] && chmod 755 "${STAGE_COPY}/app/faststrm"      || true
-  echo "${VERSION}" > "${STAGE_COPY}/VERSION"
-  chmod 644 "${STAGE_COPY}/VERSION" "${STAGE_COPY}/manifest" 2>/dev/null || true
 
   SIZE="$(du -h "${PKG_PATH}" | cut -f1)"
   echo "    built -> ${PKG_PATH} (${SIZE})"
@@ -247,4 +252,4 @@ done
 echo
 echo "Done. Artifacts in: ${DIST_DIR}"
 echo "  .fpk = 可上传到飞牛应用中心的安装包"
-echo "  faststrm-{arch}-{VERSION}/ = 解压后的应用目录(可手工定制后再打包)"
+echo "  (可设 BUILD_FNOS_KEEP_STAGE=1 保留解压后的应用目录)"

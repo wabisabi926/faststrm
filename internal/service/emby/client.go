@@ -158,3 +158,186 @@ func (c *Client) BuildImageURL(itemID string, maxWidth int) string {
 		url.QueryEscape(c.apiKey),
 	)
 }
+
+// ==================== 媒体库刷新 ====================
+
+// RefreshOptions 刷新选项
+type RefreshOptions struct {
+	Recursive          bool   // 是否递归刷新子项
+	MetadataMode       string // MetadataRefreshMode: Default/FullRefresh
+	ImageMode          string // ImageRefreshMode: Default/FullRefresh
+	ReplaceAllMetadata bool   // 是否替换所有元数据
+	ReplaceAllImages   bool   // 是否替换所有图片
+}
+
+// DefaultRefreshOptions 返回默认刷新选项
+func DefaultRefreshOptions() *RefreshOptions {
+	return &RefreshOptions{
+		Recursive:    true,
+		MetadataMode: "FullRefresh",
+		ImageMode:    "FullRefresh",
+	}
+}
+
+// FindItemByPath 根据路径查找 Emby Item
+// GET /emby/Items?Path={path}&Recursive=true&Fields=Path&IncludeItemTypes=Movie,Episode,Series,Folder
+func (c *Client) FindItemByPath(ctx context.Context, path string) (*ItemInfo, error) {
+	if c.baseURL == "" || c.apiKey == "" || path == "" {
+		return nil, fmt.Errorf("invalid params: baseURL empty=%v apiKey empty=%v path=%q", c.baseURL == "", c.apiKey == "", path)
+	}
+
+	u := fmt.Sprintf("%s/emby/Items?Path=%s&Recursive=true&Fields=Path&IncludeItemTypes=Movie,Episode,Series,Folder&api_key=%s",
+		c.baseURL,
+		url.QueryEscape(path),
+		url.QueryEscape(c.apiKey),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request emby: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("emby find item status %d for path %s", resp.StatusCode, path)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	// Emby 返回格式: { "Items": [...] }
+	var result struct {
+		Items []ItemInfo `json:"Items"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode json: %w", err)
+	}
+
+	// 精确匹配路径
+	for _, item := range result.Items {
+		if item.Path == path {
+			return &item, nil
+		}
+	}
+
+	// 没有找到精确匹配
+	return nil, nil
+}
+
+// RefreshItem 刷新单个 Item
+// POST /emby/Items/{id}/Refresh
+func (c *Client) RefreshItem(ctx context.Context, itemID string, opts *RefreshOptions) error {
+	if c.baseURL == "" || c.apiKey == "" || itemID == "" {
+		return fmt.Errorf("invalid params: baseURL empty=%v apiKey empty=%v itemID=%q", c.baseURL == "", c.apiKey == "", itemID)
+	}
+
+	if opts == nil {
+		opts = DefaultRefreshOptions()
+	}
+
+	u := fmt.Sprintf("%s/emby/Items/%s/Refresh",
+		c.baseURL,
+		url.PathEscape(itemID),
+	)
+
+	// 构建查询参数
+	params := url.Values{}
+	params.Set("Recursive", fmt.Sprintf("%t", opts.Recursive))
+	params.Set("MetadataRefreshMode", opts.MetadataMode)
+	params.Set("ImageRefreshMode", opts.ImageMode)
+	params.Set("ReplaceAllMetadata", fmt.Sprintf("%t", opts.ReplaceAllMetadata))
+	params.Set("ReplaceAllImages", fmt.Sprintf("%t", opts.ReplaceAllImages))
+	params.Set("api_key", c.apiKey)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u+"?"+params.Encode(), nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request emby: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 200 OK 或 204 No Content 都算成功
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, bread := io.ReadAll(resp.Body)
+		if bread != nil {
+			return fmt.Errorf("emby refresh failed: status=%d", resp.StatusCode)
+		}
+		return fmt.Errorf("emby refresh failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// RefreshLibrary 刷新指定媒体库
+// POST /emby/Library/Refresh?LibraryId={id}
+func (c *Client) RefreshLibrary(ctx context.Context, libraryID string) error {
+	if c.baseURL == "" || c.apiKey == "" {
+		return fmt.Errorf("invalid params: baseURL=%v apiKey=%v", c.baseURL == "", c.apiKey == "")
+	}
+
+	u := fmt.Sprintf("%s/emby/Library/Refresh?LibraryId=%s&api_key=%s",
+		c.baseURL,
+		url.QueryEscape(libraryID),
+		url.QueryEscape(c.apiKey),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request emby: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, bread := io.ReadAll(resp.Body)
+		if bread != nil {
+			return fmt.Errorf("emby library refresh failed: status=%d", resp.StatusCode)
+		}
+		return fmt.Errorf("emby library refresh failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// Ping 检测 Emby 服务器连通性
+// GET /emby/System/Info/Public
+func (c *Client) Ping(ctx context.Context) error {
+	if c.baseURL == "" || c.apiKey == "" {
+		return fmt.Errorf("emby not configured")
+	}
+
+	u := fmt.Sprintf("%s/emby/System/Info/Public", c.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("emby ping failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("emby ping failed: status=%d", resp.StatusCode)
+	}
+
+	return nil
+}

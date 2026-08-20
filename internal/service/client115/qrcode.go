@@ -20,24 +20,49 @@ import (
 
 // APP_TO_SSOENT 设备类型 → ssoent 映射（对齐 p115client APP_TO_SSOENT）
 var APP_TO_SSOENT = map[string]string{
-	"alipaymini":  "R2", // 支付宝小程序（默认，不会踢掉现有设备）
-	"wechatmini":  "R1", // 微信小程序
-	"115android":  "F3", // 115 安卓
-	"115ios":      "D3", // 115 iOS
-	"tv":          "I1", // 115 TV
-	"web":         "A1", // 115 网页（会踢掉网页端登录）
-	"qandroid":    "M1", // 115 管理端
+	"web":         "A1",
+	"desktop":     "A1",
+	"ios":         "D1",
+	"bios":        "D2",
+	"115ios":      "D3",
+	"android":     "F1",
+	"bandroid":    "F2",
+	"115android":  "F3",
+	"ipad":        "H1",
+	"bipad":       "H2",
+	"115ipad":     "H3",
+	"tv":          "I1",
+	"apple_tv":    "I2",
+	"qandroid":    "M1",
+	"qios":        "N1",
+	"qipad":       "O1",
+	"os_windows":  "P1",
+	"os_mac":      "P2",
+	"os_linux":    "P3",
+	"wechatmini":  "R1",
+	"alipaymini":  "R2",
+	"harmony":     "S1",
 }
 
 // CLIENT_DISPLAY 设备类型 → 中文显示名
 var CLIENT_DISPLAY = map[string]string{
-	"alipaymini": "支付宝小程序",
-	"wechatmini": "微信小程序",
-	"115android": "115 安卓",
-	"115ios":     "115 iOS",
-	"tv":         "115 TV",
-	"web":        "115 网页",
-	"qandroid":   "115 管理端",
+	"alipaymini":  "支付宝小程序",
+	"wechatmini":  "微信小程序",
+	"115android":  "115 安卓",
+	"android":     "安卓原生",
+	"115ios":      "115 iOS",
+	"ios":         "iOS 原生",
+	"115ipad":     "115 iPad",
+	"ipad":        "iPad 原生",
+	"tv":          "115 TV",
+	"web":         "115 网页",
+	"qandroid":    "115 管理端",
+	"qios":        "企业 iOS",
+	"qipad":       "企业 iPad",
+	"os_windows":  "Windows 客户端",
+	"os_mac":      "Mac 客户端",
+	"os_linux":    "Linux 客户端",
+	"harmony":     "鸿蒙",
 }
 
 // DefaultUA 默认 iOS 115 客户端 UA
@@ -100,12 +125,8 @@ func NewClient(userAgent string) *Client {
 // GetQrcodeToken 阶段1：获取二维码 token
 // GET https://qrcodeapi.115.com/api/1.0/{clientType}/1.0/token/
 // clientType 决定了二维码的客户端类型（alipaymini, wechatmini, 115android 等）
-func (c *Client) GetQrcodeToken(clientType string) (*QrCodeTokenResp, error) {
-	if !isValidClientType(clientType) {
-		clientType = "alipaymini"
-	}
-
-	urlStr := fmt.Sprintf("https://qrcodeapi.115.com/api/1.0/%s/1.0/token/", clientType)
+func (c *Client) GetQrcodeToken(_ string) (*QrCodeTokenResp, error) {
+	urlStr := "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
 	body, err := c.httpGet(urlStr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get qrcode token: %w", err)
@@ -153,7 +174,7 @@ func (c *Client) GetQrcodeToken(clientType string) (*QrCodeTokenResp, error) {
 		Qrcode:       qrcodeContent,
 		QrcodeBase64: qrcodeBase64,
 		Tips:         "请使用 115 客户端扫描二维码登录",
-		ClientType:   clientType,
+		ClientType:   "web",
 	}, nil
 }
 
@@ -214,24 +235,26 @@ func (c *Client) GetQrcodeStatus(uid, timeStr, sign, clientType string) (*QrCode
 }
 
 // GetQrcodeResult 阶段3：用 uid 换 cookie
-// POST https://passportapi.115.com/app/1.0/{clientType}/1.0/login/qrcode/
+// POST https://qrcodeapi.115.com/app/1.0/{clientType}/1.0/login/qrcode/
 // body: app={clientType}&account={uid}
 // 返回标准 cookie 字符串：key1=value1; key2=value2; ...
 func (c *Client) GetQrcodeResult(uid, clientType string) (string, error) {
-	if !isValidClientType(clientType) {
-		clientType = "alipaymini"
-	}
+	normalizedApp, specialUA := normalizeAppType(clientType)
 
-	urlStr := fmt.Sprintf("https://passportapi.115.com/app/1.0/%s/1.0/login/qrcode/", clientType)
+	urlStr := fmt.Sprintf("https://qrcodeapi.115.com/app/1.0/%s/1.0/login/qrcode/", normalizedApp)
 	// POST body 必须同时传 app 和 account 参数（对齐 p115client）
-	formBody := "app=" + clientType + "&account=" + url.QueryEscape(uid)
+	bodyBytes, _ := json.Marshal(map[string]string{"account": uid})
 
-	req, err := http.NewRequest("POST", urlStr, strings.NewReader(formBody))
+	req, err := http.NewRequest("POST", urlStr, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", c.UserAgent)
+	req.Header.Set("Content-Type", "application/json")
+	if specialUA != "" {
+		req.Header.Set("User-Agent", specialUA)
+	} else {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
 
 	// 不跟随重定向，保留 Set-Cookie
 	c.HTTP.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -284,6 +307,48 @@ func (c *Client) GetQrcodeResult(uid, clientType string) (string, error) {
 
 // rawToString 将 json.RawMessage 转为字符串，兼容 JSON 字符串和数字两种格式。
 // 避免大数字被 float64 解析后输出科学计数法（如 1.78e+09），导致 115 API 无法识别。
+// normalizeAppType 将客户端类型归一化为 115 API 认可的 app 参数
+// 对齐 p115client login_qrcode_scan_result 中的归一化逻辑
+func normalizeAppType(clientType string) (app string, specialUA string) {
+	ct := strings.TrimSpace(clientType)
+
+	switch ct {
+	case "desktop":
+		return "web", ""
+	case "windows", "os_windows":
+		return "os_windows", ""
+	case "mac", "os_mac":
+		return "os_mac", ""
+	case "linux", "os_linux":
+		return "os_linux", ""
+	case "ios", "115ios":
+		return "ios", "UPhone/1.0.0"
+	case "qios":
+		return "ios", "OfficePhone/1.0.0"
+	case "ipad", "115ipad":
+		return "ios", "UPad/1.0.0"
+	case "qipad":
+		return "ios", "OfficePad/1.0.0"
+	case "android", "115android":
+		return "115android", ""
+	case "bandroid":
+		return "bandroid", ""
+	case "bios":
+		return "bios", ""
+	case "apple_tv":
+		return "apple_tv", ""
+	case "bipad":
+		return "bipad", ""
+	case "alipaymini", "wechatmini", "tv", "qandroid", "harmony", "web":
+		return ct, ""
+	default:
+		if _, ok := APP_TO_SSOENT[ct]; ok {
+			return ct, ""
+		}
+		return "alipaymini", ""
+	}
+}
+
 func rawToString(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""

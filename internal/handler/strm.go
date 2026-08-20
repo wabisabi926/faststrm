@@ -109,7 +109,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			return
 		}
 
-		account := strm.FindAccount115(opts.AccountStore, accountName)
+		account := opts.AccountStore.Get(accountName)
 		if account == nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Account not found: " + accountName})
 			return
@@ -339,3 +339,4 @@ func handleProxy(
 
 // ConnectTimeoutMs proxy 建连超时
 const ConnectTimeoutMs = 30_000
+

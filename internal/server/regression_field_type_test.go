@@ -238,7 +238,7 @@ func TestRegression_FieldTypes(t *testing.T) {
 func TestRegression_EmptyArrayNotNull(t *testing.T) {
 	salt := "regression_empty_array_salt_32b_pad_"
 	cfgDir := t.TempDir()
-	accountStore := store.NewAccountStore(salt, cfgDir)
+	accountStore, _ := store.NewAccountStore(salt, cfgDir)
 
 	t.Run("account_list_empty_is_array", func(t *testing.T) {
 		// 无账号时 GET /api/account 应返回 [] 而非 null
@@ -304,7 +304,7 @@ func TestRegression_SettingsDefaultFields(t *testing.T) {
 func TestRegression_AccountCRUDLifecycle(t *testing.T) {
 	salt := "regression_crud_salt_32b_pad____"
 	cfgDir := t.TempDir()
-	accountStore := store.NewAccountStore(salt, cfgDir)
+	accountStore, _ := store.NewAccountStore(salt, cfgDir)
 
 	// 创建账号
 	t.Run("create_account_response_shape", func(t *testing.T) {
@@ -388,7 +388,7 @@ func TestRegression_AccountCRUDLifecycle(t *testing.T) {
 func TestRegression_ErrorResponses(t *testing.T) {
 	salt := "regression_error_salt_32b_pad____"
 	cfgDir := t.TempDir()
-	accountStore := store.NewAccountStore(salt, cfgDir)
+	accountStore, _ := store.NewAccountStore(salt, cfgDir)
 
 	t.Run("create_account_missing_fields", func(t *testing.T) {
 		code, raw := doReq(handler.CreateAccount(accountStore), "POST", "/api/account",
@@ -433,3 +433,4 @@ func max(a, b int) int {
 	}
 	return b
 }
+

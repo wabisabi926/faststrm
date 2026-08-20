@@ -26,7 +26,8 @@ export default function DownloadProgressPage() {
   const loadHistoryLogs = useCallback(async () => {
     try {
       const response = await axiosInstance.get("/api/taskHistory");
-      const allHistory = response.data;
+      const allHistoryRaw = response.data;
+      const allHistory = Array.isArray(allHistoryRaw) ? allHistoryRaw : (allHistoryRaw?.items || []);
       const execution = allHistory.find((h: { id: string }) => h.id === executionId);
 
       if (execution) {

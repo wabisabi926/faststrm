@@ -33,8 +33,15 @@ func HandleClearDir(deps ClearDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req ClearDirRequest
 		if r.Body != nil {
-			body, _ := io.ReadAll(r.Body)
-			_ = json.Unmarshal(body, &req)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "read body failed: " + err.Error()})
+				return
+			}
+			if err := json.Unmarshal(body, &req); err != nil {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid json: " + err.Error()})
+				return
+			}
 		}
 		if req.TargetPath == "" {
 			req.TargetPath = r.URL.Query().Get("targetPath")
@@ -43,6 +50,22 @@ func HandleClearDir(deps ClearDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "targetPath required"})
 			return
 		}
+
+		// Path traversal protection: reject paths with ".." segments
+		cleaned := filepath.Clean(req.TargetPath)
+		if cleaned != req.TargetPath || strings.Contains(req.TargetPath, "..") {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+			return
+		}
+
+		// Resolve to absolute path to ensure it's safe
+		absPath, err := filepath.Abs(cleaned)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+			return
+		}
+		req.TargetPath = absPath
+
 		if _, err := os.Stat(req.TargetPath); err != nil {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "targetPath does not exist"})
 			return
@@ -67,8 +90,9 @@ func HandleClearDir(deps ClearDeps) http.HandlerFunc {
 
 		deleted := 0
 		// 第一遍：遍历删除非保留扩展名的文件
-		err := filepath.Walk(req.TargetPath, func(p string, info os.FileInfo, err error) error {
+		err = filepath.Walk(req.TargetPath, func(p string, info os.FileInfo, err error) error {
 			if err != nil {
+				logger.S().Warnf("[clearDir] walk error at %s: %v", p, err)
 				return nil
 			}
 			if info.IsDir() {
@@ -113,6 +137,7 @@ func rmEmptyDirs(root string) {
 			}
 			entries, err := os.ReadDir(p)
 			if err != nil {
+				logger.S().Warnf("[clearDir] read dir %s failed: %v", p, err)
 				return nil
 			}
 			if len(entries) == 0 {

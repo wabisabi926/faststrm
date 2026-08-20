@@ -56,9 +56,13 @@ func Run(cfg *config.AppConfig) error {
 	// 初始化依赖
 	issuer := auth.NewTokenIssuer([]byte(cfg.Settings.InternalToken))
 	client := client115.NewClient(cfg.Settings.UserAgent)
-	accountStore := store.NewAccountStore(cfg.Salt, cfg.Paths.ConfigDir)
+	accountStore, err := store.NewAccountStore(cfg.Salt, cfg.Paths.ConfigDir)
+	if err != nil {
+		return fmt.Errorf("init account store: %w", err)
+	}
 	settingsStore := store.NewSettingsStore(cfg.Salt, cfg.Paths.ConfigDir)
 	tasksStore := store.NewTasksStore(cfg.Paths.ConfigDir)
+	strmCacheStore := store.NewStrmCacheStore(cfg.Paths.ConfigDir)
 	stateMgr := runtime.Init(cfg.Paths.ConfigDir)
 
 	// SQLite 打开
@@ -99,6 +103,7 @@ func Run(cfg *config.AppConfig) error {
 		SettingsStore: store.NewSettingsAdapter(settingsStore),
 		SQLiteDB:      sqliteDB,
 		TasksStore:    tasksStore,
+		StrmCache:     &strmCacheWriterAdapter{inner: strmCacheStore},
 		BaseURL:       baseURL,
 		PublicBaseURL: cfg.Settings.StrmPrefix,
 	}
@@ -108,10 +113,11 @@ func Run(cfg *config.AppConfig) error {
 	notifyDeps, embyDeps, lifeMonitorDeps, mon := initPhase6Deps(
 		settingsStore, tasksStore, accountStore,
 		lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
+		taskRuntime, execDeps,
 	)
 
 	// 注册路由
-	RegisterRoutes(server, cfg, issuer, client, accountStore, settingsStore, tasksStore,
+	RegisterRoutes(server, cfg, issuer, client, accountStore, settingsStore, tasksStore, strmCacheStore,
 		taskHistoryRepo, taskRuntime, scheduler, execDeps,
 		notifyDeps, embyDeps, lifeMonitorDeps)
 
@@ -143,6 +149,7 @@ func RegisterRoutes(
 	accountStore *store.AccountStore,
 	settingsStore *store.SettingsStore,
 	tasksStore *store.TasksStore,
+	strmCacheStore *store.StrmCacheStore,
 	taskHistoryRepo *db.TaskHistoryRepo,
 	taskRuntime *task.Runtime,
 	scheduler *task.Scheduler,
@@ -296,6 +303,8 @@ func RegisterRoutes(
 		ClientFactory: func(name string) (*client115.Client, error) {
 			return client115.NewClient(""), nil
 		},
+		TasksStore:    tasksStore,
+		StrmCache:     strmCacheStore,
 	}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodPost, Path: "/api/strmCleanup/scan", Handler: corsJWT(handler.HandleStrmCleanupScanPOST(strmCleanupDeps))},
@@ -329,6 +338,8 @@ func initPhase6Deps(
 	lifeEventLogRepo *db.LifeEventLogRepo,
 	filePathRepo *db.FilePathRepo,
 	stateMgr *runtime.StateManager,
+	taskRuntime *task.Runtime,
+	execDeps task.ExecutorDeps,
 ) (handler.NotifyDeps, handler.EmbyDeps, handler.LifeMonitorDeps, *monitor.Monitor) {
 	// 读取启动时配置，用于初始化 TelegramBot / EmbyClient
 	initSettings, _ := settingsStore.ReadSettings()
@@ -364,6 +375,8 @@ func initPhase6Deps(
 		TelegramBot:     tgBot,
 		PollingManager:  pollingMgr,
 		CommandHandler: cmdHandler,
+		TasksStore:      tasksStore,
+		AccountStore:    accountStore,
 	}
 
 	// ---------- Emby ----------
@@ -384,6 +397,7 @@ func initPhase6Deps(
 	if filePathRepo != nil {
 		embySyncDel.SetFilePathDb(filePathRepo)
 	}
+	embyRefresh := emby.NewMediaServerRefresh(embyClient, embySettingsFn)
 
 	embyDeps := handler.EmbyDeps{
 		SettingsStore: settingsStore,
@@ -407,7 +421,22 @@ func initPhase6Deps(
 		stateMgr,
 		dispatcher,
 		accountStore,
+		embyRefresh,
 	)
+
+	// ---------- MenuActions 适配器 ----------
+	if cmdHandler != nil {
+		adapter := &menuActionsAdapter{
+			settingsStore: settingsStore,
+			tasksStore:    tasksStore,
+			accountStore:  accountStore,
+			monitor:       mon,
+			embyRefresh:   embyRefresh,
+			taskRuntime:   taskRuntime,
+			execDeps:      execDeps,
+		}
+		cmdHandler.SetMenuActions(adapter)
+	}
 
 	lifeMonitorDeps := handler.LifeMonitorDeps{
 		SettingsStore:    settingsStore,
@@ -418,9 +447,272 @@ func initPhase6Deps(
 	return notifyDeps, embyDeps, lifeMonitorDeps, mon
 }
 
+// ==================== MenuActions 适配器 ====================
+
+// menuActionsAdapter 实现 notify.MenuActions 接口
+// 将 Telegram 菜单动作委托给 Monitor / Task / Emby 等服务
+type menuActionsAdapter struct {
+	settingsStore *store.SettingsStore
+	tasksStore    *store.TasksStore
+	accountStore  *store.AccountStore
+	monitor       *monitor.Monitor
+	embyRefresh   *emby.MediaServerRefresh
+	taskRuntime   *task.Runtime
+	execDeps      task.ExecutorDeps
+}
+
+// GetSystemStatus 聚合账号、监控、运行任务和 Emby 状态
+func (a *menuActionsAdapter) GetSystemStatus() (map[string]any, error) {
+	accounts := a.accountStore.List()
+	var accountList []map[string]any
+	for _, acc := range accounts {
+		accountList = append(accountList, map[string]any{
+			"name":     acc.Name,
+			"hasCookie": acc.Cookie != "",
+		})
+	}
+
+	monitorStatus := a.internalGetMonitorStatus()
+	runningTasks := a.internalListRunningTasks()
+
+	embyStatus := map[string]any{"connected": false}
+	if a.embyRefresh != nil {
+		embyStatus = a.embyRefresh.GetStatus()
+	}
+
+	return map[string]any{
+		"accounts":     accountList,
+		"monitors":     monitorStatus["monitors"],
+		"runningTasks": runningTasks,
+		"emby":         embyStatus,
+	}, nil
+}
+
+// StartMonitor 启动指定账号的监控
+func (a *menuActionsAdapter) StartMonitor(ctx context.Context, account string) error {
+	if a.monitor == nil {
+		return fmt.Errorf("monitor not initialized")
+	}
+	return a.monitor.Start(ctx, account)
+}
+
+// StopMonitor 停止指定账号的监控
+func (a *menuActionsAdapter) StopMonitor(ctx context.Context, account string) error {
+	if a.monitor == nil {
+		return fmt.Errorf("monitor not initialized")
+	}
+	a.monitor.Stop(account)
+	return nil
+}
+
+// StopAllMonitors 停止所有监控
+func (a *menuActionsAdapter) StopAllMonitors(ctx context.Context) error {
+	if a.monitor == nil {
+		return fmt.Errorf("monitor not initialized")
+	}
+	a.monitor.StopAll()
+	return nil
+}
+
+// GetMonitorStatus 获取监控状态
+func (a *menuActionsAdapter) GetMonitorStatus() (map[string]any, error) {
+	return a.internalGetMonitorStatus(), nil
+}
+
+func (a *menuActionsAdapter) internalGetMonitorStatus() map[string]any {
+	result := map[string]any{"monitors": []map[string]any{}}
+	if a.monitor == nil {
+		return result
+	}
+	status := a.monitor.Status()
+	var monitors []map[string]any
+	for _, s := range status {
+		monitors = append(monitors, map[string]any{
+			"account": s.Account,
+			"running": s.Running,
+		})
+	}
+	result["monitors"] = monitors
+
+	// 返回事件开关状态（供 TG 菜单动态显示）
+	if s, err := a.settingsStore.ReadSettings(); err == nil {
+		et := s.LifeMonitor.EventTypes
+		result["eventTypes"] = map[string]bool{
+			"create":  et.Create,
+			"remove":  et.Remove,
+			"rename":  et.Rename,
+			"move":    et.Move,
+		}
+	}
+	return result
+}
+
+// ToggleMonitorEvent 切换监控事件类型（持久化到 settings.json）
+func (a *menuActionsAdapter) ToggleMonitorEvent(ctx context.Context, account, eventType string, enabled bool) error {
+	s, err := a.settingsStore.ReadSettings()
+	if err != nil {
+		return fmt.Errorf("读取设置失败: %w", err)
+	}
+	switch eventType {
+	case "create":
+		s.LifeMonitor.EventTypes.Create = enabled
+	case "remove":
+		s.LifeMonitor.EventTypes.Remove = enabled
+	case "rename":
+		s.LifeMonitor.EventTypes.Rename = enabled
+	case "move":
+		s.LifeMonitor.EventTypes.Move = enabled
+	default:
+		return fmt.Errorf("未知事件类型: %s", eventType)
+	}
+	if err := a.settingsStore.SaveSettings(s); err != nil {
+		return fmt.Errorf("保存设置失败: %w", err)
+	}
+	return nil
+}
+
+// ExecuteTask 执行指定任务
+func (a *menuActionsAdapter) ExecuteTask(ctx context.Context, taskID string) (map[string]any, error) {
+	result := task.ExecuteTask(ctx, taskID, a.execDeps)
+	return map[string]any{
+		"success": result.Success,
+		"message": result.Message,
+		"taskId":  result.TaskID,
+	}, nil
+}
+
+// CancelTask 取消指定任务
+func (a *menuActionsAdapter) CancelTask(ctx context.Context, taskID string) error {
+	if a.taskRuntime == nil {
+		return fmt.Errorf("task runtime not initialized")
+	}
+	found := a.taskRuntime.Cancel(taskID)
+	if !found {
+		return fmt.Errorf("task not found: %s", taskID)
+	}
+	return nil
+}
+
+// ListRunningTasks 列出运行中任务
+func (a *menuActionsAdapter) ListRunningTasks() ([]map[string]any, error) {
+	return a.internalListRunningTasks(), nil
+}
+
+func (a *menuActionsAdapter) internalListRunningTasks() []map[string]any {
+	if a.taskRuntime == nil {
+		return []map[string]any{}
+	}
+	running := a.taskRuntime.RunningTasks()
+	tasks, err := a.tasksStore.ReadTasks()
+	if err != nil {
+		return []map[string]any{}
+	}
+
+	var result []map[string]any
+	for id, state := range running {
+		var taskName string
+		for _, t := range tasks {
+			if t.ID == id {
+				taskName = t.Name
+				break
+			}
+		}
+		progress := string(state.Status)
+		if state.TotalFiles > 0 {
+			pct := float64(state.DownloadedFiles) / float64(state.TotalFiles) * 100
+			progress = fmt.Sprintf("%.0f%% (%d/%d)", pct, state.DownloadedFiles, state.TotalFiles)
+		}
+		result = append(result, map[string]any{
+			"id":       id,
+			"name":     taskName,
+			"progress": progress,
+		})
+	}
+	return result
+}
+
+// ListScheduledTasks 列出定时任务
+func (a *menuActionsAdapter) ListScheduledTasks() ([]map[string]any, error) {
+	tasks, err := a.tasksStore.ReadTasks()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []map[string]any
+	for _, t := range tasks {
+		if t.Schedule != nil && t.Schedule.Enabled {
+			schedule := a.formatSchedule(t.Schedule)
+			result = append(result, map[string]any{
+				"id":       t.ID,
+				"name":     t.Name,
+				"schedule": schedule,
+			})
+		}
+	}
+	return result, nil
+}
+
+func (a *menuActionsAdapter) formatSchedule(s *task.TaskSchedule) string {
+	switch s.Mode {
+	case "interval":
+		return fmt.Sprintf("每 %d 分钟", s.IntervalMinutes)
+	case "daily":
+		return fmt.Sprintf("每天 %s", s.Time)
+	case "weekly":
+		return fmt.Sprintf("每周 %s", s.Time)
+	default:
+		return "未知"
+	}
+}
+
+// RefreshEmbyByPath 按路径刷新 Emby
+func (a *menuActionsAdapter) RefreshEmbyByPath(ctx context.Context, path string) error {
+	if a.embyRefresh == nil {
+		return fmt.Errorf("emby refresh not initialized")
+	}
+	return a.embyRefresh.RefreshByPath(ctx, path)
+}
+
+// RefreshEmbyLibrary 刷新 Emby 媒体库
+func (a *menuActionsAdapter) RefreshEmbyLibrary(ctx context.Context, libraryType string) error {
+	if a.embyRefresh == nil {
+		return fmt.Errorf("emby refresh not initialized")
+	}
+	return a.embyRefresh.RefreshLibrary(ctx, libraryType)
+}
+
+// GetEmbyStatus 获取 Emby 状态
+func (a *menuActionsAdapter) GetEmbyStatus() (map[string]any, error) {
+	if a.embyRefresh == nil {
+		return map[string]any{"connected": false}, nil
+	}
+	return a.embyRefresh.GetStatus(), nil
+}
+
+// RunFullSync 全量同步（占位实现）
+func (a *menuActionsAdapter) RunFullSync(ctx context.Context) error {
+	return nil
+}
+
+// RunCleanup 清理孤儿（占位实现）
+func (a *menuActionsAdapter) RunCleanup(ctx context.Context) error {
+	return nil
+}
+
 func maskToken(t string) string {
 	if len(t) <= 8 {
 		return "***"
 	}
 	return t[:4] + "..." + t[len(t)-4:]
+}
+
+// strmCacheWriterAdapter adapts *store.StrmCacheStore to task.StrmCacheWriter
+type strmCacheWriterAdapter struct{ inner *store.StrmCacheStore }
+
+func (a *strmCacheWriterAdapter) Save(entry task.StrmCacheEntryLike) error {
+	return a.inner.Save(&store.StrmCacheEntry{
+		UUID: entry.UUID, TaskID: entry.TaskID, Target: entry.Target,
+		Account: entry.Account, RelPaths: entry.RelPaths, LocalPaths: entry.LocalPaths,
+		CreatedAt: entry.CreatedAt,
+	})
 }

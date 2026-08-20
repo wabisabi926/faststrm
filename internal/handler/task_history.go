@@ -18,7 +18,7 @@ type TaskHistoryDeps struct {
 func HandleTaskHistory(deps TaskHistoryDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if deps.Repo == nil {
-			httpx.WriteJson(w, http.StatusOK, []db.TaskExecution{})
+			httpx.WriteJson(w, http.StatusOK, map[string]any{"items": []db.TaskExecution{}})
 			return
 		}
 		q := r.URL.Query()
@@ -44,6 +44,6 @@ func HandleTaskHistory(deps TaskHistoryDeps) http.HandlerFunc {
 		if items == nil {
 			items = []db.TaskExecution{}
 		}
-		httpx.WriteJson(w, http.StatusOK, items)
+		httpx.WriteJson(w, http.StatusOK, map[string]any{"items": items})
 	}
 }

@@ -43,6 +43,9 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	if len(out.StrmExtensions) == 0 {
 		out.StrmExtensions = def.StrmExtensions
 	}
+	if out.UserAgent == "" {
+		out.UserAgent = def.UserAgent
+	}
 	if len(out.DownloadExtensions) == 0 {
 		out.DownloadExtensions = def.DownloadExtensions
 	}

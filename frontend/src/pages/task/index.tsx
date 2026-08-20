@@ -137,7 +137,33 @@ export default function Home() {
     try {
       setIsLoading(true);
       const res = await axiosInstance.get("/api/tasks");
-      setData(res.data);
+      const payload = res.data;
+      const tasks = Array.isArray(payload) ? payload : (payload.tasks || []);
+      const mapped: Task[] = tasks.map((t: any) => ({
+        id: t.id || '',
+        name: t.name || '',
+        account: t.account || '',
+        accountType: t.accountType || '',
+        originPath: t.originPath || '',
+        targetPath: t.targetPath || '',
+        strmType: t.strmType || '',
+        strmPrefix: t.strmPrefix || '',
+        removeExtraFiles: t.removeExtraFiles ?? false,
+        enable302: t.enable302 ?? false,
+        path: t.path || t.originPath || '',
+        status: t.runtime?.status || t.status || "pending",
+        schedule: t.schedule ? {
+          enabled: t.schedule.enabled ?? false,
+          mode: t.schedule.mode || "interval",
+          intervalMinutes: t.schedule.intervalMinutes,
+          time: t.schedule.time,
+          weekdays: t.schedule.weekdays,
+          lastRunAt: t.schedule.lastRunAt,
+          nextRunAt: t.scheduleNext?.nextRunAt,
+        } : undefined,
+        _computedNextRunAt: t.scheduleNext?.nextRunAt ?? null,
+      }));
+      setData(mapped);
     } catch {
       toast.error("获取任务列表失败");
     } finally {

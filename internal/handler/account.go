@@ -2,8 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
@@ -17,17 +19,12 @@ import (
 // ListAccounts GET /api/account 获取所有账号（解密后）
 func ListAccounts(accountStore *store.AccountStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		accounts, err := accountStore.ReadAccounts()
-		if err != nil {
-			logger.S().Errorf("read accounts: %v", err)
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取账号失败"})
-			return
+		accounts := accountStore.List()
+		result := make([]model.AccountInfo, 0, len(accounts))
+		for _, a := range accounts {
+			result = append(result, *a)
 		}
-	// 列表接口统一直接返回 JSON 数组，与 E2E/回归测试契约一致：空为 [] 而非 null
-	if accounts == nil {
-		accounts = []model.AccountInfo{}
-	}
-	httpx.WriteJson(w, http.StatusOK, accounts)
+		httpx.WriteJson(w, http.StatusOK, result)
 	}
 }
 
@@ -42,20 +39,17 @@ type CreateAccountRequest struct {
 }
 
 // CreateAccount POST /api/account 新建账号
-// 支持 form-urlencoded（HTMX 默认）和 JSON 两种格式
 func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req CreateAccountRequest
 
 		contentType := r.Header.Get("Content-Type")
 		if strings.HasPrefix(contentType, "application/json") {
-			// JSON 格式
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
 				return
 			}
 		} else {
-			// form-urlencoded 格式（HTMX 默认）
 			if err := r.ParseForm(); err != nil {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
 				return
@@ -73,7 +67,6 @@ func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 			return
 		}
 
-		// 根据账户类型验证必需字段
 		if req.AccountType == "115" && req.Cookie == "" {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "cookie is required for 115 accounts"})
 			return
@@ -85,37 +78,42 @@ func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 			}
 		}
 
-		accounts, err := accountStore.ReadAccounts()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取账号失败"})
+		if accountStore.Has(req.Name) {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "Account name already exists"})
 			return
 		}
 
-		// 检查名称唯一性
-		for _, a := range accounts {
-			if a.Name == req.Name {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "Account name already exists"})
-				return
+		now := time.Now().UnixMilli()
+		cookieValid := true
+		if req.AccountType == "115" && req.Cookie != "" {
+			result := client115.ValidateCookie(req.Cookie)
+			cookieValid = result.Valid
+			if !result.Valid {
+				logger.S().Warnf("[CreateAccount] Cookie 格式无效 account=%s 缺少: %s", req.Name, strings.Join(result.Missing, ","))
 			}
 		}
 
-		newAcc := model.AccountInfo{
-			Name:        req.Name,
-			AccountType: req.AccountType,
-			Cookie:      req.Cookie,
-			Account:     req.Account,
-			Password:    req.Password,
-			URL:         req.URL,
+		newAcc := &model.AccountInfo{
+			Name:           req.Name,
+			AccountType:    req.AccountType,
+			Cookie:         req.Cookie,
+			Account:        req.Account,
+			Password:       req.Password,
+			URL:            req.URL,
+			LastCookieCheck: now,
+			CookieValid:    &cookieValid,
 		}
 
-		accounts = append(accounts, newAcc)
-		if err := accountStore.WriteAccounts(accounts); err != nil {
-			logger.S().Errorf("write accounts: %v", err)
+		if err := accountStore.Upsert(newAcc); err != nil {
+			logger.S().Errorf("upsert account: %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存账号失败"})
 			return
 		}
 
-		// 触发前端刷新账号列表
+		if err := accountStore.Flush(); err != nil {
+			logger.S().Warnf("flush account after create: %v", err)
+		}
+
 		w.Header().Set("HX-Trigger", "accounts-changed")
 		httpx.WriteJson(w, http.StatusCreated, newAcc)
 	}
@@ -146,7 +144,6 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 			return
 		}
 
-		// 根据账户类型验证（如果提供了 accountType）
 		if req.AccountType == "115" && req.Cookie == "" {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "115 账户必须提供 Cookie"})
 			return
@@ -158,55 +155,80 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 			}
 		}
 
-		accounts, err := accountStore.ReadAccounts()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取账号失败"})
-			return
-		}
-
-		// 用 originalName 查找账户（重命名场景），fallback 用新名称
 		lookupName := req.OriginalName
 		if lookupName == "" {
 			lookupName = req.Name
 		}
-		idx := -1
-		for i, a := range accounts {
-			if a.Name == lookupName {
-				idx = i
-				break
-			}
-		}
-		if idx == -1 {
+
+		acc := accountStore.Get(lookupName)
+		if acc == nil {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
 			return
 		}
 
-		// 更新账户名称（如果改了名）
-		accounts[idx].Name = req.Name
-
-		// 合并更新（非空字段覆盖）
-		if req.Cookie != "" {
-			accounts[idx].Cookie = req.Cookie
-		}
-		if req.AccountType != "" {
-			accounts[idx].AccountType = req.AccountType
-		}
-		if req.Account != "" {
-			accounts[idx].Account = req.Account
-		}
-		if req.Password != "" {
-			accounts[idx].Password = req.Password
-		}
-		if req.URL != "" {
-			accounts[idx].URL = req.URL
+		// 验证新 cookie 格式（仅记录警告，不阻止更新）
+		cookieChanged := req.Cookie != "" && req.Cookie != acc.Cookie
+		if cookieChanged {
+			result := client115.ValidateCookie(req.Cookie)
+			if !result.Valid {
+				logger.S().Warnf("[UpdateAccount] Cookie 格式无效 account=%s 缺少: %s", req.Name, strings.Join(result.Missing, ","))
+			}
 		}
 
-		if err := accountStore.WriteAccounts(accounts); err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存账号失败"})
-			return
+		now := time.Now().UnixMilli()
+		cookieValid := true
+		if req.AccountType == "115" {
+			if cookieChanged {
+				result := client115.ValidateCookie(req.Cookie)
+				cookieValid = result.Valid
+			} else if acc.CookieValid != nil {
+				cookieValid = *acc.CookieValid
+			}
 		}
 
-		httpx.OkJson(w, accounts[idx])
+		if lookupName != req.Name {
+			acc.Name = req.Name
+			acc.LastCookieCheck = now
+			acc.CookieValid = &cookieValid
+			if err := accountStore.Delete(lookupName); err != nil {
+				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "更新账号失败"})
+				return
+			}
+			if err := accountStore.Upsert(acc); err != nil {
+				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "更新账号失败"})
+				return
+			}
+		} else {
+			err := accountStore.Update(lookupName, func(a *model.AccountInfo) {
+				if req.Cookie != "" {
+					a.Cookie = req.Cookie
+				}
+				if req.AccountType != "" {
+					a.AccountType = req.AccountType
+				}
+				if req.Account != "" {
+					a.Account = req.Account
+				}
+				if req.Password != "" {
+					a.Password = req.Password
+				}
+				if req.URL != "" {
+					a.URL = req.URL
+				}
+				a.LastCookieCheck = now
+				a.CookieValid = &cookieValid
+			})
+			if err != nil {
+				httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
+				return
+			}
+		}
+
+		if err := accountStore.Flush(); err != nil {
+			logger.S().Warnf("flush account after update: %v", err)
+		}
+
+		httpx.OkJson(w, acc)
 	}
 }
 
@@ -219,30 +241,18 @@ func DeleteAccount(accountStore *store.AccountStore) http.HandlerFunc {
 			return
 		}
 
-		accounts, err := accountStore.ReadAccounts()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取账号失败"})
-			return
-		}
-
-		newAccounts := make([]model.AccountInfo, 0, len(accounts))
-		found := false
-		for _, a := range accounts {
-			if a.Name == name {
-				found = true
-				continue
-			}
-			newAccounts = append(newAccounts, a)
-		}
-
-		if !found {
+		if !accountStore.Has(name) {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
 			return
 		}
 
-		if err := accountStore.WriteAccounts(newAccounts); err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存账号失败"})
+		if err := accountStore.Delete(name); err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "删除账号失败"})
 			return
+		}
+
+		if err := accountStore.Flush(); err != nil {
+			logger.S().Warnf("flush account after delete: %v", err)
 		}
 
 		httpx.OkJson(w, map[string]string{"message": "Account deleted"})
@@ -271,8 +281,8 @@ func GetQrcodeTokenHandler(c *client115.Client) http.HandlerFunc {
 		if err != nil {
 			logger.S().Errorf("[API/qrcode/token] %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{
-				"error":    "获取二维码失败",
-				"details":  err.Error(),
+				"error":   "获取二维码失败",
+				"details": err.Error(),
 			})
 			return
 		}
@@ -339,7 +349,7 @@ func GetQrcodeStatusHandler(c *client115.Client) http.HandlerFunc {
 type GetQrcodeCookieRequest struct {
 	UID         string `json:"uid"`
 	ClientType  string `json:"clientType"`
-	AccountName string `json:"accountName"` // 可选：更新已有账户的 cookie
+	AccountName string `json:"accountName"`
 }
 
 // GetQrcodeCookieHandler POST /api/account/qrcode/cookie
@@ -361,7 +371,6 @@ func GetQrcodeCookieHandler(c *client115.Client, accountStore *store.AccountStor
 			clientType = "alipaymini"
 		}
 
-		// 换取 cookie
 		cookie, err := c.GetQrcodeResult(req.UID, clientType)
 		if err != nil {
 			logger.S().Errorf("[API/qrcode/cookie] %v", err)
@@ -372,34 +381,40 @@ func GetQrcodeCookieHandler(c *client115.Client, accountStore *store.AccountStor
 			return
 		}
 
-		// 如果提供了 accountName，则更新已有账户
-		if req.AccountName != "" {
-			accounts, err := accountStore.ReadAccounts()
-			if err != nil {
-				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取账号失败"})
-				return
-			}
+		// 验证 cookie 格式
+		validateResult := client115.ValidateCookie(cookie)
+		if !validateResult.Valid {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]any{
+					"error":         "Cookie 格式无效",
+					"missingFields": validateResult.Missing,
+				"message":       "缺少必需字段: " + strings.Join(validateResult.Missing, ", "),
+			})
+			return
+		}
 
-			idx := -1
-			for i, a := range accounts {
-				if a.Name == req.AccountName {
-					idx = i
-					break
-				}
-			}
-			if idx == -1 {
+		if req.AccountName != "" {
+			acc := accountStore.Get(req.AccountName)
+			if acc == nil {
 				httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户 \"" + req.AccountName + "\" 不存在"})
 				return
 			}
-			if accounts[idx].AccountType != "115" {
+			if acc.AccountType != "115" {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "账户 \"" + req.AccountName + "\" 不是 115 类型，无法更新 Cookie"})
 				return
 			}
 
-			accounts[idx].Cookie = cookie
-			if err := accountStore.WriteAccounts(accounts); err != nil {
+			now := time.Now().UnixMilli()
+			valid := true
+			if err := accountStore.Update(req.AccountName, func(a *model.AccountInfo) {
+				a.Cookie = cookie
+				a.LastCookieCheck = now
+				a.CookieValid = &valid
+			}); err != nil {
 				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存账号失败"})
 				return
+			}
+			if err := accountStore.Flush(); err != nil {
+				logger.S().Warnf("flush account after cookie update: %v", err)
 			}
 
 			logger.S().Infof("[QRCODE-LOGIN] Cookie updated for account: %s", req.AccountName)
@@ -408,40 +423,41 @@ func GetQrcodeCookieHandler(c *client115.Client, accountStore *store.AccountStor
 				"message":      "Cookie 更新成功",
 				"accountName":  req.AccountName,
 				"cookieLength": len(cookie),
+				"cookieValid":  true,
 			})
 			return
 		}
 
-		// 未提供 accountName：仅返回 cookie
 		httpx.OkJson(w, map[string]any{
 			"success":      true,
 			"message":      "获取 Cookie 成功",
 			"cookie":       cookie,
 			"cookieLength": len(cookie),
+			"cookieValid":  true,
 		})
 	}
 }
 
 // ==================== Account Status ====================
 
-// AccountStatus 账号状态
-type AccountStatus struct {
-	Name    string `json:"name"`
-	Status  string `json:"status"` // ok / error / unknown
-	Message string `json:"message,omitempty"`
+// AccountStatusInfo 账号状态（带 cookie 元数据）
+type AccountStatusInfo struct {
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	Message         string `json:"message,omitempty"`
+	CookieValid     *bool  `json:"cookieValid,omitempty"`
+	LastCookieCheck int64  `json:"lastCookieCheck,omitempty"`
 }
 
-// GetAccountStatus GET /api/account/status?names=xxx,yyy
+// GetAccountStatus GET /api/account/status?names=xxx,yyy&deep=true
 func GetAccountStatus(accountStore *store.AccountStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		accounts, err := accountStore.ReadAccounts()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取账号失败"})
-			return
-		}
+		accounts := accountStore.List()
 
 		namesParam := r.URL.Query().Get("names")
-		var targets []model.AccountInfo
+		deepCheck := r.URL.Query().Get("deep") == "true"
+
+		var targets []*model.AccountInfo
 		if namesParam != "" {
 			names := strings.Split(namesParam, ",")
 			nameSet := make(map[string]bool)
@@ -460,37 +476,159 @@ func GetAccountStatus(accountStore *store.AccountStore) http.HandlerFunc {
 			targets = accounts
 		}
 
-		results := make([]AccountStatus, 0, len(targets))
+		results := make([]AccountStatusInfo, 0, len(targets))
+		now := time.Now().UnixMilli()
 		for _, acc := range targets {
-			results = append(results, checkAccountStatus(acc))
+			results = append(results, checkAccountStatusInfo(*acc))
 		}
 
+		// Deep check: 同步执行 cookie 验证
+		var deepResults []map[string]any
+		if deepCheck {
+			deepResults = make([]map[string]any, 0, len(targets))
+			for _, acc := range targets {
+				if acc.AccountType == "115" && acc.Cookie != "" {
+					valid, missing, err := accountStore.ValidateCookie(acc.Name)
+					deepResults = append(deepResults, map[string]any{
+						"account":   acc.Name,
+						"valid":     valid,
+						"missing":   missing,
+						"error":     fmt.Sprintf("%v", err),
+						"checkedAt": now,
+					})
+				}
+			}
+			accountStore.Flush()
+		}
+
+		resp := map[string]any{
+			"results": results,
+		}
+		if deepCheck && deepResults != nil {
+			resp["deepResults"] = deepResults
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// checkAccountStatusInfo 检查单个账号状态（带元数据）
+func checkAccountStatusInfo(acc model.AccountInfo) AccountStatusInfo {
+	info := AccountStatusInfo{
+		Name:            acc.Name,
+		CookieValid:     acc.CookieValid,
+		LastCookieCheck: acc.LastCookieCheck,
+	}
+
+	switch acc.AccountType {
+	case "115":
+		if acc.Cookie == "" {
+			info.Status = "error"
+			info.Message = "Cookie 为空"
+			return info
+		}
+		result := client115.ValidateCookie(acc.Cookie)
+		if !result.Valid {
+			info.Status = "error"
+			info.Message = "Cookie 缺少字段: " + strings.Join(result.Missing, ", ")
+			return info
+		}
+		info.Status = "ok"
+		info.Message = "Cookie 格式有效"
+		if acc.LastCookieCheck > 0 {
+			checkedAt := time.UnixMilli(acc.LastCookieCheck)
+			info.Message += fmt.Sprintf(" (校验于 %s)", checkedAt.Format("2006-01-02 15:04:05"))
+		}
+		return info
+	case "openlist":
+		if acc.URL == "" {
+			info.Status = "error"
+			info.Message = "URL 为空"
+			return info
+		}
+		info.Status = "ok"
+		info.Message = "配置完整"
+		return info
+	default:
+		info.Status = "unknown"
+		info.Message = "未知账户类型"
+		return info
+	}
+}
+
+// ==================== Cookie 验证 API ====================
+
+// VerifyAccountHandler POST /api/account/verify?name=xxx
+// 对单个账号执行 cookie 格式校验并更新元数据
+func VerifyAccountHandler(accountStore *store.AccountStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		if name == "" {
+			// Try from body
+			var body struct {
+				Name string `json:"name"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.Name != "" {
+				name = body.Name
+			}
+		}
+		if name == "" {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "name 参数不能为空"})
+			return
+		}
+
+		acc := accountStore.Get(name)
+		if acc == nil {
+			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
+			return
+		}
+
+		valid, missing, err := accountStore.ValidateCookie(name)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		accountStore.Flush()
+
 		httpx.OkJson(w, map[string]any{
-			"results":   results,
-			"checkedAt": 0, // 前端会自己处理时间戳
+			"account":  name,
+			"valid":    valid,
+			"missing":  missing,
+			"checkedAt": time.Now().UnixMilli(),
 		})
 	}
 }
 
-// checkAccountStatus 检查单个账号状态
-// 当前阶段仅做 cookie 格式校验，后续阶段接入 115 API 做在线检测
-func checkAccountStatus(acc model.AccountInfo) AccountStatus {
-	switch acc.AccountType {
-	case "115":
-		if acc.Cookie == "" {
-			return AccountStatus{Name: acc.Name, Status: "error", Message: "Cookie 为空"}
+// VerifyAllAccountsHandler POST /api/account/verify-all
+// 批量校验所有 115 账号的 cookie
+func VerifyAllAccountsHandler(accountStore *store.AccountStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		validCount, invalidCount, err := accountStore.ValidateAllCookies()
+		if err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
 		}
-		result := client115.ValidateCookie(acc.Cookie)
-		if !result.Valid {
-			return AccountStatus{Name: acc.Name, Status: "error", Message: "Cookie 缺少字段: " + strings.Join(result.Missing, ", ")}
+		accountStore.Flush()
+
+		accounts := accountStore.List()
+		results := make([]map[string]any, 0, len(accounts))
+		for _, acc := range accounts {
+			if acc.AccountType == "115" {
+				results = append(results, map[string]any{
+					"account":     acc.Name,
+					"cookieValid": acc.CookieValid,
+					"lastCheck":   acc.LastCookieCheck,
+				})
+			}
 		}
-		return AccountStatus{Name: acc.Name, Status: "ok", Message: "Cookie 格式有效"}
-	case "openlist":
-		if acc.URL == "" {
-			return AccountStatus{Name: acc.Name, Status: "error", Message: "URL 为空"}
-		}
-		return AccountStatus{Name: acc.Name, Status: "ok", Message: "配置完整"}
-	default:
-		return AccountStatus{Name: acc.Name, Status: "unknown", Message: "未知账户类型"}
+
+		httpx.OkJson(w, map[string]any{
+			"validCount":   validCount,
+			"invalidCount": invalidCount,
+			"total":        validCount + invalidCount,
+			"results":      results,
+			"checkedAt":    time.Now().UnixMilli(),
+		})
 	}
 }
+
+

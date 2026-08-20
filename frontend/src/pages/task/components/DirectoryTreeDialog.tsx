@@ -62,9 +62,8 @@ export function DirectoryTreeDialog({
 
       setLoading(true);
       try {
-        const response = await axiosInstance.post("/api/directory/remote/list", {
-          account,
-          path,
+        const response = await axiosInstance.get("/api/directory/remote/list", {
+          params: { account, path },
         });
 
         if (response.data.code === 200) {
@@ -111,9 +110,8 @@ export function DirectoryTreeDialog({
       if (node.children === undefined) {
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
-          const response = await axiosInstance.post("/api/directory/remote/list", {
-            account,
-            path: currentPath,
+          const response = await axiosInstance.get("/api/directory/remote/list", {
+            params: { account, path: currentPath },
           });
 
           if (response.data.code === 200) {

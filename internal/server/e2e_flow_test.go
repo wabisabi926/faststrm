@@ -83,7 +83,11 @@ func setupE2E(t *testing.T) *e2eFixture {
 		cfgDir:        cfgDir,
 		dataDir:       dataDir,
 		salt:          salt,
-		accountStore:  store.NewAccountStore(salt, cfgDir),
+		accountStore:  (func() *store.AccountStore {
+		as, err := store.NewAccountStore(salt, cfgDir)
+		if err != nil { t.Fatalf("NewAccountStore: %v", err) }
+		return as
+	})(),
 		tasksStore:    store.NewTasksStore(cfgDir),
 		settingsStore: store.NewSettingsStore(salt, cfgDir),
 		stateMgr:      runtime.Init(cfgDir),
@@ -404,9 +408,16 @@ func TestE2E_FlowC_EmbyWebhookLifeMonitor(t *testing.T) {
 		t.Fatalf("SaveSettings: %v", err)
 	}
 
+	execDeps := task.ExecutorDeps{
+		AccountStore:  f.accountStore,
+		SettingsStore: store.NewSettingsAdapter(f.settingsStore),
+		TasksStore:    f.tasksStore,
+	}
+
 	_, embyDeps, lifeMonitorDeps, _ := initPhase6Deps(
 		f.settingsStore, f.tasksStore, f.accountStore,
 		f.lifeEventRepo, f.lifeEventLog, f.filePathRepo, f.stateMgr,
+		f.taskRuntime, execDeps,
 	)
 
 	t.Run("emby_webhook_library_new", func(t *testing.T) {
@@ -641,7 +652,7 @@ func TestE2E_FlowE_DirectoryLocal(t *testing.T) {
 	}
 
 	t.Run("list_local_without_root_returns_drives", func(t *testing.T) {
-		// 不传 root → 返回盘符列表
+		// 不传 root → 返回盘符列表（数组格式）
 		code, raw := doReq(handler.HandleLocalDirList(dirDeps), "GET",
 			"/api/directory/local/list", nil, f.token)
 		if code != 200 {
@@ -651,12 +662,12 @@ func TestE2E_FlowE_DirectoryLocal(t *testing.T) {
 		if m["code"].(float64) != 200 {
 			t.Errorf("code want 200, got %v", m["code"])
 		}
-		data, ok := m["data"].(map[string]any)
+		data, ok := m["data"].([]any)
 		if !ok {
-			t.Fatalf("data must be object, got %T", m["data"])
+			t.Fatalf("data must be array, got %T", m["data"])
 		}
-		if _, ok := data["roots"]; !ok {
-			t.Error("missing 'roots' field when no root param")
+		if len(data) == 0 {
+			t.Error("data should not be empty for root listing")
 		}
 	})
 
@@ -668,28 +679,24 @@ func TestE2E_FlowE_DirectoryLocal(t *testing.T) {
 			t.Fatalf("want 200, got %d body=%s", code, raw)
 		}
 		m := decodeAsMap(t, raw)
-		data, ok := m["data"].(map[string]any)
+		data, ok := m["data"].([]any)
 		if !ok {
-			t.Fatalf("data must be object, got %T", m["data"])
-		}
-		content, ok := data["content"].([]any)
-		if !ok {
-			t.Fatalf("content must be array, got %T", data["content"])
+			t.Fatalf("data must be array, got %T", m["data"])
 		}
 		// 应包含 movies 和 tv 两个目录
 		names := map[string]bool{}
-		for _, c := range content {
+		for _, c := range data {
 			if node, ok := c.(map[string]any); ok {
 				names[node["name"].(string)] = true
 			}
 		}
 		if !names["movies"] {
-			t.Errorf("expected 'movies' in content, got: %v", names)
+			t.Errorf("expected movies in data, got: %v", names)
 		}
 		if !names["tv"] {
-			t.Errorf("expected 'tv' in content, got: %v", names)
+			t.Errorf("expected tv in data, got: %v", names)
 		}
-	})
+		})
 
 	t.Run("list_local_invalid_root", func(t *testing.T) {
 		// 不存在的路径 → code=500 + 空 content
@@ -704,3 +711,5 @@ func TestE2E_FlowE_DirectoryLocal(t *testing.T) {
 		}
 	})
 }
+
+

@@ -267,7 +267,7 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
 
                 {/* 扫码登录模式 */}
                 {cookieMode === "qrcode" ? (
-                  <QrCodeLogin onSuccess={handleQrcodeSuccess} />
+                  <QrCodeLogin onSuccess={handleQrcodeSuccess} autoStart={true} />
                 ) : (
                   /* 手动粘贴模式 */
                   <FormField

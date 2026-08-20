@@ -15,6 +15,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
+	"github.com/wabisabi926/faststrm/internal/service/notify"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -64,7 +65,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		if !config.EventTypes.Create {
 			return nil
 		}
-		return m.handleCreateEvent(ctx, account, event, mapping, cloudPath)
+		return m.handleCreateEvent(ctx, account, event, mapping, cloudPath, true)
 
 	case client115.DeleteEventTypes[eventType]:
 		if !config.EventTypes.Remove {
@@ -102,6 +103,7 @@ func (m *Monitor) handleCreateEvent(
 	event client115.LifeEventItem,
 	mapping *pathMapping,
 	cloudPath string,
+	notify bool,
 ) error {
 	config := m.settingsFn()
 
@@ -114,6 +116,9 @@ func (m *Monitor) handleCreateEvent(
 		}
 		m.appendLog(ctx, account, "create", true, cloudPath, mapping.localPath, "文件夹已创建")
 		logger.S().Infof("[Monitor] 文件夹已创建: %s", mapping.localPath)
+		if notify {
+			m.notifyCreate(ctx, account, cloudPath, "目录", mapping.localPath, 0)
+		}
 		return nil
 	}
 
@@ -168,6 +173,18 @@ func (m *Monitor) handleCreateEvent(
 	m.appendLog(ctx, account, "create", true, cloudPath, strmPath,
 		fmt.Sprintf("STRM 已创建: %s", strmPath))
 	logger.S().Infof("[Monitor] STRM 已创建: %s", strmPath)
+
+	if notify {
+		m.notifyCreate(ctx, account, cloudPath, "文件", strmPath, event.Size)
+	}
+
+	// 通知 Emby 刷库
+	if m.embyRefresh != nil {
+		if err := m.embyRefresh.RefreshOnCreate(ctx, strmPath); err != nil {
+			logger.S().Warnf("[Monitor] Emby 刷库安排失败 path=%s: %v", strmPath, err)
+		}
+	}
+
 	return nil
 }
 
@@ -224,6 +241,14 @@ func (m *Monitor) handleDeleteEvent(
 		fmt.Sprintf("STRM 已删除: %s (关联文件 %d 个)", strmPath, deletedRelated))
 	m.notifyDelete(ctx, account, cloudPath, "文件", strmPath)
 	logger.S().Infof("[Monitor] STRM 已删除: %s (关联 %d)", strmPath, deletedRelated)
+
+	// 通知 Emby 刷库
+	if m.embyRefresh != nil {
+		if err := m.embyRefresh.RefreshOnDelete(ctx, strmPath); err != nil {
+			logger.S().Warnf("[Monitor] Emby 刷库安排失败 path=%s: %v", strmPath, err)
+		}
+	}
+
 	return nil
 }
 
@@ -239,12 +264,11 @@ func (m *Monitor) handleMoveEvent(
 	mapping *pathMapping,
 	cloudPath string,
 ) error {
-	// 简化：在新路径创建 STRM（recreate 模式）
-	// 旧 STRM 由一致性检查或全量扫描清理
-	err := m.handleCreateEvent(ctx, account, event, mapping, cloudPath)
+	err := m.handleCreateEvent(ctx, account, event, mapping, cloudPath, false)
 	if err == nil {
 		m.appendLog(ctx, account, "move", true, cloudPath, mapping.localPath,
 			"移动事件已处理（recreate 模式）")
+		m.notifyMove(ctx, account, cloudPath, "文件", mapping.localPath)
 	}
 	return err
 }
@@ -261,11 +285,11 @@ func (m *Monitor) handleRenameEvent(
 	mapping *pathMapping,
 	cloudPath string,
 ) error {
-	// 简化：在新路径创建 STRM（recreate 模式）
-	err := m.handleCreateEvent(ctx, account, event, mapping, cloudPath)
+	err := m.handleCreateEvent(ctx, account, event, mapping, cloudPath, false)
 	if err == nil {
 		m.appendLog(ctx, account, "rename", true, cloudPath, mapping.localPath,
 			"重命名事件已处理（recreate 模式）")
+		m.notifyRename(ctx, account, cloudPath, "文件", mapping.localPath)
 	}
 	return err
 }
@@ -479,14 +503,94 @@ func (m *Monitor) appendLog(ctx context.Context, account, eventType string, succ
 	})
 }
 
+// ==================== 通知辅助函数 ====================
+
+// tryDispatchNotification 尝试通过新的 Dispatch 接口发送结构化通知
+func (m *Monitor) tryDispatchNotification(ctx context.Context, n *notify.Notification) bool {
+	if dispatcher, ok := m.notifier.(notify.NotificationDispatcher); ok {
+		if err := dispatcher.Dispatch(ctx, n); err != nil {
+			logger.S().Warnf("[Monitor] Dispatch 通知发送失败: %v", err)
+		}
+		return true
+	}
+	return false
+}
+
+// ==================== STRM 通知（统一 Notification 对象 + 富文本 HTML 格式） ====================
+
+// notifyCreate 发送创建通知
+func (m *Monitor) notifyCreate(ctx context.Context, account, cloudPath, kindLabel, localPath string, size int64) {
+	if m.notifier == nil {
+		return
+	}
+	builder := notify.NewStrmNotifyBuilder()
+	n := builder.BuildCreateNotification(notify.STRMCreateInput{
+		Account:   account,
+		Kind:      kindLabel,
+		CloudPath: cloudPath,
+		LocalPath: localPath,
+		FileSize:  size,
+	})
+	if !m.tryDispatchNotification(ctx, n) {
+		if err := m.notifier.Notify(ctx, n.Content); err != nil {
+			logger.S().Warnf("[Monitor] 创建通知发送失败: %v", err)
+		}
+	}
+}
+
 // notifyDelete 发送删除通知
 func (m *Monitor) notifyDelete(ctx context.Context, account, cloudPath, kindLabel, localPath string) {
 	if m.notifier == nil {
 		return
 	}
-	msg := fmt.Sprintf("🗑️ STRM 已删除\n账号: %s\n类型: %s\n云端路径: %s\n本地路径: %s",
-		account, kindLabel, cloudPath, localPath)
-	if err := m.notifier.Notify(ctx, msg); err != nil {
-		logger.S().Warnf("[Monitor] 删除通知发送失败: %v", err)
+	builder := notify.NewStrmNotifyBuilder()
+	n := builder.BuildDeleteNotification(notify.STRMDeleteInput{
+		Account:   account,
+		Kind:      kindLabel,
+		CloudPath: cloudPath,
+		LocalPath: localPath,
+	})
+	if !m.tryDispatchNotification(ctx, n) {
+		if err := m.notifier.Notify(ctx, n.Content); err != nil {
+			logger.S().Warnf("[Monitor] 删除通知发送失败: %v", err)
+		}
+	}
+}
+
+// notifyMove 发送移动通知
+func (m *Monitor) notifyMove(ctx context.Context, account, cloudPath, kindLabel, localPath string) {
+	if m.notifier == nil {
+		return
+	}
+	builder := notify.NewStrmNotifyBuilder()
+	n := builder.BuildMoveNotification(notify.STRMMoveInput{
+		Account:   account,
+		Kind:      kindLabel,
+		CloudPath: cloudPath,
+		LocalPath: localPath,
+	})
+	if !m.tryDispatchNotification(ctx, n) {
+		if err := m.notifier.Notify(ctx, n.Content); err != nil {
+			logger.S().Warnf("[Monitor] 移动通知发送失败: %v", err)
+		}
+	}
+}
+
+// notifyRename 发送重命名通知
+func (m *Monitor) notifyRename(ctx context.Context, account, cloudPath, kindLabel, localPath string) {
+	if m.notifier == nil {
+		return
+	}
+	builder := notify.NewStrmNotifyBuilder()
+	n := builder.BuildRenameNotification(notify.STRMRenameInput{
+		Account:   account,
+		Kind:      kindLabel,
+		CloudPath: cloudPath,
+		LocalPath: localPath,
+	})
+	if !m.tryDispatchNotification(ctx, n) {
+		if err := m.notifier.Notify(ctx, n.Content); err != nil {
+			logger.S().Warnf("[Monitor] 重命名通知发送失败: %v", err)
+		}
 	}
 }

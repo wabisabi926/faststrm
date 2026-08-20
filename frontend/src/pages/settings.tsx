@@ -83,6 +83,7 @@ type Settings = {
     linkMaxPerSecond?: number;
     linkMaxConcurrent?: number;
     downloadMaxConcurrent?: number;
+    autoDownloadMetadata?: boolean;
   };
   lifeMonitor?: LifeMonitorConfig;
 } & Record<string, unknown>;
@@ -481,6 +482,10 @@ export default function SettingsPage() {
         ...data,
         strmExtensions,
         downloadExtensions,
+        download: {
+          ...data.download,
+          autoDownloadMetadata: data.download?.autoDownloadMetadata ?? true,
+        },
         strm: {
           ...data.strm,
           forceProxyUaTokens,
@@ -847,7 +852,7 @@ export default function SettingsPage() {
                   }
                 />
                 <label htmlFor="global-enable-302" className="text-sm cursor-pointer leading-tight">
-                  302 重定向<span className="text-xs text-muted-foreground">（带 pickcode）</span>
+                  302 重定向<span className="text-xs text-muted-foreground">（直链下载，不走本机代理）</span>
                 </label>
               </div>
               <div className="flex items-center gap-2">
@@ -1001,6 +1006,38 @@ export default function SettingsPage() {
                 />
                 <p className="text-xs text-muted-foreground">downloadMaxConcurrent</p>
               </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>自动下载媒体元数据</Label>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={data.download?.autoDownloadMetadata ?? true}
+                  onClick={() =>
+                    setData({
+                      ...data,
+                      download: {
+                        ...(data.download || {}),
+                        autoDownloadMetadata: !(data.download?.autoDownloadMetadata ?? true)
+                      },
+                    })
+                  }
+                  className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                    (data.download?.autoDownloadMetadata ?? true) ? "bg-primary" : "bg-muted"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      (data.download?.autoDownloadMetadata ?? true) ? "translate-x-4" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                全量同步时自动下载 nfo/jpg/png/srt 等媒体元数据文件。关闭后只生成 STRM 视频索引文件。
+              </p>
             </div>
           </section>
 

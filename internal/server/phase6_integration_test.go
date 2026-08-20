@@ -18,6 +18,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/emby"
 	"github.com/wabisabi926/faststrm/internal/service/runtime"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/task"
 )
 
 // 阶段 6 集成测试：验证 initPhase6Deps 正确装配 Telegram / Emby / LifeMonitor 依赖
@@ -41,7 +42,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 
 	settingsStore := store.NewSettingsStore(salt, cfgDir)
 	tasksStore := store.NewTasksStore(cfgDir)
-	accountStore := store.NewAccountStore(salt, cfgDir)
+	accountStore, _ := store.NewAccountStore(salt, cfgDir)
 	stateMgr := runtime.Init(cfgDir)
 
 	// SQLite（用 OpenNew 避免全局单例污染其他测试）
@@ -61,11 +62,19 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 	}
 	filePathRepo := db.NewFilePathRepo(sqliteDB)
 
+	taskRuntime := task.GetRuntime()
+	execDeps := task.ExecutorDeps{
+		AccountStore:  accountStore,
+		SettingsStore: store.NewSettingsAdapter(settingsStore),
+		TasksStore:    tasksStore,
+	}
+
 	t.Run("no_config_wiring", func(t *testing.T) {
 		// 未写入 settings.json → 使用默认配置
 		notifyDeps, embyDeps, lifeMonitorDeps, mon := initPhase6Deps(
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
+			taskRuntime, execDeps,
 		)
 
 		// Dispatcher 必须非 nil（即便 Telegram 未配置，Notify 静默跳过）
@@ -129,6 +138,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 		notifyDeps, _, _, _ := initPhase6Deps(
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
+			taskRuntime, execDeps,
 		)
 
 		if notifyDeps.TelegramBot == nil {
@@ -155,6 +165,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 		_, embyDeps, _, _ := initPhase6Deps(
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
+			taskRuntime, execDeps,
 		)
 		if embyDeps.EmbyClient == nil {
 			t.Fatal("EmbyClient should not be nil when emby.url+apiKey are configured")
@@ -170,6 +181,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 		_, embyDeps, _, _ := initPhase6Deps(
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
+			taskRuntime, execDeps,
 		)
 		// 启动时 emby 未配置 → EmbyClient 为 nil
 		if embyDeps.EmbyClient != nil {
@@ -296,7 +308,7 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 
 	settingsStore := store.NewSettingsStore(salt, cfgDir)
 	tasksStore := store.NewTasksStore(cfgDir)
-	accountStore := store.NewAccountStore(salt, cfgDir)
+	accountStore, _ := store.NewAccountStore(salt, cfgDir)
 	stateMgr := runtime.Init(cfgDir)
 
 	sqliteDB, err := db.OpenNew(dataDir)
@@ -315,6 +327,13 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 	}
 	filePathRepo := db.NewFilePathRepo(sqliteDB)
 
+	taskRuntime2 := task.GetRuntime()
+	execDeps2 := task.ExecutorDeps{
+		AccountStore:  accountStore,
+		SettingsStore: store.NewSettingsAdapter(settingsStore),
+		TasksStore:    tasksStore,
+	}
+
 	// 初始写入空配置
 	if err := settingsStore.SaveSettings(model.DefaultSettings()); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
@@ -323,6 +342,7 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 	notifyDeps, embyDeps, lifeMonitorDeps, _ := initPhase6Deps(
 		settingsStore, tasksStore, accountStore,
 		lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
+		taskRuntime2, execDeps2,
 	)
 
 	// doJSON 发起 JSON POST 请求并返回 (status, body)
@@ -392,7 +412,7 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 			t.Fatalf("SaveSettings: %v", err)
 		}
 		// 重新构造 notifyDeps 以拿到 CommandHandler
-		nd, _, _, _ := initPhase6Deps(settingsStore, tasksStore, accountStore, lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr)
+		nd, _, _, _ := initPhase6Deps(settingsStore, tasksStore, accountStore, lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr, taskRuntime2, execDeps2)
 
 		raw, _ := json.Marshal(map[string]any{"update_id": 1})
 		req := httptest.NewRequest(http.MethodPost, "/api/notify/webhook", bytes.NewReader(raw))
@@ -505,3 +525,4 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 		}
 	})
 }
+

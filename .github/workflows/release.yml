@@ -11,6 +11,61 @@ env:
   FNPACK_URL: https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64
 
 jobs:
+  # ---- Job 0: 提取更新日志作为 Release Notes ----
+  release-notes:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Extract release notes
+      id: notes
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        TAG="${GITHUB_REF_NAME}"
+        NOTES_CONTENT=""
+
+        # 优先从 .changes 目录读取版本日志
+        if [ -f ".changes/${TAG}.md" ]; then
+          echo "Found .changes/${TAG}.md"
+          NOTES_CONTENT=$(cat ".changes/${TAG}.md")
+        elif [ -f ".changes/${VERSION}.md" ]; then
+          echo "Found .changes/${VERSION}.md"
+          NOTES_CONTENT=$(cat ".changes/${VERSION}.md")
+        # 其次从 docs/CHANGELOG.md 提取对应版本
+        elif [ -f "docs/CHANGELOG.md" ]; then
+          echo "Extracting v${VERSION} section from docs/CHANGELOG.md"
+          # 提取从 ## vX.Y.Z 到下一个 ## 之前的内容
+          NOTES_CONTENT=$(awk "/^## v${VERSION}[[:space:]]/{found=1; next} /^## v/{if(found) exit} found" docs/CHANGELOG.md)
+        fi
+
+        if [ -n "$NOTES_CONTENT" ]; then
+          echo "Using custom release notes."
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NOTES_CONTENT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+        else
+          echo "No custom release notes found, will use auto-generated notes."
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "Release ${TAG}" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "### 更新日志" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "请编辑 \`.changes/${TAG}.md\` 添加自定义更新日志。" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Save release notes to file
+      run: |
+        echo "${{ steps.notes.outputs.body }}" > release_notes.md
+        cat release_notes.md
+
+    - name: Upload release notes artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-notes
+        path: release_notes.md
+
   # ---- Job 1: Docker 镜像构建 + 推送到 Docker Hub ----
   docker-release:
     runs-on: ubuntu-latest
@@ -78,6 +133,7 @@ jobs:
 
   # ---- Job 2: 飞牛 fNOS .fpk 包 (amd64 + arm64) ----
   fnos-release:
+    needs: release-notes
     runs-on: ubuntu-latest
     permissions:
       contents: write   # 写 Release Assets
@@ -143,23 +199,46 @@ jobs:
     - name: List dist artifacts
       run: ls -lh dist/
 
+    - name: Download release notes artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: release-notes
+        path: .
+
     - name: Upload .fpk to GitHub Release Assets
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -euo pipefail
         TAG="${{ github.ref_name }}"
-        # 安装/更新 GitHub CLI (runner 自带的 gh 已经足够新)
         gh --version
-        # 先确保 Release 已经创建 (如果 docker-release job 还没创建好就会失败，gh release create --clobber 不支持)
-        # 这里用 create-if-not-exists 的惯用手法：create 失败时忽略，然后上传
-        gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+
+        # 读取 release notes 内容
+        RELEASE_NOTES=""
+        if [ -f "release_notes.md" ]; then
+          RELEASE_NOTES=$(cat release_notes.md)
+        fi
+
+        # 创建 Release 并使用自定义 notes（如果没有则用 --generate-notes）
+        if [ -n "$RELEASE_NOTES" ]; then
+          echo "Creating release with custom notes..."
           gh release create "$TAG" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Release $TAG" \
-            --generate-notes
+            --notes "$RELEASE_NOTES" || \
+          gh release edit "$TAG" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --notes "$RELEASE_NOTES"
+        else
+          echo "Creating release with auto-generated notes..."
+          gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Release $TAG" \
+              --generate-notes
+        fi
 
-        # 上传所有 .fpk 和 VERSION 目录打包成 zip
+        # 上传所有 .fpk 安装包
         cd dist
         for FPK in ./*.fpk; do
           [ -f "$FPK" ] || continue
@@ -169,21 +248,10 @@ jobs:
             --clobber
         done
 
-        # 同时把解压后的安装目录也打成 zip 方便用户下载
-        for DIR in ./faststrm-*/; do
-          [ -d "$DIR" ] || continue
-          BASENAME="$(basename "$DIR")"
-          ZIP="${BASENAME}.zip"
-          (cd "$DIR" && zip -q -r "../${ZIP}" .)
-          echo "Uploading $ZIP ..."
-          gh release upload "$TAG" "$ZIP" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --clobber
-        done
-
   # ---- Job 2.5: 原生独立二进制 (Windows amd64 + Linux amd64 / arm64) ----
   # 对齐 qmediasync 的一次性打包模式：tag 一推，全平台二进制自动出现在 Release Assets
   native-release:
+    needs: release-notes
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -280,17 +348,44 @@ jobs:
     - name: List native artifacts
       run: ls -lh faststrm_windows_amd64.zip faststrm_linux_amd64 faststrm_linux_arm64
 
+    - name: Download release notes artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: release-notes
+        path: .
+
     - name: Upload native binaries to GitHub Release Assets
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -euo pipefail
         TAG="${{ github.ref_name }}"
-        gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-          gh release create "$TAG" \
+
+        # 读取 release notes 内容
+        RELEASE_NOTES=""
+        if [ -f "release_notes.md" ]; then
+          RELEASE_NOTES=$(cat release_notes.md)
+        fi
+
+        # 使用自定义 notes 创建或更新 Release
+        if [ -n "$RELEASE_NOTES" ]; then
+          gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Release $TAG" \
+              --notes "$RELEASE_NOTES"
+          # 更新 notes（如果 Release 已存在）
+          gh release edit "$TAG" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "Release $TAG" \
-            --generate-notes
+            --notes "$RELEASE_NOTES" 2>/dev/null || true
+        else
+          gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Release $TAG" \
+              --generate-notes
+        fi
+
         for ART in faststrm_windows_amd64.zip faststrm_linux_amd64 faststrm_linux_arm64; do
           [ -f "$ART" ] || continue
           echo "Uploading $ART ..."
@@ -299,16 +394,21 @@ jobs:
             --clobber
         done
 
-  # ---- Job 3: 创建 Release (兜底, 在 docker-release / fnos-release / native-release 之后) ----
-  # Docker Hub 镜像 + fNOS .fpk + Win/Linux 原生二进制 全部上传完成后, 保证 Release 存在且包含 release notes
+  # ---- Job 3: 创建 Release 并使用自定义更新日志 ----
   github-release:
-    needs: [docker-release, fnos-release, native-release]
+    needs: [release-notes, docker-release, fnos-release, native-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-    - name: Create / update GitHub Release (notes only)
+    - name: Download release notes artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: release-notes
+        path: .
+
+    - name: Create / update GitHub Release with custom notes
       uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -317,5 +417,6 @@ jobs:
         name: Release ${{ github.ref_name }}
         draft: false
         prerelease: false
-        generate_release_notes: true
+        body_path: release_notes.md
+        generate_release_notes: false
         append_body: false
