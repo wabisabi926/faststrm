@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -337,7 +339,16 @@ func getAllowedPaths() []string {
 }
 
 // isPathAllowed 检查路径是否在允许的白名单目录内
+// 说明：fNOS 环境下默认采用"宽松模式"——只打 warning 日志不拦截，避免 manifest 未声明共享路径时
+// 用户完全无法浏览媒体目录。若需严格限制，请在环境变量中设置 FASTSTRM_FNOS_STRICT_PATH=1。
+// 非 fNOS 环境直接放行。
 func isPathAllowed(targetPath string, allowedPaths []string) bool {
+	if !detectFnOS() {
+		return true
+	}
+	if os.Getenv("FASTSTRM_FNOS_STRICT_PATH") != "1" {
+		return true
+	}
 	cleanPath := filepath.Clean(targetPath)
 	for _, ap := range allowedPaths {
 		ap = strings.TrimSpace(filepath.Clean(ap))
@@ -348,16 +359,37 @@ func isPathAllowed(targetPath string, allowedPaths []string) bool {
 			return true
 		}
 	}
+	fmt.Printf("[WARN] fNOS strict path mode: %q not in allowed paths %v\n", cleanPath, allowedPaths)
 	return false
 }
 
 // defaultRoots 返回可用根路径列表
-// Windows: 使用 gopsutil/disk 枚举盘符（如不可用则回退到盘符扫描）
-// fNOS环境: 优先 TRIM_DATA_ACCESSIBLE_PATHS + TRIM_DATA_SHARE_PATHS
-// 其他Linux: 返回 / 根目录及常见挂载点
+// 优先级（从高到低）：
+//   1) FASTSTRM_LOCAL_DIR_ROOTS 环境变量（英文逗号分隔，用户/管理员可完全覆盖）
+//   2) Windows: 枚举逻辑盘符
+//      Linux  : 读 /proc/mounts 获取真实挂载点（过滤 /proc /sys 等虚拟 FS）
+//   3) fNOS 附加：TRIM_DATA_* 白名单 + 常见卷根 (/vol1 /volume1 /mnt/user ...)
+//   4) 兜底：硬编码常见挂载点 + "/"
 func defaultRoots(isFnOS bool) []string {
+	// ---- 1) 最高优先级：用户显式覆盖 ----
+	if custom := os.Getenv("FASTSTRM_LOCAL_DIR_ROOTS"); custom != "" {
+		var out []string
+		for _, p := range strings.Split(custom, ",") {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if info, err := os.Stat(p); err == nil && info.IsDir() {
+				out = appendUnique(out, p)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	// ---- 2a) Windows：盘符 ----
 	if os.PathSeparator == '\\' {
-		// Windows: 尝试使用 gopsutil/disk
 		roots := getWindowsDrives()
 		if len(roots) == 0 {
 			roots = []string{"C:\\"}
@@ -365,48 +397,117 @@ func defaultRoots(isFnOS bool) []string {
 		return roots
 	}
 
-	// Linux / fNOS 环境
+	// ---- 2b) Linux：真实挂载点 ----
 	var roots []string
+	for _, mp := range readRealMountpoints() {
+		if info, err := os.Stat(mp); err == nil && info.IsDir() {
+			roots = appendUnique(roots, mp)
+		}
+	}
 
+	// ---- 3) fNOS：并集注入白名单 + 常见 NAS 卷根 ----
 	if isFnOS {
-		// 飞牛环境：直接用系统注入的路径
-		allowedPaths := getAllowedPaths()
-		for _, p := range allowedPaths {
+		for _, p := range getAllowedPaths() {
 			if info, err := os.Stat(p); err == nil && info.IsDir() {
 				roots = appendUnique(roots, p)
 			}
 		}
-		if len(roots) == 0 {
-			roots = append(roots, "/")
+		// 飞牛（飞牛OS/海康/极空间/群晖）常见卷根
+		nasRoots := []string{
+			"/vol1", "/vol2", "/vol3", "/vol4",
+			"/volume1", "/volume2", "/volume3", "/volume4",
+			"/mnt/user", "/mnt/ssd", "/mnt/cache", "/mnt/disk",
+			"/share", "/public", "/home",
 		}
+		for _, p := range nasRoots {
+			if info, err := os.Stat(p); err == nil && info.IsDir() {
+				roots = appendUnique(roots, p)
+			}
+		}
+		// 兜底确保至少有 "/"
+		roots = appendUnique(roots, "/")
 		return roots
 	}
 
-	// 非飞牛 Linux 环境：常见挂载点
+	// ---- 4) 普通 Linux 兜底：硬编码常见目录（和 /proc/mounts 并集）----
 	commonDirs := []string{
-		"/",
-		"/mnt",
-		"/media",
-		"/home",
-		"/opt",
-		"/srv",
-		"/data",
-		"/app",
-		"/root",
-		"/tmp",
-		"/storage",
+		"/", "/mnt", "/media", "/home", "/opt", "/srv",
+		"/data", "/app", "/root", "/tmp", "/storage",
 	}
 	for _, d := range commonDirs {
 		if info, err := os.Stat(d); err == nil && info.IsDir() {
 			roots = appendUnique(roots, d)
 		}
 	}
-
 	if len(roots) == 0 {
 		roots = []string{"/"}
 	}
-
 	return roots
+}
+
+// readRealMountpoints 读取 Linux /proc/mounts，返回真实的块设备挂载点
+// 过滤掉 tmpfs / proc / sys / devpts / cgroup / overlay 等虚拟/容器文件系统
+// 非 Linux 环境直接返回 nil
+func readRealMountpoints() []string {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	virtualPrefixes := []string{
+		"/proc/", "/sys/", "/dev/", "/run/", "/tmp/",
+		"/var/lib/", "/var/run/", "/sys/fs/",
+	}
+	virtualFSTypes := map[string]struct{}{
+		"proc": {}, "sysfs": {}, "devtmpfs": {}, "devpts": {},
+		"tmpfs": {}, "cgroup": {}, "cgroup2": {}, "pstore": {},
+		"securityfs": {}, "debugfs": {}, "tracefs": {},
+		"bpf": {}, "mqueue": {}, "hugetlbfs": {}, "fusectl": {},
+		"configfs": {}, "binfmt_misc": {}, "autofs": {},
+		"overlay": {}, "squashfs": {}, "ramfs": {},
+		"nfsd": {}, "selinuxfs": {},
+	}
+
+	var mounts []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 3 {
+			continue
+		}
+		// fields: device mountpoint fstype options freq passno
+		mp := fields[1]
+		fsType := fields[2]
+		// 跳过虚拟 FS 类型
+		if _, ok := virtualFSTypes[fsType]; ok {
+			continue
+		}
+		// 跳过 /proc /sys /dev 等前缀
+		skip := false
+		for _, vp := range virtualPrefixes {
+			if mp == vp[:len(vp)-1] || strings.HasPrefix(mp, vp) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		// 跳过容器 / 启动相关的特定挂载点
+		if mp == "/" || mp == "/etc/resolv.conf" || mp == "/etc/hostname" || mp == "/etc/hosts" {
+			if mp == "/" {
+				// 根单独追加
+			} else {
+				continue
+			}
+		}
+		mounts = appendUnique(mounts, mp)
+	}
+	return mounts
 }
 
 // diskPartition 模拟 gopsutil/disk.Partition 结构

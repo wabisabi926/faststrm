@@ -1,7 +1,8 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import axiosInstance from "@/lib/axios";
-import { ChevronRight, ChevronDown, Folder, Loader2, HardDrive } from "lucide-react";
+import { ChevronRight, ChevronDown, Folder, Loader2, HardDrive, AlertCircle, CheckCircle2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,13 @@ export function LocalDirectoryTreeDialog({
     new Set()
   );
   const [selectedPath, setSelectedPath] = React.useState<string>("");
+  const [manualPath, setManualPath] = React.useState<string>("");
+  const [manualCheck, setManualCheck] = React.useState<
+    | { status: "idle" }
+    | { status: "checking" }
+    | { status: "ok"; name: string }
+    | { status: "err"; message: string }
+  >({ status: "idle" });
 
   // 加载目录（basePath 为空时，后端自动返回根或盘符列表）
   const loadTree = React.useCallback(
@@ -145,7 +153,67 @@ export function LocalDirectoryTreeDialog({
   // 选择路径
   const handleSelect = (node: TreeNode) => {
     setSelectedPath(node.id);
+    // 同步到手动输入框，方便用户在此基础上微调
+    setManualPath(node.id);
+    setManualCheck({ status: "idle" });
   };
+
+  // 手动输入路径：校验 + 跳转到该目录（浏览树列出它的父目录内容并高亮）
+  const checkAndJumpManual = async () => {
+    const p = manualPath.trim();
+    if (!p) {
+      setManualCheck({ status: "err", message: "请输入路径" });
+      return;
+    }
+    setManualCheck({ status: "checking" });
+    try {
+      // 1) 走 listChildren 接口校验路径存在、可访问、是目录
+      const listRes = await axiosInstance.post("/api/directory/local/list", {
+        basePath: p,
+      });
+      if (listRes.data.code === 200) {
+        // 存在：把该目录的子项加载到视图里
+        setTree(listRes.data.data || []);
+        setSelectedPath(p);
+        setManualCheck({
+          status: "ok",
+          name: `目录有效（含 ${(listRes.data.data || []).length} 个条目）`,
+        });
+        return;
+      }
+      // 2) 如果 basePath=p 失败，可能传的是文件路径，走 listChildren(basePath="", targetPath=p) 看是否存在
+      const statRes = await axiosInstance.post("/api/directory/local/listChildren", {
+        basePath: "",
+        targetPath: p,
+      });
+      if (statRes.data.code === 200) {
+        setSelectedPath(p);
+        setManualCheck({ status: "ok", name: "路径已选择" });
+        return;
+      }
+      setManualCheck({
+        status: "err",
+        message:
+          (statRes.data && statRes.data.message) ||
+          (listRes.data && listRes.data.message) ||
+          "无法访问该路径（请检查沙箱授权 / 权限 / 路径是否存在）",
+      });
+    } catch (e: any) {
+      const msg =
+        e?.response?.data?.message || e?.message || "校验路径时网络错误";
+      setManualCheck({ status: "err", message: msg });
+    }
+  };
+
+  // 对话框关闭时清理手动输入状态
+  React.useEffect(() => {
+    if (open) {
+      // 打开时如果已经有选中路径，回填到输入框
+      if (selectedPath) setManualPath(selectedPath);
+    } else {
+      setManualCheck({ status: "idle" });
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 确认选择
   const handleConfirm = () => {
@@ -244,9 +312,62 @@ export function LocalDirectoryTreeDialog({
         <DialogHeader>
           <DialogTitle>选择本地目录</DialogTitle>
           <DialogDescription>
-            从系统根目录或盘符开始浏览，选择本地路径
+            从下方根节点开始浏览，或直接粘贴已知路径后点「跳转」
           </DialogDescription>
         </DialogHeader>
+
+        {/* 手动路径输入 + 校验 + 跳转（fNOS/Docker/NAS 环境下浏览根不全时的兜底） */}
+        <div className="space-y-1.5 shrink-0">
+          <div className="flex gap-2">
+            <Input
+              value={manualPath}
+              onChange={(e) => {
+                setManualPath(e.target.value);
+                setManualCheck({ status: "idle" });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  checkAndJumpManual();
+                }
+              }}
+              placeholder="例：/vol1/电影 或 D:\Media\电影 或 /volume1/video"
+              className="font-mono text-sm"
+            />
+            <Button
+              variant="outline"
+              onClick={checkAndJumpManual}
+              disabled={manualCheck.status === "checking" || !manualPath.trim()}
+              className="shrink-0"
+            >
+              {manualCheck.status === "checking" ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  校验中
+                </>
+              ) : (
+                "跳转"
+              )}
+            </Button>
+          </div>
+          {manualCheck.status === "ok" && (
+            <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              {manualCheck.name}
+            </div>
+          )}
+          {manualCheck.status === "err" && (
+            <div className="flex items-start gap-1.5 text-xs text-destructive">
+              <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span className="break-all">{manualCheck.message}</span>
+            </div>
+          )}
+          {manualCheck.status === "idle" && manualPath.trim().length > 0 && (
+            <div className="text-xs text-muted-foreground">
+              输入完成后按 Enter 或点「跳转」定位到该目录
+            </div>
+          )}
+        </div>
 
         <div className="flex-1 min-h-[300px] max-h-[500px] border rounded-md p-2 overflow-auto">
           {loading ? (
