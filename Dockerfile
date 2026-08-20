@@ -50,7 +50,8 @@ WORKDIR /app
 COPY --from=builder /out/faststrm .
 COPY docker-entrypoint.sh .
 COPY .config/ ./.config/
-RUN chmod +x faststrm docker-entrypoint.sh
+# 防御性 CRLF → LF 转换：即使 .gitattributes 未生效（Windows clone autocrlf=true），也保证入口脚本是 LF
+RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x faststrm docker-entrypoint.sh
 
 RUN addgroup -g 12331 faststrm && \
     adduser -D -u 12331 -G faststrm faststrm

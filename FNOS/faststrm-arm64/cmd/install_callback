@@ -1,38 +1,46 @@
 #!/bin/bash
 # install_callback：安装完成回调（用户在 wizard 点确定后执行）
-# - 保证可写目录存在
-# - 首次安装时放置默认 config.yml（如有需要）
-# - 目前 FastStrm 无数据库迁移逻辑，仅占位
+# - 保证可写目录存在（与 main 的 __fn_writeable_dir 4 级 fallback 完全一致，避免路径漂移）
+# - FastStrm Go 后端在 InitApp 时会自动生成 config.json/account.json/tasks.json/settings.json
+#   首次启动无需预置模板，这里只确保目录存在即可
 set +e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_ROOT="$(dirname "${SCRIPT_DIR}")"
+APP_ROOT="${TRIM_APPDEST:-$(dirname "${SCRIPT_DIR}")}"
 
+# 与 main 的 __fn_writeable_dir 完全一致：env → TRIM_PKGVAR/xxx → TRIM_APPDEST/xxx → /tmp
 __fn_writeable_dir() {
   local want="$1" fallback="$2" usage="$3"
   local from_env=""
   eval "from_env=\"\${${want}:-}\""
   if [ -n "${from_env}" ]; then
     mkdir -p "${from_env}" 2>/dev/null || true
-    if [ -d "${from_env}" ] && [ -w "${from_env}" ]; then printf "%s" "${from_env}" ; return 0 ; fi
+    if [ -d "${from_env}" ] && [ -w "${from_env}" ]; then printf "%s" "${from_env}"; return 0; fi
   fi
+  local under_trim="${TRIM_PKGVAR}/${fallback}"
+  mkdir -p "${under_trim}" 2>/dev/null || true
+  if [ -d "${under_trim}" ] && [ -w "${under_trim}" ]; then printf "%s" "${under_trim}"; return 0; fi
   local under_app="${APP_ROOT}/${fallback}"
   mkdir -p "${under_app}" 2>/dev/null || true
-  if [ -d "${under_app}" ] && [ -w "${under_app}" ]; then printf "%s" "${under_app}" ; return 0 ; fi
+  if [ -d "${under_app}" ] && [ -w "${under_app}" ]; then printf "%s" "${under_app}"; return 0; fi
   local safe_name="faststrm-$(id -u 2>/dev/null || echo 0)"
   local last="/tmp/${safe_name}/${fallback}"
   mkdir -p "${last}" 2>/dev/null || true
-  if [ -d "${last}" ] && [ -w "${last}" ]; then printf "%s" "${last}" ; return 0 ; fi
+  if [ -d "${last}" ] && [ -w "${last}" ]; then printf "%s" "${last}"; return 0; fi
   return 1
 }
 
-CONF_DIR="$(__fn_writeable_dir "CONFIG_DIR" "config" "配置" 2>/dev/null \
-        || __fn_writeable_dir "DEFAULT_CONFIG_DIR" "config" "配置" 2>/dev/null \
-        || echo "${APP_ROOT}/config")"
+CONF_DIR="$(__fn_writeable_dir "CONFIG_DIR"           "config" "配置" 2>/dev/null \
+        || __fn_writeable_dir "DEFAULT_CONFIG_DIR"   "config" "配置" 2>/dev/null \
+        || __fn_writeable_dir "FNOS_APP_CONFIG_DIR"  "config" "配置" 2>/dev/null \
+        || echo "${TRIM_PKGVAR:-${APP_ROOT}}/config")"
 mkdir -p "${CONF_DIR}" 2>/dev/null || true
 
-if [ ! -f "${CONF_DIR}/config.yml" ] && [ -f "${APP_ROOT}/config.yml" ]; then
-  cp -f "${APP_ROOT}/config.yml" "${CONF_DIR}/config.yml" 2>/dev/null || true
-fi
+# 同时确保 data/logs/run 目录存在，避免首次启动时 main 还要兜底
+for sub in data logs run; do
+  __fn_writeable_dir "DATA_DIR"         "$sub" "数据" 2>/dev/null >/dev/null \
+    || __fn_writeable_dir "FNOS_APP_$(echo $sub | tr a-z A-Z)_DIR" "$sub" "数据" 2>/dev/null >/dev/null \
+    || true
+done
 
 exit 0

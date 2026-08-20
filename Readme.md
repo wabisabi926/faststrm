@@ -80,7 +80,7 @@ FastStrm 提供 3 种官方分发方式，任选其一：
 | 方式 | 适用场景 | 下载地址 / 命令 |
 |:----:|----------|-----------------|
 | 🐳 **Docker**（最通用） | Linux / NAS / macOS / Windows，已有 Docker 环境 | `docker pull wabisabi926/faststrm:latest` |
-| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-0.8.8.fpk`](https://github.com/wabisabi926/faststrm/releases) |
+| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-0.9.1.fpk`](https://github.com/wabisabi926/faststrm/releases) |
 | 🖥️ **源码 / 单二进制** | 想自己编译或跑在普通 Linux 主机 | `git clone -b go https://github.com/wabisabi926/faststrm && cd faststrm && go build ./cmd/server/` |
 
 > 📘 飞牛打包、定制、运行目录和排错详见 [docs/飞牛打包部署.md](docs/飞牛打包部署.md)
@@ -89,7 +89,7 @@ FastStrm 提供 3 种官方分发方式，任选其一：
 
 ## 🏗️ 架构说明
 
-FastStrm v0.8.8 采用纯 Go 架构：
+FastStrm v0.9.1 采用纯 Go 架构：
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -127,13 +127,13 @@ FastStrm v0.8.8 采用纯 Go 架构：
 
 ---
 
-## 📝 最新版本 (v0.8.8)
+## 📝 最新版本 (v0.9.1)
 
-- **🚀 全平台一次性自动打包（对齐 qmediasync 模式）**：打 `v0.8.8` tag 后 GitHub Actions 自动产出 Windows amd64 zip、Linux amd64/arm64 原生二进制、多架构 Docker 镜像、飞牛 fnOS amd64/arm64 .fpk，全部一次性上传到 Release Assets
-- **🐛 飞牛 CI 致命修复**：清理 `faststrm-demo` 残留的 submodule gitlink（修复 actions/checkout submodule foreach exit 128 导致 CI 直接挂的问题）；build-fnos.sh 修复 APP_ROOT 只读权限 fallback + 变量污染问题（字面量 heredoc 注入公共函数）
-- **🏷️ 版本号全链路可注入**：侧边栏 footer `appVersion` 改为 var（原 const 无法 ldflags 注入），构建时同步注入 `/api/health`、`--version`、侧边栏、FNOS manifest 4 处版本；fNOS manifest / package.json / 默认值 全部同步 0.8.7 → 0.8.8
-- **🧹 Go 重构残余清理**：删除 Next.js 遗留（next-env.d.ts、next.svg、vercel.svg、.next 缓存、旧 server.exe/faststrm.exe）；删除整个 `emby2Alist/` 旧 Nginx+NJS 反代 demo（共 44 个文件 / 7209 行，Go 架构已无依赖）
-- **🔧 端口 & 前端构建修复**：Vite dev server 端口 5173 / 生产 8090 分离；前端硬编码 `localhost:3000` 全部清除（Emby Webhook 改用 `window.location.origin`、settings 占位符改 8090）；创建 `tsconfig.node.json` 让 `tsc -b` 通过，构建稳定
+- **🔥 启动与数据兼容性全量修复**：响应 v0.8.9.7 审查报告，修复 FPK 二进制路径多一层 `app/`、Shell 脚本 CRLF、`tasks.json` 文件名不一致、SQLite 路径迁移缺失、amd64 manifest 架构字段等所有 P0/P1 问题
+- **🔧 配置语义拆分**：拆分 `CONFIG_DIR`（用户可写）和 `DEFAULT_CONFIG_DIR`（只读模板）；FPK `cmd/main` 移除 `--config` flag 污染；秒退时写 `TRIM_TEMP_LOGFILE` 并返回非零
+- **🐛 飞牛生命周期脚本深度修复**：uninstall_init/upgrade_init 改为读 PID_FILE 杀进程（原 `pkill -f "^${p} "` 无法匹配 nohup 启动的进程）；install_callback 的可写目录 fallback 与 main 对齐；uninstall_callback 补全 `TRIM_PKGVAR/{config,data,logs,run}` 清理
+- **🏷️ Docker Hub 标签策略修复**：metadata 增加 `type=raw,value=${{ github.ref_name }}`，让 `v0.8.9.7` 这类四段版本号也能生成同名 Docker Hub tag
+- **🧹 Go 重构残余清理（继承 v0.8.8）**：删除 Next.js 遗留、`emby2Alist/` 旧 Nginx+NJS 反代 demo、`faststrm-demo` submodule gitlink
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 

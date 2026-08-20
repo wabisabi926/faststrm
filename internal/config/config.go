@@ -169,6 +169,46 @@ func EnsureDirs(paths AppConfigPaths) error {
 	return nil
 }
 
+// migrateDotFile 如果旧版 dot-prefix 文件存在而新版不存在，则重命名迁移
+// 例如 .tasks.json → tasks.json（Go 早期代码用 dot 前缀，新版和 TS 版统一为无前缀）
+func migrateDotFile(configDir, oldName, newName string) {
+	oldPath := filepath.Join(configDir, oldName)
+	newPath := filepath.Join(configDir, newName)
+	if _, err := os.Stat(oldPath); err == nil {
+		if _, err := os.Stat(newPath); os.IsNotExist(err) {
+			if rerr := os.Rename(oldPath, newPath); rerr == nil {
+				logger.S().Infof("migrated %s → %s", oldName, newName)
+			}
+		}
+	}
+}
+
+// migrateSQLite 如果旧版 SQLite 数据库在 configDir 下而新版 dataDir 下不存在，则迁移
+// TS 版数据库路径: configDir/filePathDb.sqlite
+// Go 版数据库路径: dataDir/filePathDb.sqlite
+// 同时迁移 -wal 和 -shm 文件（WAL 模式附属文件）
+func migrateSQLite(configDir, dataDir string) {
+	dbFile := "filePathDb.sqlite"
+	oldPath := filepath.Join(configDir, dbFile)
+	newPath := filepath.Join(dataDir, dbFile)
+	if _, err := os.Stat(oldPath); err == nil {
+		if _, err := os.Stat(newPath); os.IsNotExist(err) {
+			// 迁移主数据库文件
+			if rerr := os.Rename(oldPath, newPath); rerr == nil {
+				logger.S().Infof("migrated SQLite %s from config/ to data/", dbFile)
+			}
+			// 迁移 WAL / SHM 附属文件（如果存在）
+			for _, suffix := range []string{"-wal", "-shm"} {
+				oldWAL := oldPath + suffix
+				newWAL := newPath + suffix
+				if _, err := os.Stat(oldWAL); err == nil {
+					_ = os.Rename(oldWAL, newWAL)
+				}
+			}
+		}
+	}
+}
+
 // InitApp 完整初始化流程（对应 docker-entrypoint.sh）
 // 顺序: 建目录 → 拷贝默认配置 → 生成 admin 密码哈希 → 生成 internalToken → 加载配置
 func InitApp(defaultRoot string) (*AppConfig, error) {
@@ -179,6 +219,14 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 	if err := EnsureDirs(paths); err != nil {
 		return nil, err
 	}
+
+	// 1a. 一次性数据迁移：旧版 dot-prefix 文件 → 新版无 dot 文件
+	//     Go 早期代码用 .tasks.json，新版统一为 tasks.json（和 TS 版对齐）
+	migrateDotFile(paths.ConfigDir, ".tasks.json", "tasks.json")
+
+	// 1b. 一次性数据迁移：旧版 SQLite 从 config/ 迁移到 data/
+	//     TS 版数据库在 config/filePathDb.sqlite，Go 版在 data/filePathDb.sqlite
+	migrateSQLite(paths.ConfigDir, paths.DataDir)
 
 	// 2. 拷贝默认配置（如果不存在）
 	defaultFiles := []struct {

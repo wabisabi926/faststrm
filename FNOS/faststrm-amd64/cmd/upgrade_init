@@ -3,12 +3,27 @@
 # - 先把老进程停掉，释放 app 目录，避免替换二进制时被占用
 set +e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_ROOT="$(dirname "${SCRIPT_DIR}")"
+APP_ROOT="${TRIM_APPDEST:-$(dirname "${SCRIPT_DIR}")}"
 
-for p in "${APP_ROOT}/app/faststrm" "${APP_ROOT}/app/faststrm-linux-amd64" "${APP_ROOT}/app/faststrm-linux-arm64"; do
-  if [ -n "$p" ]; then
-    pkill -f "^${p} " 2>/dev/null || true
-    pkill -xf "${p}"   2>/dev/null || true
+# 1. 优先读 PID_FILE（main 启动时已写入 TRIM_PKGVAR/app.pid），最可靠
+PID_FILE="${TRIM_PKGVAR:-${APP_ROOT}/var}/app.pid"
+if [ -r "${PID_FILE}" ]; then
+  pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
+  if [ -n "${pid}" ]; then
+    kill -TERM "${pid}" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      kill -0 "${pid}" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL "${pid}" 2>/dev/null || true
+  fi
+  rm -f "${PID_FILE}" 2>/dev/null || true
+fi
+
+# 2. 兜底：pkill 匹配 ${APP_ROOT}/faststrm（覆盖 fallback 链全部路径）
+for p in "${APP_ROOT}/faststrm" "${APP_ROOT}/app/faststrm" "${APP_ROOT}/bin/faststrm"; do
+  if [ -n "${p}" ]; then
+    pkill -f "${p}" 2>/dev/null || true
   fi
 done
 sleep 1

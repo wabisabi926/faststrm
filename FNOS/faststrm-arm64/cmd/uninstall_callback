@@ -2,15 +2,24 @@
 
 ### Called after the user uninstalls the application.
 
-# Check if the user wants to delete the application data.
-if [ "$wizard_delete_data" = "yes" ]; then
-    # Wipe fNOS persistent data dirs (config/data/logs) — only when user explicitly opts in
-    rm -rf "${TRIM_PKGETC:-/app_data/faststrm/config}" \
+# 兼容大小写：fNOS wizard 变量名可能是 wizard_delete_data 或 WIZARD_DELETE_DATA
+_wizard_delete_data="${wizard_delete_data:-${WIZARD_DELETE_DATA:-}}"
+case "${_wizard_delete_data}" in
+  yes|YES|true|TRUE|1)
+    # 清理 main 实际写入的所有路径：TRIM_PKGVAR/{config,data,logs,run} 是主目录
+    # TRIM_PKGETC 是 fNOS 注入的 etc-style 配置目录（main 不会主动写入，但 wizard 可能设置）
+    _PKGVAR="${TRIM_PKGVAR:-/app_data/faststrm}"
+    rm -rf "${_PKGVAR}/config" \
+           "${_PKGVAR}/data" \
+           "${_PKGVAR}/logs" \
+           "${_PKGVAR}/run" \
+           "${TRIM_PKGETC:-/app_data/faststrm/config}" \
            "${TRIM_DATA_SHARE_PATHS:+${TRIM_DATA_SHARE_PATHS}/data}" \
            2>/dev/null || true
-    # Also clean our fallback temp dir (just in case user has no fNOS env passthrough)
+    # 同时清理 /tmp 兜底目录
     safe_name="faststrm-$(id -u 2>/dev/null || echo 0)"
     rm -rf "/tmp/${safe_name}" 2>/dev/null || true
-fi
+    ;;
+esac
 
 exit 0

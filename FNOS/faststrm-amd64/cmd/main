@@ -12,8 +12,19 @@
 #   TRIM_PKGVAR  : 应用"可变数据目录"（100% 可写，放 logs/pid/面板可见的 config）
 #   TRIM_UID     : 应用实例唯一 ID（预留）
 
-LOG_FILE="${TRIM_PKGVAR}/info.log"
-PID_FILE="${TRIM_PKGVAR}/app.pid"
+# 兜底：TRIM_PKGVAR 未注入时，使用 ${APP_ROOT}/var 或 /tmp，避免日志/PID 写入失败
+__PKGVAR="${TRIM_PKGVAR:-}"
+if [ -z "${__PKGVAR}" ]; then
+  SCRIPT_DIR_FALLBACK="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+  __PKGVAR="$(dirname "${SCRIPT_DIR_FALLBACK:-.}")/var"
+  mkdir -p "${__PKGVAR}" 2>/dev/null || true
+  if [ ! -d "${__PKGVAR}" ] || [ ! -w "${__PKGVAR}" ]; then
+    __PKGVAR="/tmp/faststrm-$(id -u 2>/dev/null || echo 0)"
+    mkdir -p "${__PKGVAR}" 2>/dev/null || true
+  fi
+fi
+LOG_FILE="${__PKGVAR}/info.log"
+PID_FILE="${__PKGVAR}/app.pid"
 
 # ---------------------------------------------------------------------------
 # 工具函数
@@ -102,9 +113,9 @@ start_process() {
     mkdir -p "$(dirname "${LOG_FILE}")" "$(dirname "${PID_FILE}")" 2>/dev/null || true
 
     # --- 二进制定位 ---
-    BIN="${TRIM_APPDEST}/app/faststrm"
-    if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/app/faststrm-linux-amd64"; fi
-    if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/app/faststrm-linux-arm64"; fi
+    # fNOS 的 TRIM_APPDEST 是 app.tgz 解压后的 target 目录，二进制直接在根目录
+    BIN="${TRIM_APPDEST}/faststrm"
+    if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/app/faststrm"; fi
     if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/bin/faststrm"; fi
     if [ ! -x "${BIN}" ]; then
         log_msg "ERROR: faststrm 二进制未找到 (TRIM_APPDEST=${TRIM_APPDEST})"
@@ -112,12 +123,12 @@ start_process() {
     fi
     chmod +x "${BIN}" 2>/dev/null || true
 
-    # --- 环境变量：和 cmd/server/main.go getDefaultRoot 对齐（双拼写都 export，避免漏掉） ---
+    # --- 环境变量：和 cmd/server/main.go getDefaultRoot 对齐 ---
     # Go 后端使用 config.InitApp(defaultRoot) 管理一套纯 JSON 配置：
     #   config.json / account.json / tasks.json / settings.json
-    # 注意：TRIM_APPDEST/config.yml 仅作为默认值模板/占位文件，Go 后端不读取它
+    # CONFIG_DIR：用户可写配置目录（Go 侧 getDefaultRoot fallback 到此）
+    # DEFAULT_CONFIG_DIR：只读默认模板目录（fNOS FPK 不含 .config 模板，不设置此变量）
     export CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
-    export DEFAULT_CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
     export DATA_DIR="${FASTSTRM_DATA_DIR}"
     export LOGS_DIR="${FASTSTRM_LOGS_DIR}"
     export RUN_DIR="${FASTSTRM_RUN_DIR}"
@@ -127,13 +138,13 @@ start_process() {
 
     cd "${TRIM_APPDEST}" || true
 
-    # --- 启动：真实 flag 是 --config <CONFIG_DIR>（Go 侧新增的 flag 支持）
-    #     不加任何子命令（cmd/server 是纯 main 程序，没有 Cobra/子命令）
-    log_msg "启动命令: ${BIN} --config ${FASTSTRM_CONFIG_DIR}"
+    # --- 启动：不加 --config flag，让 Go 用环境变量 getDefaultRoot() 自动解析
+    #     cmd/server 是纯 main 程序，没有 Cobra/子命令
+    log_msg "启动命令: ${BIN} (CONFIG_DIR=${FASTSTRM_CONFIG_DIR} DATA_DIR=${FASTSTRM_DATA_DIR})"
     log_msg " stdout -> ${STD_LOG}"
     log_msg " stderr -> ${ERR_LOG}"
 
-    nohup "${BIN}" --config "${FASTSTRM_CONFIG_DIR}" \
+    nohup "${BIN}" \
         >>"${STD_LOG}" 2>>"${ERR_LOG}" </dev/null &
     CHILD_PID=$!
 
@@ -142,23 +153,33 @@ start_process() {
         return 1
     fi
 
-    printf "%s" "${CHILD_PID}" > "${PID_FILE}"
+    if ! printf "%s" "${CHILD_PID}" > "${PID_FILE}" 2>/dev/null; then
+        log_msg "ERROR: 写 PID_FILE 失败 (${PID_FILE})，终止子进程避免孤儿"
+        kill -KILL "${CHILD_PID}" 2>/dev/null || true
+        return 1
+    fi
     log_msg "已启动，PID=${CHILD_PID}，PID_FILE=${PID_FILE}"
 
-    # 1.5s 健康检查：binary 如果秒退（flag 错误/端口占用等）把 stderr 打到 info.log
+    # 1s 健康检查：binary 如果秒退（flag 错误/端口占用等）把 stderr 打到 info.log
     sleep 1
     if ! check_process "${CHILD_PID}"; then
-        log_msg "WARNING: 启动后进程 (PID=${CHILD_PID}) 已退出（秒退，通常是 flag/端口/config 问题）"
+        log_msg "WARNING: 启动后进程 (PID=${CHILD_PID}) 已退出（秒退，通常是 config/端口问题）"
         log_msg "--- tail ${STD_LOG} (stdout) ---"
         tail -n 30 "${STD_LOG}" 2>/dev/null >> "${LOG_FILE}" || true
         log_msg "--- tail ${ERR_LOG} (stderr) ---"
         tail -n 50 "${ERR_LOG}" 2>/dev/null >> "${LOG_FILE}" || true
+        # 写入 fNOS 面板展示用的 TRIM_TEMP_LOGFILE（fNOS 会把此文件内容显示在应用日志面板）
+        if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+            echo "[faststrm] 启动后进程秒退，以下为 stderr + stdout:" >> "${TRIM_TEMP_LOGFILE}" 2>/dev/null || true
+            tail -n 50 "${ERR_LOG}" 2>/dev/null >> "${TRIM_TEMP_LOGFILE}" || true
+            tail -n 30 "${STD_LOG}" 2>/dev/null >> "${TRIM_TEMP_LOGFILE}" || true
+        fi
         rm -f "${PID_FILE}"
-        # 仍然 return 0，让 fNOS 面板能展示"已下发启动命令"状态，用户直接去 info.log 看秒退原因
+        return 1   # 秒退返回失败，让 fNOS 面板正确显示"启动失败"
     else
         log_msg "启动后 1s 健康检查通过，进程仍存活。"
+        return 0
     fi
-    return 0
 }
 
 # ---------------------------------------------------------------------------

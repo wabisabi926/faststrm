@@ -34,17 +34,17 @@ type persistedTask struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// TasksStore 读写 .tasks.json
+// TasksStore 读写 tasks.json
 type TasksStore struct {
 	mu   sync.Mutex
-	path string // .tasks.json 绝对路径
+	path string // tasks.json 绝对路径
 	cfg  *configProvider
 }
 
 // NewTasksStore 基于配置目录创建
 func NewTasksStore(configDir string) *TasksStore {
 	return &TasksStore{
-		path: filepath.Join(configDir, ".tasks.json"),
+		path: filepath.Join(configDir, "tasks.json"),
 		cfg:  &configProvider{dir: configDir},
 	}
 }

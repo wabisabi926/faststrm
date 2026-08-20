@@ -11,9 +11,11 @@ set -e
 
 CONFIG_DIR="${CONFIG_DIR:-/app/config}"
 DATA_DIR="${DATA_DIR:-/app/data}"
-# 双保险：DEFAULT_CONFIG_DIR 是 Go 后端原生识别的名字，CONFIG_DIR 是 docker/fNOS 通用名
+# DEFAULT_CONFIG_DIR 指向只读默认模板目录（Dockerfile COPY .config/ ./.config/ 放在这里）
+# 不能和 CONFIG_DIR 相同，否则 InitApp 在 DefaultDir 找不到模板，只能创建空 JSON
+DEFAULT_CONFIG_DIR="${DEFAULT_CONFIG_DIR:-/app/.config}"
 export CONFIG_DIR
-export DEFAULT_CONFIG_DIR="${DEFAULT_CONFIG_DIR:-${CONFIG_DIR}}"
+export DEFAULT_CONFIG_DIR
 export DATA_DIR
 
 echo "==> FastStrm Go Server starting..."
