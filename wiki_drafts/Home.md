@@ -20,15 +20,14 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.8.6 已发布**
+> **🎉 v0.9.3 已发布 — 紧急修复：fNOS 启动 & 路径浏览 & 任务列表**
 >
-> - 🔧 **Telegram 轮询自启动**：新增 `autoPolling` 配置项，服务启动时自动启动轮询，支持运行时自愈
-> - 🎨 **移动端 UI 优化**：表格/Dialog/网格响应式修复，页面居中对齐统一
-> - 📊 **统一日志系统**：新增 `logger.ts`，迁移 ~80 处 console 调用，高频日志降噪
-> - 🏗️ **代码架构优化**：大文件拆分，新增健康检查端点 `/api/health`
-> - 🔧 **TG 通知 UI 增强**：新增「启动时自动轮询」复选框
-> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
-
+> - 🔧 **fNOS 启动修复**：添加 `DEFAULT_CONFIG_DIR` 环境变量，修复飞牛环境下应用无法启动的问题
+> - 📂 **本地/网盘路径浏览**：将目录列表接口改为 POST、修复 ID 唯一性、优化 fNOS 默认根路径
+> - ✅ **任务列表容错**：`ReadTasks` 失败时返回空列表而非 500 错误，不再弹出「获取任务列表失败」
+> - ✅ **媒体挂载路径**：`ReadSettings` 失败时降级到默认值，不再显示「未加载数据」
+> - 🛡️ **安全加固**：路径穿越防护、JSON 解析容错
+> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases/tag/v0.9.3)
 ---
 
 ## 🚩 目录导航
