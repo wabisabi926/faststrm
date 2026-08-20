@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,7 +50,6 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 		if path == "" {
 			path = "/"
 		}
-		// 先用 dir_getid 拿到 cid，再 fs_files 递归拿树
 		cid, err := deps.Client115.FsDirGetID(r.Context(), path, account.Cookie)
 		if err != nil {
 			httpx.WriteJson(w, http.StatusBadGateway, map[string]string{
@@ -84,7 +84,6 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 				PickCode: e.PickCode,
 			})
 		}
-		// 转换为前端期望的格式: {id, name, isDir, size, pickCode}
 		frontendNodes := make([]map[string]any, 0, len(content))
 		for _, n := range content {
 			frontendNodes = append(frontendNodes, map[string]any{
@@ -103,13 +102,33 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 	}
 }
 
-// HandleLocalDirList GET /api/directory/local/list
-// query: root (本地根目录绝对路径)，支持选择目标路径
+// HandleLocalDirList POST /api/directory/local/list
+// Body: { basePath: string } - basePath 为空时返回默认根路径列表
+// 也兼容 GET ?root=xxx 查询参数
 func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		root := r.URL.Query().Get("root")
+		var root string
+
+		// 优先从 POST JSON body 读取 basePath
+		if r.Method == http.MethodPost {
+			var body struct {
+				BasePath string `json:"basePath"`
+				Root     string `json:"root"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+				root = body.BasePath
+				if root == "" {
+					root = body.Root
+				}
+			}
+		}
+
+		// 兼容 GET query 参数
 		if root == "" {
-			// 默认根：Windows 列盘符；类 Unix /
+			root = r.URL.Query().Get("root")
+		}
+
+		if root == "" {
 			roots := defaultRoots()
 			frontendNodes := make([]map[string]any, 0, len(roots))
 			for _, r := range roots {
@@ -126,44 +145,73 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 			})
 			return
 		}
-		entries, err := os.ReadDir(root)
-		if err != nil {
+
+		// 清理路径，防止路径穿越
+		cleaned := filepath.Clean(root)
+		if !filepath.IsAbs(cleaned) {
 			httpx.WriteJson(w, http.StatusOK, map[string]any{
 				"code":    500,
-				"message": err.Error(),
+				"message": "path must be absolute",
 				"data":    []map[string]any{},
 			})
 			return
 		}
-		content := make([]DirTreeNode, 0, len(entries))
+
+		info, err := os.Stat(cleaned)
+		if err != nil || !info.IsDir() {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    500,
+				"message": "path not accessible: " + err.Error(),
+				"data":    []map[string]any{},
+			})
+			return
+		}
+
+		entries, err := os.ReadDir(cleaned)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    500,
+				"message": "read dir failed: " + err.Error(),
+				"data":    []map[string]any{},
+			})
+			return
+		}
+
+		type localNode struct {
+			name  string
+			isDir bool
+			size  int64
+		}
+		var nodes []localNode
 		for _, e := range entries {
 			name := e.Name()
-			// 跳过隐藏文件
 			if strings.HasPrefix(name, ".") {
 				continue
 			}
-			node := DirTreeNode{Name: name, IsDir: e.IsDir()}
+			node := localNode{name: name, isDir: e.IsDir()}
 			if !e.IsDir() {
 				if info, err := e.Info(); err == nil {
-					node.Size = info.Size()
+					node.size = info.Size()
 				}
 			}
-			content = append(content, node)
+			nodes = append(nodes, node)
 		}
-		sort.Slice(content, func(i, j int) bool {
-			if content[i].IsDir != content[j].IsDir {
-				return content[i].IsDir
+
+		sort.Slice(nodes, func(i, j int) bool {
+			if nodes[i].isDir != nodes[j].isDir {
+				return nodes[i].isDir
 			}
-			return strings.ToLower(content[i].Name) < strings.ToLower(content[j].Name)
+			return strings.ToLower(nodes[i].name) < strings.ToLower(nodes[j].name)
 		})
-		// 转换为前端期望的格式: {id, name, isDir, size}
-		frontendNodes := make([]map[string]any, 0, len(content))
-		for i, n := range content {
+
+		frontendNodes := make([]map[string]any, 0, len(nodes))
+		for _, n := range nodes {
+			fullPath := filepath.Join(cleaned, n.name)
 			frontendNodes = append(frontendNodes, map[string]any{
-				"id":    i,
-				"name":  n.Name,
-				"isDir": n.IsDir,
-				"size":  n.Size,
+				"id":    fullPath,
+				"name":  n.name,
+				"isDir": n.isDir,
+				"size":  n.size,
 			})
 		}
 		httpx.WriteJson(w, http.StatusOK, map[string]any{
@@ -174,12 +222,13 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 	}
 }
 
-// defaultRoots 返回可用根路径列表（Windows 列盘符，否则 /）
+// defaultRoots 返回可用根路径列表
+// Windows: 枚举盘符
+// fNOS/容器: 返回数据目录、配置目录、常见挂载点
+// 其他 Linux: 返回 /mnt、/media、/home 等常见目录
 func defaultRoots() []string {
-	// Windows：C:/ D:/ … 实际调用 filepath.VolumeName 成本较高；直接给常见值
-	roots := []string{filepath.FromSlash("/")}
 	if os.PathSeparator == '\\' {
-		roots = nil
+		roots := []string{}
 		for _, drive := range "CDEFGHIJKLMNOPQRS" {
 			d := string(drive) + ":\\"
 			if _, err := os.Stat(d); err == nil {
@@ -189,8 +238,62 @@ func defaultRoots() []string {
 		if len(roots) == 0 {
 			roots = []string{"C:\\"}
 		}
+		return roots
 	}
+
+	// Linux / fNOS 环境
+	var roots []string
+
+	// 1. fNOS 环境变量暴露的目录
+	fnosDirs := []string{
+		os.Getenv("FNOS_APP_DATA_DIR"),
+		os.Getenv("FNOS_APP_CONFIG_DIR"),
+		os.Getenv("FNOS_APP_LOG_DIR"),
+		os.Getenv("DATA_DIR"),
+		os.Getenv("DEFAULT_CONFIG_DIR"),
+	}
+	for _, d := range fnosDirs {
+		if d == "" {
+			continue
+		}
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			roots = appendUnique(roots, d)
+		}
+	}
+
+	// 2. 常见挂载点
+	commonDirs := []string{
+		"/mnt",
+		"/media",
+		"/home",
+		"/opt",
+		"/srv",
+		"/data",
+		"/app",
+		"/root",
+		"/tmp",
+	}
+	for _, d := range commonDirs {
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			roots = appendUnique(roots, d)
+		}
+	}
+
+	// 3. 如果以上都没有，返回 /
+	if len(roots) == 0 {
+		roots = []string{"/"}
+	}
+
 	return roots
+}
+
+func appendUnique(roots []string, newPath string) []string {
+	for _, r := range roots {
+		if r == newPath {
+			return roots
+		}
+	}
+	return append(roots, newPath)
 }
 
 func itoa64(v int64) string  { return strconvInt64(v) }
@@ -219,7 +322,6 @@ func parseInt64(s string) (int64, error) {
 	return n, nil
 }
 func strconvInt64(n int64) string {
-	// 极简 Int64 -> string（避免额外 import 冲突）
 	if n == 0 {
 		return "0"
 	}
@@ -240,5 +342,3 @@ func strconvInt64(n int64) string {
 	}
 	return string(buf[i:])
 }
-
-

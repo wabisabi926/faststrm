@@ -239,7 +239,7 @@ func RegisterRoutes(
 		{Method: http.MethodGet, Path: "/api/taskLog/:taskId", Handler: corsJWT(handler.HandleTaskLog(taskDeps))},
 		// 目录
 		{Method: http.MethodGet, Path: "/api/directory/remote/list", Handler: corsJWT(handler.HandleRemoteDirList(dirDeps))},
-		{Method: http.MethodGet, Path: "/api/directory/local/list", Handler: corsJWT(handler.HandleLocalDirList(dirDeps))},
+		{Method: http.MethodPost, Path: "/api/directory/local/list", Handler: corsJWT(handler.HandleLocalDirList(dirDeps))},
 		{Method: http.MethodPost, Path: "/api/directory/clear", Handler: corsJWT(handler.HandleClearDir(handler.ClearDeps{
 			SettingsProvider: func() *model.Settings {
 				s, err := settingsStore.ReadSettings()
