@@ -35,7 +35,6 @@ jobs:
         # 其次从 docs/CHANGELOG.md 提取对应版本
         elif [ -f "docs/CHANGELOG.md" ]; then
           echo "Extracting v${VERSION} section from docs/CHANGELOG.md"
-          # 提取从 ## vX.Y.Z 到下一个 ## 之前的内容
           NOTES_CONTENT=$(awk "/^## v${VERSION}[[:space:]]/{found=1; next} /^## v/{if(found) exit} found" docs/CHANGELOG.md)
         fi
 
@@ -132,11 +131,9 @@ jobs:
           GOPROXY=https://proxy.golang.org,direct
 
   # ---- Job 2: 飞牛 fNOS .fpk 包 (amd64 + arm64) ----
-  fnos-release:
+  fnos-build:
     needs: release-notes
     runs-on: ubuntu-latest
-    permissions:
-      contents: write   # 写 Release Assets
 
     steps:
     - name: Get current time
@@ -146,8 +143,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # ---- 对齐 qmediasync：fnos-release 自己构建 SPA + 前端嵌入到 Go binary
-    #      (不依赖 native-release job 的产物，两个 job 并行独立可跑)
     - name: Set up Node.js (构建前端 SPA 嵌入 Go embed)
       uses: actions/setup-node@v4
       with:
@@ -179,7 +174,7 @@ jobs:
         curl -fSL --retry 3 "${{ env.FNPACK_URL }}" -o "$HOME/.local/bin/fnpack"
         chmod +x "$HOME/.local/bin/fnpack"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-        fnpack --version || fnpack help || true  # 仅打印版本信息，不同版本 subcommand 可能有差异
+        fnpack --version || fnpack help || true
 
     - name: Verify Go & fnpack
       run: |
@@ -199,62 +194,16 @@ jobs:
     - name: List dist artifacts
       run: ls -lh dist/
 
-    - name: Download release notes artifact
-      uses: actions/download-artifact@v4
+    - name: Upload .fpk packages as artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: release-notes
-        path: .
+        name: fnos-packages
+        path: dist/*.fpk
 
-    - name: Upload .fpk to GitHub Release Assets
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        set -euo pipefail
-        TAG="${{ github.ref_name }}"
-        gh --version
-
-        # 读取 release notes 内容
-        RELEASE_NOTES=""
-        if [ -f "release_notes.md" ]; then
-          RELEASE_NOTES=$(cat release_notes.md)
-        fi
-
-        # 创建 Release 并使用自定义 notes（如果没有则用 --generate-notes）
-        if [ -n "$RELEASE_NOTES" ]; then
-          echo "Creating release with custom notes..."
-          gh release create "$TAG" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "Release $TAG" \
-            --notes "$RELEASE_NOTES" || \
-          gh release edit "$TAG" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --notes "$RELEASE_NOTES"
-        else
-          echo "Creating release with auto-generated notes..."
-          gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-            gh release create "$TAG" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "Release $TAG" \
-              --generate-notes
-        fi
-
-        # 上传所有 .fpk 安装包
-        cd dist
-        for FPK in ./*.fpk; do
-          [ -f "$FPK" ] || continue
-          echo "Uploading $FPK ..."
-          gh release upload "$TAG" "$FPK" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --clobber
-        done
-
-  # ---- Job 2.5: 原生独立二进制 (Windows amd64 + Linux amd64 / arm64) ----
-  # 对齐 qmediasync 的一次性打包模式：tag 一推，全平台二进制自动出现在 Release Assets
-  native-release:
+  # ---- Job 3: 原生独立二进制 (Windows amd64 + Linux amd64 / arm64) ----
+  native-build:
     needs: release-notes
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
     - name: Get current time
@@ -285,7 +234,7 @@ jobs:
         npm ci
         node -e "const fs=require('fs'); const p='./package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.version='$VERSION_CLEAN'; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\n');"
         npm run build
-        echo "frontend build ok, internal/web/spa 内容："
+        echo "frontend build ok, internal/web/spa contents:"
         ls -la ../internal/web/spa/
 
     - name: Build Windows amd64 (zip with SPA + 默认 config)
@@ -306,7 +255,6 @@ jobs:
               -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${APP_VERSION}' \
               -X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${APP_VERSION}'" \
             -o "${OUT_DIR}/faststrm.exe" ./cmd/server/
-        # 打包：二进制 + 一份示例 config
         cp -r internal/web "${OUT_DIR}/web" 2>/dev/null || true
         (cd "${OUT_DIR}" && zip -q -r "../${OUT_DIR}.zip" .)
         ls -lh "${OUT_DIR}.zip"
@@ -326,7 +274,7 @@ jobs:
               -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${APP_VERSION}' \
               -X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${APP_VERSION}'" \
             -o "faststrm_linux_amd64" ./cmd/server/
-        ls -lh "faststrm_linux_amd64"
+        ls -lh faststrm_linux_amd64
 
     - name: Build Linux arm64
       env:
@@ -343,32 +291,78 @@ jobs:
               -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${APP_VERSION}' \
               -X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${APP_VERSION}'" \
             -o "faststrm_linux_arm64" ./cmd/server/
-        ls -lh "faststrm_linux_arm64"
+        ls -lh faststrm_linux_arm64
 
     - name: List native artifacts
       run: ls -lh faststrm_windows_amd64.zip faststrm_linux_amd64 faststrm_linux_arm64
 
-    - name: Download release notes artifact
+    - name: Upload native binaries as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: native-binaries
+        path: |
+          faststrm_windows_amd64.zip
+          faststrm_linux_amd64
+          faststrm_linux_arm64
+
+  # ---- Job 4: 统一创建 Release 并上传所有产物 ----
+  github-release:
+    needs: [release-notes, docker-release, fnos-build, native-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
-        name: release-notes
-        path: .
+        path: artifacts
+        pattern: |
+          release-notes
+          fnos-packages
+          native-binaries
+        merge-multiple: false
 
-    - name: Upload native binaries to GitHub Release Assets
+    - name: List all downloaded artifacts
+      run: find artifacts -type f -ls
+
+    - name: Create GitHub Release with notes and upload all assets
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -euo pipefail
         TAG="${{ github.ref_name }}"
-
-        # 读取 release notes 内容
         RELEASE_NOTES=""
-        if [ -f "release_notes.md" ]; then
-          RELEASE_NOTES=$(cat release_notes.md)
+        
+        # 读取 release notes
+        if [ -f "artifacts/release-notes/release_notes.md" ]; then
+          RELEASE_NOTES=$(cat artifacts/release-notes/release_notes.md)
         fi
 
-        # 使用自定义 notes 创建或更新 Release
+        # 创建 Release 并上传所有产物
+        echo "Creating release $TAG with notes and all assets..."
+        
+        # 收集所有需要上传的文件
+        ASSETS=()
+        
+        # fpk 文件
+        for f in artifacts/fnos-packages/*.fpk; do
+          [ -f "$f" ] && ASSETS+=("$f")
+        done
+        
+        # 原生二进制
+        for f in artifacts/native-binaries/faststrm_*; do
+          [ -f "$f" ] && ASSETS+=("$f")
+        done
+        
+        echo "Assets to upload:"
+        for a in "${ASSETS[@]}"; do
+          echo "  $a"
+        done
+
+        # 创建或更新 Release
         if [ -n "$RELEASE_NOTES" ]; then
+          echo "Using custom release notes."
           gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${GITHUB_REPOSITORY}" \
@@ -379,6 +373,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --notes "$RELEASE_NOTES" 2>/dev/null || true
         else
+          echo "Using auto-generated release notes."
           gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${GITHUB_REPOSITORY}" \
@@ -386,37 +381,13 @@ jobs:
               --generate-notes
         fi
 
-        for ART in faststrm_windows_amd64.zip faststrm_linux_amd64 faststrm_linux_arm64; do
-          [ -f "$ART" ] || continue
-          echo "Uploading $ART ..."
-          gh release upload "$TAG" "$ART" \
+        # 上传所有产物
+        for ASSET in "${ASSETS[@]}"; do
+          echo "Uploading $ASSET ..."
+          gh release upload "$TAG" "$ASSET" \
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
         done
 
-  # ---- Job 3: 创建 Release 并使用自定义更新日志 ----
-  github-release:
-    needs: [release-notes, docker-release, fnos-release, native-release]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-    - name: Download release notes artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: release-notes
-        path: .
-
-    - name: Create / update GitHub Release with custom notes
-      uses: softprops/action-gh-release@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref_name }}
-        name: Release ${{ github.ref_name }}
-        draft: false
-        prerelease: false
-        body_path: release_notes.md
-        generate_release_notes: false
-        append_body: false
+        echo "Release $TAG completed successfully!"
+        gh release view "$TAG" --repo "${GITHUB_REPOSITORY}"
