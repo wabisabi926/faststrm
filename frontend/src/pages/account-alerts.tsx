@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -132,7 +133,7 @@ export default function AccountAlertsPage() {
       );
     }
 
-    const config: Record<string, { icon: JSX.Element; label: string; cls: string }> = {
+    const config: Record<string, { icon: ReactNode; label: string; cls: string }> = {
       ok: {
         icon: <CheckCircle className="w-3.5 h-3.5 text-green-500" />,
         label: "正常",
