@@ -1,5 +1,30 @@
 # FastStrm 变更日志
 
+## v0.9.6 (2026-08-21)
+
+### 飞牛 fNOS 路径权限对齐 qmediasync
+
+- **directory.go**: `defaultRoots` fNOS 分支改为仅返回 `TRIM_DATA_*` 白名单路径，不再枚举 `/proc/mounts` 系统挂载点；未授权时返回友好提示
+- **LocalDirectoryTreeDialog.tsx**: 新增 `rootMessage` state，空列表时显示后端提示 + 路径跳转引导
+
+### 删除错误的自动填写功能
+
+- **DirectoryTreeDialog.tsx**: 删除远程路径选择后的「自动填写本地路径」弹窗；用户需通过本地路径选择器独立选择有效绝对路径
+- **AddTaskDialog.tsx**: 清理 `onSelectWithTargetPath` 回调
+
+### 修复任务日志查看
+
+- **task/index.tsx**: 修复日志判断逻辑（后端返回 text/plain，前端之前用 JSON 字段判断导致完全失效）；未执行任务用 toast.info 提示而非报错
+
+### 监控状态显示修复
+
+- **monitor.go**: `handlePollError` 排除 `context.Canceled/DeadlineExceeded` 正常停止行为
+- **settings.tsx**: 状态显示优先级改为：有错误(红色「异常」) > 运行中(绿色) > 待保存(黄色) > 已停止(灰色)
+
+### 版本号全链路同步 0.9.6
+
+- `cmd/server/main.go`、`frontend/package.json`、`FNOS/faststrm-amd64/manifest`、`FNOS/faststrm-arm64/manifest`
+
 ## v0.9.5 (2026-08-20)
 
 ### 跨平台本地目录浏览大修（飞牛 fNOS / Docker / Linux / Windows）

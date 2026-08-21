@@ -20,13 +20,13 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.9.5 已发布 — 跨平台本地目录浏览大修（飞牛 fNOS / Docker / Linux / Windows）**
+> **🎉 v0.9.6 已发布 — 飞牛 fNOS 路径权限对齐 qmediasync + 多项修复**
 >
-> - � **后端 4 级优先根列表**：`FASTSTRM_LOCAL_DIR_ROOTS` 显式覆盖 → Linux `/proc/mounts` 真实挂载点 → fNOS 白名单 ∪ NAS 常见卷根 → 硬编码兜底；fNOS 路径白名单默认宽松模式，避免误 403
-> - � **FNOS manifest 对齐 qmediasync**：新增 `share_dirs` 声明，用户勾选共享文件夹后会真正 bind mount 进应用沙箱
-> - 🎛️ **前端对话框兜底通道**：本地目录选择器新增手动路径输入框 + Enter/跳转按钮 + 校验状态反馈，根列表不全时可直接粘贴已知路径
-> - �️ **CI：升级 GitHub Actions 到 Node 24 native**（checkout@v5 / setup-node@v5 / setup-go@v6 / upload+download-artifact@v5），消除 Node 20 弃用告警
-> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases/tag/v0.9.5)
+> - 🔒 **fNOS 路径权限简化**：根列表仅显示用户授权的存储卷路径，不再枚举系统挂载点，和 qmediasync 行为一致
+> - 🗑️ **删除错误的自动填写**：远程路径选择后不再自动填入无效的本地路径
+> - 📋 **修复任务日志查看**：日志查看功能恢复正常，未执行任务友好提示
+> - 📊 **监控状态显示修复**：区分真正错误与正常停止，异常状态正确标红
+> - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases/tag/v0.9.6)
 ---
 
 ## 🚩 目录导航
@@ -93,4 +93,4 @@
 
 欢迎提交 [Issue](https://github.com/wabisabi926/faststrm/issues) 和 [Pull Request](https://github.com/wabisabi926/faststrm/pulls) 来改进这个项目。
 
-<!-- v0.9.5 sync trigger -->
+<!-- v0.9.6 sync trigger -->
