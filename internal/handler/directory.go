@@ -319,6 +319,91 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 	}
 }
 
+// HandleLocalDirListChildren POST /api/directory/local/listChildren
+// 验证指定路径是否存在并获取其内容（用于手动输入路径时的验证）
+// Body: { basePath: string, targetPath: string }
+func HandleLocalDirListChildren(deps DirectoryDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			BasePath   string `json:"basePath"`
+			TargetPath string `json:"targetPath"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    400,
+				"message": "请求格式错误",
+				"data":    []map[string]any{},
+			})
+			return
+		}
+
+		if req.TargetPath == "" {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    400,
+				"message": "targetPath is required",
+				"data":    []map[string]any{},
+			})
+			return
+		}
+
+		// fNOS 环境下校验路径白名单
+		if detectFnOS() {
+			allowedPaths := getAllowedPaths()
+			if !isPathAllowed(req.TargetPath, allowedPaths) {
+				httpx.WriteJson(w, http.StatusOK, map[string]any{
+					"code":    403,
+					"message": "无权限访问该目录",
+					"data":    []map[string]any{},
+				})
+				return
+			}
+		}
+
+		// 检查路径是否存在
+		cleaned := filepath.Clean(req.TargetPath)
+		info, err := os.Stat(cleaned)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    404,
+				"message": fmt.Sprintf("路径不存在或不可访问: %v", err),
+				"data":    []map[string]any{},
+			})
+			return
+		}
+
+		// 如果是目录，列出子项
+		var children []map[string]any
+		if info.IsDir() {
+			entries, err := os.ReadDir(cleaned)
+			if err != nil {
+				httpx.WriteJson(w, http.StatusOK, map[string]any{
+					"code":    500,
+					"message": fmt.Sprintf("读取目录失败: %v", err),
+					"data":    []map[string]any{},
+				})
+				return
+			}
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue // 只返回目录
+				}
+				children = append(children, map[string]any{
+					"id":    filepath.Join(cleaned, e.Name()),
+					"name":  e.Name(),
+					"isDir": true,
+				})
+			}
+		}
+
+		// 路径存在且可访问
+		httpx.WriteJson(w, http.StatusOK, map[string]any{
+			"code":    200,
+			"message": "",
+			"data":    children,
+		})
+	}
+}
+
 // detectFnOS 检测是否为飞牛 fNOS 环境
 // 参考 qmediasync: 通过 TRIM_DATA_ACCESSIBLE_PATHS 环境变量判断
 func detectFnOS() bool {

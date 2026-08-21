@@ -46,10 +46,18 @@ export type Task = {
   removeExtraFiles?: boolean;
   enable302?: boolean;
   name: string;
-  path: string;
-  status: "pending" | "processing" | "success" | "failed";
+  status: "pending" | "processing" | "success" | "failed" | "cancelled";
   schedule?: TaskSchedule;
   _computedNextRunAt?: number | null;
+};
+
+// 后端状态到前端状态的映射
+const STATUS_MAP: Record<string, Task["status"]> = {
+  pending: "pending",
+  running: "processing",
+  completed: "success",
+  failed: "failed",
+  cancelled: "cancelled",
 };
 
 // 状态图标和颜色映射
@@ -58,7 +66,8 @@ const getStatusConfig = (status: Task["status"]) => {
     pending: { icon: AlertCircle, color: "bg-slate-500/20 text-slate-300 hover:bg-slate-500/30", label: "待处理" },
     processing: { icon: AlertCircle, color: "bg-blue-500/20 text-blue-300 hover:bg-blue-500/30", label: "处理中" },
     success: { icon: CheckCircle, color: "bg-green-500/20 text-green-300 hover:bg-green-500/30", label: "成功" },
-    failed: { icon: XCircle, color: "bg-red-500/20 text-red-300 hover:bg-red-500/30", label: "失败" }
+    failed: { icon: XCircle, color: "bg-red-500/20 text-red-300 hover:bg-red-500/30", label: "失败" },
+    cancelled: { icon: XCircle, color: "bg-gray-500/20 text-gray-300 hover:bg-gray-500/30", label: "已取消" }
   };
   return configs[status] || { icon: CheckCircle, color: "bg-muted text-muted-foreground border border-border hover:bg-muted/80", label: "空闲" };
 };
@@ -150,8 +159,8 @@ export default function Home() {
         strmPrefix: t.strmPrefix || '',
         removeExtraFiles: t.removeExtraFiles ?? false,
         enable302: t.enable302 ?? false,
-        path: t.path || t.originPath || '',
-        status: t.runtime?.status || t.status || "pending",
+        // 使用状态映射将后端状态转换为前端状态
+        status: STATUS_MAP[t.runtime?.status || t.status] || "pending",
         schedule: t.schedule ? {
           enabled: t.schedule.enabled ?? false,
           mode: t.schedule.mode || "interval",
@@ -242,7 +251,7 @@ export default function Home() {
   // 取消任务
   const cancelTask = async (id: string) => {
     try {
-      await axiosInstance.post("/api/cancelTask", { id });
+      await axiosInstance.post("/api/cancelTask", { taskId: id });
       toast.success("任务已取消");
     } catch {
       toast.error("任务取消失败");

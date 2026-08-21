@@ -39,6 +39,8 @@ export type Account = {
   url?: string;
   token?: string;
   expiresAt?: number;
+  lastCookieCheck?: number;  // 上次 cookie 检查时间（unix 毫秒）
+  cookieValid?: boolean;      // cookie 是否有效
 };
 
 type AccountStatus = {

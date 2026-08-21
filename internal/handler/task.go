@@ -247,6 +247,7 @@ type UpsertTaskRequest struct {
 	Enabled        string `json:"enabled" form:"enabled"`           // "on"/"true"/"1" 表示 true
 	ScheduleMode   string `json:"scheduleMode" form:"scheduleMode"` // interval/daily/weekly/manual
 	ScheduleValue  string `json:"scheduleValue" form:"scheduleValue"`
+	StrmType       string `json:"strmType" form:"strmType"`         // STRM 类型
 	StrmPrefix     string `json:"strmPrefix" form:"strmPrefix"`
 	RemoveExtra    string `json:"removeExtraFiles" form:"removeExtraFiles"`
 	EnableEnc      string `json:"enablePathEncoding" form:"enablePathEncoding"`
@@ -353,6 +354,9 @@ func (req *UpsertTaskRequest) toTask(existing *task.Task) task.Task {
 	}
 	if req.TargetPath != "" {
 		t.TargetPath = req.TargetPath
+	}
+	if req.StrmType != "" {
+		t.StrmType = req.StrmType
 	}
 	if req.StrmPrefix != "" {
 		t.StrmPrefix = req.StrmPrefix

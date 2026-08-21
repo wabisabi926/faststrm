@@ -68,6 +68,7 @@ type Task struct {
 	AccountType         string        `json:"accountType,omitempty"`
 	OriginPath          string        `json:"originPath"`
 	TargetPath          string        `json:"targetPath"`
+	StrmType            string        `json:"strmType,omitempty"` // STRM 类型（如 "local"、"remote" 等）
 	StrmPrefix          string        `json:"strmPrefix,omitempty"`
 	EnablePathEncoding  bool          `json:"enablePathEncoding,omitempty"`
 	Enable302           bool          `json:"enable302,omitempty"`
@@ -274,4 +275,3 @@ type SettingsStore interface {
 	ReadSettings() (*model.Settings, error)
 	SaveSettings(s *model.Settings) error
 }
-
