@@ -99,7 +99,7 @@ type MonitorState = {
 const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
   enabled: false,
   accounts: [],
-  pollInterval: 30,
+  pollInterval: 10,
   pathMappings: [],
   removeEmptyDirs: true,
   eventTypes: {
@@ -177,7 +177,7 @@ export default function SettingsPage() {
   // Life monitor form state
   const [monitorEnabled, setMonitorEnabled] = useState(false);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
-  const [pollInterval, setPollInterval] = useState(30);
+  const [pollInterval, setPollInterval] = useState(10);
   const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
   const [newMappingAccount, setNewMappingAccount] = useState<string>("__all__");
   const [removeEmptyDirs, setRemoveEmptyDirs] = useState(true);
@@ -246,7 +246,7 @@ export default function SettingsPage() {
         const monitor = settings.lifeMonitor || DEFAULT_MONITOR_CONFIG;
         setMonitorEnabled(monitor.enabled);
         setSelectedAccounts(monitor.accounts || []);
-        setPollInterval(monitor.pollInterval || 30);
+        setPollInterval(monitor.pollInterval || 10);
         setPathMappings(monitor.pathMappings || []);
         setRemoveEmptyDirs(monitor.removeEmptyDirs ?? true);
         setEventTypes(monitor.eventTypes || DEFAULT_MONITOR_CONFIG.eventTypes);
@@ -1272,10 +1272,10 @@ export default function SettingsPage() {
                     min="5"
                     max="300"
                     value={pollInterval}
-                    onChange={(e) => setPollInterval(parseInt(e.target.value) || 30)}
+                    onChange={(e) => setPollInterval(parseInt(e.target.value) || 10)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    建议 30-60 秒，太频繁可能触发限流
+                    建议 10-30 秒，太频繁可能触发限流（默认 10 秒）
                   </p>
                 </div>
               </div>

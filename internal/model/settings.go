@@ -171,7 +171,7 @@ func DefaultSettings() *Settings {
 			},
 		},
 		LifeMonitor: LifeMonitorSettings{
-			PollInterval:     30,
+			PollInterval:     10,
 			RemoveEmptyDirs:  true,
 			EnableDedup:      true,
 			DedupWindowHours: 24,

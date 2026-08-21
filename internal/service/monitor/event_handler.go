@@ -41,14 +41,28 @@ type pathMapping struct {
 
 // processEvent 事件分发器：根据事件类型调用对应 handler
 // 对齐 TS processEvent
-func (m *Monitor) processEvent(ctx context.Context, account string, event client115.LifeEventItem) error {
+func (m *Monitor) processEvent(ctx context.Context, account string, event client115.LifeEventItem, lifeClient *client115.LifeClient) error {
 	config := m.settingsFn()
 	eventType := event.Type
 
+	// 忽略无需操作的事件类型（标星/浏览/标签等）
+	if client115.IgnoreBehaviorTypes[eventType] {
+		logger.S().Debugf("[Monitor] 事件类型 %d (%s) 无需处理，跳过", eventType, event.BehaviorType)
+		return nil
+	}
+
 	// 解析云端路径
 	cloudPath := event.FilePath
+	if cloudPath == "" && lifeClient != nil {
+		// 降级：通过 parent_id + file_name 解析路径
+		cloudPath = lifeClient.ResolvePath(ctx, event.ParentID, event.FileName)
+		if cloudPath != "" {
+			logger.S().Debugf("[Monitor] 路径降级解析: parentID=%s fileName=%s → %s",
+				event.ParentID, event.FileName, cloudPath)
+		}
+	}
 	if cloudPath == "" {
-		return fmt.Errorf("event file_path 为空，无法解析云端路径")
+		return fmt.Errorf("event file_path 为空且路径解析失败，无法处理")
 	}
 
 	// 匹配路径映射
@@ -108,7 +122,7 @@ func (m *Monitor) handleCreateEvent(
 	config := m.settingsFn()
 
 	// 文件夹事件：仅创建目录
-	if event.Category == 0 {
+	if event.FileCategory == 0 {
 		if err := os.MkdirAll(mapping.localPath, 0o755); err != nil {
 			m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath,
 				fmt.Sprintf("mkdir 失败: %v", err))
@@ -138,9 +152,9 @@ func (m *Monitor) handleCreateEvent(
 	}
 
 	// 检查最小文件大小
-	if config.MinFileSize > 0 && event.Size > 0 && event.Size < config.MinFileSize {
+	if config.MinFileSize > 0 && event.FileSize > 0 && event.FileSize < config.MinFileSize {
 		m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath,
-			fmt.Sprintf("文件过小 (%d < %d): %s", event.Size, config.MinFileSize, event.FileName))
+			fmt.Sprintf("文件过小 (%d < %d): %s", event.FileSize, config.MinFileSize, event.FileName))
 		return nil
 	}
 
@@ -175,7 +189,7 @@ func (m *Monitor) handleCreateEvent(
 	logger.S().Infof("[Monitor] STRM 已创建: %s", strmPath)
 
 	if notify {
-		m.notifyCreate(ctx, account, cloudPath, "文件", strmPath, event.Size)
+		m.notifyCreate(ctx, account, cloudPath, "文件", strmPath, event.FileSize)
 	}
 
 	// 通知 Emby 刷库
@@ -202,7 +216,7 @@ func (m *Monitor) handleDeleteEvent(
 	config := m.settingsFn()
 
 	// 文件夹事件：递归删除目录
-	if event.Category == 0 {
+	if event.FileCategory == 0 {
 		if err := os.RemoveAll(mapping.localPath); err != nil {
 			m.appendLog(ctx, account, "delete", false, cloudPath, mapping.localPath,
 				fmt.Sprintf("删除目录失败: %v", err))

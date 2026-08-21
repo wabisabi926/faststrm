@@ -1,5 +1,17 @@
 # FastStrm 变更日志
 
+## v0.9.7 (2026-08-21)
+
+### 115 生活事件监控全面修复与优化
+
+- **life.go**: 修复 API 域名（web.api.115.com -> webapi.115.com / life.115.com）、修正路径、添加路径解析降级（三级缓存->API->降级）、实现 API 域名轮换（webapi <-> proapi）
+- **life.go**: LifeEventItem 字段对齐 p115client 规范，添加 FilePath 字段解析
+- **event_handler.go**: 字段引用修正（Category->FileCategory, Size->FileSize），添加事件类型过滤（IgnoreBehaviorTypes: 3,4,7,8,9,10,19），支持路径解析降级
+- **monitor.go**: oncePoll 整合 LifeClient 传递链路，pullEventsWithRetry 接受 LifeClient 参数
+- **qrcode.go**: GetQrcodeResult 请求体改为 application/x-www-form-urlencoded，GetQrcodeToken 支持动态 clientType
+- **settings.go**: 默认 PollInterval 从 30 秒调整为 10 秒
+- **settings.tsx**: 前端默认轮询间隔对齐 10 秒
+
 ## v0.9.6 (2026-08-21)
 
 ### 飞牛 fNOS 路径权限对齐 qmediasync

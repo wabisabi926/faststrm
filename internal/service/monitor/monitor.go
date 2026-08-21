@@ -425,16 +425,19 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error {
 		return err
 	}
 
-	// 3. 拉取事件（含重试和 API 冷却）
+	// 3. 创建 LifeClient（用于拉取事件和路径解析）
+	lifeClient := client115.NewLifeClient(cookie)
+
+	// 4. 拉取事件（含重试和 API 冷却）
 	config := m.settingsFn()
-	events, nextCursor, err := m.pullEventsWithRetry(ctx, account, cookie, config)
+	events, nextCursor, err := m.pullEventsWithRetry(ctx, account, lifeClient, config)
 	if err != nil {
 		m.handlePollError(account, err)
 		m.appendLog(ctx, account, "poll", false, "", "", fmt.Sprintf("拉取事件失败: %v", err))
 		return err
 	}
 
-	// 4. 逐个处理事件（含去重）
+	// 5. 逐个处理事件（含去重）
 	processedCount := 0
 	errorCount := 0
 	duplicateCount := 0
@@ -452,7 +455,7 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error {
 			}
 		}
 
-		if err := m.processEvent(ctx, account, event); err != nil {
+		if err := m.processEvent(ctx, account, event, lifeClient); err != nil {
 			errorCount++
 			logger.S().Warnf("[Monitor] 处理事件失败 account=%s type=%d file=%s: %v",
 				account, event.Type, event.FileName, err)
@@ -491,11 +494,9 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error {
 func (m *Monitor) pullEventsWithRetry(
 	ctx context.Context,
 	account string,
-	cookie string,
+	lifeClient *client115.LifeClient,
 	config model.LifeMonitorSettings,
 ) ([]client115.LifeEventItem, int64, error) {
-	lifeClient := client115.NewLifeClient(cookie)
-
 	m.mu.RLock()
 	accMon, ok := m.accounts[account]
 	cursor := int64(0)

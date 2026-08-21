@@ -125,8 +125,9 @@ func NewClient(userAgent string) *Client {
 // GetQrcodeToken 阶段1：获取二维码 token
 // GET https://qrcodeapi.115.com/api/1.0/{clientType}/1.0/token/
 // clientType 决定了二维码的客户端类型（alipaymini, wechatmini, 115android 等）
-func (c *Client) GetQrcodeToken(_ string) (*QrCodeTokenResp, error) {
-	urlStr := "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
+func (c *Client) GetQrcodeToken(clientType string) (*QrCodeTokenResp, error) {
+	normalizedApp, _ := normalizeAppType(clientType)
+	urlStr := fmt.Sprintf("https://qrcodeapi.115.com/api/1.0/%s/1.0/token/", normalizedApp)
 	body, err := c.httpGet(urlStr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get qrcode token: %w", err)
@@ -174,7 +175,7 @@ func (c *Client) GetQrcodeToken(_ string) (*QrCodeTokenResp, error) {
 		Qrcode:       qrcodeContent,
 		QrcodeBase64: qrcodeBase64,
 		Tips:         "请使用 115 客户端扫描二维码登录",
-		ClientType:   "web",
+		ClientType:   clientType,
 	}, nil
 }
 
@@ -243,13 +244,15 @@ func (c *Client) GetQrcodeResult(uid, clientType string) (string, error) {
 
 	urlStr := fmt.Sprintf("https://qrcodeapi.115.com/app/1.0/%s/1.0/login/qrcode/", normalizedApp)
 	// POST body 必须同时传 app 和 account 参数（对齐 p115client）
-	bodyBytes, _ := json.Marshal(map[string]string{"account": uid})
+	formData := url.Values{}
+	formData.Set("account", uid)
+	formData.Set("app", normalizedApp)
 
-	req, err := http.NewRequest("POST", urlStr, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequest("POST", urlStr, strings.NewReader(formData.Encode()))
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if specialUA != "" {
 		req.Header.Set("User-Agent", specialUA)
 	} else {
