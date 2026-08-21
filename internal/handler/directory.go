@@ -215,9 +215,13 @@ func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 					"isDir": true,
 				})
 			}
+			msg := ""
+			if len(frontendNodes) == 0 && isFnOS {
+				msg = "未检测到授权的存储卷，请在飞牛应用设置中勾选「存储卷」权限"
+			}
 			httpx.WriteJson(w, http.StatusOK, map[string]any{
 				"code":    200,
-				"message": "",
+				"message": msg,
 				"data":    frontendNodes,
 			})
 			return
@@ -366,10 +370,9 @@ func isPathAllowed(targetPath string, allowedPaths []string) bool {
 // defaultRoots 返回可用根路径列表
 // 优先级（从高到低）：
 //   1) FASTSTRM_LOCAL_DIR_ROOTS 环境变量（英文逗号分隔，用户/管理员可完全覆盖）
-//   2) Windows: 枚举逻辑盘符
-//      Linux  : 读 /proc/mounts 获取真实挂载点（过滤 /proc /sys 等虚拟 FS）
-//   3) fNOS 附加：TRIM_DATA_* 白名单 + 常见卷根 (/vol1 /volume1 /mnt/user ...)
-//   4) 兜底：硬编码常见挂载点 + "/"
+//   2) fNOS  : 仅返回用户授权的 TRIM_DATA_* 白名单路径（对齐 qmediasync）
+//   3) Windows: 枚举逻辑盘符
+//   4) Linux  : 读 /proc/mounts 获取真实挂载点 + 硬编码常见目录兜底
 func defaultRoots(isFnOS bool) []string {
 	// ---- 1) 最高优先级：用户显式覆盖 ----
 	if custom := os.Getenv("FASTSTRM_LOCAL_DIR_ROOTS"); custom != "" {
@@ -388,7 +391,19 @@ func defaultRoots(isFnOS bool) []string {
 		}
 	}
 
-	// ---- 2a) Windows：盘符 ----
+	// ---- 2) fNOS：仅返回用户在飞牛应用设置中授权的存储卷路径 ----
+	// 不再枚举系统挂载点，避免暴露 /boot、/fs、/vol00 等系统目录
+	if isFnOS {
+		var roots []string
+		for _, p := range getAllowedPaths() {
+			if info, err := os.Stat(p); err == nil && info.IsDir() {
+				roots = appendUnique(roots, p)
+			}
+		}
+		return roots
+	}
+
+	// ---- 3) Windows：盘符 ----
 	if os.PathSeparator == '\\' {
 		roots := getWindowsDrives()
 		if len(roots) == 0 {
@@ -397,39 +412,13 @@ func defaultRoots(isFnOS bool) []string {
 		return roots
 	}
 
-	// ---- 2b) Linux：真实挂载点 ----
+	// ---- 4) 普通 Linux：真实挂载点 + 硬编码常见目录兜底 ----
 	var roots []string
 	for _, mp := range readRealMountpoints() {
 		if info, err := os.Stat(mp); err == nil && info.IsDir() {
 			roots = appendUnique(roots, mp)
 		}
 	}
-
-	// ---- 3) fNOS：并集注入白名单 + 常见 NAS 卷根 ----
-	if isFnOS {
-		for _, p := range getAllowedPaths() {
-			if info, err := os.Stat(p); err == nil && info.IsDir() {
-				roots = appendUnique(roots, p)
-			}
-		}
-		// 飞牛（飞牛OS/海康/极空间/群晖）常见卷根
-		nasRoots := []string{
-			"/vol1", "/vol2", "/vol3", "/vol4",
-			"/volume1", "/volume2", "/volume3", "/volume4",
-			"/mnt/user", "/mnt/ssd", "/mnt/cache", "/mnt/disk",
-			"/share", "/public", "/home",
-		}
-		for _, p := range nasRoots {
-			if info, err := os.Stat(p); err == nil && info.IsDir() {
-				roots = appendUnique(roots, p)
-			}
-		}
-		// 兜底确保至少有 "/"
-		roots = appendUnique(roots, "/")
-		return roots
-	}
-
-	// ---- 4) 普通 Linux 兜底：硬编码常见目录（和 /proc/mounts 并集）----
 	commonDirs := []string{
 		"/", "/mnt", "/media", "/home", "/opt", "/srv",
 		"/data", "/app", "/root", "/tmp", "/storage",

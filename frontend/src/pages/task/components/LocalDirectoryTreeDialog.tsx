@@ -32,6 +32,7 @@ export function LocalDirectoryTreeDialog({
   onSelect,
 }: LocalDirectoryTreeDialogProps) {
   const [tree, setTree] = React.useState<TreeNode[]>([]);
+  const [rootMessage, setRootMessage] = React.useState<string>("");
   const [loading, setLoading] = React.useState(false);
   const [expandedNodes, setExpandedNodes] = React.useState<Set<string>>(
     new Set()
@@ -59,13 +60,16 @@ export function LocalDirectoryTreeDialog({
 
         if (response.data.code === 200) {
           setTree(response.data.data || []);
+          setRootMessage(response.data.message || "");
         } else {
           console.error("Failed to load directory tree:", response.data.message);
           setTree([]);
+          setRootMessage(response.data.message || "");
         }
       } catch (error) {
         console.error("Error loading directory tree:", error);
         setTree([]);
+        setRootMessage("");
       } finally {
         setLoading(false);
       }
@@ -79,6 +83,7 @@ export function LocalDirectoryTreeDialog({
       loadTree("");
       setExpandedNodes(new Set());
       setSelectedPath("");
+      setRootMessage("");
     }
   }, [open, loadTree]);
 
@@ -376,8 +381,13 @@ export function LocalDirectoryTreeDialog({
               <span className="ml-2 text-sm text-gray-500">加载中...</span>
             </div>
           ) : tree.length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-gray-500">
-              暂无目录
+            <div className="flex flex-col items-center justify-center py-8 text-sm text-gray-500 gap-2">
+              <span>{rootMessage || "暂无目录"}</span>
+              {rootMessage && (
+                <span className="text-xs text-muted-foreground">
+                  可在上方输入框直接粘贴路径后点「跳转」访问
+                </span>
+              )}
             </div>
           ) : (
             <div>{tree.map((node) => renderTreeNode(node))}</div>
