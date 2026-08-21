@@ -188,16 +188,16 @@ export function StrmCleanupCard() {
         })
       );
       setScanResult({
-        totalRemoteFiles: data.totalRemoteFiles,
-        totalLocalStrms: data.totalLocalStrms,
-        totalStale: data.totalStale,
-        totalMissing: data.totalMissing,
-        durationMs: data.durationMs,
+        totalRemoteFiles: data.totalRemoteFiles ?? 0,
+        totalLocalStrms: data.totalLocalStrms ?? 0,
+        totalStale: data.totalStale ?? 0,
+        totalMissing: data.totalMissing ?? 0,
+        durationMs: data.durationMs ?? 0,
         mappings: normalizedMappings,
       });
-      appendLog("扫描", `完成：${data.totalStale} 失效 / ${data.totalMissing} 漏生成`, true);
+      appendLog("扫描", `完成：${data.totalStale ?? 0} 失效 / ${data.totalMissing ?? 0} 漏生成`, true);
       toast.success(
-        `扫描完成：发现 ${data.totalStale} 个失效 STRM，${data.totalMissing} 个漏生成`
+        `扫描完成：发现 ${data.totalStale ?? 0} 个失效 STRM，${data.totalMissing ?? 0} 个漏生成`
       );
     } catch (err) {
       const axiosErr = err as AxiosError;

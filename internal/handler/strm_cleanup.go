@@ -213,7 +213,11 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 
 	cid, err := client.FsDirGetID(ctx, m.CloudPath, cookie)
 	if err != nil {
-		result.Error = fmt.Sprintf("get cloud dir id: %v", err)
+		if err.Error() == "parse dir id: nil" {
+			result.Error = fmt.Sprintf("路径不存在或无权限：%s", m.CloudPath)
+		} else {
+			result.Error = fmt.Sprintf("获取云端目录失败：%v", err)
+		}
 		return result
 	}
 
