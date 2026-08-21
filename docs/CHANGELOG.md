@@ -25,6 +25,15 @@
 
 - **life.go**: LifeClient.doRequest 增加 HTTP 状态码检查，404/500 返回清晰错误；PullEvents 路径 `life.115.com/.../live/listhistory` → `web.api.115.com/.../life/listhistory` 且改为 GET；LifeShow 路径同步修正
 
+### fNOS 安装向导 & 端口自定义 & 图标精简
+
+- **向导两步结构**：Step 1 欢迎页（仅两条功能介绍），Step 2 服务端口配置页（`wizard_service_port`，默认 8090，正则校验 1-65535）
+- **删除默认账号密码提示**：避免泄露默认凭据，同时消除之前文档中 admin123 与代码实际 admin/admin 的矛盾
+- **端口自定义链路打通**：`install_callback`（安装后持久化 `port.env` 到用户数据区）→ `cmd/main`（`source port.env` + `export SERVER_PORT`）→ Go 后端 `getEnv("SERVER_PORT", 8090)` 自动读取
+- **新增占位规范脚本**：`upgrade_init` / `upgrade_callback` / `install_init` 按 fNOS 规范补齐，升级时 port.env 保留在 TRIM_PKGVAR，不丢用户自定义端口
+- **图标精简对齐官方规范**：每个架构从 9 个图标精简为 2 个（icon_64 + icon_256），删除 14 个多余副本
+- **默认密码统一 admin**：config.yml 从 admin123 → admin，与 InitApp 中 HashPassword(salt, "admin") 完全一致
+
 ### 版本号全链路同步 0.9.6
 
 - `cmd/server/main.go`、`frontend/package.json`、`FNOS/faststrm-amd64/manifest`、`FNOS/faststrm-arm64/manifest`
