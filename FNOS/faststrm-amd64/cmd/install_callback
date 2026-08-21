@@ -1,46 +1,23 @@
 #!/bin/bash
-# install_callback：安装完成回调（用户在 wizard 点确定后执行）
-# - 保证可写目录存在（与 main 的 __fn_writeable_dir 4 级 fallback 完全一致，避免路径漂移）
-# - FastStrm Go 后端在 InitApp 时会自动生成 config.json/account.json/tasks.json/settings.json
-#   首次启动无需预置模板，这里只确保目录存在即可
-set +e
+# 安装后回调：读取 wizard_service_port 环境变量（来自安装向导填写值）
+# 校验并持久化到用户数据区 ${TRIM_PKGVAR}/config/port.env
+# 升级不会覆盖 TRIM_PKGVAR，用户自定义端口因此被保留
+PORT="${wizard_service_port:-8090}"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_ROOT="${TRIM_APPDEST:-$(dirname "${SCRIPT_DIR}")}"
+# 合法性校验：必须是 1-65535 的整数
+if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
+    PORT=8090
+fi
 
-# 与 main 的 __fn_writeable_dir 完全一致：env → TRIM_PKGVAR/xxx → TRIM_APPDEST/xxx → /tmp
-__fn_writeable_dir() {
-  local want="$1" fallback="$2" usage="$3"
-  local from_env=""
-  eval "from_env=\"\${${want}:-}\""
-  if [ -n "${from_env}" ]; then
-    mkdir -p "${from_env}" 2>/dev/null || true
-    if [ -d "${from_env}" ] && [ -w "${from_env}" ]; then printf "%s" "${from_env}"; return 0; fi
-  fi
-  local under_trim="${TRIM_PKGVAR}/${fallback}"
-  mkdir -p "${under_trim}" 2>/dev/null || true
-  if [ -d "${under_trim}" ] && [ -w "${under_trim}" ]; then printf "%s" "${under_trim}"; return 0; fi
-  local under_app="${APP_ROOT}/${fallback}"
-  mkdir -p "${under_app}" 2>/dev/null || true
-  if [ -d "${under_app}" ] && [ -w "${under_app}" ]; then printf "%s" "${under_app}"; return 0; fi
-  local safe_name="faststrm-$(id -u 2>/dev/null || echo 0)"
-  local last="/tmp/${safe_name}/${fallback}"
-  mkdir -p "${last}" 2>/dev/null || true
-  if [ -d "${last}" ] && [ -w "${last}" ]; then printf "%s" "${last}"; return 0; fi
-  return 1
-}
+# 持久化目录优先用 TRIM_PKGVAR（fNOS 官方可写区），兜底 /tmp
+PKGVAR="${TRIM_PKGVAR:-}"
+if [ -z "${PKGVAR}" ]; then
+    PKGVAR="/tmp/faststrm-$(id -u 2>/dev/null || echo 0)"
+    mkdir -p "${PKGVAR}" 2>/dev/null || true
+fi
+ETC_DIR="${PKGVAR}/config"
+mkdir -p "${ETC_DIR}" 2>/dev/null || true
 
-CONF_DIR="$(__fn_writeable_dir "CONFIG_DIR"           "config" "配置" 2>/dev/null \
-        || __fn_writeable_dir "DEFAULT_CONFIG_DIR"   "config" "配置" 2>/dev/null \
-        || __fn_writeable_dir "FNOS_APP_CONFIG_DIR"  "config" "配置" 2>/dev/null \
-        || echo "${TRIM_PKGVAR:-${APP_ROOT}}/config")"
-mkdir -p "${CONF_DIR}" 2>/dev/null || true
-
-# 同时确保 data/logs/run 目录存在，避免首次启动时 main 还要兜底
-for sub in data logs run; do
-  __fn_writeable_dir "DATA_DIR"         "$sub" "数据" 2>/dev/null >/dev/null \
-    || __fn_writeable_dir "FNOS_APP_$(echo $sub | tr a-z A-Z)_DIR" "$sub" "数据" 2>/dev/null >/dev/null \
-    || true
-done
-
+echo "SERVER_PORT=${PORT}" > "${ETC_DIR}/port.env"
+echo "[install_callback] 服务端口已持久化: SERVER_PORT=${PORT} -> ${ETC_DIR}/port.env"
 exit 0

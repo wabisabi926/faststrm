@@ -134,6 +134,12 @@ start_process() {
     export LOGS_DIR="${FASTSTRM_LOGS_DIR}"
     export RUN_DIR="${FASTSTRM_RUN_DIR}"
 
+    # 读取安装向导持久化的端口（用户在安装时自定义 -> upgrade不丢）
+    if [ -f "${FASTSTRM_CONFIG_DIR}/port.env" ]; then
+        set -a; . "${FASTSTRM_CONFIG_DIR}/port.env"; set +a
+    fi
+    export SERVER_PORT="${SERVER_PORT:-8090}"
+
     STD_LOG="${FASTSTRM_LOGS_DIR}/app.out.log"
     ERR_LOG="${FASTSTRM_LOGS_DIR}/app.err.log"
 

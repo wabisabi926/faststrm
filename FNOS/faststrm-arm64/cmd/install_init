@@ -1,4 +1,3 @@
 #!/bin/bash
-
-### Called before the user installs the application.
+# fnOS 规范：安装前回调（占位）
 exit 0

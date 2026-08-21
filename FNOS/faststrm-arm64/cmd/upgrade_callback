@@ -1,5 +1,3 @@
 #!/bin/bash
-# upgrade_callback：升级后回调
-# - 若新版新增了默认配置字段，这里把用户 config.yml 中缺失的默认字段合并（简单处理：保留用户原文件，缺失字段由 Go 启动时填充默认值即可）
-# - FastStrm Go 侧会自动补默认值，此处仅 exit 0
+# fnOS 规范：升级后回调（占位；TRIM_PKGVAR 用户数据区默认保留，port.env不会丢）
 exit 0
