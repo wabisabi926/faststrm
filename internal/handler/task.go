@@ -50,11 +50,41 @@ func HandleStartTask(deps TaskHandlerDeps) http.HandlerFunc {
 			return
 		}
 
-		// 抢占式同步检查
-		res := task.ExecuteTask(context.Background(), req.TaskID, deps.ExecutorDeps)
-		// 无论成功失败，重新读取任务刷新调度
-		go deps.Scheduler.RefreshAll(deps.TasksStore)
-		httpx.WriteJson(w, http.StatusOK, res)
+		// 前置快速检查：确保任务存在（避免异步启动后立即失败）
+		tasks, err := deps.TasksStore.ReadTasks()
+		if err != nil {
+			httpx.WriteJson(w, http.StatusOK, task.ExecuteResult{
+				Success: false, Reason: "store_error", Message: err.Error(),
+			})
+			return
+		}
+		var foundTask *task.Task
+		for i := range tasks {
+			if tasks[i].ID == req.TaskID {
+				foundTask = &tasks[i]
+				break
+			}
+		}
+		if foundTask == nil {
+			httpx.WriteJson(w, http.StatusOK, task.ExecuteResult{
+				Success: false, Reason: "not_found", Message: "Task not found",
+			})
+			return
+		}
+
+		// 异步执行任务（立即返回，实际执行通过 SSE 广播进度）
+		// 注意：独占锁由 task.ExecuteTask 内部处理，这里不重复获取
+		go func() {
+			res := task.ExecuteTask(context.Background(), req.TaskID, deps.ExecutorDeps)
+			// 无论成功失败，重新读取任务刷新调度
+			go deps.Scheduler.RefreshAll(deps.TasksStore)
+			_ = res
+		}()
+
+		// 立即返回启动成功
+		httpx.WriteJson(w, http.StatusOK, task.ExecuteResult{
+			Success: true, TaskID: req.TaskID, Message: "Task started",
+		})
 	}
 }
 
