@@ -113,7 +113,7 @@ func NewLifeClient(cookie string) *LifeClient {
 }
 
 // LifeShow 开启生活事件功能
-// POST https://life.115.com/api/1.0/web/1.0/calendar/setoption
+// POST https://web.api.115.com/api/1.0/web/1.0/life/setoption
 // 表单: locus=1&open_life=1
 // 检查响应 errNo 字段（0=成功）
 func (c *LifeClient) LifeShow(ctx context.Context) error {
@@ -121,7 +121,7 @@ func (c *LifeClient) LifeShow(ctx context.Context) error {
 		return fmt.Errorf("cookie is empty")
 	}
 
-	endpoint := "https://life.115.com/api/1.0/web/1.0/calendar/setoption"
+	endpoint := "https://web.api.115.com/api/1.0/web/1.0/life/setoption"
 	form := url.Values{}
 	form.Set("locus", "1")
 	form.Set("open_life", "1")
@@ -162,23 +162,19 @@ func (c *LifeClient) LifeShow(ctx context.Context) error {
 }
 
 // PullEvents 拉取生活事件列表
-// POST https://life.115.com/api/1.0/web/1.0/live/listhistory
-// 表单: cursor=xxx&limit=1000
+// GET https://web.api.115.com/api/1.0/web/1.0/life/listhistory?cursor=xxx&limit=1000
 // 返回事件列表 + 下一页游标（0 表示无更多数据）
 func (c *LifeClient) PullEvents(ctx context.Context, account string, cursor int64) ([]LifeEventItem, int64, error) {
 	if c.cookie == "" {
 		return nil, 0, fmt.Errorf("cookie is empty")
 	}
 
-	endpoint := "https://life.115.com/api/1.0/web/1.0/live/listhistory"
-	form := url.Values{}
-	form.Set("cursor", strconv.FormatInt(cursor, 10))
-	form.Set("limit", "1000")
-	if account != "" {
-		form.Set("account", account)
-	}
+	endpoint := fmt.Sprintf(
+		"https://web.api.115.com/api/1.0/web/1.0/life/listhistory?cursor=%s&limit=1000",
+		url.QueryEscape(strconv.FormatInt(cursor, 10)),
+	)
 
-	body, err := c.doRequest(ctx, http.MethodPost, endpoint, form.Encode())
+	body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
 	if err != nil {
 		return nil, 0, fmt.Errorf("pullEvents request: %w", err)
 	}
@@ -248,7 +244,21 @@ func (c *LifeClient) doRequest(ctx context.Context, method, urlStr, body string)
 	}
 	defer resp.Body.Close()
 
-	return io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// 非 2xx 状态码，返回带状态码和响应体的错误，方便排查
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet := string(respBody)
+		if len(snippet) > 256 {
+			snippet = snippet[:256]
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet)
+	}
+
+	return respBody, nil
 }
 
 // toLifeEventItem 将灵活解析的 raw 转为强类型 LifeEventItem
