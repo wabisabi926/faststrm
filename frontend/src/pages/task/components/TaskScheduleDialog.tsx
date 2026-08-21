@@ -135,7 +135,7 @@ export function TaskScheduleDialog({
 
   async function handleFireNow() {
     try {
-      const res = await axiosInstance.post("/api/startTask", { id: task.id });
+      const res = await axiosInstance.post("/api/startTask", { taskId: task.id });
       toast.success(`立即执行：${res.data.message}`);
       onSuccess?.();
     } catch (err: unknown) {

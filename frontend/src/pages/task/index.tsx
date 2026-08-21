@@ -203,7 +203,7 @@ export default function Home() {
     setStartingTasks(prev => new Set(prev).add(id));
     
     try {
-      const res = await axiosInstance.post("/api/startTask", { id }, {
+      const res = await axiosInstance.post("/api/startTask", { taskId: id }, {
         timeout: 180000 // 设置180秒超时
       });
       toast.success(`任务已开始: ${res.data.message}`);
@@ -473,6 +473,8 @@ export default function Home() {
             <Button
                   variant="ghost"
                   size="sm"
+                  onClick={() => startTask(task.id)}
+                  disabled={isDisabled}
                   className={`h-8 w-8 p-0 ${
                     isDisabled 
                       ? BUTTON_STYLES.disabled 
