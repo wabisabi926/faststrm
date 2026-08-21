@@ -6,4 +6,4 @@ strm:
   minVideoSize: 52428800
   metaExt: [.nfo, .ass, .srt, .ssa, .sub, .vtt, .jpg, .jpeg, .png, .bmp]
 adminUsername: admin
-adminPassword: admin123
+adminPassword: admin
