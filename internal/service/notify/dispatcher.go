@@ -109,6 +109,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, n *Notification) error {
 
 func (d *Dispatcher) sendWebhookText(ctx context.Context, message string) {
 	if d.webhook == nil {
+		logger.S().Debug("Webhook not configured, skipping webhook notification")
 		return
 	}
 	if err := d.webhook.Send(ctx, message); err != nil {

@@ -338,6 +338,12 @@ func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, dep
 		r.Error = "no cache, fallback to network scan"
 		return scanMapping(ctx, m, deps, accountMap)
 	}
+	// Check cache expiry (1 hour)
+	if time.Since(time.UnixMilli(entry.CreatedAt)) > time.Hour {
+		r := MappingScanResult{Account: m.Account, CloudPath: m.CloudPath, LocalPath: m.LocalPath}
+		r.Error = "cache expired, fallback to network scan"
+		return scanMapping(ctx, m, deps, accountMap)
+	}
 	return scanMappingFromCache(m, entry)
 }
 

@@ -376,10 +376,20 @@ func HandleNotifyPollingGET(deps NotifyDeps) http.HandlerFunc {
 			logger.S().Debugf("[notify/polling GET] getWebhookInfo failed: %v", err)
 		}
 
+		// 构建轮询状态提示
+		var message string
+		if running {
+			message = "轮询运行中，每 5 秒检查一次新消息"
+		} else if webhookInfo != nil && webhookInfo.URL != "" {
+			message = "Webhook 模式：已配置 webhook URL，实时接收消息"
+		} else {
+			message = "轮询已停止"
+		}
+
 		httpx.OkJson(w, map[string]any{
 			"polling": running,
 			"webhook": webhookInfo,
-			"message": "",
+			"message": message,
 		})
 	}
 }
@@ -571,13 +581,23 @@ func HandleNotifySend(deps NotifyDeps) http.HandlerFunc {
 			}
 			sendErr = deps.Dispatcher.NotifyError(ctx, d.TaskName, d.Message)
 		case "info":
-			var d infoData
-			if err := json.Unmarshal(req.Data, &d); err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid data for info"})
+			var msgText string
+			if len(req.Data) > 0 {
+				var d infoData
+				if err := json.Unmarshal(req.Data, &d); err != nil {
+					httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid data for info"})
+					return
+				}
+				msgText = firstNonEmpty(d.Message, string(req.Data))
+			} else {
+				msgText = req.Message
+			}
+			if msgText == "" {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "message is required for info"})
 				return
 			}
 			msg := fmt.Sprintf("ℹ️ <b>Info</b>\n\n%s\n\n<b>Time:</b> %s",
-				firstNonEmpty(d.Message, string(req.Data)),
+				msgText,
 				time.Now().Local().Format("2006-01-02 15:04:05"))
 			sendErr = deps.Dispatcher.Notify(ctx, msg)
 		default:

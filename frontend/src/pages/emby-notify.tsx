@@ -43,8 +43,18 @@ interface TestResult {
   message: string;
 }
 
+const DEFAULT_NOTIFY_SETTINGS: EmbySettings = {
+  notifyMediaAdded: true,
+  notifyMediaRemoved: true,
+  notifyPlayback: true,
+  playbackShowProgress: true,
+  syncDeleteEnabled: false,
+  syncDeleteDryRun: true,
+  syncDeleteNotify: true,
+};
+
 export default function EmbyNotifyPage() {
-  const [settings, setSettings] = useState<EmbySettings>({});
+  const [settings, setSettings] = useState<EmbySettings>({ ...DEFAULT_NOTIFY_SETTINGS });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -74,7 +84,7 @@ export default function EmbyNotifyPage() {
     try {
       const response = await axiosInstance.get("/api/settings");
       if (response.data?.emby) {
-        setSettings(response.data.emby);
+        setSettings({ ...DEFAULT_NOTIFY_SETTINGS, ...response.data.emby });
       }
     } catch (err) {
       console.error("加载设置失败:", err);
@@ -591,16 +601,26 @@ export default function EmbyNotifyPage() {
                     value={mapping.embyPath}
                     onChange={(e) => updatePathMapping(index, "embyPath", e.target.value)}
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="shrink-0"
-                    onClick={() => openFolderPickerForMapping(index)}
-                    title="选择本地文件夹"
-                  >
-                    <FolderOpen className="h-4 w-4" />
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="shrink-0 inline-flex">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="shrink-0"
+                            onClick={() => openFolderPickerForMapping(index)}
+                          >
+                            <FolderOpen className="h-4 w-4" />
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        选择包含 STRM 文件的本地目录
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
                 <span className="text-muted-foreground hidden sm:inline">→</span>
                 <span className="text-muted-foreground sm:hidden">↓</span>
@@ -666,16 +686,26 @@ export default function EmbyNotifyPage() {
                   value={newMappingEmbyPath}
                   onChange={(e) => setNewMappingEmbyPath(e.target.value)}
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="shrink-0"
-                  onClick={openFolderPickerForNew}
-                  title="选择本地文件夹"
-                >
-                  <FolderOpen className="h-4 w-4" />
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="shrink-0 inline-flex">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0"
+                          onClick={openFolderPickerForNew}
+                        >
+                          <FolderOpen className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      选择包含 STRM 文件的本地目录
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
               <span className="text-muted-foreground hidden sm:inline">→</span>
               <span className="text-muted-foreground sm:hidden">↓</span>

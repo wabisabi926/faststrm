@@ -835,10 +835,10 @@ export default function SettingsPage() {
                 onChange={(e) =>
                   setData({ ...data, strmPrefix: e.target.value })
                 }
-                placeholder="http://localhost:8090"
+                placeholder="http://服务器IP:端口 (如 http://192.168.1.100:8090)"
               />
               <p className="text-xs text-muted-foreground">
-                STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。302 模式下自动追加 <code>/api/strm</code>，无需手动添加。
+                STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。系统会自动追加对应路径（302 模式 <code>/api/fs/get</code>，其他模式 <code>/api/strm</code>），无需手动添加。
               </p>
             </div>
 

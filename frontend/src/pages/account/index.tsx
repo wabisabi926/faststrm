@@ -135,16 +135,13 @@ export default function AccountPage() {
         
         if (account.accountType === "115") {
           const cookie = account.cookie ?? "";
-          const shortCookie = cookie.length > 30 ? cookie.slice(0, 30) + "..." : cookie;
-          
           return (
             <div className="flex items-center gap-2">
               <Key className="w-4 h-4 text-muted-foreground" />
               <code 
-                title={cookie} 
                 className="text-xs bg-muted px-2 py-1 rounded max-w-xs truncate block"
               >
-                {shortCookie}
+                {cookie || "-"}
               </code>
             </div>
           );
@@ -160,7 +157,7 @@ export default function AccountPage() {
                 <Key className="w-3 h-3 text-muted-foreground" />
                 <span className="text-muted-foreground">密码:</span>
                 <code className="bg-muted px-1 rounded">
-                  {"*".repeat(Math.min(account.password?.length ?? 0, 8))}
+                  {account.password || "********"}
                 </code>
               </div>
               <div className="flex items-center gap-2 text-xs">

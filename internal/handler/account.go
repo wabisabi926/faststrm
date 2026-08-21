@@ -482,7 +482,7 @@ func GetAccountStatus(accountStore *store.AccountStore) http.HandlerFunc {
 			results = append(results, checkAccountStatusInfo(*acc))
 		}
 
-		// Deep check: 同步执行 cookie 验证
+		// Deep check: 同步执行账号验证
 		var deepResults []map[string]any
 		if deepCheck {
 			deepResults = make([]map[string]any, 0, len(targets))
@@ -491,6 +491,7 @@ func GetAccountStatus(accountStore *store.AccountStore) http.HandlerFunc {
 					valid, missing, err := accountStore.ValidateCookie(acc.Name)
 					deepResults = append(deepResults, map[string]any{
 						"account":   acc.Name,
+						"type":      "115",
 						"valid":     valid,
 						"missing":   missing,
 						"error":     fmt.Sprintf("%v", err),
@@ -632,3 +633,38 @@ func VerifyAllAccountsHandler(accountStore *store.AccountStore) http.HandlerFunc
 }
 
 
+
+
+// testOpenlistConnection 测试 openlist 连接
+func testOpenlistConnection(url, account, password string) (bool, string) {
+	if url == "" {
+		return false, "URL 为空"
+	}
+	// 确保 URL 以 /api 结尾
+	if !strings.HasSuffix(url, "/api") {
+		url = strings.TrimRight(url, "/") + "/api"
+	}
+	// 发送登录请求测试连接
+	loginURL := url + "/login"
+	payload := fmt.Sprintf(`{"username":"%s","password":"%s"}`, account, password)
+	req, err := http.NewRequest(http.MethodPost, loginURL, strings.NewReader(payload))
+	if err != nil {
+		return false, fmt.Sprintf("创建请求失败: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("连接失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		return true, "连接成功"
+	} else if resp.StatusCode == http.StatusUnauthorized {
+		return false, "用户名或密码错误"
+	} else {
+		return false, fmt.Sprintf("服务器返回错误: HTTP %d", resp.StatusCode)
+	}
+}
