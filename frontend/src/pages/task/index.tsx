@@ -253,18 +253,14 @@ export default function Home() {
   const goToLog = async (id: string) => {
     try {
       const logRes = await axiosInstance.get(`/api/taskLog/${id}`);
-      if (logRes.data.taskId) {
-        const executionId = logRes.data.executionId;
-        if (executionId) {
-          navigate(`/log/${id}?executionId=${executionId}`);
-        } else {
-          navigate(`/log/${id}`);
-        }
+      const logText: string = logRes.data || "";
+      if (logText.trim()) {
+        navigate(`/log/${id}`);
       } else {
-        toast.error("没有找到对应的任务日志");
+        toast.info("任务尚未执行，暂无日志");
       }
     } catch {
-      toast.error("没有找到对应的任务日志");
+      toast.error("获取日志失败");
     }
   };
 
