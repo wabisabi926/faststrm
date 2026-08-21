@@ -21,6 +21,10 @@
 - **monitor.go**: `handlePollError` 排除 `context.Canceled/DeadlineExceeded` 正常停止行为
 - **settings.tsx**: 状态显示优先级改为：有错误(红色「异常」) > 运行中(绿色) > 待保存(黄色) > 已停止(灰色)
 
+### 生活事件监控 API 修复
+
+- **life.go**: LifeClient.doRequest 增加 HTTP 状态码检查，404/500 返回清晰错误；PullEvents 路径 `life.115.com/.../live/listhistory` → `web.api.115.com/.../life/listhistory` 且改为 GET；LifeShow 路径同步修正
+
 ### 版本号全链路同步 0.9.6
 
 - `cmd/server/main.go`、`frontend/package.json`、`FNOS/faststrm-amd64/manifest`、`FNOS/faststrm-arm64/manifest`
