@@ -1,7 +1,7 @@
 {
     ".url": {
         "faststrm.Application": {
-            "title": "faststrm",
+            "title": "FastStrm",
             "icon": "images/icon_{0}.png",
             "type": "url",
             "protocol": "",
