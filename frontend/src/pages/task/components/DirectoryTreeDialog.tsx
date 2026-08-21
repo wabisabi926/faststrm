@@ -10,16 +10,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 interface TreeNode {
   name: string;
@@ -37,7 +27,6 @@ interface DirectoryTreeDialogProps {
   onOpenChange: (open: boolean) => void;
   account: string;
   onSelect: (path: string) => void;
-  onSelectWithTargetPath?: (originPath: string, targetPath: string) => void;
 }
 
 export function DirectoryTreeDialog({
@@ -45,7 +34,6 @@ export function DirectoryTreeDialog({
   onOpenChange,
   account,
   onSelect,
-  onSelectWithTargetPath,
 }: DirectoryTreeDialogProps) {
   const [tree, setTree] = React.useState<TreeNode[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -56,7 +44,6 @@ export function DirectoryTreeDialog({
     new Set()
   );
   const [selectedPath, setSelectedPath] = React.useState<string>("");
-  const [showAutoFillDialog, setShowAutoFillDialog] = React.useState(false);
 
   const loadTree = React.useCallback(
     async (cid: string = "0") => {
@@ -171,29 +158,7 @@ export function DirectoryTreeDialog({
 
   const handleConfirm = () => {
     if (!selectedPath) return;
-
-    if (onSelectWithTargetPath) {
-      setShowAutoFillDialog(true);
-      return;
-    }
-
     onSelect(selectedPath);
-    onOpenChange(false);
-  };
-
-  const handleAutoFillConfirm = () => {
-    if (!selectedPath || !onSelectWithTargetPath) return;
-
-    onSelectWithTargetPath(selectedPath, selectedPath);
-    setShowAutoFillDialog(false);
-    onOpenChange(false);
-  };
-
-  const handleAutoFillCancel = () => {
-    if (!selectedPath) return;
-
-    onSelect(selectedPath);
-    setShowAutoFillDialog(false);
     onOpenChange(false);
   };
 
@@ -305,31 +270,6 @@ export function DirectoryTreeDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
-
-      <AlertDialog open={showAutoFillDialog} onOpenChange={setShowAutoFillDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>自动填写本地路径</AlertDialogTitle>
-            <AlertDialogDescription>
-              将为您自动填写本地路径，是否需要？
-              <br />
-              <span className="font-medium text-gray-700 mt-2 block">
-                本地路径: {selectedPath}
-              </span>
-              <br />
-              <span className="text-sm text-gray-500">填写后可在表单中修改</span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleAutoFillCancel}>
-              我自己填写
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleAutoFillConfirm}>
-              好的
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </Dialog>
   );
 }
