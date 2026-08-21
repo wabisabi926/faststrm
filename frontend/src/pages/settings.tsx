@@ -1624,13 +1624,15 @@ export default function SettingsPage() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-medium">{state.account}</span>
                           <span className={`text-xs px-2 py-0.5 rounded ${
-                            state.running
-                              ? "bg-green-500/20 text-green-400"
-                              : state.pending
-                                ? "bg-yellow-500/20 text-yellow-400"
-                                : "bg-muted text-muted-foreground"
+                            state.lastError
+                              ? "bg-red-500/20 text-red-400"
+                              : state.running
+                                ? "bg-green-500/20 text-green-400"
+                                : state.pending
+                                  ? "bg-yellow-500/20 text-yellow-400"
+                                  : "bg-muted text-muted-foreground"
                           }`}>
-                            {state.running ? "运行中" : state.pending ? "待保存配置" : "已停止"}
+                            {state.lastError ? "异常" : state.running ? "运行中" : state.pending ? "待保存配置" : "已停止"}
                           </span>
                           {state.eventsProcessed > 0 && (
                             <span className="text-xs text-muted-foreground">

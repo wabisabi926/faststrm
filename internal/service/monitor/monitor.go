@@ -4,6 +4,7 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -578,6 +579,10 @@ func isAuthError(err error) bool {
 
 // handlePollError 处理轮询错误，检测 cookie 失效
 func (m *Monitor) handlePollError(account string, err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+
 	isAuth := isAuthError(err)
 
 	m.mu.Lock()
@@ -586,7 +591,6 @@ func (m *Monitor) handlePollError(account string, err error) {
 		accMon.lastErr = err.Error()
 		if isAuth {
 			accMon.consecutiveFailures++
-			// 连续 3 次认证错误则标记 cookie 失效
 			if accMon.consecutiveFailures >= 3 && !accMon.cookieMarkedInvalid {
 				accMon.cookieMarkedInvalid = true
 				m.mu.Unlock()
