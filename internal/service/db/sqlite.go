@@ -82,6 +82,38 @@ func migrateSchema(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_path ON files(account, path)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_parent ON files(account, parent_id)`,
+		// P0-2 folders 表：对齐参考项目 FileDbHelper.process_life_dir_item
+		// 文件夹路径持久化，move/rename 事件通过 file_id 查旧路径
+		`CREATE TABLE IF NOT EXISTS folders (
+			account     TEXT    NOT NULL,
+			file_id     INTEGER NOT NULL,
+			path        TEXT    NOT NULL,
+			file_name   TEXT    NOT NULL,
+			parent_id   INTEGER NOT NULL DEFAULT 0,
+			update_time INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (account, file_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_folders_path ON folders(account, path)`,
+		`CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(account, parent_id)`,
+		// P0-4 STRM 执行历史回滚：记录每次 STRM 生成/删除的细粒度历史
+		// 对齐参考项目 core/history/strm.py，限 500 条循环覆盖
+		`CREATE TABLE IF NOT EXISTS strm_exec_history (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id       TEXT    NOT NULL DEFAULT '',
+			kind          TEXT    NOT NULL DEFAULT '',
+			account       TEXT    NOT NULL DEFAULT '',
+			success       INTEGER NOT NULL DEFAULT 0,
+			total_files   INTEGER NOT NULL DEFAULT 0,
+			success_files INTEGER NOT NULL DEFAULT 0,
+			failed_files  INTEGER NOT NULL DEFAULT 0,
+			elapsed_ms    INTEGER NOT NULL DEFAULT 0,
+			api_requests  INTEGER NOT NULL DEFAULT 0,
+			error_msg     TEXT    NOT NULL DEFAULT '',
+			created_at    INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_strm_history_created ON strm_exec_history(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_strm_history_kind ON strm_exec_history(kind, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_strm_history_task ON strm_exec_history(task_id, created_at DESC)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -90,6 +122,10 @@ func migrateSchema(db *sql.DB) error {
 	}
 	return nil
 }
+
+// StrmHistoryMaxRecords P0-4 保留最近 N 条 STRM 执行历史
+// 对齐参考项目 core/history/strm.py 的 500 条上限
+const StrmHistoryMaxRecords = 500
 
 // ==================== 工具函数 ====================
 

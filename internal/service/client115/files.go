@@ -111,11 +111,12 @@ type DownloadUrlMeta struct {
 
 // GetDownloadUrlWebFull 根据 pickcode 获取 115 直链
 // 对齐 lib/115.ts getDownloadUrlWebFull
-// 走 POST http://pro.api.115.com/android/2.0/ufile/download + encrypt/decrypt
+// 走 POST http://proapi.115.com/android/2.0/ufile/download + encrypt/decrypt
 func (c *Client) GetDownloadUrlWebFull(
 	ctx context.Context,
 	pickcode string,
 	cookie string,
+	userAgent string,
 ) (*DownloadUrlMeta, error) {
 	if pickcode == "" {
 		return nil, fmt.Errorf("pickcode is empty")
@@ -123,6 +124,9 @@ func (c *Client) GetDownloadUrlWebFull(
 	if cookie == "" {
 		return nil, fmt.Errorf("cookie is empty")
 	}
+
+	// 对齐参考项目 api.py#L829: 115 API 要求 pickcode 小写
+	pickcode = strings.ToLower(pickcode)
 
 	// 加密 payload: {"pick_code":"xxx"}
 	payload := fmt.Sprintf(`{"pick_code":"%s"}`, pickcode)
@@ -132,9 +136,15 @@ func (c *Client) GetDownloadUrlWebFull(
 	}
 	data := "data=" + url.QueryEscape(encrypted)
 
-	endpoint := "http://pro.api.115.com/android/2.0/ufile/download"
+	endpoint := "http://proapi.115.com/android/2.0/ufile/download"
+	// 对齐参考项目：用调用方传入的 userAgent（浏览器/播放器 UA），
+	// 而非 c.UserAgent（115 客户端 UA）。115 API 返回的 CDN URL 可能有 UA 绑定。
+	ua := userAgent
+	if ua == "" {
+		ua = c.UserAgent
+	}
 	headers := map[string]string{
-		"User-Agent":     c.UserAgent,
+		"User-Agent":     ua,
 		"Content-Type":   "application/x-www-form-urlencoded",
 		"Content-Length": strconv.Itoa(len(data)),
 	}
@@ -166,6 +176,9 @@ func (c *Client) GetDownloadUrlWebFull(
 	// 解密
 	decrypted, decErr := crypto115.Decrypt(resp.Data)
 	if decErr != nil {
+		// 输出调试信息：原始响应体 + data字段前128字节，便于排查
+		logger.S().Errorf("[115Download] decrypt failed: %v | respData[:128]=%q rawBody[:256]=%q",
+			decErr, truncate([]byte(resp.Data), 128), truncate(respBody, 256))
 		return nil, fmt.Errorf("decrypt 115 download API response: %w", decErr)
 	}
 	var dm struct {
@@ -269,18 +282,38 @@ func (c *Client) FsFiles(
 		return nil, fmt.Errorf("parse fs_files response: %w (body=%s)", err, truncate(body, 512))
 	}
 	// 标记目录
-	// 115 web API: fc 字段为子项数量（目录>0，文件为1或0）
-	// 正确判断：fc > 0 且 fid 为 0 → 目录
+	// 115 web API:
+	//   - 目录: cid（有效非零）为该目录子内容访问id，fid 为 nil / 0 / 不存在（目录没有文件ID）
+	//   - 文件: fid（有效非零）为该文件的唯一ID，cid 等于父目录的cid
+	// 判定优先级：
+	//   1. 有有效 fid → 文件（即使 fc>0 也不能覆盖，115 某些文件 fc 也大于0）
+	//   2. 无有效 fid 但有有效 cid → 目录
+	//   3. 都没有 → 用 fc 兜底
 	for i := range resp.Data {
-		fc, _ := toInt64(resp.Data[i].FC)
-		fid, _ := toInt64(resp.Data[i].FID)
-		resp.Data[i].IsDir = fc > 0 && fid == 0
+		cid, cidErr := toInt64(resp.Data[i].CID)
+		fid, fidErr := toInt64(resp.Data[i].FID)
+		hasCID := cidErr == nil && cid > 0
+		hasFID := fidErr == nil && fid > 0
+		fc, fcErr := toInt64(resp.Data[i].FC)
+		hasChildren := fcErr == nil && fc > 0
+		switch {
+		case hasFID:
+			resp.Data[i].IsDir = false
+		case hasCID:
+			resp.Data[i].IsDir = true
+		default:
+			resp.Data[i].IsDir = hasChildren
+		}
 	}
 	return &resp, nil
 }
 
 // FsDirGetID 根据路径获取目录 ID
 // GET https://webapi.115.com/files/getid?path={path}
+// 115 实际响应存在两种格式：
+//   新版（实测）: {"state":true, "id":"3491751436709005103", "is_private":"0"}
+//   旧版（文档）: {"state":true, "data":{"id":"..."}}
+// 两种都要兼容
 func (c *Client) FsDirGetID(
 	ctx context.Context,
 	path string,
@@ -301,26 +334,49 @@ func (c *Client) FsDirGetID(
 		UseCommonHeaders: true,
 	})
 	if err != nil {
+		logger.S().Errorf("[115/FsDirGetID] path=%s request error: %v", path, err)
 		return 0, fmt.Errorf("fs_dir_getid request: %w", err)
 	}
+	logger.S().Infof("[115/FsDirGetID] path=%s raw response: %s", path, truncate(body, 1024))
 	var resp struct {
-		State bool `json:"state"`
-		Data  struct {
-			ID any `json:"id"`
-		} `json:"data"`
+		State  bool   `json:"state"`
 		ErrMsg string `json:"errmsg,omitempty"`
+		// 新版格式：id 直接在顶层（string）
+		ID any `json:"id"`
+		// 旧版兼容：data.id
+		Data struct {
+			ID any `json:"id"`
+		} `json:"data,omitempty"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return 0, fmt.Errorf("parse fs_dir_getid: %w", err)
+		logger.S().Errorf("[115/FsDirGetID] path=%s parse failed: %v, body=%s", path, err, truncate(body, 1024))
+		return 0, fmt.Errorf("parse fs_dir_getid: %w (body=%s)", err, truncate(body, 512))
 	}
 	if !resp.State {
-		return 0, fmt.Errorf("fs_dir_getid state=false: %s (path=%s)", resp.ErrMsg, path)
+		logger.S().Warnf("[115/FsDirGetID] path=%s state=false, errmsg=%s, body=%s", path, resp.ErrMsg, truncate(body, 1024))
+		return 0, fmt.Errorf("115 目录不存在:path=%q，请在任务编辑中重新选择远程路径 (errmsg=%s)", path, resp.ErrMsg)
 	}
-	id, err := toInt64(resp.Data.ID)
+	// 兼容两种 id 位置：优先顶层 id，回退到 data.id
+	idAny := resp.ID
+	if idAny == nil || isEmptyString(idAny) {
+		idAny = resp.Data.ID
+	}
+	id, err := toInt64(idAny)
 	if err != nil {
-		return 0, fmt.Errorf("parse dir id: %w", err)
+		logger.S().Errorf("[115/FsDirGetID] path=%s parse id failed: %v, top.id=%v, data.id=%v, body=%s",
+			path, err, resp.ID, resp.Data.ID, truncate(body, 1024))
+		return 0, fmt.Errorf("parse dir id: %w (top.id=%v, data.id=%v, body=%s)", err, resp.ID, resp.Data.ID, truncate(body, 512))
 	}
 	return id, nil
+}
+
+// isEmptyString 判断 any 类型是否为空字符串形式（nil、空串、全空格）
+func isEmptyString(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && strings.TrimSpace(s) == ""
 }
 
 // ExportDirParse 提交并轮询目录导出任务，拿到 export_id 的完整解析结果
@@ -361,12 +417,16 @@ func (c *Client) ExportDirParse(
 			ExportID any `json:"export_id"`
 		} `json:"data"`
 		ErrMsg string `json:"errmsg,omitempty"`
+		Error  string `json:"error,omitempty"`
+		Errno  any    `json:"errno,omitempty"`
 	}
+	logger.S().Infof("[ExportDirParse] submit body=%s", truncate(body, 1024))
 	if err := json.Unmarshal(body, &submitResp); err != nil {
 		return "", fmt.Errorf("parse submit export: %w (body=%s)", err, truncate(body, 512))
 	}
 	if !submitResp.State {
-		return "", fmt.Errorf("submit export state=false: %s", submitResp.ErrMsg)
+		errMsg := firstNonEmpty(submitResp.ErrMsg, submitResp.Error, fmt.Sprint(submitResp.Errno))
+		return "", fmt.Errorf("submit export state=false: %s (body=%s)", errMsg, truncate(body, 512))
 	}
 	exportID, err := toInt64(submitResp.Data.ExportID)
 	if err != nil {

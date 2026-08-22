@@ -9,6 +9,38 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// encodeRedirectURL 对 302 重定向 URL 进行编码：
+// 只编码非 ASCII 字符和空格，保留 URL 保留字符和已有的百分号转义。
+// 对齐参考项目 utils/url.py UrlUtils.encode_url_fully:
+//   Python: quote(url, safe=":/?#@!$&'()*+,;=%")
+func encodeRedirectURL(rawURL string) string {
+	var sb []byte
+	for i := 0; i < len(rawURL); i++ {
+		b := rawURL[i]
+		switch {
+		case b == ' ':
+			sb = append(sb, '%', '2', '0')
+		case b < 0x80:
+			// ASCII 字符（含 % : / ? # @ ! $ & ' ( ) * + , ; =）全部保留
+			sb = append(sb, b)
+		default:
+			// 非 ASCII 字节：百分号编码（UTF-8 多字节逐字节编码）
+			sb = append(sb, '%')
+			sb = append(sb, hexUpper(b>>4))
+			sb = append(sb, hexUpper(b&0x0f))
+		}
+	}
+	return string(sb)
+}
+
+// hexUpper 将 0-15 转为大写十六进制字符
+func hexUpper(n byte) byte {
+	if n < 10 {
+		return '0' + n
+	}
+	return 'A' + n - 10
+}
+
 // ==================== /api/fs/get 小文件下载 ====================
 
 // FsGetRequest GET /api/fs/get?account=&pickcode=
@@ -74,7 +106,10 @@ func HandleFsGet(opts StrmOptions) http.HandlerFunc {
 		if meta.FileSize > 0 {
 			w.Header().Set("X-File-Size", itoa(meta.FileSize))
 		}
-		http.Redirect(w, r, meta.URL, http.StatusFound)
+		encodedURL := encodeRedirectURL(meta.URL)
+		logger.S().Infof("[FS/GET] redirect: account=%s pickcode=%s origURL[:200]=%q encodedURL[:200]=%q",
+			accountName, pickcode, meta.URL, encodedURL)
+		http.Redirect(w, r, encodedURL, http.StatusFound)
 	}
 }
 

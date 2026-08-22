@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"regexp"
@@ -28,6 +29,8 @@ const (
 	ReachableCacheMax  = 256                   // 简单 LRU 上限
 	URLCacheMax        = 512
 	ConnectTimeoutMs   = 30_000                // proxy 模式建连超时
+	// P0-3 负面缓存 TTL：115 API 失败后短时间内不重试，避免雪崩
+	URLNegativeCacheTTL = 10 * 1000            // 10 秒
 )
 
 // RouteDecision 路由决策
@@ -141,7 +144,48 @@ func (c *simpleLRU[V]) Set(key string, value V) {
 var (
 	urlCache       = newSimpleLRU[*client115.DownloadUrlMeta](URLCacheMax, URLCacheTTL)
 	reachableCache = newSimpleLRU[ReachableResult](ReachableCacheMax, ReachableCacheTTL)
+	// P0-3 负面缓存：115 API 返回错误时短时间缓存，避免短时间内重复请求导致雪崩
+	urlNegativeCache = newSimpleLRU[error](URLCacheMax, URLNegativeCacheTTL)
 )
+
+// P0-3 singleflight：合并并发相同 pickcode 的下载链接查询，
+// 避免多个 goroutine 同时调用 115 download API 造成配额浪费与触发限流。
+// 对齐参考项目 r302 的下载链接缓存并发锁
+var urlCallGroup = &callGroup{calls: make(map[string]*urlCall)}
+
+type urlCall struct {
+	wg  sync.WaitGroup
+	val *client115.DownloadUrlMeta
+	err error
+}
+
+type callGroup struct {
+	mu    sync.Mutex
+	calls map[string]*urlCall
+}
+
+// Do 合并并发相同 key 的调用：首个调用者执行 fn，后续调用者等待结果
+func (g *callGroup) Do(key string, fn func() (*client115.DownloadUrlMeta, error)) (*client115.DownloadUrlMeta, error) {
+	g.mu.Lock()
+	if c, ok := g.calls[key]; ok {
+		g.mu.Unlock()
+		c.wg.Wait()
+		return c.val, c.err
+	}
+	c := &urlCall{}
+	c.wg.Add(1)
+	g.calls[key] = c
+	g.mu.Unlock()
+
+	c.val, c.err = fn()
+	c.wg.Done()
+
+	g.mu.Lock()
+	delete(g.calls, key)
+	g.mu.Unlock()
+
+	return c.val, c.err
+}
 
 // ==================== 工具函数 ====================
 
@@ -396,20 +440,38 @@ func RedirectCheck(
 	return result
 }
 
-// ==================== URL 解析（带缓存） ====================
+// ==================== URL 解析（带缓存 + singleflight + 负面缓存） ====================
 
-// ResolveDownloadUrl 取下载直链（LRU 缓存 5 分钟）
+// ResolveDownloadUrl 取下载直链
+//   - 正面 LRU 缓存 5 分钟
+//   - P0-3 singleflight 合并并发相同 pickcode 的调用，避免重复请求 115 API
+//   - P0-3 负面缓存：115 API 失败后 10 秒内不重试，避免短时间内雪崩请求
+// 对齐参考项目 r302 的下载链接缓存 + 并发锁
 func ResolveDownloadUrl(
 	ctx context.Context,
 	c115 *client115.Client,
 	pickcode, accountName, cookie, userAgent string,
 ) (*client115.DownloadUrlMeta, error) {
+	// 对齐参考项目 api.py#L829: 115 API 要求 pickcode 小写
+	// 统一小写化保证缓存 key 一致，避免大小写不同导致缓存未命中
+	pickcode = strings.ToLower(pickcode)
 	cacheKey := accountName + ":" + pickcode
+	// 1) 正面缓存命中
 	if cached, ok := urlCache.Get(cacheKey); ok {
 		return cached, nil
 	}
-	meta, err := c115.GetDownloadUrlWebFull(ctx, pickcode, cookie)
+	// 2) 负面缓存命中（短时间内已失败过，不重试）
+	if negErr, ok := urlNegativeCache.Get(cacheKey); ok {
+		return nil, fmt.Errorf("cached 115 download error (retry in %ds): %w",
+			URLNegativeCacheTTL/1000, negErr)
+	}
+	// 3) singleflight 合并并发相同 key 的调用
+	meta, err := urlCallGroup.Do(cacheKey, func() (*client115.DownloadUrlMeta, error) {
+		return c115.GetDownloadUrlWebFull(ctx, pickcode, cookie, userAgent)
+	})
 	if err != nil {
+		// 负面缓存错误，避免短时间内重复请求
+		urlNegativeCache.Set(cacheKey, err)
 		return nil, err
 	}
 	urlCache.Set(cacheKey, meta)

@@ -14,11 +14,27 @@ import (
 
 // CommandHandler Bot 命令处理器，依赖 store 层读取配置/任务/账号
 type CommandHandler struct {
-	bot         *TelegramBot
-	settings    *store.SettingsStore
-	tasks       *store.TasksStore
-	accounts    *store.AccountStore
-	menuActions MenuActions
+	bot            *TelegramBot
+	settings       *store.SettingsStore
+	tasks          *store.TasksStore
+	accounts       *store.AccountStore
+	menuActions    MenuActions
+	cleanupHandler CleanupCallbackHandler
+}
+
+// CleanupCallbackHandler STRM 清理待删队列的 TG 按钮回调处理器接口
+// 由 handler.StrmCleanupInteraction 实现，避免 notify → handler 循环依赖
+type CleanupCallbackHandler interface {
+	// HandleTelegramCallback 处理 TG 按钮 callback
+	// requestID: 待删批次 ID
+	// approve: true=确认删除, false=取消
+	// 返回处理结果消息（用于回复用户）
+	HandleTelegramCallback(ctx context.Context, requestID string, approve bool) (string, error)
+}
+
+// SetCleanupCallbackHandler 注入清理待删队列的 TG 按钮回调处理器
+func (h *CommandHandler) SetCleanupCallbackHandler(handler CleanupCallbackHandler) {
+	h.cleanupHandler = handler
 }
 
 // NewCommandHandler 创建命令处理器
@@ -141,6 +157,12 @@ func (h *CommandHandler) HandleCallbackQuery(ctx context.Context, cq CallbackQue
 		}
 	}
 
+	// P0 STRM 清理待删队列的 TG 按钮回调
+	// 格式：cleanup_confirm|{request_id}|{y|n}
+	if strings.HasPrefix(cq.Data, "cleanup_confirm|") {
+		return h.handleCleanupConfirmCallback(ctx, chatID, cq)
+	}
+
 	switch cq.Data {
 	case "status":
 		return h.handleStatus(ctx, chatID)
@@ -153,6 +175,37 @@ func (h *CommandHandler) HandleCallbackQuery(ctx context.Context, cq CallbackQue
 	default:
 		return h.bot.SendMessage(ctx, chatID, fmt.Sprintf("✅ 已处理: %s", cq.Data), "HTML")
 	}
+}
+
+// handleCleanupConfirmCallback 处理 STRM 清理待删队列的 TG 按钮回调
+// callback_data 格式：cleanup_confirm|{request_id}|{y|n}
+func (h *CommandHandler) handleCleanupConfirmCallback(ctx context.Context, chatID string, cq CallbackQuery) error {
+	if h.cleanupHandler == nil {
+		return h.bot.SendMessage(ctx, chatID, "⚠️ 清理待删队列未启用（settings.cleanup.confirmMode 未开启或 SQLite 不可用）", "HTML")
+	}
+	requestID, approve, ok := parseCleanupCallbackData(cq.Data)
+	if !ok {
+		return h.bot.SendMessage(ctx, chatID, "⚠️ 无效的清理回调数据: "+cq.Data, "HTML")
+	}
+	msg, err := h.cleanupHandler.HandleTelegramCallback(ctx, requestID, approve)
+	if err != nil {
+		msg = fmt.Sprintf("❌ 处理清理回调失败: %v", err)
+		logger.S().Errorf("[Telegram] cleanup callback %s approve=%v failed: %v", requestID, approve, err)
+	}
+	return h.bot.SendMessage(ctx, chatID, msg, "HTML")
+}
+
+// parseCleanupCallbackData 解析 cleanup_confirm|{request_id}|{y|n} 格式的 callback_data
+// 返回 (requestID, approve, 是否有效)
+func parseCleanupCallbackData(data string) (requestID string, approve bool, ok bool) {
+	parts := strings.Split(data, "|")
+	if len(parts) != 3 || parts[0] != "cleanup_confirm" {
+		return "", false, false
+	}
+	if parts[2] != "y" && parts[2] != "n" {
+		return "", false, false
+	}
+	return parts[1], parts[2] == "y", true
 }
 
 // handleHelp 显示帮助文本

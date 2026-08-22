@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,8 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
+	"github.com/wabisabi926/faststrm/pkg/concurrency"
+	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // taskCompleteThreshold 任务完成判定阈值（99.995%）
@@ -26,16 +29,24 @@ const taskCompleteThreshold = 99.995
 // defaultStrmWorkers STRM 写入默认并发数
 const defaultStrmWorkers = 20
 
+// StrmRefresher STRM 创建/删除后的媒体库刷新接口（由 emby.MediaServerRefresh 实现）
+type StrmRefresher interface {
+	RefreshOnCreate(ctx context.Context, filePath string) error
+	RefreshOnDelete(ctx context.Context, filePath string) error
+}
+
 // ExecutorDeps 执行器依赖
 type ExecutorDeps struct {
-	Client115     *client115.Client
-	AccountStore  AccountReader
-	SettingsStore SettingsStore
-	SQLiteDB      *sql.DB
-	TasksStore    TasksReaderWriter
-	StrmCache     StrmCacheWriter
-	BaseURL       string // 用于拼接 strmPrefix（302模式下可留空）
-	PublicBaseURL string // 公开可访问的 baseUrl（302 模式用户可配置）
+	Client115        *client115.Client
+	AccountStore    AccountReader
+	SettingsStore    SettingsStore
+	SQLiteDB        *sql.DB
+	TasksStore       TasksReaderWriter
+	StrmCache        StrmCacheWriter
+	EmbyRefresh      StrmRefresher        // Emby 刷库服务（可为 nil）
+	CleanupSubmitter CleanupBatchSubmitter // STRM 清理延迟批次提交器（可为 nil）
+	BaseURL          string                // 用于拼接 strmPrefix（302模式下可留空）
+	PublicBaseURL    string                // 公开可访问的 baseUrl（302 模式用户可配置）
 }
 
 // ExecuteTask 执行一个任务（同步执行，调用方应开 goroutine 异步调用）
@@ -79,10 +90,33 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	sseServer := sse.GetServer()
 	taskStart := time.Now()
 
+	// P0-4 STRM 执行历史埋点状态（defer 统一记录，避免每个 return 点重复代码）
+	// downloaded 提前声明，供 defer 闭包引用（后续 worker pool 累加）
+	histKind := db.StrmHistoryKindFull
+	histSuccess := true
+	histErrMsg := ""
+	totalFiles := 0
+	downloaded := new(int64)
+	defer func() {
+		elapsedMs := time.Since(taskStart).Milliseconds()
+		dl := int64(0)
+		if downloaded != nil {
+			dl = atomic.LoadInt64(downloaded)
+		}
+		failed := 0
+		if totalFiles >= int(dl) {
+			failed = totalFiles - int(dl)
+		}
+		recordStrmHistory(deps, task.ID, task.Account, histKind, histSuccess,
+			totalFiles, int(dl), failed, elapsedMs, histErrMsg)
+	}()
+
 	// 4) 找 115 账号 cookie
 	account := findAccount(deps.AccountStore, task.Account)
 	if account == nil || account.AccountType != "115" {
 		msg := "No valid 115 account: " + task.Account
+		histSuccess = false
+		histErrMsg = msg
 		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli() })
 		sseServer.EmitComplete(sse.CompletePayload{
 			TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds(),
@@ -107,6 +141,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	cid, err := deps.Client115.FsDirGetID(ctx, task.OriginPath, account.Cookie)
 	if err != nil {
 		msg := "FsDirGetID failed: " + err.Error()
+		histSuccess = false
+		histErrMsg = msg
 		sseServer.EmitLog(task.ID, "error", msg)
 		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli() })
 		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
@@ -114,23 +150,32 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	}
 	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Got cid=%d for path %s", cid, task.OriginPath))
 
-	// 7) 导出目录解析（可能耗时），最多 5 分钟
-	exportCtx, exportCancel := context.WithTimeout(ctx, 5*time.Minute)
+	// 7) 导出目录解析（仅用于日志，实际遍历目录由 FsFiles 递归完成，不依赖 rootPick）
+	//    如果此步骤失败（例如 115 files/zip 接口返回"服务器开小差"），只记录警告不中断任务。
+	exportCtx, exportCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer exportCancel()
-
-	rootPick, err := deps.Client115.ExportDirParse(exportCtx, itoa(cid), account.Cookie, 0)
-	if err != nil {
-		msg := "ExportDirParse failed: " + err.Error()
-		sseServer.EmitLog(task.ID, "error", msg)
-		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli() })
-		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
-		return ExecuteResult{Success: true, TaskID: task.ID}
+	rootPick := ""
+	if rp, err := deps.Client115.ExportDirParse(exportCtx, itoa(cid), account.Cookie, 0); err != nil {
+		warn := "ExportDirParse skipped: " + err.Error()
+		sseServer.EmitLog(task.ID, "warn", warn)
+	} else {
+		rootPick = rp
 	}
-	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Export root pickcode=%s", rootPick))
+	if rootPick != "" {
+		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Export root pickcode=%s", rootPick))
+	} else {
+		sseServer.EmitLog(task.ID, "info", "Export root pickcode unavailable, proceeding with FsFiles direct traversal")
+	}
 
 	// 8) 构建目录树（从导出结果列目录得到文件列表）
 	//    简化版：我们用 fs_files 多次分页遍历目标目录（cid 已知），获取文件条目
-	fileEntries, err := listAllFilesRecursive(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions)
+	// 对齐 MoviePilot StrmGenerater.should_generate_strm：
+	//   - minFileSize: 从全局 settings.Download.MinFileSize（full_sync_min_file_size）读取
+	//   - blacklist:  从全局 settings.Download.StrmGenerateBlacklist 读取
+	//   listAllFilesRecursive 内部同时会严格校验 pickcode 有效性（对齐 MoviePilot）。
+	minFileSize := settings.Download.MinFileSize
+	blacklist := settings.Download.StrmGenerateBlacklist
+	fileEntries, err := listAllFilesRecursive(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist)
 	if err != nil {
 		msg := "list files failed: " + err.Error()
 		sseServer.EmitLog(task.ID, "error", msg)
@@ -139,16 +184,116 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		return ExecuteResult{Success: true, TaskID: task.ID}
 	}
 
-	totalFiles := len(fileEntries)
+	totalFiles = len(fileEntries)
 	rt.SetState(task.ID, func(s *RuntimeState) { s.TotalFiles = totalFiles })
 	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Total files: %d (strm=%d, download=%d)",
 		totalFiles, countKind(fileEntries, kindStrm), countKind(fileEntries, kindDownload)))
 
-	// 9) 写回 filePathDb（302 模式需要反查 pickcode）
-	if resolved.Enable302 && deps.SQLiteDB != nil {
+	// ---- P2-3 增量同步：基于 files 表 snapshot 跳过未变更条目 ----
+	// 执行顺序：必须在写回 filePathDb 之前取 snapshot，否则 upsert 覆盖后无差异可识别。
+	incremental := settings.Download.IncrementalSync && deps.SQLiteDB != nil && task.Account != ""
+	if incremental {
+		histKind = db.StrmHistoryKindIncrement
+	}
+	if incremental {
+		snap, serr := db.ListSnapshotByAccount(deps.SQLiteDB, task.Account, task.OriginPath)
+		if serr != nil {
+			sseServer.EmitLog(task.ID, "warn", "增量快照读取失败，退化为全量: "+serr.Error())
+			incremental = false
+		} else if len(snap) > 0 {
+			skipped := 0
+			for _, f := range fileEntries {
+				// kindSkip 已跳过的不重复处理（黑名单/过小的）
+				if f.Kind == kindSkip {
+					continue
+				}
+				if se, ok := snap[f.CloudPath]; ok &&
+					se.PickCode == f.PickCode &&
+					se.FileName == f.Name {
+					f.Kind = kindSkip
+					skipped++
+				}
+			}
+			if skipped > 0 {
+				sseServer.EmitLog(task.ID, "info", fmt.Sprintf(
+					"增量模式：已跳过 %d 个未变化文件 (CloudPath+PickCode+FileName 与上次同步一致)", skipped))
+			}
+			// 刷新 totalFiles 统计，保持与进度一致
+			totalFiles = 0
+			for _, f := range fileEntries {
+				if f.Kind != kindSkip {
+					totalFiles++
+				}
+			}
+			rt.SetState(task.ID, func(s *RuntimeState) { s.TotalFiles = totalFiles })
+		}
+	}
+
+	// ---- P0-1 增量对账清理：扫描本地 STRM，孤儿（云端已删但本地仍存）按 mode 处理 ----
+	// 注意：cloudPickcodes 来自本次 fileEntries（云端最新列表），而非 DB（DB 可能滞后），
+	// 这样对账更准确。kindSkip 条目的 pickcode 仍会进入集合（buildCloudPickcodeSet 不分 Kind），
+	// 避免增量跳过的条目被误判为孤儿。
+	if incremental {
+		mode := strings.ToLower(strings.TrimSpace(settings.Download.IncrementalCleanupMode))
+		if mode != "" && mode != "off" {
+			sseServer.EmitLog(task.ID, "info", "增量对账清理：开始扫描本地孤儿 STRM")
+			cloudPickcodes := buildCloudPickcodeSet(fileEntries)
+			orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
+				task.ID, task.TargetPath, cloudPickcodes, mode, settings.Cleanup, deps.EmbyRefresh)
+			if cerr != nil {
+				sseServer.EmitLog(task.ID, "warn", "增量对账清理失败: "+cerr.Error())
+				logger.S().Warnf("[Task] 增量对账清理失败 task=%s: %v", task.ID, cerr)
+			} else if orphanN > 0 && reqID != "" {
+				sseServer.EmitLog(task.ID, "warn",
+					fmt.Sprintf("增量对账：检测到孤儿 STRM 超阈值，已入队等待二次确认 (requestID=%s, count=%d)",
+						reqID, orphanN))
+			} else if orphanN > 0 {
+				sseServer.EmitLog(task.ID, "info",
+					fmt.Sprintf("增量对账：已处理 %d 个孤儿 STRM (mode=%s)", orphanN, mode))
+			}
+		}
+	}
+
+	// ---- P0-2 全量预扫清理：全量任务时清理孤儿 STRM ----
+	// 与 P0-1 互斥（incremental=true 跳过），cloudPickcodes = DB 快照 + 本次 fileEntries 合并，
+	// 避免误删历史 STRM 或本次新增的 STRM。对齐参考项目 full_sync_remove_unless_strm。
+	// 与 removeExtraFiles（基于路径）互补：本扫描基于 STRM 内容的 pickcode，更精确。
+	if !incremental {
+		mode := strings.ToLower(strings.TrimSpace(settings.Download.FullSyncCleanupOrphans))
+		if mode != "" && mode != "off" {
+			sseServer.EmitLog(task.ID, "info", "全量预扫清理：开始扫描本地孤儿 STRM")
+			var snapPickcodes map[string]struct{}
+			if deps.SQLiteDB != nil && task.Account != "" {
+				snap, serr := db.ListSnapshotByAccount(deps.SQLiteDB, task.Account, task.OriginPath)
+				if serr != nil {
+					sseServer.EmitLog(task.ID, "warn", "全量预扫：DB 快照读取失败: "+serr.Error())
+				} else if len(snap) > 0 {
+					snapPickcodes = buildCloudPickcodeSetFromSnapshot(snap)
+				}
+			}
+			// 合并：DB 历史 pickcode + 本次云端最新 pickcode，避免误删
+			cloudPickcodes := mergePickcodeSets(snapPickcodes, buildCloudPickcodeSet(fileEntries))
+			orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
+				task.ID, task.TargetPath, cloudPickcodes, mode, settings.Cleanup, deps.EmbyRefresh)
+			if cerr != nil {
+				sseServer.EmitLog(task.ID, "warn", "全量预扫清理失败: "+cerr.Error())
+				logger.S().Warnf("[Task] 全量预扫清理失败 task=%s: %v", task.ID, cerr)
+			} else if orphanN > 0 && reqID != "" {
+				sseServer.EmitLog(task.ID, "warn",
+					fmt.Sprintf("全量预扫：检测到孤儿 STRM 超阈值，已入队等待二次确认 (requestID=%s, count=%d)",
+						reqID, orphanN))
+			} else if orphanN > 0 {
+				sseServer.EmitLog(task.ID, "info",
+					fmt.Sprintf("全量预扫：已处理 %d 个孤儿 STRM (mode=%s)", orphanN, mode))
+			}
+		}
+	}
+
+	// 9) 写回 filePathDb（不仅 Enable302 反查需要，生活事件 move/rename 时也依赖 DB 反查旧路径）
+	if deps.SQLiteDB != nil {
 		entries := make([]db.FilePathEntry, 0, len(fileEntries))
 		for _, f := range fileEntries {
-			if f.PickCode == "" {
+			if !isValidPickcode(f.PickCode) {
 				continue
 			}
 			entries = append(entries, db.FilePathEntry{
@@ -170,6 +315,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	// 10) 下载/写 STRM：按文件类型拆分，并发执行
 	if err := os.MkdirAll(task.TargetPath, 0o755); err != nil {
 		msg := "mkdir target failed: " + err.Error()
+		histSuccess = false
+		histErrMsg = msg
 		sseServer.EmitLog(task.ID, "error", msg)
 		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli() })
 		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
@@ -177,7 +324,6 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	}
 
 	perFilePct := newPerFilePercent(totalFiles)
-	downloaded := new(int64)
 
 	// ---- 写 STRM 文件（并发数可通过 settings 配置） ----
 	strmWorkers := defaultStrmWorkers
@@ -187,37 +333,73 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			strmWorkers = defaultStrmWorkers
 		}
 	}
+	// 对齐 MoviePilot overwrite_mode："never" 时已存在 STRM 则跳过；"always"(默认) 始终覆盖
+	overwriteNever := strings.EqualFold(settings.Download.OverwriteMode, "never")
+	// P1-4 高级模板
+	strmUrlTemplate := settings.Strm.StrmUrlTemplate
+	strmFilenameTemplate := settings.Strm.StrmFilenameTemplate
 	strmFiles := filterKind(fileEntries, kindStrm)
 	cacheEntryUUID := uuid.New().String()
 	cacheRelPaths := make([]string, 0, len(strmFiles))
 	cacheLocalPaths := make([]string, 0, len(strmFiles))
 	var cacheMu sync.Mutex
 	if len(strmFiles) > 0 {
-		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("writing %d strm files (concurrency=%d)", len(strmFiles), strmWorkers))
-		wg := sync.WaitGroup{}
-		sem := make(chan struct{}, strmWorkers)
+		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("writing %d strm files (concurrency=%d, overwrite=%s)",
+			len(strmFiles), strmWorkers, settings.Download.OverwriteMode))
+		// P2-1：统一用 WorkerPool，不再每处手写 sem+wg 模板
+		pool := concurrency.NewPool(strmWorkers)
+		skipped := new(int64)
 		for _, f := range strmFiles {
-			wg.Add(1)
-			sem <- struct{}{}
-			go func(f *fileItem) {
-				defer wg.Done()
-				defer func() { <-sem }()
-				savePath := filepath.Join(task.TargetPath, f.RelPath+".strm")
-				content, cerr := buildStrmContent(task, f, resolved)
+			f := f
+			pool.Submit(func() error {
+				// P1-4 文件名模板优先，否则回退默认（.iso 保留双扩展名）
+				var strmRelPath string
+				if strmFilenameTemplate != "" {
+					relDir, relName := filepath.Split(f.RelPath)
+					ext := strings.ToLower(filepath.Ext(f.Name))
+					stem := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
+					if strings.EqualFold(ext, ".iso") {
+						stem = stem + ".iso"
+					}
+					newName := model.RenderStrmFilenameTemplate(strmFilenameTemplate, f.Name, ext, stem, task.Account)
+					if newName == "" {
+						newName = getStrmFileName(relName)
+					}
+					strmRelPath = filepath.Join(relDir, newName)
+				} else {
+					// 默认：正确处理 .iso 双扩展名：f.RelPath = "sub/game.iso" → "sub/game.iso.strm"
+					strmRelPath = replaceRelPathExtToStrm(f.RelPath)
+				}
+				savePath := filepath.Join(task.TargetPath, strmRelPath)
+				// 对齐 MoviePilot：overwrite_mode=="never" 且文件已存在 → 跳过
+				if overwriteNever {
+					if _, statErr := os.Stat(savePath); statErr == nil {
+						atomic.AddInt64(skipped, 1)
+						return nil
+					}
+				}
+				content, cerr := buildStrmContent(task, f, resolved, strmUrlTemplate)
 				if cerr != nil {
 					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("build strm %s: %v", f.RelPath, cerr))
-					return
+					return nil
 				}
 				if cerr = ensureDir(filepath.Dir(savePath)); cerr != nil {
 					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("mkdir %s: %v", filepath.Dir(savePath), cerr))
-					return
+					return nil
 				}
-				if cerr = os.WriteFile(savePath, []byte(content), 0o644); cerr != nil {
+				// 原子写入：先写 tmp 再 rename，避免并发读到半截文件
+				if cerr = writeStrmFile(savePath, content); cerr != nil {
 					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("write %s: %v", savePath, cerr))
-					return
+					return nil
+				}
+				// Emby 刷库（带防抖，对齐 MoviePilot mediaserver_helper.refresh_mediaserver）
+				if deps.EmbyRefresh != nil {
+					if rerr := deps.EmbyRefresh.RefreshOnCreate(ctx, savePath); rerr != nil {
+						logger.S().Debugf("[Task] Emby 刷库安排失败 path=%s: %v", savePath, rerr)
+					}
 				}
 				cacheMu.Lock()
-				cacheRelPaths = append(cacheRelPaths, f.RelPath+".strm")
+				cacheRelPaths = append(cacheRelPaths, strmRelPath)
 				cacheLocalPaths = append(cacheLocalPaths, savePath)
 				cacheMu.Unlock()
 				perFilePct.Mark(f.CloudPath, 100)
@@ -229,9 +411,13 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				sseServer.EmitProgress(sse.ProgressPayload{
 					TaskID: task.ID, FilePath: f.RelPath, Percent: 100, OverallPercent: overall, Done: done,
 				})
-			}(f)
+				return nil
+			})
 		}
-		wg.Wait()
+		pool.Wait()
+		if overwriteNever && skipped != nil && *skipped > 0 {
+			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("overwrite=never：已跳过 %d 个已存在 STRM 文件", *skipped))
+		}
 	}
 
 	// ---- 真实下载文件（设置了 downloadExtensions 且启用自动下载才做） ----
@@ -256,12 +442,96 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	// ---- 11) removeExtraFiles：清理本地多余文件 ----
 	if task.RemoveExtraFiles {
 		sseServer.EmitLog(task.ID, "info", "scanning for extra files to remove")
-		deleted, derr := removeExtraFiles(task.TargetPath, fileEntries, settings)
+		deleted, reqID, derr := removeExtraFiles(ctx, deps.CleanupSubmitter, task.ID, task.TargetPath, fileEntries, settings)
 		if derr != nil {
 			sseServer.EmitLog(task.ID, "warn", "removeExtraFiles err: "+derr.Error())
+		} else if reqID != "" {
+			// 延迟清理批次已入队，等待用户二次确认（Web UI / Telegram）
+			sseServer.EmitLog(task.ID, "warn",
+				fmt.Sprintf("检测到孤儿文件超过稳定阈值，已延迟删除并等待二次确认 (requestID=%s)", reqID))
+			sseServer.EmitLog(task.ID, "info",
+				"请到 Web UI 清理页 /api/strmCleanup/pending 或 Telegram 按钮确认")
+			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = 0 })
 		} else {
 			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = deleted })
 			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("removed %d extra files", deleted))
+			// Emby 刷库（删除后刷新整个目标目录，对齐 MoviePilot full_sync_media_server_refresh）
+			if deps.EmbyRefresh != nil && deleted > 0 {
+				if rerr := deps.EmbyRefresh.RefreshOnDelete(ctx, task.TargetPath); rerr != nil {
+					logger.S().Debugf("[Task] Emby 刷库安排失败 path=%s: %v", task.TargetPath, rerr)
+				}
+			}
+		}
+	}
+
+	// ---- 11.8) P1-3 DB 幽灵记录清理 ----
+	// removeExtraFiles 后（或用户手动删除本地 STRM）files 表可能残留已失效 file_id → path 映射，
+	// 导致 302 模式 pickcode 反查返回错误指向。此处基于 task.TargetPath 做范围扫描：
+	//   遍历 DB 中该 account 条目 → 按 LifeMonitor.PathMappings 换算 localPath →
+	//   若 localPath 落在 TargetPath 范围内且本地文件不存在 → 判定幽灵并清理 DB 记录。
+	if deps.SQLiteDB != nil && task.Account != "" {
+		targetAbs, aerr := filepath.Abs(task.TargetPath)
+		if aerr != nil {
+			targetAbs = task.TargetPath
+		}
+		mappings := settings.LifeMonitor.PathMappings
+		resolve := func(entry db.FilePathEntry) (strmPath string, shouldCheck bool) {
+			// 匹配路径映射：按 account 过滤，最长 cloudPath 前缀匹配
+			cloudPath := entry.Path
+			if cloudPath == "" {
+				return "", false
+			}
+			var bestLocal string
+			var bestPrefixLen int
+			for _, mp := range mappings {
+				if mp.Account != "" && mp.Account != task.Account {
+					continue
+				}
+				key := strings.TrimRight(mp.CloudPath, "/")
+				// 精确匹配根
+				if cloudPath == mp.CloudPath || cloudPath == key {
+					if len(key) > bestPrefixLen {
+						bestPrefixLen = len(key)
+						bestLocal = mp.LocalPath
+					}
+					continue
+				}
+				norm := key + "/"
+				if strings.HasPrefix(cloudPath, norm) {
+					if len(key) > bestPrefixLen {
+						bestPrefixLen = len(key)
+						rel := cloudPath[len(norm):]
+						bestLocal = filepath.Join(mp.LocalPath, sanitizeCloudRelPath(rel))
+					}
+				}
+			}
+			if bestLocal == "" {
+				return "", false
+			}
+			// bestLocal 是 cloudPath 对应的完整本地路径（含文件名）
+			dir := filepath.Dir(bestLocal)
+			base := filepath.Base(bestLocal)
+			strmPath = filepath.Join(dir, getStrmFileName(base))
+			abs, err := filepath.Abs(strmPath)
+			if err != nil {
+				abs = strmPath
+			}
+			// 仅检查落在 TargetPath 下的条目
+			rel, err := filepath.Rel(targetAbs, abs)
+			if err != nil {
+				return abs, false
+			}
+			if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+				return abs, false
+			}
+			return abs, true
+		}
+		if n, perr := db.PurgeOrphanEntries(deps.SQLiteDB, task.Account, 0, resolve); perr != nil {
+			sseServer.EmitLog(task.ID, "warn", "DB 幽灵记录清理失败: "+perr.Error())
+			logger.S().Warnf("[Task] PurgeOrphanEntries failed task=%s: %v", task.ID, perr)
+		} else if n > 0 {
+			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("DB 幽灵记录已清理 %d 条", n))
+			logger.S().Infof("[Task] PurgeOrphanEntries task=%s deleted=%d", task.ID, n)
 		}
 	}
 
@@ -309,6 +579,29 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 }
 
 // ==================== 内部：辅助 ====================
+
+// recordStrmHistory P0-4 埋点 helper：记录 STRM 执行历史到 DB
+// 失败不阻断主流程，仅日志。对齐参考项目 core/history/strm.py
+func recordStrmHistory(deps ExecutorDeps, taskID, account string, kind db.StrmHistoryKind,
+	success bool, total, successN, failedN int, elapsedMs int64, errMsg string) {
+	if deps.SQLiteDB == nil {
+		return
+	}
+	entry := db.StrmHistoryEntry{
+		TaskID:       taskID,
+		Kind:         kind,
+		Account:      account,
+		Success:      success,
+		TotalFiles:   total,
+		SuccessFiles: successN,
+		FailedFiles:  failedN,
+		ElapsedMs:    elapsedMs,
+		ErrorMsg:     errMsg,
+	}
+	if _, err := db.InsertStrmHistory(deps.SQLiteDB, entry); err != nil {
+		logger.S().Warnf("[Task] recordStrmHistory failed task=%s: %v", taskID, err)
+	}
+}
 
 type fileKind int
 

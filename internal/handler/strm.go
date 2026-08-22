@@ -224,7 +224,7 @@ func doRedirect(w http.ResponseWriter, fileName, cdnURL string) {
 	if fileName != "" {
 		w.Header().Set("Content-Disposition", strm.BuildContentDisposition(fileName))
 	}
-	http.Redirect(w, &http.Request{Method: http.MethodGet}, cdnURL, http.StatusFound)
+	http.Redirect(w, &http.Request{Method: http.MethodGet}, encodeRedirectURL(cdnURL), http.StatusFound)
 }
 
 // ==================== handleProxy 流式代理 ====================

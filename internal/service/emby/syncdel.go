@@ -136,7 +136,7 @@ func (s *SyncDelete) HandleSyncDelete(ctx context.Context, item ItemInfo) error 
 	}
 
 	// 5. 删除 STRM 文件 + 关联文件
-	deletedFiles, deletedDirs := s.deleteByItemType(embyPath, itemType, mapping)
+	deletedFiles, deletedDirs := s.deleteByItemType(embyPath, itemType, itemName, mapping)
 
 	// 6. 更新 filePathDb（如果可用）
 	if s.filePathDb != nil {
@@ -262,19 +262,49 @@ func (s *SyncDelete) markRecentlyDeleted(itemID string) {
 
 // ==================== 按类型删除 ====================
 
+// SyncDeleteOptions SyncDelete 删除时的可配置选项
+// 参考 MoviePilot p115strmhelper sync_del_* 系列开关
+type SyncDeleteOptions struct {
+	// DeleteSymlink 是否删除本地 STRM 软链接本身（不跟目标）
+	// 对齐 sync_del_delete_symlink，默认 false
+	DeleteSymlink bool
+	// RemoveVersions 是否启用多版本删除（按 item.Name 的 title 部分模糊匹配清理所有版本）
+	// 对齐 sync_del_remove_versions，默认 false
+	RemoveVersions bool
+	// ItemName 媒体标题（用于多版本删除的 title 匹配）
+	ItemName string
+}
+
 // deleteByItemType 根据 itemType 分支删除逻辑
 // 对齐 TS deleteByItemType
 func (s *SyncDelete) deleteByItemType(
 	strmPath string,
 	itemType string,
+	itemName string,
 	mapping *model.SyncDeletePathMapping,
 ) (deletedFiles int, deletedDirs int) {
 	rootDirs := []string{normalizePath(mapping.EmbyPath)}
 
+	// 从 settings 构造 SyncDeleteOptions（P0 增强）
+	settings := s.settingsFn()
+	opts := SyncDeleteOptions{
+		DeleteSymlink:   settings.SyncDeleteDeleteSymlink,
+		RemoveVersions:  settings.SyncDeleteRemoveVersions,
+		ItemName:        itemName,
+	}
+
 	switch itemType {
 	case "Movie", "Episode":
 		// 删单个 STRM 文件 + 关联文件 + 空目录
-		return deleteStrmFile(strmPath, rootDirs)
+		deleted, dirs := deleteStrmFile(strmPath, rootDirs, opts)
+
+		// 多版本删除：扫描同目录下所有以 item.Name 的 title 部分开头的 STRM
+		if opts.RemoveVersions && opts.ItemName != "" {
+			extraDeleted, extraDirs := deleteMultiVersionStrms(strmPath, opts.ItemName, rootDirs, opts)
+			deleted += extraDeleted
+			dirs += extraDirs
+		}
+		return deleted, dirs
 
 	case "Season", "Series":
 		// 计算要删除的目录
@@ -319,21 +349,45 @@ func (s *SyncDelete) deleteByItemType(
 
 // deleteStrmFile 删除单个 STRM 文件 + 关联文件 + 空目录
 // 对齐 TS deleteStrmFile（cleanRelated=true）
-func deleteStrmFile(strmPath string, rootDirs []string) (deletedFiles int, deletedDirs int) {
-	// 防误删1：STRM 文件必须存在
-	info, err := os.Stat(strmPath)
+//
+// P0 增强：
+//   - 软链接处理：用 os.Lstat 检测 symlink，根据 opts.DeleteSymlink 决定是否删链接本身
+//   - 默认行为（DeleteSymlink=false）：检测到 symlink 时跳过（STRM 应为文本文件，symlink 异常情况）
+//   - 启用行为（DeleteSymlink=true）：os.Remove 删除 symlink 本身（不跟目标）
+func deleteStrmFile(strmPath string, rootDirs []string, opts SyncDeleteOptions) (deletedFiles int, deletedDirs int) {
+	// 防误删1：STRM 文件必须存在（用 Lstat 不跟符号链接）
+	info, err := os.Lstat(strmPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			logger.S().Infof("[%s] STRM 路径不存在，跳过（可能已被生活监控处理）: %s",
 				SyncDeleteTag, strmPath)
 			return 0, 0
 		}
-		logger.S().Errorf("[%s] stat 失败: %s err=%v", SyncDeleteTag, strmPath, err)
+		logger.S().Errorf("[%s] lstat 失败: %s err=%v", SyncDeleteTag, strmPath, err)
 		return 0, 0
 	}
+
+	// 软链接检测：STRM 应为文本文件，若是 symlink 则按开关处理
+	if info.Mode()&os.ModeSymlink != 0 {
+		if !opts.DeleteSymlink {
+			logger.S().Warnf("[%s] STRM 是软链接，DeleteSymlink=false 跳过: %s",
+				SyncDeleteTag, strmPath)
+			return 0, 0
+		}
+		// 启用软链接删除：删链接本身（不跟目标）
+		if err := os.Remove(strmPath); err != nil {
+			logger.S().Errorf("[%s] 删除软链接失败: %s err=%v", SyncDeleteTag, strmPath, err)
+			return 0, 0
+		}
+		logger.S().Infof("[%s] 删除软链接本身: %s", SyncDeleteTag, strmPath)
+		// 软链接没有关联文件（目标文件不在本地）
+		removedDirs := removeEmptyParents(filepath.Dir(strmPath), rootDirs)
+		return 1, removedDirs
+	}
+
 	if info.IsDir() {
 		// 目录走 deleteStrmDir 逻辑
-		return deleteStrmDir(strmPath, rootDirs)
+		return deleteStrmDir(strmPath, rootDirs, opts)
 	}
 
 	// 防误删2：标题校验由调用方负责（faststrm 场景宽松）
@@ -382,8 +436,88 @@ func deleteStrmFile(strmPath string, rootDirs []string) (deletedFiles int, delet
 	return deletedFiles, removedDirs
 }
 
+// deleteMultiVersionStrms 多版本删除：扫描同目录下所有以 itemName 的 title 部分开头的 STRM
+// 参考 MoviePilot p115strmhelper sync_del_remove_versions
+//
+// title 提取规则：去掉常见分辨率/编码后缀（4K/1080P/2160P/720P/H265/H264 等）
+// 例：itemName="Movie (2020) - 1080p.mkv" → title="Movie (2020) -"
+//   扫描同目录下 "Movie (2020) -*.strm" 全部删除
+func deleteMultiVersionStrms(strmPath string, itemName string, rootDirs []string, opts SyncDeleteOptions) (deletedFiles int, deletedDirs int) {
+	dir := filepath.Dir(strmPath)
+	title := extractTitleForMultiVersion(itemName)
+	if title == "" {
+		return 0, 0
+	}
+	logger.S().Infof("[%s] 多版本删除: title=%q dir=%s", SyncDeleteTag, title, dir)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		logger.S().Errorf("[%s] 多版本删除读取目录失败: %s err=%v", SyncDeleteTag, dir, err)
+		return 0, 0
+	}
+
+	// 当前 STRM 已经被 deleteStrmFile 删除，这里跳过主路径
+	mainPath := strmPath
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		fullPath := filepath.Join(dir, name)
+		if fullPath == mainPath {
+			continue
+		}
+		// 只处理 .strm 文件
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".strm" {
+			continue
+		}
+		// 检查文件名是否以 title 开头（多版本匹配）
+		if strings.HasPrefix(name, title) {
+			extraFiles, extraDirs := deleteStrmFile(fullPath, rootDirs, opts)
+			deletedFiles += extraFiles
+			deletedDirs += extraDirs
+		}
+	}
+	logger.S().Infof("[%s] 多版本删除完成: deleted=%d dirs=%d", SyncDeleteTag, deletedFiles, deletedDirs)
+	return deletedFiles, deletedDirs
+}
+
+// extractTitleForMultiVersion 从 itemName 中提取多版本匹配用的 title 前缀
+// 去掉分辨率/编码后缀：4K/1080P/2160P/720P/H265/H264/HEVC/AV1 等
+// 例："Movie (2020) - 1080p.mkv" → "Movie (2020) -"
+//     "Movie (2020) - 4K HDR.mkv" → "Movie (2020) -"
+func extractTitleForMultiVersion(itemName string) string {
+	if itemName == "" {
+		return ""
+	}
+	// 去掉扩展名
+	name := strings.TrimSuffix(itemName, filepath.Ext(itemName))
+	// 转小写做不敏感匹配
+	lower := strings.ToLower(name)
+	// 常见分辨率/编码后缀列表（按长度倒序，避免误截）
+	suffixes := []string{
+		" 2160p", " 1080p", " 720p", " 480p",
+		" 4k", " 8k",
+		" h265", " h264", " hevc", " av1",
+		" hdr", " sdr",
+		" web-dl", " webrip", " bluray", " bdrip",
+	}
+	for _, suf := range suffixes {
+		if idx := strings.Index(lower, suf); idx > 0 {
+			// 取前缀（去掉 suf 及之后的所有内容）
+			title := strings.TrimSpace(name[:idx])
+			if title != "" {
+				return title
+			}
+		}
+	}
+	// 未匹配到后缀，返回完整 name（去扩展名）
+	return name
+}
+
 // deleteStrmDir 删除目录级 STRM（整季/整剧）
-func deleteStrmDir(dirPath string, rootDirs []string) (deletedFiles int, deletedDirs int) {
+func deleteStrmDir(dirPath string, rootDirs []string, opts SyncDeleteOptions) (deletedFiles int, deletedDirs int) {
 	info, err := os.Stat(dirPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -395,7 +529,7 @@ func deleteStrmDir(dirPath string, rootDirs []string) (deletedFiles int, deleted
 	}
 	if !info.IsDir() {
 		// 文件走 deleteStrmFile
-		return deleteStrmFile(dirPath, rootDirs)
+		return deleteStrmFile(dirPath, rootDirs, opts)
 	}
 
 	// 防误删3：目录文件数校验

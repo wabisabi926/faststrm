@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -196,6 +197,58 @@ func GetEntryCount(db *sql.DB, account string) (int64, error) {
 	return n, err
 }
 
+// SnapshotEntry P2-3 增量同步 snapshot entry（比 FilePathEntry 精简，仅含无变化判断字段）
+type SnapshotEntry struct {
+	Path     string
+	PickCode string
+	FileName string
+}
+
+// ListSnapshotByAccount 读取指定 account 的全量 files 快照（用于 P2-3 增量同步比对）。
+// 若 cloudPathPrefix 非空，仅返回 path 以该 prefix 开头的条目（限定单任务范围，避免跨任务误匹配）。
+// 返回值：map[cloudPath]SnapshotEntry
+func ListSnapshotByAccount(db *sql.DB, account string, cloudPathPrefix string) (map[string]SnapshotEntry, error) {
+	snap := make(map[string]SnapshotEntry)
+	if account == "" || db == nil {
+		return snap, nil
+	}
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	base := `SELECT path, pickcode, file_name FROM files WHERE account = ?`
+	if cloudPathPrefix != "" {
+		base += ` AND (path = ? OR path LIKE ?)`
+		prefixNorm := cloudPathPrefix
+		if !strings.HasSuffix(prefixNorm, "/") {
+			prefixNorm = prefixNorm + "/"
+		}
+		like := prefixNorm + "%"
+		rows, err = db.Query(base, account, cloudPathPrefix, like)
+	} else {
+		rows, err = db.Query(base, account)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var se SnapshotEntry
+		var pc sql.NullString
+		var fn sql.NullString
+		if e := rows.Scan(&se.Path, &pc, &fn); e != nil {
+			return nil, e
+		}
+		se.PickCode = pc.String
+		se.FileName = fn.String
+		snap[se.Path] = se
+	}
+	if e := rows.Err(); e != nil {
+		return nil, e
+	}
+	return snap, nil
+}
+
 // RemoveFilePathEntryBatch 分块删除多个 file_id
 func RemoveFilePathEntryBatch(db *sql.DB, account string, fileIDs []string) (int64, error) {
 	if len(fileIDs) == 0 {
@@ -223,6 +276,87 @@ func RemoveFilePathEntryBatch(db *sql.DB, account string, fileIDs []string) (int
 		deleted += n
 	}
 	return deleted, nil
+}
+
+// ==================== P0-2 folders 表 CRUD ====================
+
+// UpsertFolderEntry 插入或更新文件夹记录（对齐参考项目 process_life_dir_item）
+func UpsertFolderEntry(db *sql.DB, account string, e FilePathEntry) error {
+	fileID, path, fileName, parentID, _, updateTime, err := normalizeEntry(&e)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`
+		INSERT INTO folders (account, file_id, path, file_name, parent_id, update_time)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(account, file_id) DO UPDATE SET
+			path        = excluded.path,
+			file_name   = excluded.file_name,
+			parent_id   = excluded.parent_id,
+			update_time = excluded.update_time`,
+		account, fileID, path, fileName, parentID, updateTime,
+	)
+	return err
+}
+
+// GetFolderEntry 按 (account, fileId) 查 folders 表单条记录
+func GetFolderEntry(db *sql.DB, account string, fileID string) (*FilePathEntry, error) {
+	row := db.QueryRow(`
+		SELECT file_id, path, file_name, parent_id, '', update_time
+		FROM folders WHERE account = ? AND file_id = ?`,
+		account, fileID,
+	)
+	return scanEntry(row.Scan)
+}
+
+// GetFileOrFolderEntry 先查 files 表，未命中再查 folders 表
+// 对齐参考项目 _databasehelper.get_by_id(file_id) 的统一查询语义
+func GetFileOrFolderEntry(db *sql.DB, account string, fileID string) (*FilePathEntry, error) {
+	// 先查 files 表
+	entry, err := GetFilePathEntry(db, account, fileID)
+	if err != nil {
+		return nil, err
+	}
+	if entry != nil {
+		return entry, nil
+	}
+	// files 表未命中，查 folders 表
+	return GetFolderEntry(db, account, fileID)
+}
+
+// UpdateFolderPathPrefixBatch folders 表批量更新路径前缀（rename/move 文件夹时调用）
+func UpdateFolderPathPrefixBatch(db *sql.DB, account, oldPrefix, newPrefix string) (int64, error) {
+	oldP := strings.TrimSuffix(normalizeDbPath(oldPrefix), "/")
+	newP := strings.TrimSuffix(normalizeDbPath(newPrefix), "/")
+	if oldP == "" || oldP == "/" {
+		return 0, nil
+	}
+	oldPrefixLen := len([]rune(oldP)) + 1
+	oldPLike := oldP + "/%"
+	res, err := db.Exec(`
+		UPDATE folders
+		SET path = ? || substr(path, ?)
+		WHERE account = ? AND (path = ? OR path LIKE ?)`,
+		newP, oldPrefixLen, account, oldP, oldPLike,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// DeleteFolderByPathPrefix 按路径前缀批量删除 folders 表记录
+func DeleteFolderByPathPrefix(db *sql.DB, account, pathPrefix string) (int64, error) {
+	p := strings.TrimSuffix(normalizeDbPath(pathPrefix), "/")
+	if p == "" || p == "/" {
+		return 0, nil
+	}
+	res, err := db.Exec(`DELETE FROM folders WHERE account = ? AND (path = ? OR path LIKE ?)`,
+		account, p, p+"/%")
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // ==================== 辅助 ====================
@@ -280,4 +414,102 @@ func (r *FilePathRepo) DeleteByPathPrefix(account, pathPrefix string) (int64, er
 		return 0, nil
 	}
 	return DeleteByPathPrefix(r.db, account, pathPrefix)
+}
+
+// ==================== P1-3 幽灵记录清理 ====================
+
+// PurgeOrphanEntries 扫描 files 表，对 resolveLocal 返回的本地 STRM 路径执行 os.Stat，
+// 若文件缺失且 shouldDeleteIfMissing==true，则删除该 DB 条目。用于清理手动删文件/同步异常
+// 后遗留的 DB 幽灵记录，避免 302 模式 pickcode 反查返回已失效文件指向。
+//
+// resolveLocal: (entry) -> (本地 STRM 绝对路径, 当该路径文件缺失时是否判定为幽灵)
+//   - 返回 shouldDeleteIfMissing=false 的条目会被跳过（例如条目不在当前 task targetPath 范围内）
+// maxCheck<=0 表示不限制检查数量（分页扫描，内存安全）
+// 返回 (实际删除 DB 条数, error)
+func PurgeOrphanEntries(
+	db *sql.DB,
+	account string,
+	maxCheck int,
+	resolveLocal func(entry FilePathEntry) (strmPath string, shouldDeleteIfMissing bool),
+) (int64, error) {
+	if db == nil || account == "" {
+		return 0, nil
+	}
+	var (
+		deleted      int64
+		checked      int
+		orphanIDs    []string
+		orphanBufCap = 200
+		pageSize     = 1000
+		offset       = 0
+	)
+	flushOrphans := func() error {
+		if len(orphanIDs) == 0 {
+			return nil
+		}
+		n, ferr := RemoveFilePathEntryBatch(db, account, orphanIDs)
+		if ferr == nil {
+			deleted += n
+		} else {
+			return ferr
+		}
+		orphanIDs = orphanIDs[:0]
+		return nil
+	}
+	for {
+		rows, qerr := db.Query(`
+			SELECT file_id, path, file_name, parent_id, pickcode, update_time
+			FROM files WHERE account = ?
+			ORDER BY file_id LIMIT ? OFFSET ?`,
+			account, pageSize, offset,
+		)
+		if qerr != nil {
+			return deleted, qerr
+		}
+		batchCount := 0
+		for rows.Next() {
+			batchCount++
+			entry, serr := scanEntry(rows.Scan)
+			if serr != nil || entry == nil {
+				continue
+			}
+			checked++
+			if maxCheck > 0 && checked > maxCheck {
+				break
+			}
+			strmPath, shouldDelete := resolveLocal(*entry)
+			if !shouldDelete || strmPath == "" {
+				continue
+			}
+			if _, sterr := osStat(strmPath); sterr != nil {
+				// 文件不存在或无权限，判定为幽灵
+				orphanIDs = append(orphanIDs, entry.FileID)
+				if len(orphanIDs) >= orphanBufCap {
+					if ferr := flushOrphans(); ferr != nil {
+						rows.Close()
+						return deleted, ferr
+					}
+				}
+			}
+		}
+		cerr := rows.Close()
+		if cerr != nil {
+			return deleted, cerr
+		}
+		if batchCount < pageSize || (maxCheck > 0 && checked >= maxCheck) {
+			break
+		}
+		offset += pageSize
+	}
+	if ferr := flushOrphans(); ferr != nil {
+		return deleted, ferr
+	}
+	return deleted, nil
+}
+
+// osStat 包内封装方便单测 mock（默认走 os.Stat）
+var osStat = _defaultOSStat
+
+func _defaultOSStat(name string) (any, error) {
+	return os.Stat(name)
 }

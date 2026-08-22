@@ -97,15 +97,46 @@ func Run(cfg *config.AppConfig) error {
 	scheduler := task.GetScheduler()
 	// 组装 baseURL：host:port (dev 默认 127.0.0.1)
 	baseURL := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+
+	// 提前创建 embyRefresh（需注入 execDeps 和 initPhase6Deps）
+	embySettingsFn := func() model.EmbySettings {
+		s, err := settingsStore.ReadSettings()
+		if err != nil || s == nil {
+			return model.EmbySettings{}
+		}
+		return s.Emby
+	}
+	var embyClient *emby.Client
+	initSettings, _ := settingsStore.ReadSettings()
+	if initSettings != nil && initSettings.Emby.URL != "" && initSettings.Emby.APIKey != "" {
+		embyClient = emby.NewClient(initSettings.Emby.URL, initSettings.Emby.APIKey)
+	}
+	embyRefresh := emby.NewMediaServerRefresh(embyClient, embySettingsFn)
+
+	// 提前创建 cleanupInteraction（先用 nil bot，等 notifyDeps.TelegramBot 就绪后通过 SetBot 注入）
+	// 这样可以把它通过 cleanupSubmitterAdapter 注入到 execDeps.CleanupSubmitter，
+	// 让 task 执行器的 removeExtraFiles 在入队延迟批次时能调用 AppendBatch 持久化到 SQLite。
+	var cleanupInteraction *handler.StrmCleanupInteraction
+	if sqliteDB != nil {
+		cleanupInteraction, err = handler.NewStrmCleanupInteraction(sqliteDB, nil, settingsStore)
+		if err != nil {
+			logger.S().Warnf("[Phase6] init cleanup interaction failed (continue without pending queue): %v", err)
+			cleanupInteraction = nil
+		}
+	} else {
+		logger.S().Warnf("[Phase6] sqlite not available, cleanup interaction disabled")
+	}
 	execDeps := task.ExecutorDeps{
-		Client115:     client,
-		AccountStore:  accountStore,
-		SettingsStore: store.NewSettingsAdapter(settingsStore),
-		SQLiteDB:      sqliteDB,
-		TasksStore:    tasksStore,
-		StrmCache:     &strmCacheWriterAdapter{inner: strmCacheStore},
-		BaseURL:       baseURL,
-		PublicBaseURL: cfg.Settings.StrmPrefix,
+		Client115:        client,
+		AccountStore:     accountStore,
+		SettingsStore:    store.NewSettingsAdapter(settingsStore),
+		SQLiteDB:         sqliteDB,
+		TasksStore:       tasksStore,
+		StrmCache:        &strmCacheWriterAdapter{inner: strmCacheStore},
+		EmbyRefresh:      embyRefresh,
+		CleanupSubmitter: &cleanupSubmitterAdapter{interaction: cleanupInteraction},
+		BaseURL:          baseURL,
+		PublicBaseURL:     cfg.Settings.StrmPrefix,
 	}
 	_ = scheduler.Init(execDeps, tasksStore, store.NewSettingsAdapter(settingsStore))
 
@@ -113,13 +144,19 @@ func Run(cfg *config.AppConfig) error {
 	notifyDeps, embyDeps, lifeMonitorDeps, mon := initPhase6Deps(
 		settingsStore, tasksStore, accountStore,
 		lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
-		taskRuntime, execDeps,
+		taskRuntime, execDeps, embyClient, embyRefresh,
 	)
+
+	// 延迟注入 TelegramBot 到 cleanupInteraction（在 initPhase6Deps 创建 notifyDeps.TelegramBot 之后）
+	if cleanupInteraction != nil && notifyDeps.TelegramBot != nil {
+		cleanupInteraction.SetBot(notifyDeps.TelegramBot)
+		logger.S().Infof("[Phase6] TelegramBot 已注入 cleanupInteraction，TG 按钮通知就绪")
+	}
 
 	// 注册路由
 	RegisterRoutes(server, cfg, issuer, client, accountStore, settingsStore, tasksStore, strmCacheStore,
 		taskHistoryRepo, taskRuntime, scheduler, execDeps,
-		notifyDeps, embyDeps, lifeMonitorDeps)
+		notifyDeps, embyDeps, lifeMonitorDeps, cleanupInteraction)
 
 	// 若生活监控已在配置中启用，启动后台监控（异步）
 	if mon != nil {
@@ -157,6 +194,7 @@ func RegisterRoutes(
 	notifyDeps handler.NotifyDeps,
 	embyDeps handler.EmbyDeps,
 	lifeMonitorDeps handler.LifeMonitorDeps,
+	cleanupInteraction *handler.StrmCleanupInteraction,
 ) {
 	// ========== 公开路由（无需 JWT，仅 CORS） ==========
 	publicRoutes := []rest.Route{
@@ -183,9 +221,9 @@ func RegisterRoutes(
 		{Method: http.MethodHead, Path: "/api/strm", Handler: middleware.CORS(handler.HandleStrm(handler.StrmOptions{
 			Cfg: cfg, Client115: client, AccountStore: accountStore,
 		}))},
-		{Method: http.MethodGet, Path: "/api/fs/get", Handler: middleware.CORS(jwtMW(handler.HandleFsGet(handler.StrmOptions{
+		{Method: http.MethodGet, Path: "/api/fs/get", Handler: middleware.CORS(handler.HandleFsGet(handler.StrmOptions{
 			Cfg: cfg, Client115: client, AccountStore: accountStore,
-		})))},
+		}))},
 	})
 
 	// ========== 受保护路由（JWT + CORS） ==========
@@ -237,6 +275,10 @@ func RegisterRoutes(
 		{Method: http.MethodGet, Path: "/api/taskHistory", Handler: corsJWT(handler.HandleTaskHistory(handler.TaskHistoryDeps{Repo: taskHistoryRepo}))},
 		{Method: http.MethodGet, Path: "/api/taskLog", Handler: corsJWT(handler.HandleTaskLog(taskDeps))},
 		{Method: http.MethodGet, Path: "/api/taskLog/:taskId", Handler: corsJWT(handler.HandleTaskLog(taskDeps))},
+		// P0-4 STRM 执行历史：细粒度记录每次 STRM 生成/删除的操作历史
+		{Method: http.MethodGet, Path: "/api/history/strm", Handler: corsJWT(handler.HandleStrmHistoryList(handler.StrmHistoryDeps{DB: execDeps.SQLiteDB}))},
+		{Method: http.MethodGet, Path: "/api/history/strm/stats", Handler: corsJWT(handler.HandleStrmHistoryStats(handler.StrmHistoryDeps{DB: execDeps.SQLiteDB}))},
+		{Method: http.MethodGet, Path: "/api/history/strm/:id", Handler: corsJWT(handler.HandleStrmHistoryDetail(handler.StrmHistoryDeps{DB: execDeps.SQLiteDB}))},
 		// 目录
 		{Method: http.MethodGet, Path: "/api/directory/remote/list", Handler: corsJWT(handler.HandleRemoteDirList(dirDeps))},
 		{Method: http.MethodPost, Path: "/api/directory/local/list", Handler: corsJWT(handler.HandleLocalDirList(dirDeps))},
@@ -298,6 +340,11 @@ func RegisterRoutes(
 	})
 
 	// ==================== STRM 清理 & 扫描 ====================
+	// cleanupInteraction 已在 Run 主流程提前创建并注入到 execDeps.CleanupSubmitter（task 执行器延迟批次入队就绪）
+	// 这里仅用于 strmCleanupDeps 装配 HTTP handler，并注入 TG CommandHandler 处理 inline 按钮回调
+	if cleanupInteraction != nil {
+		logger.S().Infof("[Phase6] cleanup interaction 复用（已注入 execDeps.CleanupSubmitter 与 HTTP handler）")
+	}
 	strmCleanupDeps := handler.StrmCleanupDeps{
 		SettingsStore: settingsStore,
 		AccountStore:  accountStore,
@@ -306,10 +353,20 @@ func RegisterRoutes(
 		},
 		TasksStore:    tasksStore,
 		StrmCache:     strmCacheStore,
+		Interaction:   cleanupInteraction,
+	}
+	// P0 注入 cleanupInteraction 到 TG CommandHandler（处理 inline 按钮回调）
+	if cleanupInteraction != nil && notifyDeps.CommandHandler != nil {
+		notifyDeps.CommandHandler.SetCleanupCallbackHandler(cleanupInteraction)
+		logger.S().Infof("[Phase6] cleanup interaction 已注入 TG CommandHandler")
 	}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodPost, Path: "/api/strmCleanup/scan", Handler: corsJWT(handler.HandleStrmCleanupScanPOST(strmCleanupDeps))},
 		{Method: http.MethodPost, Path: "/api/strmCleanup/execute", Handler: corsJWT(handler.HandleStrmCleanupExecutePOST(strmCleanupDeps))},
+		// P0 待删批次二次确认 API
+		{Method: http.MethodGet, Path: "/api/strmCleanup/pending", Handler: corsJWT(handler.HandleStrmCleanupPendingListGET(strmCleanupDeps))},
+		{Method: http.MethodPost, Path: "/api/strmCleanup/pending/cancel", Handler: corsJWT(handler.HandleStrmCleanupPendingCancelPOST(strmCleanupDeps))},
+		{Method: http.MethodPost, Path: "/api/strmCleanup/pending/execute", Handler: corsJWT(handler.HandleStrmCleanupPendingExecutePOST(strmCleanupDeps))},
 	})
 
 	// ==================== 阶段6: 生活监控 + 事件日志 ====================
@@ -341,14 +398,14 @@ func initPhase6Deps(
 	stateMgr *runtime.StateManager,
 	taskRuntime *task.Runtime,
 	execDeps task.ExecutorDeps,
+	embyClient *emby.Client,
+	embyRefresh *emby.MediaServerRefresh,
 ) (handler.NotifyDeps, handler.EmbyDeps, handler.LifeMonitorDeps, *monitor.Monitor) {
-	// 读取启动时配置，用于初始化 TelegramBot / EmbyClient
+	// 读取启动时配置，用于初始化 TelegramBot
 	initSettings, _ := settingsStore.ReadSettings()
 	var tgSettings model.TelegramSettings
-	var embySettings model.EmbySettings
 	if initSettings != nil {
 		tgSettings = initSettings.Telegram
-		embySettings = initSettings.Emby
 	}
 
 	// ---------- Telegram / Notify ----------
@@ -381,10 +438,6 @@ func initPhase6Deps(
 	}
 
 	// ---------- Emby ----------
-	var embyClient *emby.Client
-	if embySettings.URL != "" && embySettings.APIKey != "" {
-		embyClient = emby.NewClient(embySettings.URL, embySettings.APIKey)
-	}
 	embySettingsFn := func() model.EmbySettings {
 		s, err := settingsStore.ReadSettings()
 		if err != nil || s == nil {
@@ -398,7 +451,6 @@ func initPhase6Deps(
 	if filePathRepo != nil {
 		embySyncDel.SetFilePathDb(filePathRepo)
 	}
-	embyRefresh := emby.NewMediaServerRefresh(embyClient, embySettingsFn)
 
 	embyDeps := handler.EmbyDeps{
 		SettingsStore: settingsStore,
@@ -411,9 +463,35 @@ func initPhase6Deps(
 	lifeSettingsFn := func() model.LifeMonitorSettings {
 		s, err := settingsStore.ReadSettings()
 		if err != nil || s == nil {
-			return model.LifeMonitorSettings{}
+			return model.DefaultSettings().LifeMonitor
 		}
-		return s.LifeMonitor
+		life := s.LifeMonitor
+		// 继承全局的 STRM 配置（若 life 自身未设置）
+		if life.StrmPrefix == "" {
+			life.StrmPrefix = s.StrmPrefix
+		}
+		// 全局前缀仍为空则使用默认值
+		if life.StrmPrefix == "" {
+			life.StrmPrefix = "http://127.0.0.1:8090"
+		}
+		// Enable302/EnablePathEncoding：以全局为准（life 未单独开关的场景）
+		// 若 life 自身未显式设置，继承全局
+		// （注意：bool 零值无法区分"未设置"和"显式 false"，这里直接用全局 OR 覆盖即可）
+		if s.Enable302 {
+			life.Enable302 = true
+		}
+		if s.EnablePathEncoding {
+			life.EnablePathEncoding = true
+		}
+		// 黑名单关键词：life 自身未设置（空切片）时，继承全局 Download.StrmGenerateBlacklist
+		if len(life.StrmGenerateBlacklist) == 0 {
+			life.StrmGenerateBlacklist = s.Download.StrmGenerateBlacklist
+		}
+		// OverwriteMode：life 自身未设置（空字符串）时，继承全局 Download.OverwriteMode
+		if life.OverwriteMode == "" {
+			life.OverwriteMode = s.Download.OverwriteMode
+		}
+		return life
 	}
 	mon := monitor.NewMonitor(
 		lifeSettingsFn,
@@ -423,6 +501,7 @@ func initPhase6Deps(
 		dispatcher,
 		accountStore,
 		embyRefresh,
+		execDeps.SQLiteDB,
 	)
 
 	// ---------- MenuActions 适配器 ----------
@@ -716,4 +795,40 @@ func (a *strmCacheWriterAdapter) Save(entry task.StrmCacheEntryLike) error {
 		Account: entry.Account, RelPaths: entry.RelPaths, LocalPaths: entry.LocalPaths,
 		CreatedAt: entry.CreatedAt,
 	})
+}
+
+// cleanupSubmitterAdapter 把 handler.StrmCleanupInteraction 适配为 task.CleanupBatchSubmitter
+// 在 Run 主流程提前创建 cleanupInteraction 时注入，让 task 执行器 removeExtraFiles
+// 能调用 AppendBatch 把延迟批次持久化到 SQLite，按 ConfirmMode=="telegram" 派发 TG 通知。
+type cleanupSubmitterAdapter struct {
+	interaction *handler.StrmCleanupInteraction
+}
+
+// SubmitDeferredBatch 实现 task.CleanupBatchSubmitter 接口
+// interaction 为 nil（SQLite 不可用）时返回错误，调用方（removeExtraFiles）会退化为立即删除。
+func (a *cleanupSubmitterAdapter) SubmitDeferredBatch(ctx context.Context, b task.DeferredCleanupBatch) (string, error) {
+	if a.interaction == nil {
+		return "", fmt.Errorf("cleanup interaction not initialized")
+	}
+	batch := handler.CleanupBatch{
+		RequestID:          b.RequestID,
+		CreatedAt:          b.CreatedAt.UnixMilli(),
+		Paths:              b.Paths,
+		SamplePaths:        handler.BuildSamplePaths(b.Paths),
+		PathCount:          len(b.Paths),
+		RemoveStrm:         b.RemoveStrm,
+		RemoveEmptyDirs:    b.RemoveEmptyDirs,
+		RemoveRelatedFiles: b.RemoveRelated,
+	}
+	if err := a.interaction.AppendBatch(ctx, batch); err != nil {
+		return "", fmt.Errorf("AppendBatch: %w", err)
+	}
+	// 按 ConfirmMode 派发通知（仅 telegram 模式发 TG 按钮；plugin_ui 由前端轮询 /pending）
+	if b.ConfirmMode == "telegram" {
+		if err := a.interaction.NotifyTelegramPending(ctx, batch); err != nil {
+			// 通知失败不影响入队结果，仅记录警告
+			logger.S().Warnf("[cleanupSubmitterAdapter] NotifyTelegramPending failed (requestID=%s): %v", b.RequestID, err)
+		}
+	}
+	return b.RequestID, nil
 }

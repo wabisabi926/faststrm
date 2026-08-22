@@ -476,6 +476,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			}
 			lm.EnablePathEncoding = body.LifeMonitor.EnablePathEncoding
 			lm.Enable302 = body.LifeMonitor.Enable302
+			lm.AutoDownloadMetadata = body.LifeMonitor.AutoDownloadMetadata
+			if body.LifeMonitor.DownloadExtensions != nil {
+				lm.DownloadExtensions = body.LifeMonitor.DownloadExtensions
+			}
 			settings.LifeMonitor = lm
 		}
 

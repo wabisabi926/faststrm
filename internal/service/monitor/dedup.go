@@ -14,7 +14,7 @@ import (
 type EventDeduplicator struct {
 	mu   sync.Mutex
 	seen map[string]int64 // eventKey -> timestamp
-	ttl  time.Duration   // 去重窗口
+	ttl  time.Duration    // 去重窗口
 }
 
 // NewEventDeduplicator 创建去重器
@@ -32,11 +32,9 @@ func NewEventDeduplicator(ttl time.Duration) *EventDeduplicator {
 	return d
 }
 
-// IsDuplicate 检查事件是否重复
-// fileID: 115 文件 ID
-// eventType: 事件类型名称 (create/delete/move/rename)
-// 返回 true 表示重复事件，应跳过处理
-func (d *EventDeduplicator) IsDuplicate(fileID, eventType string) bool {
+// IsDuplicate 检查事件是否重复（仅检查，不标记）
+// key = fileID:eventType:parentID，parent_id 变化时不视为重复
+func (d *EventDeduplicator) IsDuplicate(fileID, eventType, parentID string) bool {
 	if d == nil || fileID == "" {
 		return false
 	}
@@ -44,19 +42,28 @@ func (d *EventDeduplicator) IsDuplicate(fileID, eventType string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	key := fileID + ":" + eventType
+	key := fileID + ":" + eventType + ":" + parentID
 	now := time.Now().UnixMilli()
 
 	if ts, ok := d.seen[key]; ok {
 		if now-ts < int64(d.ttl/time.Millisecond) {
 			return true
 		}
-		d.seen[key] = now
-		return false
+	}
+	return false
+}
+
+// MarkProcessed 标记事件为已处理（仅在事件实际生效或确定不再重试时调用）
+func (d *EventDeduplicator) MarkProcessed(fileID, eventType, parentID string) {
+	if d == nil || fileID == "" {
+		return
 	}
 
-	d.seen[key] = now
-	return false
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	key := fileID + ":" + eventType + ":" + parentID
+	d.seen[key] = time.Now().UnixMilli()
 }
 
 // cleanupLoop 定期清理过期记录

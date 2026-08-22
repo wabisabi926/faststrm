@@ -4,8 +4,10 @@ package monitor
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,11 +47,12 @@ type AccountMonitor struct {
 	LastPollTime int64
 	EventCount   int
 	// 非导出字段
-	cursor              int64            // PullEvents 游标（用于分页）
-	cancel              context.CancelFunc // 停止 pollLoop
-	lastErr             string           // 最近一次错误
-	consecutiveFailures int              // 连续失败次数
-	cookieMarkedInvalid bool             // 是否已标记 cookie 失效
+	fromTime            int64                     // 游标：上次处理的最大 update_time
+	fromID              int64                     // 游标：上次处理的最大 event id
+	cancel              context.CancelFunc        // 停止 pollLoop
+	lastErr             string                    // 最近一次错误
+	consecutiveFailures int                       // 连续失败次数
+	cookieMarkedInvalid bool                      // 是否已标记 cookie 失效
 	rateLimiter         *client115.APIRateLimiter // API 冷却限流器
 }
 
@@ -70,11 +73,13 @@ type Monitor struct {
 	settingsFn       func() model.LifeMonitorSettings
 	lifeEventRepo    *db.LifeEventRepo
 	lifeEventLogRepo *db.LifeEventLogRepo
+	sqliteDB         *sql.DB // 可选，用于写回 filePathDb（302 模式反查 pickcode）
 	runtime          *runtime.StateManager
 	notifier         Notifier
 	accountReader    AccountReader
-	dedup            *EventDeduplicator  // 事件去重器
+	dedup            *EventDeduplicator       // 事件去重器
 	embyRefresh      *emby.MediaServerRefresh // Emby 媒体库刷库服务
+	notifyMerger     *NotifyMerger            // P2-8 通知合并器
 	mu               sync.RWMutex
 }
 
@@ -84,6 +89,7 @@ type Monitor struct {
 // settingsFn: 热重载配置函数（每次调用返回最新配置）
 // accountReader: 账号读取器（用于获取 cookie）
 // embyRefresh: Emby 媒体库刷库服务（可为 nil）
+// sqliteDB: 可选，用于写回 pickcode 到 filePathDb（302 模式需要）
 func NewMonitor(
 	settingsFn func() model.LifeMonitorSettings,
 	lifeEventRepo *db.LifeEventRepo,
@@ -92,6 +98,7 @@ func NewMonitor(
 	notifier Notifier,
 	accountReader AccountReader,
 	embyRefresh *emby.MediaServerRefresh,
+	sqliteDB ...*sql.DB,
 ) *Monitor {
 	config := model.LifeMonitorSettings{}
 	if settingsFn != nil {
@@ -108,17 +115,24 @@ func NewMonitor(
 		dedup = NewEventDeduplicator(dedupWindow)
 	}
 
+	var dbPtr *sql.DB
+	if len(sqliteDB) > 0 {
+		dbPtr = sqliteDB[0]
+	}
+
 	return &Monitor{
 		config:           config,
 		accounts:         make(map[string]*AccountMonitor),
 		settingsFn:       settingsFn,
 		lifeEventRepo:    lifeEventRepo,
 		lifeEventLogRepo: lifeEventLogRepo,
+		sqliteDB:         dbPtr,
 		runtime:          stateMgr,
 		notifier:         notifier,
 		accountReader:    accountReader,
 		dedup:            dedup,
 		embyRefresh:      embyRefresh,
+		notifyMerger:     NewNotifyMerger(notifier),
 	}
 }
 
@@ -163,12 +177,24 @@ func (m *Monitor) Start(ctx context.Context, account string) error {
 	}
 
 	accMon := &AccountMonitor{
-		Account:            account,
+		Account:             account,
 		Running:             true,
 		cancel:              cancel,
 		consecutiveFailures: 0,
 		rateLimiter:         rateLimiter,
 	}
+
+	// P2-9: 从 DB 恢复事件游标（对齐参考项目重启后恢复 fromID/fromTime）
+	if m.lifeEventRepo != nil {
+		if fromID, fromTime, err := m.lifeEventRepo.LoadCursor(context.Background(), account); err != nil {
+			logger.S().Warnf("[Monitor] 恢复游标失败 account=%s: %v", account, err)
+		} else if fromID > 0 || fromTime > 0 {
+			accMon.fromID = fromID
+			accMon.fromTime = fromTime
+			logger.S().Infof("[Monitor] 恢复游标 account=%s fromID=%d fromTime=%d", account, fromID, fromTime)
+		}
+	}
+
 	m.accounts[account] = accMon
 	m.mu.Unlock()
 
@@ -336,7 +362,7 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 	}
 
 	// 测试拉取事件
-	events, _, err := lifeClient.PullEvents(ctx, account, 0)
+	events, err := lifeClient.PullEvents(ctx, account, 0, 0)
 	if err != nil {
 		m.markCookiePotentiallyInvalid(account, err)
 		return fmt.Errorf("拉取事件失败: %w", err)
@@ -430,80 +456,122 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error {
 
 	// 4. 拉取事件（含重试和 API 冷却）
 	config := m.settingsFn()
-	events, nextCursor, err := m.pullEventsWithRetry(ctx, account, lifeClient, config)
+	events, err := m.pullEventsWithRetry(ctx, account, lifeClient, config)
 	if err != nil {
 		m.handlePollError(account, err)
 		m.appendLog(ctx, account, "poll", false, "", "", fmt.Sprintf("拉取事件失败: %v", err))
 		return err
 	}
 
-	// 5. 逐个处理事件（含去重）
-	processedCount := 0
-	errorCount := 0
-	duplicateCount := 0
+	// 5. 逐个处理事件（游标过滤，不需要 in-memory dedup）
+	var counts PollCounts
+	ctx2 := WithPollCounts(ctx, &counts)
+	maxEventID := int64(0)
+	maxEventTime := int64(0)
+	// P1-4: 逆序处理（对齐参考项目 reversed(events_batch)）
+	// 115 API 返回的事件按时间倒序（最新在前），逆序后最早事件先处理
+	// 保证同一文件的多个事件按时间顺序执行（如先创建再重命名）
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+
 	for _, event := range events {
-		if ctx.Err() != nil {
+		if ctx2.Err() != nil {
 			break
 		}
 
-		// 事件去重检查
-		if m.dedup != nil {
-			eventTypeName := client115.TypeNumberToString(event.Type)
-			if m.dedup.IsDuplicate(event.FileID, eventTypeName) {
-				duplicateCount++
-				continue
-			}
-		}
-
-		if err := m.processEvent(ctx, account, event, lifeClient); err != nil {
-			errorCount++
+		counts.AddEntered()
+		if err := m.processEvent(ctx2, account, event, lifeClient); err != nil {
+			counts.AddError(err)
 			logger.S().Warnf("[Monitor] 处理事件失败 account=%s type=%d file=%s: %v",
 				account, event.Type, event.FileName, err)
 		}
-		processedCount++
+
+		// 跟踪本批次最大 id 和 update_time
+		eid, _ := strconv.ParseInt(event.ID, 10, 64)
+		etime := event.UpdateTime
+		if eid > maxEventID {
+			maxEventID = eid
+		}
+		if etime > maxEventTime {
+			maxEventTime = etime
+		}
 	}
 
-	// 5. 更新账号状态
+	// 6. 更新账号状态和游标
 	m.mu.Lock()
 	if accMon, ok := m.accounts[account]; ok {
-		// 仅当不是全部失败时才推进游标（允许重试）
-		if processedCount == 0 || errorCount < processedCount {
-			accMon.cursor = nextCursor
+		// 游标推进：有事件时更新到本批次最大 id 和 update_time
+		if maxEventID > 0 {
+			accMon.fromID = maxEventID
+			accMon.fromTime = maxEventTime
+		} else if accMon.fromTime == 0 && accMon.fromID == 0 {
+			// 首次无事件：用 pullEventsWithRetry 使用的 fromTime 回写游标
+			// pullEventsWithRetry 内部在 fromTime=0 时设为 now()-300，这里同步
+			accMon.fromTime = time.Now().Unix() - 300
 		}
 		accMon.LastPollTime = time.Now().UnixMilli()
-		accMon.EventCount += processedCount
+		accMon.EventCount += counts.Effective
 		accMon.consecutiveFailures = 0
 		accMon.cookieMarkedInvalid = false
-		if errorCount > 0 {
-			accMon.lastErr = fmt.Sprintf("%d/%d 事件处理失败", errorCount, processedCount)
+		if counts.LastError != nil {
+			accMon.lastErr = counts.LastError.Error()
+		} else if counts.Errors > 0 {
+			accMon.lastErr = fmt.Sprintf("%d/%d 事件处理失败", counts.Errors, counts.Entered)
 		} else {
 			accMon.lastErr = ""
 		}
 	}
 	m.mu.Unlock()
 
-	if len(events) > 0 {
-		logger.S().Infof("[Monitor] account=%s 拉取 %d 事件, 处理 %d, 重复 %d, 失败 %d, next_cursor=%d",
-			account, len(events), processedCount, duplicateCount, errorCount, nextCursor)
+	// P2-9: 持久化游标到 DB（对齐参考项目 db_helper.upsert_batch）
+	if m.lifeEventRepo != nil {
+		finalFromID := maxEventID
+		finalFromTime := maxEventTime
+		if finalFromID == 0 {
+			// 无事件时也要保存当前 fromTime（首次启动后）
+			if accMon, ok := m.accounts[account]; ok {
+				finalFromID = accMon.fromID
+				finalFromTime = accMon.fromTime
+			}
+		}
+		if finalFromID > 0 || finalFromTime > 0 {
+			if err := m.lifeEventRepo.SaveCursor(context.Background(), account, finalFromID, finalFromTime); err != nil {
+				logger.S().Warnf("[Monitor] 保存游标失败 account=%s: %v", account, err)
+			}
+		}
+	}
+
+	if len(events) > 0 || counts.Entered > 0 {
+		logger.S().Infof("[Monitor] account=%s poll summary: pulled=%d %s from_id=%d from_time=%d",
+			account, len(events), counts.Summary(), maxEventID, maxEventTime)
 	}
 
 	return nil
 }
 
-// pullEventsWithRetry 带重试的事件拉取
+// pullEventsWithRetry 带重试的事件拉取（游标模式：from_time + from_id）
 func (m *Monitor) pullEventsWithRetry(
 	ctx context.Context,
 	account string,
 	lifeClient *client115.LifeClient,
 	config model.LifeMonitorSettings,
-) ([]client115.LifeEventItem, int64, error) {
+) ([]client115.LifeEventItem, error) {
 	m.mu.RLock()
 	accMon, ok := m.accounts[account]
-	cursor := int64(0)
+	fromTime := int64(0)
+	fromID := int64(0)
 	if ok {
-		cursor = accMon.cursor
+		fromTime = accMon.fromTime
+		fromID = accMon.fromID
 	}
 	m.mu.RUnlock()
+
+	// 首次启动：从5分钟前开始，确保捕获最近操作
+	if fromTime == 0 && fromID == 0 {
+		fromTime = time.Now().Unix() - 300
+		logger.S().Infof("[Monitor] 首次启动 fromTime=%d (now-300)", fromTime)
+	}
 
 	maxRetries := config.MaxRetries
 	if maxRetries <= 0 {
@@ -523,9 +591,9 @@ func (m *Monitor) pullEventsWithRetry(
 		}
 		m.mu.RUnlock()
 
-		events, nextCursor, err := lifeClient.PullEvents(ctx, account, cursor)
+		events, err := lifeClient.PullEvents(ctx, account, fromTime, fromID)
 		if err == nil {
-			return events, nextCursor, nil
+			return events, nil
 		}
 
 		lastErr = err
@@ -540,12 +608,12 @@ func (m *Monitor) pullEventsWithRetry(
 
 		select {
 		case <-ctx.Done():
-			return nil, 0, ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(delay):
 		}
 	}
 
-	return nil, 0, fmt.Errorf("拉取事件失败（重试%d次）: %w", maxRetries, lastErr)
+	return nil, fmt.Errorf("拉取事件失败（重试%d次）: %w", maxRetries, lastErr)
 }
 
 // ==================== Cookie 有效性自动检测 ====================

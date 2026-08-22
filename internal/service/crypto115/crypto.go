@@ -118,21 +118,19 @@ func Decrypt(cipherBase64 string) (string, error) {
 
 	var out []byte
 	// 分块 RSA 解密
+	// 对齐 p115cipher rsa_decrypt_with_pubkey:
+	//   1. RSA 解密后转为最小字节数（不补前导0）
+	//   2. 查找第一个 0x00 字节作为 PKCS1 分隔符
+	//   3. 取分隔符之后的数据（不强制检查 0x00 0x02 前缀）
 	for l := 0; l < len(cipherData); l += rsaBlockSize {
 		r := l + rsaBlockSize
 		chunk := cipherData[l:r]
 		c := new(big.Int).SetBytes(chunk)
 		m := bigPow(c, RSAn, RSAe)
-		// ⭐ 必须用固定长度 128 字节输出，否则前导 0x00 被 big.Int 省略，
-		// 导致 PKCS1 格式偏移（正确格式应该首字节 0x00 作为块类型前缀）。
-		b := bigIntToBytes(m, rsaBlockSize)
-		// PKCS1 v1.5: 结构 00 02 [02填充] 00 [message]
-		// 首字节必须为 0x00，次字节必须为 0x02
-		if b[0] != 0x00 || b[1] != 0x02 {
-			return "", errors.New("invalid PKCS1 prefix")
-		}
-		// 从下标 1 开始找第一个 0x00（分隔符）
-		zeroIdx := findByteFrom(b, 0, 2)
+		// 转为最小字节数（等价于 Python: to_bytes(p, (p.bit_length()+7)>>3)）
+		b := bigIntToBytesMinimal(m)
+		// 查找第一个 0x00 字节（PKCS1 v1.5 分隔符）
+		zeroIdx := findByteFrom(b, 0, 0)
 		if zeroIdx < 0 {
 			return "", errors.New("invalid PKCS1 padding (no 0x00 separator)")
 		}

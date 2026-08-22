@@ -47,6 +47,7 @@ export type Task = {
   enable302?: boolean;
   name: string;
   status: "pending" | "processing" | "success" | "failed" | "cancelled";
+  error?: string | null;
   schedule?: TaskSchedule;
   _computedNextRunAt?: number | null;
 };
@@ -161,6 +162,7 @@ export default function Home() {
         enable302: t.enable302 ?? false,
         // 使用状态映射将后端状态转换为前端状态
         status: STATUS_MAP[t.runtime?.status || t.status] || "pending",
+        error: t.runtime?.error ?? null,
         schedule: t.schedule ? {
           enabled: t.schedule.enabled ?? false,
           mode: t.schedule.mode || "interval",
@@ -220,11 +222,17 @@ export default function Home() {
       // 只有在API成功返回后才更新状态为processing
       setData(prevData => 
         prevData.map(task => 
-          task.id === id ? { ...task, status: "processing" as const } : task
+          task.id === id ? { ...task, status: "processing" as const, error: null } : task
         )
       );
       
-      // 移除自动刷新，让用户手动刷新或通过其他方式查看状态
+      // 启动后自动轮询刷新状态：3s、10s 各一次（快速失败能立即看到）
+      setTimeout(() => {
+        fetchTasks();
+      }, 3000);
+      setTimeout(() => {
+        fetchTasks();
+      }, 10000);
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'code' in error && error.code === 'ECONNABORTED') {
         toast.error("任务启动超时，请稍后检查任务状态");
@@ -405,10 +413,23 @@ export default function Home() {
         const { status, label } = getTaskDisplayStatus(task);
         const config = getStatusConfig(status);
         const Icon = config.icon;
+        const hasError = status === "failed" && task.error;
         
         return (
-          <Badge className={`${config.color} border-0`}>
-            <Icon className="w-3 h-3 mr-1" />
+          <Badge 
+            className={`${config.color} border-0 ${hasError ? "cursor-help" : ""}`}
+            title={hasError ? `失败原因: ${task.error}` : undefined}
+            onClick={() => {
+              if (hasError && task.error) {
+                toast.error(`任务 ${task.name || task.id.slice(0,8)} 失败`, {
+                  description: task.error,
+                  duration: 10000,
+                  closeButton: true,
+                });
+              }
+            }}
+          >
+            <Icon className={`w-3 h-3 mr-1 ${hasError ? "animate-pulse" : ""}`} />
             {label}
           </Badge>
         );

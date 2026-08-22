@@ -57,9 +57,11 @@ func (r *MediaServerRefresh) RefreshByPath(ctx context.Context, filePath string)
 	}
 
 	timer := time.AfterFunc(delay, func() {
-		defer r.mu.Unlock()
+		// 回调中只做 doRefresh，不加锁/解锁（避免与主 goroutine 重复 Unlock 导致 fatal）
 		r.doRefresh(context.Background(), filePath)
+		r.mu.Lock()
 		delete(r.debounceMap, filePath)
+		r.mu.Unlock()
 	})
 	r.debounceMap[filePath] = timer
 	r.mu.Unlock()

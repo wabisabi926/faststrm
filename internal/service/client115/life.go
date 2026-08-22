@@ -128,11 +128,12 @@ type lifeEventRaw struct {
 type LifeClient struct {
 	cookie     string
 	httpClient *http.Client
+	fsClient   *Client // 复用 Client 通用请求能力（列目录 / 取路径等）
 
 	// 路径解析缓存
-	pathCache   sync.Map      // key: parentID, value: cachedPathEntry
-	pathCacheMu  sync.RWMutex
-	pathCacheTTL time.Duration
+	pathCache      sync.Map // key: parentID, value: cachedPathEntry —— 存 parentDirPath（含自身名）→ 兼容旧缓存结构
+	pathCacheMu    sync.RWMutex
+	pathCacheTTL   time.Duration
 
 	// API 域名轮换
 	useAlternateHost bool
@@ -145,14 +146,56 @@ func NewLifeClient(cookie string) *LifeClient {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		fsClient:     NewClient(cookie),
 		pathCacheTTL: 5 * time.Minute,
 	}
+}
+
+// FsClient 暴露底层 fs client（供 monitor 层调用 FsFiles 做网盘存在性校验等）
+func (c *LifeClient) FsClient() *Client {
+	return c.fsClient
+}
+
+// Cookie 返回 cookie 字符串（供外部调用 FsFiles 等 API 使用）
+func (c *LifeClient) Cookie() string {
+	return c.cookie
 }
 
 // cachedPathEntry 路径缓存条目
 type cachedPathEntry struct {
 	path      string
 	expiresAt time.Time
+}
+
+// anyIDMatches 比较 JSON 里任意类型的 id（int/float64/string）与目标字符串。
+func anyIDMatches(a any, target string) bool {
+	if target == "" {
+		return false
+	}
+	switch v := a.(type) {
+	case string:
+		return v == target
+	case int:
+		return strconv.Itoa(v) == target
+	case int64:
+		return strconv.FormatInt(v, 10) == target
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64) == target
+	}
+	return false
+}
+
+// stripRootPrefix 去掉"根目录/"前缀（带/不带前导斜杠都处理），并清理多余斜杠空格
+func stripRootPrefix(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.Trim(p, "/")
+	for strings.HasPrefix(p, "根目录/") {
+		p = strings.TrimPrefix(p, "根目录/")
+	}
+	if p == "根目录" {
+		p = ""
+	}
+	return p
 }
 
 // getApiHost 返回当前使用的 API 域名
@@ -220,65 +263,125 @@ func (c *LifeClient) LifeShow(ctx context.Context) error {
 // PullEvents 拉取生活事件列表
 // GET https://webapi.115.com/behavior/detail?limit=1000&offset=0
 // 对齐 p115client life_behavior_detail
-func (c *LifeClient) PullEvents(ctx context.Context, account string, offset int64) ([]LifeEventItem, int64, error) {
+// PullEvents 拉取生活事件（游标模式：from_time + from_id）
+// 对齐参考项目 iter_life_behavior_once：使用 offset 分页拉取，但用 from_time/from_id 过滤旧事件
+// 首次拉取（fromTime=0 && fromID=0）从当前时间开始，只拉新事件
+func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, fromID int64) ([]LifeEventItem, error) {
 	if c.cookie == "" {
-		return nil, -1, fmt.Errorf("cookie is empty")
+		return nil, fmt.Errorf("cookie is empty")
 	}
 
+	// fromTime/fromID 由 monitor.go 管理首次初始化，这里直接用
 	apiHost := c.getApiHost()
-	endpoint := fmt.Sprintf(
-		"%s/behavior/detail?limit=1000&offset=%d",
-		apiHost,
-		offset,
-	)
 
-	body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
-	if err != nil {
-		// 主域名失败时尝试备用域名
-		if !c.useAlternateHost {
-			c.switchApiHost()
-			endpoint = fmt.Sprintf("%s/behavior/detail?limit=1000&offset=%d", c.getApiHost(), offset)
-			body, err = c.doRequest(ctx, http.MethodGet, endpoint, "")
-		}
+	// 对齐参考项目：首批拉 1000 条，后续也 1000 条
+	// 使用 offset 分页，但用 from_time/from_id 过滤
+	var allFiltered []LifeEventItem
+	offset := 0
+	const limit = 1000
+	maxPages := 10 // 安全限制，避免无限拉取
+
+	for page := 0; page < maxPages; page++ {
+		endpoint := fmt.Sprintf(
+			"%s/behavior/detail?limit=%d&offset=%d",
+			apiHost, limit, offset,
+		)
+
+		body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
 		if err != nil {
-			return nil, -1, fmt.Errorf("pullEvents request: %w", err)
+			if !c.useAlternateHost && page == 0 {
+				c.switchApiHost()
+				apiHost = c.getApiHost()
+				continue
+			}
+			if len(allFiltered) > 0 {
+				break // 已有数据，返回已拉取的
+			}
+			return nil, fmt.Errorf("pullEvents request: %w", err)
 		}
-	}
 
-	var resp struct {
-		Code  int    `json:"code"`
-		Error string `json:"error,omitempty"`
-		Data  struct {
-			List     []lifeEventRaw `json:"list"`
-			Count    int            `json:"count"`
-			NextPage bool           `json:"next_page"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, -1, fmt.Errorf("parse pullEvents response: %w (body=%s)", err, truncateBody(body, 512))
-	}
-
-	if resp.Code != 0 {
-		if resp.Code == 99 || resp.Code == 990001 {
-			return nil, -1, fmt.Errorf("cookie 已过期 (code=%d): %s", resp.Code, resp.Error)
+		var resp struct {
+			Code  int    `json:"code"`
+			Error string `json:"error,omitempty"`
+			Data  struct {
+				List     []lifeEventRaw `json:"list"`
+				Count    int            `json:"count"`
+				NextPage bool           `json:"next_page"`
+			} `json:"data"`
 		}
-		return nil, -1, fmt.Errorf("pullEvents 失败 code=%d: %s", resp.Code, resp.Error)
+		if err := json.Unmarshal(body, &resp); err != nil {
+			if len(allFiltered) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("parse pullEvents response: %w (body=%s)", err, truncateBody(body, 512))
+		}
+
+		if resp.Code != 0 {
+			if resp.Code == 99 || resp.Code == 990001 {
+				return nil, fmt.Errorf("cookie 已过期 (code=%d): %s", resp.Code, resp.Error)
+			}
+			if len(allFiltered) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("pullEvents 失败 code=%d: %s", resp.Code, resp.Error)
+		}
+
+		if len(resp.Data.List) == 0 {
+			break
+		}
+
+		// 调试：打印首批事件的原始数据
+		if page == 0 && len(resp.Data.List) > 0 {
+			first := resp.Data.List[0]
+			logger.S().Infof("[LifeClient] DEBUG 首批事件 sample: list_len=%d, first.id=%v first.type=%v first.update_time=%v first.file_name=%s",
+				len(resp.Data.List), first.ID, first.Type, first.UpdateTime, first.FileName)
+		}
+
+		// 过滤：只保留 id > fromID 且 update_time >= fromTime 的事件
+		hitOld := false
+		for _, raw := range resp.Data.List {
+			item := raw.toLifeEventItem()
+			eid := lifeToInt64(item.ID)
+			etime := item.UpdateTime
+
+			// 调试：打印前3条事件的游标判定
+			if page == 0 {
+				logger.S().Debugf("[LifeClient] DEBUG event: id=%s eid=%d update_time=%d fromID=%d fromTime=%d -> skip=%v",
+					item.ID, eid, etime, fromID, fromTime,
+					(fromID > 0 && eid <= fromID) || (fromTime > 0 && etime > 0 && etime < fromTime))
+			}
+
+			// 游标过滤：跳过已处理的事件
+			if fromID > 0 && eid <= fromID {
+				hitOld = true
+				continue
+			}
+			if fromTime > 0 && etime > 0 && etime < fromTime {
+				hitOld = true
+				continue
+			}
+
+			allFiltered = append(allFiltered, item)
+		}
+
+		// 如果遇到旧事件，说明已经翻到历史数据，不需要继续翻页
+		if hitOld {
+			break
+		}
+
+		// 没有下一页，停止
+		if !resp.Data.NextPage {
+			break
+		}
+
+		offset += len(resp.Data.List)
 	}
 
-	items := make([]LifeEventItem, 0, len(resp.Data.List))
-	for _, raw := range resp.Data.List {
-		items = append(items, raw.toLifeEventItem())
-	}
-
-	nextOffset := int64(-1)
-	if resp.Data.NextPage && len(items) > 0 {
-		nextOffset = offset + int64(len(items))
-	}
 	_ = account
 
-	logger.S().Infof("[LifeClient] pulled %d events, offset=%d, next_offset=%d, count=%d",
-		len(items), offset, nextOffset, resp.Data.Count)
-	return items, nextOffset, nil
+	logger.S().Infof("[LifeClient] pulled events: filtered=%d, from_id=%d, from_time=%d",
+		len(allFiltered), fromID, fromTime)
+	return allFiltered, nil
 }
 
 // doRequest 发送 HTTP 请求，返回响应体
@@ -371,60 +474,317 @@ func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]f
 	return resp.Ancestors, nil
 }
 
-// ResolvePath 通过 parent_id 解析文件的完整云端路径
-// 三级降级：缓存 → fs_files_media API → 仅使用文件名
-func (c *LifeClient) ResolvePath(ctx context.Context, parentID, fileName string) string {
+// ResolveDirPath 通过 cid 获取文件夹的完整云端路径（包含文件夹自身名称）。
+// 三级回退：
+//  1) 内存缓存 pathCache (key=cid)
+//  2) FsFilesMediaAncestors(cid) 祖先链 +  在父目录中 FsFiles 回查自身 Name
+//  3) 失败返回空串+error（不再伪造 /unknown/ 虚拟路径）
+func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, error) {
+	if cid == "" || cid == "0" {
+		return "", nil // 根目录没有路径
+	}
+	now := time.Now()
+	// 1) 缓存
+	if cached, ok := c.pathCache.Load(cid); ok {
+		entry := cached.(cachedPathEntry)
+		if now.Before(entry.expiresAt) {
+			return entry.path, nil
+		}
+		c.pathCache.Delete(cid)
+	}
+
+	// 2) 祖先链
+	ancestors, err := c.FsFilesMediaAncestors(ctx, cid)
+	if err != nil {
+		return "", fmt.Errorf("ResolveDirPath ancestors cid=%s: %w", cid, err)
+	}
+
+	// a) 组装祖先段路径（去掉 根目录/ 前缀）
+	var ancestorNames []string
+	for _, n := range ancestors {
+		name := strings.TrimSpace(n.Name)
+		if name == "" || name == "根目录" {
+			continue
+		}
+		ancestorNames = append(ancestorNames, name)
+	}
+
+	// b) grandparentCid = 包含 cid 所指文件夹的那个目录（cid 的直接父目录）。
+	//    - 如果 ancestors 非空，ancestors 的最后一项就是 cid 的父文件夹
+	//    - 如果 ancestors 为空，说明 cid 是根目录下的一级文件夹，父就是 "0"
+	grandparentCid := "0"
+	if len(ancestors) > 0 {
+		last := ancestors[len(ancestors)-1]
+		if last.ID > 0 {
+			grandparentCid = strconv.Itoa(last.ID)
+		}
+	}
+
+	// c) 在 grandparentCid 目录下列表，找到 ID=cid 的文件夹项就读它的 Name
+	var folderOwnName string
+	if c.fsClient != nil {
+		resp, listErr := c.fsClient.FsFiles(ctx, grandparentCid, 2000, 0, c.cookie)
+		if listErr == nil && resp != nil && resp.State {
+			for i := range resp.Data {
+				e := &resp.Data[i]
+				if !e.IsDir {
+					continue
+				}
+				if anyIDMatches(e.CID, cid) {
+					folderOwnName = strings.TrimSpace(e.Name)
+					break
+				}
+			}
+		} else if listErr != nil {
+			logger.S().Warnf("[LifeClient] ResolveDirPath FsFiles(grandparent=%s) 失败 (将尝试仅用祖先链): %v",
+				grandparentCid, listErr)
+		}
+	}
+
+	// d) 如果 FsFiles 没找到名字，尝试再查一次祖先 API 的「扩展字段」：
+	//    部分实现会把当前目录自身作为「最后一个 ancestor」，我们可以再尝试。
+	if folderOwnName == "" && len(ancestors) > 0 {
+		last := ancestors[len(ancestors)-1]
+		if grandparentCid != "0" && strconv.Itoa(last.ID) != grandparentCid {
+			folderOwnName = strings.TrimSpace(last.Name)
+			if folderOwnName == "根目录" {
+				folderOwnName = ""
+			}
+		}
+	}
+	// e) 仍找不到名 —— 返回错误，路径不完整不做臆造（参考项目也是 API 失败直接 return None）
+	if folderOwnName == "" {
+		return "", fmt.Errorf("ResolveDirPath: 无法获取文件夹自身名称 cid=%s grandparent=%s ancestorCount=%d",
+			cid, grandparentCid, len(ancestors))
+	}
+
+	// 3) 组装完整路径：[ancestorNames...] + folderOwnName
+	ancestorNames = append(ancestorNames, folderOwnName)
+	fullPath := strings.Join(ancestorNames, "/")
+	fullPath = stripRootPrefix(fullPath) // 再次安全清理
+
+	// 4) 缓存（即便空串也缓存一小段时间，避免重复失败）
+	c.pathCache.Store(cid, cachedPathEntry{
+		path:      fullPath,
+		expiresAt: now.Add(c.pathCacheTTL),
+	})
+	return fullPath, nil
+}
+
+// ResolvePathByFileID 通过事件 file_id 自身查询祖先链，解析出文件/文件夹的完整云路径。
+// 解决「事件 parent_id=0（所有事件都显示在根目录）」的痛点：115 生活事件 API 的 parent_id 字段
+// 经常不可靠（甚至全部为 0），此时直接用 file_id 作为 cid 调 medialist 祖先链仍然能拿到真实路径链。
+//
+// 解析策略：
+//  1. ancestors 里包含所有祖先目录（不含 file_id 自身）—— 最后一个节点即 file_id 的直接父目录
+//  2. 组装 ancestors(排除根目录) + "/" + fileName
+//  3. 失败返回空串，不再伪造虚拟路径
+func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName string) string {
+	fileID = strings.TrimSpace(fileID)
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		return ""
+	}
+	if fileID == "" || fileID == "0" {
+		// 没 file_id，退化为裸文件名（仅作为最后兜底）
+		return "/" + fileName
+	}
+
+	// 先尝试缓存 key=fileID
+	now := time.Now()
+	if cached, ok := c.pathCache.Load("fid:" + fileID); ok {
+		entry := cached.(cachedPathEntry)
+		if now.Before(entry.expiresAt) {
+			if entry.path != "" {
+				return entry.path + "/" + fileName
+			}
+		} else {
+			c.pathCache.Delete("fid:" + fileID)
+		}
+	}
+
+	// 用 file_id 作为 cid 查祖先链
+	ancestors, err := c.FsFilesMediaAncestors(ctx, fileID)
+	ancestorCount := 0
+	ancestorsOK := (err == nil)
+	if ancestorsOK {
+		ancestorCount = len(ancestors)
+	}
+	// 对 err / state=false / ancestors=0 三种情况，统一进入回退逻辑：
+	//   1) FsFiles(cid=0) 根目录列目录核对 → 确认真在根目录 → 裸文件名
+	//   2) 否则遍历根目录下每个子文件夹列子目录内容，找到 fileID 匹配 → 得出父目录名
+	//   3) 最后尝试把 fileID 当 cid 调 ResolveDirPath 反查自身所在位置
+	if !ancestorsOK || ancestorCount == 0 {
+		logTag := "ancestors=0"
+		if !ancestorsOK {
+			logTag = "ancestors_FAIL"
+			logger.S().Warnf("[LifeClient] ResolvePathByFileID ancestors 失败 fid=%s name=%s: %v → 转入根目录核对降级",
+				fileID, fileName, err)
+		}
+		if ancestorCount == 0 {
+			logger.S().Infof("[LifeClient] ResolvePathByFileID ancestors=0 fid=%s name=%s, 将用 FsFiles 核对是否为真根目录",
+				fileID, fileName)
+		}
+		_ = logTag
+		if c.fsClient != nil {
+			resp, lerr := c.fsClient.FsFiles(ctx, "0", 2000, 0, c.cookie)
+			if lerr == nil && resp != nil && resp.State {
+				foundAtRoot := false
+				for i := range resp.Data {
+					e := &resp.Data[i]
+					if strings.EqualFold(strings.TrimSpace(e.Name), fileName) && anyIDMatches(e.CID, fileID) {
+						foundAtRoot = true
+						logger.S().Infof("[LifeClient] ResolvePathByFileID fid=%s 根目录核对OK (name=%s) → 裸文件名",
+							fileID, fileName)
+						c.pathCache.Store("fid:"+fileID, cachedPathEntry{
+							path:      "",
+							expiresAt: now.Add(c.pathCacheTTL),
+						})
+						return "/" + fileName
+					}
+				}
+				if !foundAtRoot {
+				// 不在根目录 → 遍历根目录下每个子文件夹（cid），递归列其内容，找到 cid==fileID 且名匹配时返回 parentName/fileName
+				dirCount := 0
+				for i := range resp.Data {
+					e := &resp.Data[i]
+					if !e.IsDir {
+						continue
+					}
+					dirCount++
+				}
+				logger.S().Infof("[LifeClient] ResolvePathByFileID 根目录列到 %d 个子文件夹，开始遍历查找 fid=%s name=%s",
+					dirCount, fileID, fileName)
+				for i := range resp.Data {
+						e := &resp.Data[i]
+						if !e.IsDir {
+							continue
+						}
+						subCid := ""
+						switch v := e.CID.(type) {
+						case string:
+							subCid = v
+						case int, int64, float64:
+							subCid = fmt.Sprintf("%v", v)
+						}
+						if subCid == "" || subCid == "0" {
+							continue
+						}
+						subResp, slerr := c.fsClient.FsFiles(ctx, subCid, 2000, 0, c.cookie)
+						if slerr != nil || subResp == nil || !subResp.State {
+							continue
+						}
+						for j := range subResp.Data {
+							se := &subResp.Data[j]
+							if strings.EqualFold(strings.TrimSpace(se.Name), fileName) && anyIDMatches(se.CID, fileID) {
+								parentName := strings.TrimSpace(e.Name)
+								if parentName == "" || parentName == "根目录" {
+									continue
+								}
+								logger.S().Infof("[LifeClient] ResolvePathByFileID fid=%s 通过FsFiles核对: parent=%s name=%s",
+									fileID, parentName, fileName)
+								c.pathCache.Store("fid:"+fileID, cachedPathEntry{
+									path:      parentName,
+									expiresAt: now.Add(c.pathCacheTTL),
+								})
+								return parentName + "/" + fileName
+							}
+						}
+					}
+					// 两级都没找到：最后尝试把 fileID 当文件夹 cid 调 ResolveDirPath 反查自身所在位置
+					if dirPath, derr := c.ResolveDirPath(ctx, fileID); derr == nil && dirPath != "" {
+						logger.S().Infof("[LifeClient] ResolvePathByFileID fid=%s 通过ResolveDirPath回退: dirPath=%s",
+							fileID, dirPath)
+						c.pathCache.Store("fid:"+fileID, cachedPathEntry{
+							path:      dirPath,
+							expiresAt: now.Add(c.pathCacheTTL),
+						})
+						return dirPath + "/" + fileName
+					}
+				}
+			} else {
+				logger.S().Warnf("[LifeClient] ResolvePathByFileID FsFiles 根目录也失败 fid=%s: err=%v respOK=%v",
+					fileID, lerr, resp != nil && resp.State)
+			}
+		}
+		// 所有 API 都失败：返回 "/" + fileName 作为最后兜底（caller 会根据 mapping 判断无效）
+		return "/" + fileName
+	}
+
+	// 组装父目录段（排除 根目录、空名）
+	var parentNames []string
+	for _, n := range ancestors {
+		name := strings.TrimSpace(n.Name)
+		if name == "" || name == "根目录" {
+			continue
+		}
+		parentNames = append(parentNames, name)
+	}
+
+	parentDir := strings.Join(parentNames, "/")
+	parentDir = stripRootPrefix(parentDir)
+
+	// 缓存父目录
+	c.pathCache.Store("fid:"+fileID, cachedPathEntry{
+		path:      parentDir,
+		expiresAt: now.Add(c.pathCacheTTL),
+	})
+
+	if parentDir == "" {
+		return "/" + fileName
+	}
+	return parentDir + "/" + fileName
+}
+
+// ResolvePath 通过 parent_id + file_name 解析文件/文件夹在云端的完整路径
+//
+// 修复点（关键）：115 生活事件 parent_id 字段经常不可靠（几乎全部为 0），
+// 之前 parentID=0 时直接 return "/fileName" 导致路径缺少「电影/」等父级前缀。
+// 现改为多级回退：
+//
+//  1. parentID 合法（非空非0）→ 走 ResolveDirPath(parentID) + "/" + fileName（原有逻辑）
+//  2. parentID 无效但 fileID 有值 → 调 ResolvePathByFileID(fileID, fileName) 用 file_id 自身查祖先链
+//  3. 全部失败 → 返回裸文件名 "/" + fileName（保留最后一个可选项，由调用方根据 mapping 判断是否有效）
+func (c *LifeClient) ResolvePath(ctx context.Context, parentID, fileID, fileName string) string {
+	fileName = strings.TrimSpace(fileName)
 	if fileName == "" {
 		return ""
 	}
 
-	// 根目录下的文件
-	if parentID == "0" || parentID == "" {
-		return "/" + fileName
-	}
+	parentID = strings.TrimSpace(parentID)
+	fileID = strings.TrimSpace(fileID)
 
-	cacheKey := parentID
-	now := time.Now()
-
-	// 一级：检查缓存
-	if cached, ok := c.pathCache.Load(cacheKey); ok {
-		entry := cached.(cachedPathEntry)
-		if now.Before(entry.expiresAt) {
-			return entry.path + "/" + fileName
+	// 情况 1：parentID 看起来合法，走原 ResolveDirPath(parentID)
+	if parentID != "" && parentID != "0" {
+		dirPath, err := c.ResolveDirPath(ctx, parentID)
+		if err == nil && dirPath != "" {
+			return dirPath + "/" + fileName
 		}
-		c.pathCache.Delete(cacheKey)
-	}
-
-	// 二级：调用 API 解析祖先链
-	ancestors, err := c.FsFilesMediaAncestors(ctx, parentID)
-	if err != nil {
-		logger.S().Warnf("[LifeClient] ResolvePath API 失败 parentID=%s: %v, 使用降级路径", parentID, err)
-		// 三级降级：仅使用文件名（无法构建完整路径，但不至于完全失败）
-		return "/unknown/" + fileName
-	}
-
-	// 构建路径
-	var pathBuilder strings.Builder
-	for _, node := range ancestors {
-		if pathBuilder.Len() > 0 {
-			pathBuilder.WriteString("/")
+		if err != nil {
+			logger.S().Warnf("[LifeClient] ResolvePath via parentID 降级: parentID=%s fid=%s name=%s: %v",
+				parentID, fileID, fileName, err)
 		}
-		pathBuilder.WriteString(node.Name)
-	}
-	parentPath := pathBuilder.String()
-	if parentPath == "" {
-		parentPath = "/"
+		// 失败时 fallback 到 file_id 祖先链（继续往下）
 	}
 
-	fullPath := parentPath + "/" + fileName
+	// 情况 2：parentID=0/无效 或上面失败 → 用 file_id 自身查祖先链
+	if fileID != "" && fileID != "0" {
+		if byFid := c.ResolvePathByFileID(ctx, fileID, fileName); byFid != "" {
+			return byFid
+		}
+	}
 
-	// 写入缓存
-	c.pathCache.Store(cacheKey, cachedPathEntry{
-		path:      parentPath,
-		expiresAt: now.Add(c.pathCacheTTL),
-	})
+	// 情况 3：最后兜底：返回 "/fileName"。后续 mapping 若不命中会自然 NONE 跳过。
+	return "/" + fileName
+}
 
-	return fullPath
+// FsFiles 列目录（生活事件文件夹递归处理使用）
+// 包装底层 Client.FsFiles，复用其请求/解析逻辑
+func (c *LifeClient) FsFiles(ctx context.Context, cid string, limit, offset int) (*FsFilesResp, error) {
+	if c.fsClient == nil {
+		return nil, fmt.Errorf("fsClient not initialized")
+	}
+	return c.fsClient.FsFiles(ctx, cid, limit, offset, c.cookie)
 }
 
 // toLifeEventItem 将灵活解析的 raw 转为强类型 LifeEventItem

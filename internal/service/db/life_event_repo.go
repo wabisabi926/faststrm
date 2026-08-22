@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // LifeEvent 增量监控事件（对应 TS life_event_repo / folder_changed_events）
@@ -30,6 +31,13 @@ CREATE TABLE IF NOT EXISTS life_events (
 );
 CREATE INDEX IF NOT EXISTS idx_life_event_account_processed ON life_events(account, processed);
 CREATE INDEX IF NOT EXISTS idx_life_event_created ON life_events(created_at);
+-- P2-9: 事件游标持久化表（对齐参考项目 db_helper upsert_batch + 重启恢复）
+CREATE TABLE IF NOT EXISTS life_event_cursor (
+  account TEXT PRIMARY KEY,
+  from_id INTEGER NOT NULL DEFAULT 0,
+  from_time INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0
+);
 `
 
 // LifeEventRepo 生命周期事件库（增量监控的落盘/重放）
@@ -102,6 +110,32 @@ func (r *LifeEventRepo) PurgeOld(ctx context.Context, beforeMs int64) (int64, er
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// ==================== P2-9: 事件游标持久化 ====================
+
+// SaveCursor 保存账号的事件游标（fromID + fromTime）
+// 对齐参考项目：重启后从 DB 恢复游标，避免重复处理已处理事件
+func (r *LifeEventRepo) SaveCursor(ctx context.Context, account string, fromID, fromTime int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO life_event_cursor (account, from_id, from_time, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(account) DO UPDATE SET
+			from_id = excluded.from_id,
+			from_time = excluded.from_time,
+			updated_at = excluded.updated_at`,
+		account, fromID, fromTime, time.Now().Unix())
+	return err
+}
+
+// LoadCursor 读取账号的事件游标
+func (r *LifeEventRepo) LoadCursor(ctx context.Context, account string) (fromID, fromTime int64, err error) {
+	err = r.db.QueryRowContext(ctx,
+		`SELECT from_id, from_time FROM life_event_cursor WHERE account = ?`, account).Scan(&fromID, &fromTime)
+	if err == sql.ErrNoRows {
+		return 0, 0, nil
+	}
+	return fromID, fromTime, err
 }
 
 func scanLifeEvents(rows any) ([]LifeEvent, error) {

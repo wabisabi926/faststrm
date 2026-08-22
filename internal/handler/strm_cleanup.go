@@ -23,6 +23,9 @@ type StrmCleanupDeps struct {
 	ClientFactory func(name string) (*client115.Client, error)
 	TasksStore    *store.TasksStore
 	StrmCache     *store.StrmCacheStore
+	// Interaction 待删队列与 TG 按钮二次确认交互器
+	// 为 nil 时表示未启用待删队列（仅做 MaxThreshold 硬拒绝）
+	Interaction *StrmCleanupInteraction
 }
 
 type MappingScanRequest struct {
@@ -85,9 +88,27 @@ type ExecuteResponse struct {
 	FailedCount     int              `json:"failedCount"`
 	Errors          []map[string]string `json:"errors"`
 	RemovedEmptyDirs []string         `json:"removedEmptyDirs"`
+	// RemovedRelatedFiles 删除 STRM 时一并清理的关联媒体信息文件（.nfo/.jpg/.srt 等）
+	RemovedRelatedFiles []string `json:"removedRelatedFiles,omitempty"`
 	DryRun          bool             `json:"dryRun"`
 	DurationMs      int64            `json:"durationMs"`
 	RegeneratedCount int             `json:"regeneratedCount,omitempty"`
+
+	// ====== 阈值与二次确认（P0 防误删）======
+	// Pending 是否已入队待删队列等待用户二次确认
+	Pending bool `json:"pending,omitempty"`
+	// PendingRequestID 待删批次 ID（Pending=true 时返回）
+	PendingRequestID string `json:"pendingRequestId,omitempty"`
+	// ThresholdError 超过 MaxThreshold 时返回的错误说明（不执行删除）
+	ThresholdError string `json:"thresholdError,omitempty"`
+	// AppliedMaxThreshold 应用的 MaxThreshold 配置值（用于 UI 提示）
+	AppliedMaxThreshold int `json:"appliedMaxThreshold,omitempty"`
+	// AppliedStableThreshold 应用的 StableThreshold 配置值
+	AppliedStableThreshold int `json:"appliedStableThreshold,omitempty"`
+	// AppliedConfirmMode 应用的 ConfirmMode 配置值
+	AppliedConfirmMode string `json:"appliedConfirmMode,omitempty"`
+	// TotalStaleCount 待删总数（用于 UI 提示）
+	TotalStaleCount int `json:"totalStaleCount,omitempty"`
 }
 
 func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
@@ -394,16 +415,88 @@ func listLocalStrmFiles(localPath string) map[string]os.FileInfo {
 
 func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Settings, deps StrmCleanupDeps, accountMap map[string]string) ExecuteResponse {
 	resp := ExecuteResponse{
-		DryRun:          body.DryRun,
-		Errors:          []map[string]string{},
+		DryRun:           body.DryRun,
+		Errors:           []map[string]string{},
 		RemovedEmptyDirs: []string{},
+		RemovedRelatedFiles: []string{},
 	}
+
+	// ====== P0 双阈值 + 二次确认 ======
+	cleanup := settings.Cleanup
+	maxThreshold := cleanup.MaxThreshold
+	if maxThreshold <= 0 {
+		maxThreshold = 10 // 默认值保护
+	}
+	stableThreshold := cleanup.StableThreshold
+	if stableThreshold < 0 {
+		stableThreshold = 5
+	}
+	confirmMode := cleanup.ConfirmMode
+	if confirmMode == "" {
+		confirmMode = "none"
+	}
+	resp.AppliedMaxThreshold = maxThreshold
+	resp.AppliedStableThreshold = stableThreshold
+	resp.AppliedConfirmMode = confirmMode
 
 	action := body.Action
 	if action == "" {
 		action = "delete"
 	}
 
+	// 统计待删总数（不包括 delete_all 模式批量扫描）
+	totalStale := 0
+	for _, entry := range body.Entries {
+		totalStale += len(entry.StaleRelPaths)
+	}
+	resp.TotalStaleCount = totalStale
+
+	// DryRun 模式下不做阈值拦截，直接走原模拟流程
+	if !body.DryRun && totalStale > maxThreshold && action != "delete_all" {
+		resp.ThresholdError = fmt.Sprintf("待删 %d 个超过最大阈值 %d，已拒绝执行。请在 settings.cleanup.maxThreshold 调高或在 UI 重新筛选", totalStale, maxThreshold)
+		logger.S().Warnf("[strmCleanup] 拒绝执行: 待删 %d 超过 MaxThreshold %d", totalStale, maxThreshold)
+		return resp
+	}
+
+	// 稳定阈值拦截：超过 StableThreshold 且开启了二次确认 → 入队待删
+	if !body.DryRun && totalStale > stableThreshold && confirmMode != "none" && action != "delete_all" && deps.Interaction != nil {
+		// 收集所有待删完整路径
+		paths := make([]string, 0, totalStale)
+		for _, entry := range body.Entries {
+			for _, rel := range entry.StaleRelPaths {
+				paths = append(paths, filepath.Join(entry.LocalPath, rel))
+			}
+		}
+		requestID := GenerateRequestID()
+		batch := CleanupBatch{
+			RequestID:          requestID,
+			CreatedAt:          time.Now().UnixNano() / 1e6,
+			Paths:              paths,
+			SamplePaths:        BuildSamplePaths(paths),
+			PathCount:          totalStale,
+			RemoveStrm:         cleanup.RemoveStrm,
+			RemoveEmptyDirs:    cleanup.RemoveEmptyDirs,
+			RemoveRelatedFiles: cleanup.RemoveRelatedFiles,
+		}
+		if err := deps.Interaction.AppendBatch(ctx, batch); err != nil {
+			logger.S().Errorf("[strmCleanup] AppendBatch failed: %v", err)
+			resp.ThresholdError = fmt.Sprintf("入队待删批次失败: %v", err)
+			return resp
+		}
+		resp.Pending = true
+		resp.PendingRequestID = requestID
+		logger.S().Infof("[strmCleanup] 待删 %d 超过 StableThreshold %d，已入队 %s，等待 %s 二次确认",
+			totalStale, stableThreshold, requestID, confirmMode)
+		// 按 ConfirmMode 派发通知
+		if confirmMode == "telegram" {
+			if err := deps.Interaction.NotifyTelegramPending(ctx, batch); err != nil {
+				logger.S().Warnf("[strmCleanup] NotifyTelegramPending failed: %v", err)
+			}
+		}
+		return resp
+	}
+
+	// ====== 执行删除（三阶段开关）======
 	for _, entry := range body.Entries {
 		for _, staleRelPath := range entry.StaleRelPaths {
 			stalePath := filepath.Join(entry.LocalPath, staleRelPath)
@@ -411,21 +504,32 @@ func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Se
 				resp.DeletedCount++
 				continue
 			}
-			if err := os.Remove(stalePath); err != nil {
-				resp.FailedCount++
-				resp.Errors = append(resp.Errors, map[string]string{
-					"path":  stalePath,
-					"error": err.Error(),
-				})
-				logger.S().Warnf("[strmCleanup] delete %s failed: %v", stalePath, err)
-			} else {
-				resp.DeletedCount++
-				logger.S().Infof("[strmCleanup] deleted stale strm: %s", stalePath)
+			// 阶段 1：删 STRM 文件本身（RemoveStrm 默认 true）
+			if cleanup.RemoveStrm {
+				if err := os.Remove(stalePath); err != nil {
+					if !os.IsNotExist(err) {
+						resp.FailedCount++
+						resp.Errors = append(resp.Errors, map[string]string{
+							"path":  stalePath,
+							"error": err.Error(),
+						})
+						logger.S().Warnf("[strmCleanup] delete %s failed: %v", stalePath, err)
+					}
+				} else {
+					resp.DeletedCount++
+					logger.S().Infof("[strmCleanup] deleted stale strm: %s", stalePath)
+				}
+			}
+			// 阶段 2：删关联媒体信息文件（RemoveRelatedFiles 默认 false）
+			if cleanup.RemoveRelatedFiles {
+				removed := deleteRelatedFilesByStem(stalePath)
+				resp.RemovedRelatedFiles = append(resp.RemovedRelatedFiles, removed...)
 			}
 		}
 	}
 
-	if !body.DryRun {
+	// 阶段 3：删无 STRM 的空目录（RemoveEmptyDirs 默认 false）
+	if !body.DryRun && cleanup.RemoveEmptyDirs {
 		for _, entry := range body.Entries {
 			removeEmptyDirs(entry.LocalPath, &resp.RemovedEmptyDirs)
 		}
@@ -474,6 +578,182 @@ func removeEmptyDirs(root string, removed *[]string) {
 		if done {
 			return
 		}
+	}
+}
+
+// deleteRelatedFilesByStem 删除与 STRM 文件同基名（stem）的关联媒体信息文件
+// 关联扩展名：.srt/.ass/.sub/.nfo/.jpg/.png（对齐 syncdel.go deleteStrmFile 的清理逻辑）
+// 返回实际删除的文件绝对路径列表
+//
+// 注意：传入的 strmPath 可以已经删除，本函数只读取同目录条目按 stem 匹配。
+func deleteRelatedFilesByStem(strmPath string) []string {
+	dir := filepath.Dir(strmPath)
+	base := strings.TrimSuffix(filepath.Base(strmPath), filepath.Ext(strmPath))
+	strmName := filepath.Base(strmPath)
+	relatedExts := map[string]bool{
+		".srt": true, ".ass": true, ".sub": true,
+		".nfo": true, ".jpg": true, ".png": true,
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var removed []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == strmName {
+			continue
+		}
+		nameBase := strings.TrimSuffix(name, filepath.Ext(name))
+		ext := strings.ToLower(filepath.Ext(name))
+		if nameBase == base && relatedExts[ext] {
+			full := filepath.Join(dir, name)
+			if err := os.Remove(full); err == nil {
+				removed = append(removed, full)
+				logger.S().Infof("[strmCleanup] deleted related file: %s", full)
+			}
+		}
+	}
+	return removed
+}
+
+// ==================== 待删批次执行（二次确认后调用）====================
+
+// executePendingBatch 执行单个待删批次（用户二次确认通过后调用）
+// 复用 executeCleanup 的三阶段删除逻辑（RemoveStrm/RemoveRelatedFiles/RemoveEmptyDirs）
+func executePendingBatch(ctx context.Context, batch CleanupBatch) ExecuteResponse {
+	resp := ExecuteResponse{
+		Errors:              []map[string]string{},
+		RemovedEmptyDirs:    []string{},
+		RemovedRelatedFiles: []string{},
+		PendingRequestID:    batch.RequestID,
+		TotalStaleCount:     batch.PathCount,
+	}
+
+	for _, p := range batch.Paths {
+		// 阶段 1：删 STRM 文件本身
+		if batch.RemoveStrm {
+			if err := os.Remove(p); err != nil {
+				if !os.IsNotExist(err) {
+					resp.FailedCount++
+					resp.Errors = append(resp.Errors, map[string]string{
+						"path":  p,
+						"error": err.Error(),
+					})
+					logger.S().Warnf("[strmCleanup] pending batch delete %s failed: %v", p, err)
+				}
+			} else {
+				resp.DeletedCount++
+				logger.S().Infof("[strmCleanup] pending batch deleted: %s", p)
+			}
+		}
+		// 阶段 2：删关联媒体信息文件
+		if batch.RemoveRelatedFiles {
+			removed := deleteRelatedFilesByStem(p)
+			resp.RemovedRelatedFiles = append(resp.RemovedRelatedFiles, removed...)
+		}
+	}
+
+	// 阶段 3：删无 STRM 的空目录
+	if batch.RemoveEmptyDirs {
+		dirSet := make(map[string]bool)
+		for _, p := range batch.Paths {
+			dirSet[filepath.Dir(p)] = true
+		}
+		for dir := range dirSet {
+			removeEmptyDirs(dir, &resp.RemovedEmptyDirs)
+		}
+	}
+
+	return resp
+}
+
+// HandleStrmCleanupPendingListGET 列出所有待删批次
+// GET /api/strmCleanup/pending
+func HandleStrmCleanupPendingListGET(deps StrmCleanupDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Interaction == nil {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{"batches": []any{}, "enabled": false})
+			return
+		}
+		batches, err := deps.Interaction.ListBatches(r.Context())
+		if err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		httpx.WriteJson(w, http.StatusOK, map[string]any{"batches": batches, "enabled": true})
+	}
+}
+
+// HandleStrmCleanupPendingCancelPOST 取消一个待删批次（仅从队列移除，不删文件）
+// POST /api/strmCleanup/pending/cancel  body: {"requestId": "xxx"}
+func HandleStrmCleanupPendingCancelPOST(deps StrmCleanupDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Interaction == nil {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "interaction not enabled"})
+			return
+		}
+		var body struct {
+			RequestID string `json:"requestId"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		if body.RequestID == "" {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "requestId is required"})
+			return
+		}
+		ok, err := deps.Interaction.CancelBatch(r.Context(), body.RequestID)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if !ok {
+			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "batch not found"})
+			return
+		}
+		httpx.WriteJson(w, http.StatusOK, map[string]bool{"canceled": true})
+	}
+}
+
+// HandleStrmCleanupPendingExecutePOST 执行一个待删批次（用户二次确认通过后调用）
+// POST /api/strmCleanup/pending/execute  body: {"requestId": "xxx"}
+func HandleStrmCleanupPendingExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Interaction == nil {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "interaction not enabled"})
+			return
+		}
+		var body struct {
+			RequestID string `json:"requestId"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		if body.RequestID == "" {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "requestId is required"})
+			return
+		}
+
+		start := time.Now()
+		batch, err := deps.Interaction.PopBatch(r.Context(), body.RequestID)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if batch == nil {
+			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "batch not found or already executed"})
+			return
+		}
+		resp := executePendingBatch(r.Context(), *batch)
+		resp.DurationMs = time.Since(start).Milliseconds()
+		logger.S().Infof("[strmCleanup] pending batch %s executed: deleted=%d failed=%d duration=%dms",
+			body.RequestID, resp.DeletedCount, resp.FailedCount, resp.DurationMs)
+		httpx.WriteJson(w, http.StatusOK, resp)
 	}
 }
 

@@ -80,7 +80,7 @@ FastStrm 提供 3 种官方分发方式，任选其一：
 | 方式 | 适用场景 | 下载地址 / 命令 |
 |:----:|----------|-----------------|
 | 🐳 **Docker**（最通用） | Linux / NAS / macOS / Windows，已有 Docker 环境 | `docker pull wabisabi926/faststrm:latest` |
-| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-0.9.5.fpk`](https://github.com/wabisabi926/faststrm/releases) |
+| 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-1.0.0.fpk`](https://github.com/wabisabi926/faststrm/releases) |
 | 🖥️ **源码 / 单二进制** | 想自己编译或跑在普通 Linux 主机 | `git clone -b go https://github.com/wabisabi926/faststrm && cd faststrm && go build ./cmd/server/` |
 
 > 📘 飞牛打包、定制、运行目录和排错详见 [docs/飞牛打包部署.md](docs/飞牛打包部署.md)
@@ -127,14 +127,17 @@ FastStrm v0.9.1 采用纯 Go 架构：
 
 ---
 
-## 📝 最新版本 (v0.9.5)
+## 📝 最新版本 (v1.0.0)
 
-- **🔥 跨平台本地目录浏览大修（飞牛 fNOS / Docker / Linux / Windows）**：彻底修复飞牛版本只能看到 `/vol1/@appshare/faststrm` 一个目录、无法选择媒体文件夹的问题
-- **📁 后端 4 级优先根列表**：`FASTSTRM_LOCAL_DIR_ROOTS` 显式覆盖 → Linux `/proc/mounts` 真实挂载点 → fNOS 白名单 ∪ NAS 常见卷根（/vol1 /volume1 /mnt/user）→ 硬编码兜底；fNOS 路径白名单默认宽松模式，避免误 403
-- **🐂 FNOS manifest 对齐 qmediasync**：新增 `share_dirs` 声明，用户勾选共享文件夹后会真正 bind mount 进应用沙箱
-- **🎛️ 前端对话框兜底通道**：本地目录选择器新增手动路径输入框 + Enter/跳转按钮 + 校验状态反馈，根列表不全时可直接粘贴已知路径
-- **🏗️ CI：升级 GitHub Actions 到 Node 24 native**（checkout@v5 / setup-node@v5 / setup-go@v6 / upload+download-artifact@v5），消除 Node 20 弃用告警
-- **🏷️ 版本号全链路同步**：main.go / package.json / manifest 统一更新为 0.9.5
+- **🎯 生活事件监控完全对齐参考项目**：实现四象限决策矩阵（OTHER_TO_MEDIA / MEDIA_TO_MEDIA / MEDIA_TO_OTHER / OTHER_TO_OTHER），事件类型严格按参考项目 p115strmhelper 路由
+- **🐛 修复 STRM 路径映射丢失子目录**：4 处 `filepath.Dir(mapping.localPath)` 误用修复，STRM 正确生成在映射子目录
+- **🐛 修复 DB 提前覆盖旧路径**：handler 内部反查旧路径后才同步 DB，旧 STRM 不再被误判为"不存在"
+- **🐛 修复 recreate 模式不生成新 STRM**：recreate 模式强制创建新 STRM，不被配置挡住
+- **🐛 修复 OTHER_TO_MEDIA 象限旧 STRM 未清理**：新增 `cleanupOldStrmForOtherToMedia` 函数，重命名/移动后旧 STRM 正确删除
+- **⚡ 115 API 优化**：Use-Agent 轮换池 + 429 自动切换 + 域名修正（proapi.115.com）+ 分级超时
+- **⚡ 302 路由增强**：405 fallback + 二次 pickcode + 并发锁
+- **⚡ STRM 清理双阈值**：max=10 拒绝 / stable=5 二次确认 + UI 确认
+- **📦 新增 pkg/concurrency（AC 自动机 + workerpool）+ pkg/strmutil（安全删除）**
 
 查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 ---

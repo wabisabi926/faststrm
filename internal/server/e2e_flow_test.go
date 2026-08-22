@@ -417,7 +417,7 @@ func TestE2E_FlowC_EmbyWebhookLifeMonitor(t *testing.T) {
 	_, embyDeps, lifeMonitorDeps, _ := initPhase6Deps(
 		f.settingsStore, f.tasksStore, f.accountStore,
 		f.lifeEventRepo, f.lifeEventLog, f.filePathRepo, f.stateMgr,
-		f.taskRuntime, execDeps,
+		f.taskRuntime, execDeps, nil, nil,
 	)
 
 	t.Run("emby_webhook_library_new", func(t *testing.T) {

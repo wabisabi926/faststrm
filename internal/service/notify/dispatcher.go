@@ -9,11 +9,12 @@ import (
 )
 
 type Dispatcher struct {
-	tg      *TelegramBot
-	webhook *WebhookSender
-	enabled bool
+	tg       *TelegramBot
+	webhook  *WebhookSender
+	enabled  bool
 	botToken string
-	chatID  string
+	chatID   string
+	batcher  *NotificationBatcher
 }
 
 func NewDispatcher(tg *TelegramBot) *Dispatcher {
@@ -23,7 +24,18 @@ func NewDispatcher(tg *TelegramBot) *Dispatcher {
 		d.chatID = tg.chatID
 		d.enabled = tg.botToken != "" && tg.chatID != ""
 	}
+	// 注册合并去抖发送器：最终走 d.dispatchRaw（绕过 Enqueue 递归）
+	d.batcher = NewNotificationBatcher(func(ctx context.Context, n *Notification) error {
+		return d.dispatchRaw(ctx, n)
+	}, 0, 0)
 	return d
+}
+
+// Stop 关闭合并 timer 并 flush 剩余通知（服务关闭时调用）
+func (d *Dispatcher) Stop() {
+	if d.batcher != nil {
+		d.batcher.Stop()
+	}
 }
 
 func (d *Dispatcher) SetEnabled(enabled bool) {
@@ -79,6 +91,20 @@ func (d *Dispatcher) NotifyError(ctx context.Context, taskName, errMsg string) e
 func (d *Dispatcher) Dispatch(ctx context.Context, n *Notification) error {
 	if !d.isConfigured() {
 		logger.S().Debug("Telegram not configured, skipping dispatch")
+		return nil
+	}
+	// 先走 60s 合并去抖：STRM 类通知合并，非 STRM 立即发送
+	if d.batcher != nil && d.batcher.Enqueue(ctx, n) {
+		return nil
+	}
+	return d.dispatchRaw(ctx, n)
+}
+
+// dispatchRaw 真正发送 Notification 到底层（TG + Webhook）。
+// 供 Batcher flush 回调使用，避免再走 Enqueue 造成递归。
+func (d *Dispatcher) dispatchRaw(ctx context.Context, n *Notification) error {
+	if !d.isConfigured() {
+		logger.S().Debug("Telegram not configured, skipping dispatchRaw")
 		return nil
 	}
 
