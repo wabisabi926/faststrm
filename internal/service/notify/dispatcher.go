@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/wabisabi926/faststrm/internal/model"
@@ -20,27 +21,97 @@ type Dispatcher struct {
 	botToken string
 	chatID   string
 	batcher  *NotificationBatcher
+	// 串行发送队列：单 worker 保证通知顺序 + TG 限流友好
+	sendCh   chan sendTask
+	sendStop chan struct{}
+	sendOnce sync.Once
+}
+
+// sendTask 串行队列中的单条发送任务
+type sendTask struct {
+	ctx      context.Context
+	n        *Notification
+	plain    string // 纯文本通知（非 Notification 时使用）
+	photo    string // 图片 URL/路径（纯文本通知时可为空）
+	caption  string // 图片 caption
 }
 
 func NewDispatcher(tg *TelegramBot) *Dispatcher {
-	d := &Dispatcher{tg: tg}
-	if tg != nil {
-		d.botToken = tg.botToken
-		d.chatID = tg.chatID
-		d.enabled = tg.botToken != "" && tg.chatID != ""
+	d := &Dispatcher{
+		tg:       tg,
+		sendCh:   make(chan sendTask, 256),
+		sendStop: make(chan struct{}),
 	}
-	// 注册合并去抖发送器：最终走 d.dispatchRaw（绕过 Enqueue 递归）
+	if tg != nil {
+		d.botToken = tg.BotToken()
+		d.chatID = tg.ChatID()
+		d.enabled = d.botToken != "" && d.chatID != ""
+	}
+	// 注册合并去抖发送器：最终走 d.enqueueSend（绕过 Enqueue 递归）
 	d.batcher = NewNotificationBatcher(func(ctx context.Context, n *Notification) error {
-		return d.dispatchRaw(ctx, n)
+		return d.enqueueSend(ctx, n)
 	}, 0, 0)
+	d.startSendWorker()
 	return d
 }
 
-// Stop 关闭合并 timer 并 flush 剩余通知（服务关闭时调用）
+// startSendWorker 启动串行发送 worker goroutine
+func (d *Dispatcher) startSendWorker() {
+	go func() {
+		for {
+			select {
+			case <-d.sendStop:
+				// 排空剩余队列
+				for {
+					select {
+					case t := <-d.sendCh:
+						d.executeSend(t)
+					default:
+						return
+					}
+				}
+			case t := <-d.sendCh:
+				d.executeSend(t)
+			}
+		}
+	}()
+}
+
+// executeSend 真正执行单条发送任务
+func (d *Dispatcher) executeSend(t sendTask) {
+	if t.n != nil {
+		d.dispatchRawDirect(t.ctx, t.n)
+	} else if t.photo != "" {
+		d.dispatchPhotoDirect(t.ctx, t.caption, t.photo)
+	} else if t.plain != "" {
+		d.dispatchTextDirect(t.ctx, t.plain)
+	}
+}
+
+// enqueueSend 将 Notification 入串行发送队列
+func (d *Dispatcher) enqueueSend(ctx context.Context, n *Notification) error {
+	if !d.isConfigured() {
+		logger.S().Debug("Telegram not configured, skipping dispatchRaw")
+		return nil
+	}
+	select {
+	case d.sendCh <- sendTask{ctx: context.Background(), n: n}:
+	default:
+		// 队列满时降级为直接发送（不丢失通知）
+		logger.S().Warnf("[Dispatcher] send queue full (256), falling back to direct send")
+		d.dispatchRawDirect(ctx, n)
+	}
+	return nil
+}
+
+// Stop 关闭合并 timer 和串行发送队列，flush 剩余通知（服务关闭时调用）
 func (d *Dispatcher) Stop() {
 	if d.batcher != nil {
 		d.batcher.Stop()
 	}
+	d.sendOnce.Do(func() {
+		close(d.sendStop)
+	})
 }
 
 func (d *Dispatcher) SetEnabled(enabled bool) {
@@ -81,11 +152,13 @@ func (d *Dispatcher) Notify(ctx context.Context, message string) error {
 		logger.S().Debug("Telegram not configured (missing botToken or chatID), skipping notification")
 		return nil
 	}
-	if err := d.tg.SendNotification(ctx, message); err != nil {
-		logger.S().Errorf("Failed to send Telegram notification: %v", err)
-		return err
+	// 入串行发送队列
+	select {
+	case d.sendCh <- sendTask{ctx: context.Background(), plain: message}:
+	default:
+		// 队列满时降级为直接发送
+		d.dispatchTextDirect(ctx, message)
 	}
-	d.sendWebhookText(ctx, message)
 	return nil
 }
 
@@ -94,30 +167,43 @@ func (d *Dispatcher) NotifyWithPhoto(ctx context.Context, caption, photoURL stri
 		logger.S().Debug("Telegram not configured, skipping photo send")
 		return nil
 	}
+	// 入串行发送队列（图片下载和发送在 worker 中处理）
+	select {
+	case d.sendCh <- sendTask{ctx: context.Background(), caption: caption, photo: photoURL}:
+	default:
+		// 队列满时降级为直接发送
+		d.dispatchPhotoDirect(ctx, caption, photoURL)
+	}
+	return nil
+}
+
+// dispatchTextDirect 直接发送纯文本（绕过队列，用于队列满时降级）
+func (d *Dispatcher) dispatchTextDirect(ctx context.Context, message string) {
+	if err := d.tg.SendNotification(ctx, message); err != nil {
+		logger.S().Errorf("Failed to send Telegram notification: %v", err)
+	}
+	d.sendWebhookText(ctx, message)
+}
+
+// dispatchPhotoDirect 直接发送图片（绕过队列，用于队列满时降级）
+func (d *Dispatcher) dispatchPhotoDirect(ctx context.Context, caption, photoURL string) {
 	// 先下载图片到本地临时文件，再 multipart 上传到 Telegram（对齐 qmediasync）
 	// 原因：绝大多数 Emby 部署在内网（192.168.x.x / 127.0.0.1 / 局域网域名），
 	// Telegram 官方服务器无法主动抓取 URL，会导致 sendPhoto 失败或返回空图。
 	tmpPath, err := downloadImageToTemp(ctx, photoURL)
 	if err != nil {
 		logger.S().Warnf("下载 Emby 图片失败，降级为纯文本通知: %v", err)
-		if err2 := d.tg.SendNotification(ctx, caption); err2 != nil {
-			return err2
-		}
-		d.sendWebhookText(ctx, caption)
-		return nil
+		d.dispatchTextDirect(ctx, caption)
+		return
 	}
-	defer func() { _ = os.Remove(tmpPath) }() // 无论如何发送完清理临时文件
+	defer func() { _ = os.Remove(tmpPath) }()
 
-	if err := d.tg.SendPhotoFromFile(ctx, d.tg.chatID, caption, tmpPath); err != nil {
+	if err := d.tg.SendPhotoFromFile(ctx, d.chatID, caption, tmpPath); err != nil {
 		logger.S().Errorf("SendPhotoFromFile 失败，降级为纯文本通知: %v", err)
-		if err2 := d.tg.SendNotification(ctx, caption); err2 != nil {
-			return err2
-		}
-		d.sendWebhookText(ctx, caption)
-		return nil
+		d.dispatchTextDirect(ctx, caption)
+		return
 	}
 	d.sendWebhookText(ctx, caption)
-	return nil
 }
 
 // downloadImageToTemp 把 URL 图片下载到系统临时目录，返回临时文件路径（调用方负责 os.Remove）
@@ -177,15 +263,15 @@ func (d *Dispatcher) Dispatch(ctx context.Context, n *Notification) error {
 	if d.batcher != nil && d.batcher.Enqueue(ctx, n) {
 		return nil
 	}
-	return d.dispatchRaw(ctx, n)
+	return d.enqueueSend(ctx, n)
 }
 
-// dispatchRaw 真正发送 Notification 到底层（TG + Webhook）。
-// 供 Batcher flush 回调使用，避免再走 Enqueue 造成递归。
-func (d *Dispatcher) dispatchRaw(ctx context.Context, n *Notification) error {
+// dispatchRawDirect 真正发送 Notification 到底层（TG + Webhook）。
+// 由串行 worker 调用，避免并发发送造成 TG 限流。
+func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 	if !d.isConfigured() {
 		logger.S().Debug("Telegram not configured, skipping dispatchRaw")
-		return nil
+		return
 	}
 
 	if n.ImageFile != "" || n.ImageURL != "" {
@@ -199,7 +285,8 @@ func (d *Dispatcher) dispatchRaw(ctx context.Context, n *Notification) error {
 			if err != nil {
 				logger.S().Warnf("Dispatch photo: 下载图片失败，降级纯文本: %v", err)
 				d.sendWebhookNotification(ctx, n)
-				return d.tg.SendNotification(ctx, n.Content)
+				_ = d.tg.SendNotification(ctx, n.Content)
+				return
 			}
 			finalPath = p
 			needCleanup = true
@@ -210,10 +297,11 @@ func (d *Dispatcher) dispatchRaw(ctx context.Context, n *Notification) error {
 		if err := d.tg.SendPhotoFromFile(ctx, d.chatID, n.Content, finalPath); err != nil {
 			logger.S().Warnf("Dispatch photo: SendPhotoFromFile 失败，降级纯文本: %v", err)
 			d.sendWebhookNotification(ctx, n)
-			return d.tg.SendNotification(ctx, n.Content)
+			_ = d.tg.SendNotification(ctx, n.Content)
+			return
 		}
 		d.sendWebhookNotification(ctx, n)
-		return nil
+		return
 	}
 
 	buttons := d.buildInlineKeyboard(n)
@@ -221,14 +309,15 @@ func (d *Dispatcher) dispatchRaw(ctx context.Context, n *Notification) error {
 		if err := d.tg.SendMessageWithButtons(ctx, d.chatID, n.Content, buttons); err != nil {
 			logger.S().Warnf("Dispatch with buttons failed, fallback to text: %v", err)
 			d.sendWebhookNotification(ctx, n)
-			return d.tg.SendNotification(ctx, n.Content)
+			_ = d.tg.SendNotification(ctx, n.Content)
+			return
 		}
 		d.sendWebhookNotification(ctx, n)
-		return nil
+		return
 	}
 
 	d.sendWebhookNotification(ctx, n)
-	return d.tg.SendNotification(ctx, n.Content)
+	_ = d.tg.SendNotification(ctx, n.Content)
 }
 
 func (d *Dispatcher) sendWebhookText(ctx context.Context, message string) {
@@ -270,16 +359,23 @@ func (d *Dispatcher) buildInlineKeyboard(n *Notification) [][]InlineKeyboardButt
 }
 
 func FormatTaskStatusMessage(taskName, status, detail string) string {
-	return fmt.Sprintf("🎬 任务: %s\n📊 状态: %s\n📝 %s", taskName, status, detail)
+	return FormatMessage("🎬 任务状态", taskName, map[string]string{
+		"状态": status,
+		"详情": detail,
+	})
 }
 
 func FormatDownloadCompleteMessage(taskName string, totalFiles, downloaded int, durationMs int64) string {
-	return fmt.Sprintf("✅ 下载完成\n🎬 任务: %s\n📁 文件数: %d/%d\n⏱ 耗时: %s",
-		taskName, downloaded, totalFiles, formatDuration(durationMs))
+	return FormatMessage("✅ 任务完成", taskName, map[string]string{
+		"文件数": fmt.Sprintf("%d / %d", downloaded, totalFiles),
+		"耗时":  formatDuration(durationMs),
+	})
 }
 
 func FormatErrorMessage(taskName, errMsg string) string {
-	return fmt.Sprintf("❌ 错误\n🎬 任务: %s\n📝 %s", taskName, errMsg)
+	return FormatMessage("❌ 任务错误", taskName, map[string]string{
+		"错误": errMsg,
+	})
 }
 
 func formatDuration(ms int64) string {

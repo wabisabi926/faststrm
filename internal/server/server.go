@@ -222,7 +222,7 @@ func Run(cfg *config.AppConfig) error {
 			if err := pollingMgr.Start(context.Background(), handlerFn); err != nil {
 				logger.S().Warnf("[Telegram] AutoPolling 启动失败: %v", err)
 			} else {
-				logger.S().Infof("[Telegram] AutoPolling 已自动启动（每 5 秒检查一次新消息）")
+				logger.S().Infof("[Telegram] AutoPolling 已自动启动（GetUpdatesChan: timeout=60, limit=100）")
 			}
 		} else if tg.BotToken != "" {
 			logger.S().Infof("[Telegram] Bot 已配置，但 AutoPolling 未勾选，跳过自动轮询（可在设置中开启或通过 API /api/notify/polling 手动启动）")

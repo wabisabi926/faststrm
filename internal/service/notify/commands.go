@@ -91,8 +91,8 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 	var username string
 	var userID int64
 	if msg.From != nil {
-		if msg.From.Username != "" {
-			username = msg.From.Username
+		if msg.From.UserName != "" {
+			username = msg.From.UserName
 		} else {
 			username = msg.From.FirstName
 		}
@@ -105,8 +105,8 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 	if !strings.HasPrefix(text, "/") {
 		reply := fmt.Sprintf("👋 你好 %s！\n\nFastStrm Bot 支持以下操作：\n\n"+
 			"• /status — 查看系统状态\n"+
-			"• /scan — 执行全量对账\n"+
-			"• /cleanup — 清理孤儿 STRM\n"+
+			"• /scan — 打开 STRM 操作菜单\n"+
+			"• /cleanup — 打开 STRM 操作菜单\n"+
 			"• /accounts — 查看账号列表\n\n"+
 			"输入 /start 打开操作菜单。", username)
 		return h.bot.SendMessage(ctx, chatID, reply, "HTML")
@@ -132,9 +132,9 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 	case "/status":
 		return h.handleStatus(ctx, chatID)
 	case "/scan":
-		return h.handleScanPlaceholder(ctx, chatID)
+		return h.handleScanMenu(ctx, chatID)
 	case "/cleanup":
-		return h.handleCleanupPlaceholder(ctx, chatID)
+		return h.handleScanMenu(ctx, chatID)
 	case "/accounts":
 		return h.handleAccounts(ctx, chatID)
 	default:
@@ -172,9 +172,9 @@ func (h *CommandHandler) HandleCallbackQuery(ctx context.Context, cq CallbackQue
 	case "status":
 		return h.handleStatus(ctx, chatID)
 	case "scan":
-		return h.handleScanPlaceholder(ctx, chatID)
+		return h.handleScanMenu(ctx, chatID)
 	case "cleanup":
-		return h.handleCleanupPlaceholder(ctx, chatID)
+		return h.handleScanMenu(ctx, chatID)
 	case "accounts":
 		return h.handleAccounts(ctx, chatID)
 	default:
@@ -213,23 +213,43 @@ func parseCleanupCallbackData(data string) (requestID string, approve bool, ok b
 	return parts[1], parts[2] == "y", true
 }
 
-// handleHelp 显示帮助文本
+// handleHelp 显示帮助文本（按实际功能梳理，不引入不存在的命令）
 func (h *CommandHandler) handleHelp(ctx context.Context, chatID, username string) error {
-	text := "❓ <b>FastStrm Bot 命令</b>\n\n" +
-		"<b>/start</b> — 打开操作菜单\n" +
-		"<b>/status</b> — 查看监控状态、账号 Cookie 状态\n" +
-		"<b>/scan</b> — 执行全量对账（扫描+清理+补生成）\n" +
-		"<b>/cleanup</b> — 扫描孤儿 STRM\n" +
-		"<b>/accounts</b> — 查看账号列表\n" +
-		"<b>/help</b> — 显示此帮助\n\n" +
-		"<b>说明：</b>\n" +
-		"• 全量对账会暂停监控，完成后自动恢复\n" +
-		"• 孤儿扫描不会自动删除，请在 Web UI 确认后清理\n" +
+	text := "❓ <b>FastStrm Bot 帮助</b>\n\n" +
+		"<b>📋 命令列表</b>\n" +
+		"• /start — 打开主菜单（6 大子菜单）\n" +
+		"• /status — 查看系统状态概览\n" +
+		"• /scan — 打开 STRM 操作菜单（全量同步/清理孤儿）\n" +
+		"• /cleanup — 打开 STRM 操作菜单\n" +
+		"• /accounts — 查看账号列表及 Cookie 状态\n" +
+		"• /help — 显示此帮助\n\n" +
+		"<b>🗂 主菜单介绍</b>\n" +
+		"通过 /start 打开，包含 6 个子菜单：\n" +
+		"• 系统状态 — 账号/监控/任务/Emby 概览\n" +
+		"• 监控控制 — 启停各账号生活事件监控\n" +
+		"• 任务管理 — 执行/取消 STRM 同步任务\n" +
+		"• Emby 刷库 — 刷新媒体库\n" +
+		"• STRM 操作 — 全量同步/清理孤儿\n" +
+		"• 帮助 — 功能说明\n\n" +
+		"<b>🎬 任务执行</b>\n" +
+		"通过主菜单 → 任务管理 → 选择任务 → 点击执行按钮触发。\n" +
+		"任务完成后自动发送通知。\n\n" +
+		"<b>📺 监控启停</b>\n" +
+		"通过主菜单 → 监控控制 → 选择账号 → 启动/停止。\n" +
+		"可控制创建/删除/移动/重命名事件类型。\n\n" +
+		"<b>💡 提示</b>\n" +
+		"• 全量同步会暂停监控，完成后自动恢复\n" +
 		"• Cookie 过期请在 Web UI 扫码刷新"
 	if username != "" {
 		text = fmt.Sprintf("👋 <b>你好 %s！</b>\n\n", username) + text
 	}
 	return h.bot.SendMessage(ctx, chatID, text, "HTML")
+}
+
+// handleScanMenu 发送 STRM 操作菜单（/scan /cleanup 命令直接跳转到此菜单）
+func (h *CommandHandler) handleScanMenu(ctx context.Context, chatID string) error {
+	text, buttons := BuildSTRMMenu()
+	return h.bot.SendMessageWithButtons(ctx, chatID, text, buttons)
 }
 
 // handleStatus 显示完整系统状态（账号 + 监控 + 任务 + Emby + 事件开关）
@@ -339,18 +359,6 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 
 	sb.WriteString(fmt.Sprintf("\n<b>⏰ %s</b>", nowFormatted()))
 	return h.bot.SendMessage(ctx, chatID, sb.String(), "HTML")
-}
-
-// handleScanPlaceholder 全量对账占位：实际触发由调用方接入 strm 对账服务后启用
-func (h *CommandHandler) handleScanPlaceholder(ctx context.Context, chatID string) error {
-	text := "🔍 <b>全量对账</b>\n\n该命令需在调用方接入 strm 对账服务后启用，或前往 Web UI 触发。"
-	return h.bot.SendMessage(ctx, chatID, text, "HTML")
-}
-
-// handleCleanupPlaceholder 孤儿清理占位：实际触发由调用方接入 strm 清理服务后启用
-func (h *CommandHandler) handleCleanupPlaceholder(ctx context.Context, chatID string) error {
-	text := "🧹 <b>清理孤儿</b>\n\n该命令需在调用方接入 strm 清理服务后启用，或前往 Web UI 触发。"
-	return h.bot.SendMessage(ctx, chatID, text, "HTML")
 }
 
 // handleAccounts 列出已配置账号及其 Cookie 状态

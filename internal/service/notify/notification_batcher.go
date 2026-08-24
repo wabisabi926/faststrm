@@ -216,7 +216,7 @@ func mergeEntries(entries []coalescedEntry, key bucketKey) *Notification {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "📦 批量%s通知 (%d条)\n", typeLabel, len(entries))
 	if account != "" {
-		fmt.Fprintf(&sb, "👤 账号: %s\n", account)
+		fmt.Fprintf(&sb, "👤 账号： %s\n", account)
 	}
 	// 取每条的首行（避免消息过长），并按时间排序
 	sorted := make([]coalescedEntry, len(entries))

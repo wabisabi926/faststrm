@@ -208,6 +208,9 @@ func (c *Client) BuildImageURL(itemID string, maxWidth int) string {
 // BuildImageURLIfAvailable 仅当 imageTags 里存在图片时才返回合法 URL（避免 Telegram 404 后降级成纯文本）
 // 优先级：Backdrop（横版背景，通知里视觉效果更好） > Primary（竖版海报）
 // 注意：Emby ImageTags 的 key 大小写不固定（有 "backdrop"/"Backdrop"/"primary"/"Primary" 等变体），因此做大小写不敏感查找
+//
+// 适用场景：入库/删除通知（横版背景图视觉更佳）。
+// 播放通知请用 BuildPrimaryImageURL（只取竖版海报，对齐 QMS 播放通知图片策略）。
 func (c *Client) BuildImageURLIfAvailable(itemID string, imageTags map[string]string, maxWidth int) string {
 	if len(imageTags) == 0 {
 		return ""
@@ -245,6 +248,31 @@ func (c *Client) BuildImageURLIfAvailable(itemID string, imageTags map[string]st
 			maxWidth,
 			url.QueryEscape(c.apiKey),
 		)
+	}
+	return ""
+}
+
+// BuildPrimaryImageURL 仅当 imageTags 里存在 Primary 时才返回竖版海报 URL
+// 对齐 QMS 播放通知图片策略：播放通知只用 Primary（竖版海报），不用 Backdrop（横版背景）
+// 理由：播放通知含季集/进度等文字信息，竖版海报视觉更协调；Backdrop 横版图在播放通知里不搭
+func (c *Client) BuildPrimaryImageURL(itemID string, imageTags map[string]string, maxWidth int) string {
+	if len(imageTags) == 0 {
+		return ""
+	}
+	if maxWidth <= 0 {
+		maxWidth = 400
+	}
+	// 大小写不敏感取 Primary/Thumb
+	for mk, mv := range imageTags {
+		if (strings.EqualFold(mk, "Primary") || strings.EqualFold(mk, "Thumb")) && mv != "" {
+			return fmt.Sprintf("%s/emby/Items/%s/Images/Primary?tag=%s&maxWidth=%d&api_key=%s",
+				c.baseURL,
+				url.PathEscape(itemID),
+				url.QueryEscape(mv),
+				maxWidth,
+				url.QueryEscape(c.apiKey),
+			)
+		}
 	}
 	return ""
 }

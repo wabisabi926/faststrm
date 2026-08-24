@@ -68,26 +68,23 @@ type STRMCreateInput struct {
 	FileSize  int64
 }
 
-// BuildCreateNotification 构建 STRM 创建通知
+// BuildCreateNotification 构建 STRM 创建通知（统一走 FormatMessage 三段式渲染）
 func (b *StrmNotifyBuilder) BuildCreateNotification(input STRMCreateInput) *Notification {
-	var sizeLine string
-	if input.FileSize > 0 {
-		sizeLine = fmt.Sprintf("<b>大小:</b> %s\n", formatFileSize(input.FileSize))
+	displayMeta := map[string]string{
+		"账号":   input.Account,
+		"类型":   input.Kind,
+		"云端路径": input.CloudPath,
+		"本地路径": input.LocalPath,
+		"时间":   formatTimestamp(),
 	}
-
-	content := fmt.Sprintf("📺 <b>STRM 已创建</b>\n\n"+
-		"<b>账号:</b> %s\n"+
-		"<b>类型:</b> %s\n"+
-		"%s"+
-		"<b>云端路径:</b> %s\n"+
-		"<b>本地路径:</b> %s\n\n"+
-		"⏰ %s",
-		input.Account, input.Kind, sizeLine, input.CloudPath, input.LocalPath, formatTimestamp())
-
+	if input.FileSize > 0 {
+		displayMeta["大小"] = formatFileSize(input.FileSize)
+	}
+	content := FormatMessage("📺 STRM 已创建", "", displayMeta)
 	return &Notification{
-		Type:      TypeSTRMCreate,
-		Title:     "STRM 已创建",
-		Content:   content,
+		Type:     TypeSTRMCreate,
+		Title:    "📺 STRM 已创建",
+		Content:  content,
 		Metadata: map[string]string{
 			"account":    input.Account,
 			"kind":       input.Kind,
@@ -110,20 +107,20 @@ type STRMDeleteInput struct {
 	LocalPath string
 }
 
-// BuildDeleteNotification 构建 STRM 删除通知
+// BuildDeleteNotification 构建 STRM 删除通知（统一走 FormatMessage 三段式渲染）
 func (b *StrmNotifyBuilder) BuildDeleteNotification(input STRMDeleteInput) *Notification {
-	content := fmt.Sprintf("🗑️ <b>STRM 已删除</b>\n\n"+
-		"<b>账号:</b> %s\n"+
-		"<b>类型:</b> %s\n"+
-		"<b>云端路径:</b> %s\n"+
-		"<b>本地路径:</b> %s\n\n"+
-		"⏰ %s",
-		input.Account, input.Kind, input.CloudPath, input.LocalPath, formatTimestamp())
-
+	displayMeta := map[string]string{
+		"账号":   input.Account,
+		"类型":   input.Kind,
+		"云端路径": input.CloudPath,
+		"本地路径": input.LocalPath,
+		"时间":   formatTimestamp(),
+	}
+	content := FormatMessage("🗑️ STRM 已删除", "", displayMeta)
 	return &Notification{
-		Type:      TypeSTRMDelete,
-		Title:     "STRM 已删除",
-		Content:   content,
+		Type:     TypeSTRMDelete,
+		Title:    "🗑️ STRM 已删除",
+		Content:  content,
 		Metadata: map[string]string{
 			"account":    input.Account,
 			"kind":       input.Kind,
@@ -145,20 +142,20 @@ type STRMMoveInput struct {
 	LocalPath string
 }
 
-// BuildMoveNotification 构建 STRM 移动通知
+// BuildMoveNotification 构建 STRM 移动通知（统一走 FormatMessage 三段式渲染）
 func (b *StrmNotifyBuilder) BuildMoveNotification(input STRMMoveInput) *Notification {
-	content := fmt.Sprintf("📦 <b>STRM 已移动</b>\n\n"+
-		"<b>账号:</b> %s\n"+
-		"<b>类型:</b> %s\n"+
-		"<b>云端路径:</b> %s\n"+
-		"<b>本地路径:</b> %s\n\n"+
-		"⏰ %s",
-		input.Account, input.Kind, input.CloudPath, input.LocalPath, formatTimestamp())
-
+	displayMeta := map[string]string{
+		"账号":   input.Account,
+		"类型":   input.Kind,
+		"云端路径": input.CloudPath,
+		"本地路径": input.LocalPath,
+		"时间":   formatTimestamp(),
+	}
+	content := FormatMessage("📦 STRM 已移动", "", displayMeta)
 	return &Notification{
-		Type:      TypeSTRMMove,
-		Title:     "STRM 已移动",
-		Content:   content,
+		Type:     TypeSTRMMove,
+		Title:    "📦 STRM 已移动",
+		Content:  content,
 		Metadata: map[string]string{
 			"account":    input.Account,
 			"kind":       input.Kind,
@@ -180,20 +177,20 @@ type STRMRenameInput struct {
 	LocalPath string
 }
 
-// BuildRenameNotification 构建 STRM 重命名通知
+// BuildRenameNotification 构建 STRM 重命名通知（统一走 FormatMessage 三段式渲染）
 func (b *StrmNotifyBuilder) BuildRenameNotification(input STRMRenameInput) *Notification {
-	content := fmt.Sprintf("✏️ <b>STRM 已重命名</b>\n\n"+
-		"<b>账号:</b> %s\n"+
-		"<b>类型:</b> %s\n"+
-		"<b>云端路径:</b> %s\n"+
-		"<b>本地路径:</b> %s\n\n"+
-		"⏰ %s",
-		input.Account, input.Kind, input.CloudPath, input.LocalPath, formatTimestamp())
-
+	displayMeta := map[string]string{
+		"账号":   input.Account,
+		"类型":   input.Kind,
+		"云端路径": input.CloudPath,
+		"本地路径": input.LocalPath,
+		"时间":   formatTimestamp(),
+	}
+	content := FormatMessage("✏️ STRM 已重命名", "", displayMeta)
 	return &Notification{
-		Type:      TypeSTRMRename,
-		Title:     "STRM 已重命名",
-		Content:   content,
+		Type:     TypeSTRMRename,
+		Title:    "✏️ STRM 已重命名",
+		Content:  content,
 		Metadata: map[string]string{
 			"account":    input.Account,
 			"kind":       input.Kind,

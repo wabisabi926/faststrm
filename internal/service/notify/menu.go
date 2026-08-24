@@ -441,7 +441,7 @@ func (h *CommandHandler) RouteMenuCallback(ctx context.Context, cq CallbackQuery
 		return nil
 	}
 	chatID := fmt.Sprintf("%d", cq.Message.Chat.ID)
-	messageID := cq.Message.MessageID
+	messageID := int64(cq.Message.MessageID)
 	data := cq.Data
 
 	logger.S().Debugf("[Menu] Route callback: %s", data)
