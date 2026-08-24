@@ -127,21 +127,6 @@ FastStrm v0.9.1 采用纯 Go 架构：
 
 ---
 
-## 📝 最新版本 (v1.0.0)
-
-- **🎯 生活事件监控完全对齐参考项目**：实现四象限决策矩阵（OTHER_TO_MEDIA / MEDIA_TO_MEDIA / MEDIA_TO_OTHER / OTHER_TO_OTHER），事件类型严格按参考项目 p115strmhelper 路由
-- **🐛 修复 STRM 路径映射丢失子目录**：4 处 `filepath.Dir(mapping.localPath)` 误用修复，STRM 正确生成在映射子目录
-- **🐛 修复 DB 提前覆盖旧路径**：handler 内部反查旧路径后才同步 DB，旧 STRM 不再被误判为"不存在"
-- **🐛 修复 recreate 模式不生成新 STRM**：recreate 模式强制创建新 STRM，不被配置挡住
-- **🐛 修复 OTHER_TO_MEDIA 象限旧 STRM 未清理**：新增 `cleanupOldStrmForOtherToMedia` 函数，重命名/移动后旧 STRM 正确删除
-- **⚡ 115 API 优化**：Use-Agent 轮换池 + 429 自动切换 + 域名修正（proapi.115.com）+ 分级超时
-- **⚡ 302 路由增强**：405 fallback + 二次 pickcode + 并发锁
-- **⚡ STRM 清理双阈值**：max=10 拒绝 / stable=5 二次确认 + UI 确认
-- **📦 新增 pkg/concurrency（AC 自动机 + workerpool）+ pkg/strmutil（安全删除）**
-
-查看完整变更：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
----
-
 ## 📄 许可证
 
 本项目采用 [MIT License](LICENSE) 许可证。
