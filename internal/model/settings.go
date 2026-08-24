@@ -172,7 +172,8 @@ type LifeMonitorSettings struct {
 	// P1-5 Delete 安全兜底：
 	//   false(默认)=软删除，仅把本地 STRM 重命名为 *.deleted.bak 并同步清理 DB，不硬删；
 	//   true=硬删除（对齐原有行为，危险）
-	EnableHardDelete bool `json:"enableHardDelete"`
+	EnableHardDelete  bool `json:"enableHardDelete"`
+	NotifyOnlyOnError bool `json:"notifyOnlyOnError"` // true=仅错误时发TG通知，正常操作不通知
 	// 事件去重配置
 	EnableDedup      bool `json:"enableDedup"`      // 是否启用事件去重
 	DedupWindowHours int  `json:"dedupWindowHours"` // 去重窗口（小时），默认 24

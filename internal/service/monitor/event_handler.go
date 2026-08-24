@@ -2704,6 +2704,10 @@ func (m *Monitor) notifyCreate(ctx context.Context, account, cloudPath, kindLabe
 	if m.notifier == nil {
 		return
 	}
+	// 仅错误模式：正常操作不发通知（错误仍由 notifyPollError/notifyEventBatchError 推送）
+	if m.settingsFn().NotifyOnlyOnError {
+		return
+	}
 	builder := notify.NewStrmNotifyBuilder()
 	n := builder.BuildCreateNotification(notify.STRMCreateInput{
 		Account:   account,
@@ -2722,6 +2726,9 @@ func (m *Monitor) notifyCreate(ctx context.Context, account, cloudPath, kindLabe
 // notifyDelete 发送删除通知
 func (m *Monitor) notifyDelete(ctx context.Context, account, cloudPath, kindLabel, localPath string) {
 	if m.notifier == nil {
+		return
+	}
+	if m.settingsFn().NotifyOnlyOnError {
 		return
 	}
 	builder := notify.NewStrmNotifyBuilder()
@@ -2743,6 +2750,9 @@ func (m *Monitor) notifyMove(ctx context.Context, account, cloudPath, kindLabel,
 	if m.notifier == nil {
 		return
 	}
+	if m.settingsFn().NotifyOnlyOnError {
+		return
+	}
 	builder := notify.NewStrmNotifyBuilder()
 	n := builder.BuildMoveNotification(notify.STRMMoveInput{
 		Account:   account,
@@ -2760,6 +2770,9 @@ func (m *Monitor) notifyMove(ctx context.Context, account, cloudPath, kindLabel,
 // notifyRename 发送重命名通知
 func (m *Monitor) notifyRename(ctx context.Context, account, cloudPath, kindLabel, localPath string) {
 	if m.notifier == nil {
+		return
+	}
+	if m.settingsFn().NotifyOnlyOnError {
 		return
 	}
 	builder := notify.NewStrmNotifyBuilder()

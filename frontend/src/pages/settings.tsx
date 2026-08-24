@@ -39,6 +39,7 @@ type LifeMonitorConfig = {
   pathMappings: PathMapping[];
   removeEmptyDirs: boolean;
   enableHardDelete?: boolean;
+  notifyOnlyOnError?: boolean;
   eventTypes: {
     create: boolean;
     remove: boolean;
@@ -183,6 +184,7 @@ export default function SettingsPage() {
   const [newMappingAccount, setNewMappingAccount] = useState<string>("__all__");
   const [removeEmptyDirs, setRemoveEmptyDirs] = useState(true);
   const [enableHardDelete, setEnableHardDelete] = useState(true);
+  const [notifyOnlyOnError, setNotifyOnlyOnError] = useState(false);
   const [eventTypes, setEventTypes] = useState({
     create: true,
     remove: true,
@@ -252,6 +254,7 @@ export default function SettingsPage() {
         setPathMappings(monitor.pathMappings || []);
         setRemoveEmptyDirs(monitor.removeEmptyDirs ?? true);
         setEnableHardDelete(monitor.enableHardDelete ?? true);
+        setNotifyOnlyOnError(monitor.notifyOnlyOnError ?? false);
         setEventTypes(monitor.eventTypes || DEFAULT_MONITOR_CONFIG.eventTypes);
         const loadedMinSize = typeof monitor.minFileSize === "number" ? monitor.minFileSize : 0;
         setMinFileSizeMb(loadedMinSize > 0 ? (loadedMinSize / (1024 * 1024)).toString() : "");
