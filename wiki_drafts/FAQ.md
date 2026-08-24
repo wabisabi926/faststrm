@@ -92,6 +92,16 @@ A: 排查步骤：
 4. 查看日志是否有 `[LifeMonitor]` 错误
 5. 检查 `lifeMonitorState.json` 断点是否过期
 
+### Q: 115 生活监控 STRM 不生成？（v1.0.2 修复）
+
+A: v1.0.2 修复了一个关键 bug：早期版本默认调用 `webapi.115.com/behavior/detail`，该端点返回的事件 `pick_code` 字段经常缺失，导致单文件创建事件被全部跳过。v1.0.2 已改为默认走 `proapi.115.com/ios/behavior/detail`（字段完整）。
+
+如果升级后仍不生成，排查：
+1. 确认路径映射正确（cloudPath 必须是 115 网盘真实路径）
+2. 查看日志是否有 `invalid_pickcode` 或 `pick_code missing` 提示
+3. 检查文件是否被扩展名/大小/黑名单过滤
+4. 查看日志是否有 `[Monitor] ... poll summary` 确认事件已拉取
+
 ### Q: 删了网盘文件但本地 STRM 没删？
 
 A: 可能原因：

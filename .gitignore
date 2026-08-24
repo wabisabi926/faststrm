@@ -66,3 +66,5 @@ frontend/vite.config.d.ts
 # ==== Runtime ====
 logs/
 data/
+
+dist/

@@ -88,6 +88,17 @@ faststrm 会调用 Emby 的 `System/Info` 接口进行校验，并提供 **9 种
 
 ---
 
+### 故障排查（v1.0.2 新增诊断日志）
+
+如果 TG 没收到入库/播放通知：
+1. 查看 `app.log` 是否有 `[emby/webhook] 收到 webhook: Event=...` 这行
+   - **没有** → Emby 端 webhook 事件类型未勾选「新建项」/「播放」，或网络不通
+   - **有但 Event 不匹配** → Emby 版本事件标识不同，检查日志中 Event 实际值
+2. 确认 faststrm 设置页「入库通知」/「播放通知」开关已打开
+3. 确认 Telegram 已配置且 enabled
+
+---
+
 ## Jellyfin 支持
 
 Webhook 格式与 Emby 类似，但事件字段略有差异。当前主要测试 Emby，Jellyfin 可能需要调整 webhook 解析逻辑。
