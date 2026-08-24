@@ -327,8 +327,8 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 			Error string `json:"error,omitempty"`
 			Data  struct {
 				List     []lifeEventRaw `json:"list"`
-				Count    int            `json:"count"`
-				NextPage bool           `json:"next_page"`
+				Count    any            `json:"count"`
+				NextPage any            `json:"next_page"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(body, &resp); err != nil {
@@ -392,7 +392,7 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 		}
 
 		// 没有下一页，停止
-		if !resp.Data.NextPage {
+		if !parseNextPage(resp.Data.NextPage) {
 			break
 		}
 
@@ -404,6 +404,22 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 	logger.S().Infof("[LifeClient] pulled events: filtered=%d, from_id=%d, from_time=%d",
 		len(allFiltered), fromID, fromTime)
 	return allFiltered, nil
+}
+
+// parseNextPage 灵活解析 next_page 字段（API 可能返回 bool/int/string）
+func parseNextPage(v any) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case int:
+		return val != 0
+	case float64:
+		return val != 0
+	case string:
+		return val == "1" || val == "true" || val == "True"
+	default:
+		return false
+	}
 }
 
 // doRequest 发送 HTTP 请求，返回响应体
