@@ -1,5 +1,11 @@
 # FastStrm 变更日志
 
+## v1.0.3 (2026-08-24)
+
+### 🐛 关键 Bug 修复
+
+- **修复 115 生活事件 API 响应 count 字段为字符串导致 JSON 解析失败**：proapi 端点返回的 count 字段是字符串而非数字，next_page 也可能返回非 bool 类型，导致 Go 反序列化报错，事件拉取直接失败。现将 Count 和 NextPage 改为 any 类型，并新增 parseNextPage 辅助函数灵活处理 bool/int/string。
+
 ## v1.0.2 (2026-08-24)
 
 ### 🐛 关键 Bug 修复
