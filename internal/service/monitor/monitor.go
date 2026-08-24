@@ -547,6 +547,11 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error {
 			account, len(events), counts.Summary(), maxEventID, maxEventTime)
 	}
 
+	// 事件处理错误摘要通知：批量事件中有失败时主动推送
+	if counts.Errors > 0 && m.notifier != nil {
+		m.notifyEventBatchError(account, events, &counts)
+	}
+
 	return nil
 }
 
@@ -664,6 +669,7 @@ func (m *Monitor) handlePollError(account string, err error) {
 				accMon.cookieMarkedInvalid = true
 				m.mu.Unlock()
 				m.markCookiePotentiallyInvalid(account, err)
+				m.notifyPollError(account, "cookie 可能已失效", err)
 				return
 			}
 		} else {
@@ -671,6 +677,11 @@ func (m *Monitor) handlePollError(account string, err error) {
 		}
 	}
 	m.mu.Unlock()
+
+	// 非认证错误但需要通知的场景：拉取事件失败等
+	if !isAuth {
+		m.notifyPollError(account, "轮询异常", err)
+	}
 }
 
 // markCookiePotentiallyInvalid 标记账号 cookie 可能失效
@@ -682,6 +693,43 @@ func (m *Monitor) markCookiePotentiallyInvalid(account string, err error) {
 		logger.S().Warnf("[Monitor] 标记 cookie 失效失败 account=%s: %v", account, err)
 	}
 	logger.S().Warnf("[Monitor] 账号 %s cookie 可能已失效: %v", account, err)
+}
+
+// notifyPollError 主动推送轮询错误到 TG（参考项目 post_message 通知策略）
+func (m *Monitor) notifyPollError(account, stage string, err error) {
+	if m.notifier == nil {
+		return
+	}
+	msg := fmt.Sprintf("⚠️ <b>115 生活监控异常</b>\n\n账号: <code>%s</code>\n阶段: %s\n错误: %s\n\n请检查 Cookie 状态或网络连接",
+		account, stage, err.Error())
+	if err := m.notifier.Notify(context.Background(), msg); err != nil {
+		logger.S().Warnf("[Monitor] 错误通知推送失败 account=%s: %v", account, err)
+	}
+}
+
+// notifyEventBatchError 推送事件批量处理错误摘要到 TG
+func (m *Monitor) notifyEventBatchError(account string, events []client115.LifeEventItem, counts *PollCounts) {
+	if m.notifier == nil || counts.Errors == 0 {
+		return
+	}
+	// 收集失败的事件（最多 5 条，避免消息过长）
+	var failedItems []string
+	for i, e := range events {
+		if i >= 5 {
+			break
+		}
+		failedItems = append(failedItems, fmt.Sprintf("  · [%d] %s (file_id=%s)", e.Type, e.FileName, e.FileID))
+	}
+	truncated := ""
+	if len(events) > 5 {
+		truncated = fmt.Sprintf("\n  ... 以及其他 %d 条", len(events)-5)
+	}
+	msg := fmt.Sprintf("⚠️ <b>115 生活监控事件处理异常</b>\n\n账号: <code>%s</code>\n总数: %d / 成功: %d / 失败: %d\n\n%s%s",
+		account, counts.Entered, counts.Effective, counts.Errors,
+		strings.Join(failedItems, "\n"), truncated)
+	if err := m.notifier.Notify(context.Background(), msg); err != nil {
+		logger.S().Warnf("[Monitor] 批量错误通知推送失败 account=%s: %v", account, err)
+	}
 }
 
 // resetConsecutiveFailures 重置连续失败计数
