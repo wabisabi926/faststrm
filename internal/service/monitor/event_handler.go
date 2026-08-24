@@ -1117,6 +1117,51 @@ func (m *Monitor) cleanupOldStrmAssets(
 		fmt.Sprintf("recreate 模式：旧 STRM 已清理 %s (关联 %d)", oldStrmPath, deletedRelated))
 }
 
+
+// recreateStrmInDirectory 在目标目录重新生成STRM（用于move/rename目标已存在时的recreate fallback）
+func (m *Monitor) recreateStrmInDirectory(
+	ctx context.Context,
+	account string,
+	event client115.LifeEventItem,
+	mapping *pathMapping,
+	cloudPath string,
+	lifeClient *client115.LifeClient,
+) {
+	if event.FileCategory == 0 {
+		strmCreated, createErr := m.handleCreateFolderRecursive(
+			ctx, account, mapping, lifeClient, event.FileID, cloudPath, 0,
+		)
+		if createErr != nil {
+			logger.S().Warnf("[Monitor] recreate文件夹递归部分失败 folder=%s: %v", cloudPath, createErr)
+		}
+		m.appendLog(ctx, account, "create", true, cloudPath, mapping.localPath,
+			fmt.Sprintf("recreate: 文件夹已重新创建，内部生成 STRM %d 个", strmCreated))
+		logger.S().Infof("[Monitor] recreate文件夹已创建: %s (内部STRM: %d)", mapping.localPath, strmCreated)
+	} else {
+		in := singleFileCreateInput{
+			CloudPath: cloudPath,
+			FileName:  event.FileName,
+			PickCode:  event.PickCode,
+			FileSize:  event.FileSize,
+			FileID:    event.FileID,
+			ParentID:  event.ParentID,
+		}
+		localParentDir := mapping.localPath
+		strmPath, err := m.createStrmForSingleFile(ctx, account, in, localParentDir, "文件")
+		if err != nil {
+			m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath, err.Error())
+			return
+		}
+		if strmPath == "" {
+			m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath,
+				fmt.Sprintf("recreate: 未生成 STRM: %s", event.FileName))
+			return
+		}
+		m.appendLog(ctx, account, "create", true, cloudPath, strmPath, "recreate: STRM 已重新创建")
+		logger.S().Infof("[Monitor] recreate STRM已创建: %s", strmPath)
+	}
+}
+
 // resolveOldCloudPathByFileID 从 filePathDb 按 file_id 反查旧的 cloudPath
 // 对齐 MoviePilot：file_item = _databasehelper.get_by_id(int(event["file_id"]))
 // P0-2: 先查 files 表，未命中查 folders 表（文件夹路径持久化）
@@ -1362,10 +1407,31 @@ func (m *Monitor) handleMoveEvent(
 				fmt.Sprintf("跳过: 本地旧文件夹不存在 %s", oldLocalPath))
 			return nil
 		}
-		// b) 新目录已存在 → 跳过（L1775-1780）
+		// b) 新目录已存在 → fallback 到 recreate（先清理旧STRM，再在新位置重新生成）
+		// 原因：115 可能先触发创建事件在目标位置生成STRM，再触发move事件，
+		//       此时目标已存在不能直接跳过，需要走recreate逻辑保证STRM正确
 		if _, dstErr := os.Stat(mapping.localPath); dstErr == nil {
-			m.appendLog(ctx, account, "move", false, cloudPath, mapping.localPath,
-				fmt.Sprintf("跳过: 移动目标已存在 %s", mapping.localPath))
+			logger.S().Infof("[Monitor] move目标已存在 %s, fallback到recreate模式重新生成STRM", mapping.localPath)
+			// 清理旧路径的STRM
+			if oldLocalPath != "" {
+				m.cleanupOldStrmAssets(ctx, account, event, oldCloudPath, oldLocalPath, config)
+			}
+			// 走recreate: 在新位置创建STRM
+			if err := os.MkdirAll(mapping.localPath, 0o755); err != nil {
+				return fmt.Errorf("mkdir 失败: %w", err)
+			}
+			if lifeClient != nil {
+				m.recreateStrmInDirectory(ctx, account, event, mapping, cloudPath, lifeClient)
+			}
+			// DB路径前缀更新
+			if m.sqliteDB != nil && oldCloudPath != "" && oldCloudPath != cloudPath {
+				if n, upErr := db.UpdatePathPrefixBatch(m.sqliteDB, account, oldCloudPath, cloudPath); upErr == nil && n > 0 {
+					logger.S().Infof("[Monitor] move fallback recreate DB更新: %s→%s (%d条)", oldCloudPath, cloudPath, n)
+				}
+			}
+			m.appendLog(ctx, account, "move", true, cloudPath, mapping.localPath,
+				fmt.Sprintf("移动(recreate): 旧目录已清理，新STRM已生成 %s", mapping.localPath))
+			m.notifyMove(ctx, account, cloudPath, "目录", mapping.localPath)
 			return nil
 		}
 		// c) mkdir 父目录（L1781）
@@ -1746,10 +1812,26 @@ func (m *Monitor) handleRenameEvent(
 				fmt.Sprintf("跳过: 本地旧文件夹不存在 %s", oldLocalPath))
 			return nil
 		}
-		// ④ new_path 已存在 → 跳过
+		// ④ new_path 已存在 → fallback 到 recreate（清理旧STRM + 重新生成）
 		if _, dstErr := os.Stat(mapping.localPath); dstErr == nil {
-			m.appendLog(ctx, account, "rename", false, cloudPath, mapping.localPath,
-				fmt.Sprintf("跳过: 重命名目标已存在 %s", mapping.localPath))
+			logger.S().Infof("[Monitor] rename目标已存在 %s, fallback到recreate模式", mapping.localPath)
+			if oldLocalPath != "" {
+				m.cleanupOldStrmAssets(ctx, account, event, oldCloudPath, oldLocalPath, config)
+			}
+			if err := os.MkdirAll(mapping.localPath, 0o755); err != nil {
+				return fmt.Errorf("mkdir 失败: %w", err)
+			}
+			if lifeClient != nil {
+				m.recreateStrmInDirectory(ctx, account, event, mapping, cloudPath, lifeClient)
+			}
+			if m.sqliteDB != nil && oldCloudPath != "" && oldCloudPath != cloudPath {
+				if n, upErr := db.UpdatePathPrefixBatch(m.sqliteDB, account, oldCloudPath, cloudPath); upErr == nil && n > 0 {
+					logger.S().Infof("[Monitor] rename fallback recreate DB更新: %s→%s (%d条)", oldCloudPath, cloudPath, n)
+				}
+			}
+			m.appendLog(ctx, account, "rename", true, cloudPath, mapping.localPath,
+				fmt.Sprintf("重命名(recreate): 旧目录已清理，新STRM已生成 %s", mapping.localPath))
+			m.notifyRename(ctx, account, cloudPath, "目录", mapping.localPath)
 			return nil
 		}
 		// ⑤ 执行 rename（对齐 L1204-1210: shutil_move）
