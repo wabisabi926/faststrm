@@ -831,23 +831,23 @@ func cleanupOrphanStrms(
 		}
 	}
 
-	// auto_clean 直接软删
+	// auto_clean 直接硬删（不再生成 .deleted.bak 备份）
 	if mode == "auto_clean" {
-		hardDelete := false // 默认软删，避免误删
+		hardDelete := true
 		deleted := 0
 		for _, p := range orphans {
 			if derr := strmutil.SafeDeleteStrmFile(p, hardDelete); derr != nil {
-				logger.S().Warnf("[cleanupOrphanStrms] 软删孤儿 STRM 失败 %s: %v", p, derr)
+				logger.S().Warnf("[cleanupOrphanStrms] 硬删孤儿 STRM 失败 %s: %v", p, derr)
 				if sseServer != nil {
-					sseServer.EmitLog(taskID, "warn", fmt.Sprintf("软删孤儿STRM失败 %s: %v", p, derr))
+					sseServer.EmitLog(taskID, "warn", fmt.Sprintf("硬删孤儿STRM失败 %s: %v", p, derr))
 				}
 				continue
 			}
 			deleted++
-			logger.S().Infof("[cleanupOrphanStrms] 软删孤儿 STRM %s", p)
+			logger.S().Infof("[cleanupOrphanStrms] 硬删孤儿 STRM %s", p)
 		}
 		if sseServer != nil {
-			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：已软删 %d/%d 个孤儿 STRM", deleted, len(orphans)))
+			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：已硬删 %d/%d 个孤儿 STRM", deleted, len(orphans)))
 		}
 		// Emby 刷库（删除后刷新整个目标目录，对齐 MoviePilot full_sync_media_server_refresh）
 		if embyRefresh != nil && deleted > 0 {
