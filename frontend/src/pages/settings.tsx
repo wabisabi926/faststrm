@@ -38,6 +38,7 @@ type LifeMonitorConfig = {
   pollInterval: number;
   pathMappings: PathMapping[];
   removeEmptyDirs: boolean;
+  enableHardDelete?: boolean;
   eventTypes: {
     create: boolean;
     remove: boolean;
@@ -181,6 +182,7 @@ export default function SettingsPage() {
   const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
   const [newMappingAccount, setNewMappingAccount] = useState<string>("__all__");
   const [removeEmptyDirs, setRemoveEmptyDirs] = useState(true);
+  const [enableHardDelete, setEnableHardDelete] = useState(true);
   const [eventTypes, setEventTypes] = useState({
     create: true,
     remove: true,
@@ -249,6 +251,7 @@ export default function SettingsPage() {
         setPollInterval(monitor.pollInterval || 10);
         setPathMappings(monitor.pathMappings || []);
         setRemoveEmptyDirs(monitor.removeEmptyDirs ?? true);
+        setEnableHardDelete(monitor.enableHardDelete ?? true);
         setEventTypes(monitor.eventTypes || DEFAULT_MONITOR_CONFIG.eventTypes);
         const loadedMinSize = typeof monitor.minFileSize === "number" ? monitor.minFileSize : 0;
         setMinFileSizeMb(loadedMinSize > 0 ? (loadedMinSize / (1024 * 1024)).toString() : "");
@@ -496,6 +499,7 @@ export default function SettingsPage() {
           pollInterval,
           pathMappings,
           removeEmptyDirs,
+          enableHardDelete,
           eventTypes,
           minFileSize: minBytes,
           firstPullMode,
@@ -668,6 +672,7 @@ export default function SettingsPage() {
           pollInterval,
           pathMappings,
           removeEmptyDirs,
+          enableHardDelete,
           eventTypes,
           minFileSize: minBytes,
           firstPullMode,
@@ -1344,6 +1349,18 @@ export default function SettingsPage() {
                 />
                 <label htmlFor="remove-empty" className="text-sm cursor-pointer">
                   删除文件后自动清理空父目录
+                </label>
+              </div>
+
+              {/* Hard Delete (不生成 .deleted.bak 备份) */}
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="hard-delete"
+                  checked={enableHardDelete}
+                  onCheckedChange={(checked) => setEnableHardDelete(checked === true)}
+                />
+                <label htmlFor="hard-delete" className="text-sm cursor-pointer">
+                  硬删除（不生成 .deleted.bak 备份）
                 </label>
               </div>
 

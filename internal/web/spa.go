@@ -10,7 +10,7 @@ import (
 
 // appVersion 显示在前端 sidebar footer
 // 通过 ldflags 在构建时注入：-X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${VERSION}'
-var appVersion = "1.0.1"
+var appVersion = "1.0.2"
 
 //go:embed all:spa
 var spaFS embed.FS

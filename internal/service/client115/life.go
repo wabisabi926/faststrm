@@ -198,18 +198,38 @@ func stripRootPrefix(p string) string {
 	return p
 }
 
+// 生活事件 API 端点（对齐参考项目 _get_life_event_app 策略）
+// - proapi/ios: 字段完整（含 pick_code），是 p115client life_behavior_detail_app 默认端点
+// - webapi: 字段可能缺失（pick_code 经常为空），但稳定，作为风控回退
+const (
+	lifeApiPrimaryHost  = "https://proapi.115.com"
+	lifeApiPrimaryPath  = "/ios/behavior/detail"
+	lifeApiFallbackHost = "https://webapi.115.com"
+	lifeApiFallbackPath = "/behavior/detail"
+)
+
 // getApiHost 返回当前使用的 API 域名
+// 默认 proapi.115.com（字段完整），失败回退 webapi.115.com（稳定但字段缺失）
 func (c *LifeClient) getApiHost() string {
 	if c.useAlternateHost {
-		return "https://proapi.115.com"
+		return lifeApiFallbackHost
 	}
-	return "https://webapi.115.com"
+	return lifeApiPrimaryHost
+}
+
+// getBehaviorDetailPath 返回 behavior/detail 的 API 路径
+// proapi 需要 /{app} 前缀，webapi 不需要
+func (c *LifeClient) getBehaviorDetailPath() string {
+	if c.useAlternateHost {
+		return lifeApiFallbackPath
+	}
+	return lifeApiPrimaryPath
 }
 
 // switchApiHost 切换 API 域名（用于风控规避）
 func (c *LifeClient) switchApiHost() {
 	c.useAlternateHost = !c.useAlternateHost
-	logger.S().Warnf("[LifeClient] 切换 API 域名: useAlternate=%v", c.useAlternateHost)
+	logger.S().Warnf("[LifeClient] 切换 API 域名: useAlternate=%v (host=%s)", c.useAlternateHost, c.getApiHost())
 }
 
 // LifeShow 开启生活事件功能
@@ -271,7 +291,9 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 		return nil, fmt.Errorf("cookie is empty")
 	}
 
-	// fromTime/fromID 由 monitor.go 管理首次初始化，这里直接用
+	// 每次拉取都默认尝试 proapi/ios（字段完整），仅本次失败时回退到 webapi
+	// 避免上一次切换后状态泄漏导致永久走 webapi（参考项目用 web_fallback_until 时间窗口控制）
+	c.useAlternateHost = false
 	apiHost := c.getApiHost()
 
 	// 对齐参考项目：首批拉 1000 条，后续也 1000 条
@@ -283,8 +305,8 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 
 	for page := 0; page < maxPages; page++ {
 		endpoint := fmt.Sprintf(
-			"%s/behavior/detail?limit=%d&offset=%d",
-			apiHost, limit, offset,
+			"%s%s?limit=%d&offset=%d",
+			apiHost, c.getBehaviorDetailPath(), limit, offset,
 		)
 
 		body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
@@ -444,20 +466,13 @@ func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]f
 		return nil, nil // 根目录无祖先
 	}
 
-	apiHost := c.getApiHost()
-	endpoint := fmt.Sprintf("%s/files/medialist?cid=%s&limit=1&type=6&nf=1", apiHost, url.QueryEscape(cid))
+	// /files/medialist 仅在 webapi 上调用，不跟随 life API 的 proapi/ios 切换
+	// （proapi 上需要 /{app} 前缀，路径不同，且 fs_files_media 是 web 端口 API）
+	endpoint := fmt.Sprintf("https://webapi.115.com/files/medialist?cid=%s&limit=1&type=6&nf=1", url.QueryEscape(cid))
 
 	body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
 	if err != nil {
-		// 如果主域名失败，尝试切换到备用域名
-		if !c.useAlternateHost {
-			c.switchApiHost()
-			endpoint = fmt.Sprintf("%s/files/medialist?cid=%s&limit=1&type=6&nf=1", c.getApiHost(), url.QueryEscape(cid))
-			body, err = c.doRequest(ctx, http.MethodGet, endpoint, "")
-		}
-		if err != nil {
-			return nil, fmt.Errorf("fs_files_media request: %w", err)
-		}
+		return nil, fmt.Errorf("fs_files_media request: %w", err)
 	}
 
 	var resp struct {

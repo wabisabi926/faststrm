@@ -286,8 +286,9 @@ func DefaultSettings() *Settings {
 			RateLimitMs:          1000,
 			MaxRetries:           3,
 			RetryDelayMs:         1000,
-			AutoDownloadMetadata: true, // 默认与全局 Download.AutoDownloadMetadata 保持一致
+			AutoDownloadMetadata: true,  // 默认与全局 Download.AutoDownloadMetadata 保持一致
 			DownloadExtensions:   nil,  // 空则继承全局 DefaultDownloadExtensions
+			EnableHardDelete:     true, // 默认硬删除，不生成 .deleted.bak 备份（软删除改名为 .deleted.bak）
 			EventTypes: EventTypesSettings{
 				Create: true,
 				Remove: true,

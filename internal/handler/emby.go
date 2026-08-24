@@ -71,6 +71,17 @@ func HandleEmbyWebhook(deps EmbyDeps) http.HandlerFunc {
 			}
 		}
 
+		// 诊断日志：确认 webhook 是否真的收到（入库不通知时优先看这里）
+		// 如果入库时这条日志没出现，说明 Emby 端没发 webhook（检查 Emby webhook 事件类型是否勾选了"新建项"）
+		itemName := ""
+		itemType := ""
+		if event.Item != nil {
+			itemName = event.Item.Name
+			itemType = event.Item.Type
+		}
+		logger.S().Infof("[emby/webhook] 收到 webhook: Event=%q Item=%q Type=%q",
+			event.Event, itemName, itemType)
+
 		// 异步处理，不阻塞 webhook 响应
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -475,13 +486,14 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
 				lm.StrmPrefix = body.LifeMonitor.StrmPrefix
 			}
 			lm.EnablePathEncoding = body.LifeMonitor.EnablePathEncoding
-			lm.Enable302 = body.LifeMonitor.Enable302
-			lm.AutoDownloadMetadata = body.LifeMonitor.AutoDownloadMetadata
-			if body.LifeMonitor.DownloadExtensions != nil {
-				lm.DownloadExtensions = body.LifeMonitor.DownloadExtensions
-			}
-			settings.LifeMonitor = lm
+		lm.Enable302 = body.LifeMonitor.Enable302
+		lm.AutoDownloadMetadata = body.LifeMonitor.AutoDownloadMetadata
+		if body.LifeMonitor.DownloadExtensions != nil {
+			lm.DownloadExtensions = body.LifeMonitor.DownloadExtensions
 		}
+		lm.EnableHardDelete = body.LifeMonitor.EnableHardDelete
+		settings.LifeMonitor = lm
+	}
 
 		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
 			logger.S().Errorf("[settings POST] save: %v", err)
