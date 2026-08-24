@@ -169,7 +169,19 @@ export default function EmbyNotifyPage() {
   const copyWebhookUrl = async () => {
     const webhookUrl = `${window.location.origin}/api/emby/webhook`;
     try {
-      await navigator.clipboard.writeText(webhookUrl);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(webhookUrl);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = webhookUrl;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.top = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
       setWebhookCopied(true);
       setTimeout(() => setWebhookCopied(false), 2000);
     } catch {
