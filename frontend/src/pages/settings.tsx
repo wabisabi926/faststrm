@@ -38,7 +38,6 @@ type LifeMonitorConfig = {
   pollInterval: number;
   pathMappings: PathMapping[];
   removeEmptyDirs: boolean;
-  enableHardDelete?: boolean;
   notifyOnlyOnError?: boolean;
   eventTypes: {
     create: boolean;
@@ -104,6 +103,7 @@ const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
   pollInterval: 10,
   pathMappings: [],
   removeEmptyDirs: true,
+  notifyOnlyOnError: false, // 默认正常通知
   eventTypes: {
     create: true,
     remove: true,
@@ -183,7 +183,6 @@ export default function SettingsPage() {
   const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
   const [newMappingAccount, setNewMappingAccount] = useState<string>("__all__");
   const [removeEmptyDirs, setRemoveEmptyDirs] = useState(true);
-  const [enableHardDelete, setEnableHardDelete] = useState(true);
   const [notifyOnlyOnError, setNotifyOnlyOnError] = useState(false);
   const [eventTypes, setEventTypes] = useState({
     create: true,
@@ -253,7 +252,6 @@ export default function SettingsPage() {
         setPollInterval(monitor.pollInterval || 10);
         setPathMappings(monitor.pathMappings || []);
         setRemoveEmptyDirs(monitor.removeEmptyDirs ?? true);
-        setEnableHardDelete(monitor.enableHardDelete ?? true);
         setNotifyOnlyOnError(monitor.notifyOnlyOnError ?? false);
         setEventTypes(monitor.eventTypes || DEFAULT_MONITOR_CONFIG.eventTypes);
         const loadedMinSize = typeof monitor.minFileSize === "number" ? monitor.minFileSize : 0;
@@ -502,7 +500,6 @@ export default function SettingsPage() {
           pollInterval,
           pathMappings,
           removeEmptyDirs,
-          enableHardDelete,
           eventTypes,
           minFileSize: minBytes,
           firstPullMode,
@@ -675,7 +672,6 @@ export default function SettingsPage() {
           pollInterval,
           pathMappings,
           removeEmptyDirs,
-          enableHardDelete,
           eventTypes,
           minFileSize: minBytes,
           firstPullMode,
@@ -1352,18 +1348,6 @@ export default function SettingsPage() {
                 />
                 <label htmlFor="remove-empty" className="text-sm cursor-pointer">
                   删除文件后自动清理空父目录
-                </label>
-              </div>
-
-              {/* Hard Delete (不生成 .deleted.bak 备份) */}
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="hard-delete"
-                  checked={enableHardDelete}
-                  onCheckedChange={(checked) => setEnableHardDelete(checked === true)}
-                />
-                <label htmlFor="hard-delete" className="text-sm cursor-pointer">
-                  硬删除（不生成 .deleted.bak 备份）
                 </label>
               </div>
 

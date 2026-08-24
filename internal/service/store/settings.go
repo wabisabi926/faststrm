@@ -40,16 +40,17 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 			logger.S().Warnf("[SettingsStore] ReadSettings json unmarshal failed: %v, returning defaults", err)
 			return model.DefaultSettings(), nil
 		}
-		// 迁移：旧配置文件没有 enableHardDelete 字段（默认 false=软删除生成 .deleted.bak 备份）
-		// 检查原始 JSON 是否有该字段，没有则设为 true（硬删除，不生成备份）
+		// 迁移：旧配置文件没有 notifyOnlyOnError 字段
+		// 检查原始 JSON 是否有该字段，没有则设为默认值
 		var rawCheck map[string]json.RawMessage
 		if json.Unmarshal(data, &rawCheck) == nil {
 			if lmRaw, ok := rawCheck["lifeMonitor"]; ok {
 				var lmCheck map[string]json.RawMessage
 				if json.Unmarshal(lmRaw, &lmCheck) == nil {
-					if _, hasField := lmCheck["enableHardDelete"]; !hasField {
-						out.LifeMonitor.EnableHardDelete = true
-						logger.S().Infof("[SettingsStore] 迁移: 旧配置无 enableHardDelete 字段，设为默认 true（硬删除）")
+					// 迁移 notifyOnlyOnError：默认 false（正常通知）
+					if _, hasField := lmCheck["notifyOnlyOnError"]; !hasField {
+						out.LifeMonitor.NotifyOnlyOnError = false
+						logger.S().Infof("[SettingsStore] 迁移: 旧配置无 notifyOnlyOnError 字段，设为默认 false（正常通知）")
 					}
 				}
 			}

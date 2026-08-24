@@ -169,10 +169,6 @@ type LifeMonitorSettings struct {
 	// P1-4 高级模板（空则继承全局 StrmSettings 模板，仍为空则走默认拼接）
 	StrmUrlTemplate      string `json:"strmUrlTemplate"`
 	StrmFilenameTemplate string `json:"strmFilenameTemplate"`
-	// P1-5 Delete 安全兜底：
-	//   false(默认)=软删除，仅把本地 STRM 重命名为 *.deleted.bak 并同步清理 DB，不硬删；
-	//   true=硬删除（对齐原有行为，危险）
-	EnableHardDelete  bool `json:"enableHardDelete"`
 	NotifyOnlyOnError bool `json:"notifyOnlyOnError"` // true=仅错误时发TG通知，正常操作不通知
 	// 事件去重配置
 	EnableDedup      bool `json:"enableDedup"`      // 是否启用事件去重
@@ -289,7 +285,6 @@ func DefaultSettings() *Settings {
 			RetryDelayMs:         1000,
 			AutoDownloadMetadata: true,  // 默认与全局 Download.AutoDownloadMetadata 保持一致
 			DownloadExtensions:   nil,  // 空则继承全局 DefaultDownloadExtensions
-			EnableHardDelete:     true, // 默认硬删除，不生成 .deleted.bak 备份（软删除改名为 .deleted.bak）
 			EventTypes: EventTypesSettings{
 				Create: true,
 				Remove: true,

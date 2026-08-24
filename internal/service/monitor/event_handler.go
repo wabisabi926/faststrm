@@ -737,7 +737,7 @@ func (m *Monitor) handleDeleteEvent(
 
 	// 文件夹事件：递归删除目录（P1-5 Delete 安全兜底）
 	if event.FileCategory == 0 {
-		if err := strmutil.SafeDeletePath(mapping.localPath, config.EnableHardDelete); err != nil {
+		if err := strmutil.DeletePath(mapping.localPath); err != nil {
 			m.appendLog(ctx, account, "delete", false, cloudPath, mapping.localPath,
 				fmt.Sprintf("删除目录失败: %v", err))
 			return fmt.Errorf("删除目录失败: %w", err)
@@ -746,13 +746,9 @@ func (m *Monitor) handleDeleteEvent(
 		if config.RemoveEmptyDirs {
 			removeEmptyParents(filepath.Dir(mapping.localPath), config.PathMappings)
 		}
-		actionWord := "已删除"
-		if !config.EnableHardDelete {
-			actionWord = "已软删除(.deleted.bak)"
-		}
-		m.appendLog(ctx, account, "delete", true, cloudPath, mapping.localPath, "文件夹"+actionWord)
+		m.appendLog(ctx, account, "delete", true, cloudPath, mapping.localPath, "文件夹已删除")
 		m.notifyDelete(ctx, account, cloudPath, "目录", mapping.localPath)
-		logger.S().Infof("[Monitor] 文件夹%s: %s", actionWord, mapping.localPath)
+		logger.S().Infof("[Monitor] 文件夹已删除: %s", mapping.localPath)
 		return nil
 	}
 
@@ -762,7 +758,7 @@ func (m *Monitor) handleDeleteEvent(
 	strmPath := filepath.Join(mapping.localPath, strmFileName)
 
 	// 删除 STRM 文件
-	if err := strmutil.SafeDeleteStrmFile(strmPath, config.EnableHardDelete); err != nil {
+	if err := strmutil.DeleteStrmFile(strmPath); err != nil {
 		m.appendLog(ctx, account, "delete", false, cloudPath, strmPath,
 			fmt.Sprintf("删除 STRM 失败: %v", err))
 		return fmt.Errorf("删除 STRM 失败: %w", err)
@@ -997,7 +993,7 @@ func (m *Monitor) handleMoveOutEvent(
 
 	// 文件夹移出：递归删除旧本地目录（P1-5 Delete 安全兜底）
 	if event.FileCategory == 0 {
-		if err := strmutil.SafeDeletePath(oldLocalPath, config.EnableHardDelete); err != nil {
+		if err := strmutil.DeletePath(oldLocalPath); err != nil {
 			m.appendLog(ctx, account, "move-out", false, oldCloudPath, oldLocalPath,
 				fmt.Sprintf("移出映射删除目录失败: %v", err))
 			return fmt.Errorf("移出映射删除目录失败: %w", err)
@@ -1013,12 +1009,8 @@ func (m *Monitor) handleMoveOutEvent(
 				logger.S().Infof("[Monitor] 移出映射后 DB 清理 %d 条 (prefix=%s)", n, oldCloudPath)
 			}
 		}
-		actionWord := "旧目录已删除"
-		if !config.EnableHardDelete {
-			actionWord = "旧目录已软删除(.deleted.bak)"
-		}
 		m.appendLog(ctx, account, "move-out", true, oldCloudPath, oldLocalPath,
-			fmt.Sprintf("移出映射：%s %s → %s", actionWord, oldCloudPath, newCloudPath))
+			fmt.Sprintf("移出映射：旧目录已删除 %s → %s", oldCloudPath, newCloudPath))
 		m.notifyMove(ctx, account, oldCloudPath, "目录", oldLocalPath)
 		if m.embyRefresh != nil {
 			if err := m.embyRefresh.RefreshOnDelete(ctx, oldLocalPath); err != nil {
@@ -1031,7 +1023,7 @@ func (m *Monitor) handleMoveOutEvent(
 	// 文件移出：删除旧 STRM + 关联资源（P1-5 Delete 安全兜底）
 	strmFileName := getStrmFileName(filepath.Base(oldLocalPath))
 	strmPath := filepath.Join(filepath.Dir(oldLocalPath), strmFileName)
-	if err := strmutil.SafeDeleteStrmFile(strmPath, config.EnableHardDelete); err != nil {
+	if err := strmutil.DeleteStrmFile(strmPath); err != nil {
 		m.appendLog(ctx, account, "move-out", false, oldCloudPath, strmPath,
 			fmt.Sprintf("移出映射删除 STRM 失败: %v", err))
 		return fmt.Errorf("移出映射删除 STRM 失败: %w", err)
@@ -1076,7 +1068,7 @@ func (m *Monitor) cleanupOldStrmAssets(
 	}
 	// 文件夹：递归删除旧本地目录 + DB 按前缀清理（P1-5 Delete 安全兜底）
 	if event.FileCategory == 0 {
-		if err := strmutil.SafeDeletePath(oldLocalPath, config.EnableHardDelete); err != nil {
+		if err := strmutil.DeletePath(oldLocalPath); err != nil {
 			logger.S().Warnf("[Monitor] recreate 清理旧目录失败 %s: %v", oldLocalPath, err)
 		}
 		if config.RemoveEmptyDirs {
@@ -1089,17 +1081,13 @@ func (m *Monitor) cleanupOldStrmAssets(
 				logger.S().Infof("[Monitor] recreate DB 前缀清理 %d 条 (%s)", n, oldCloudPath)
 			}
 		}
-		actionWord := "旧目录已清理"
-		if !config.EnableHardDelete {
-			actionWord = "旧目录已软清理(.deleted.bak)"
-		}
 		m.appendLog(ctx, account, "move-recreate", true, oldCloudPath, oldLocalPath,
-			fmt.Sprintf("recreate 模式：%s %s", actionWord, oldLocalPath))
+			fmt.Sprintf("recreate 模式：旧目录已清理 %s", oldLocalPath))
 		return
 	}
 	// 文件：删除旧 STRM + 关联资源 + DB 按 fileID 清理（P1-5 Delete 安全兜底）
 	oldStrmPath := filepath.Join(filepath.Dir(oldLocalPath), getStrmFileName(filepath.Base(oldLocalPath)))
-	if err := strmutil.SafeDeleteStrmFile(oldStrmPath, config.EnableHardDelete); err != nil {
+	if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
 		logger.S().Warnf("[Monitor] recreate 清理旧 STRM 失败 %s: %v", oldStrmPath, err)
 	}
 	deletedRelated := deleteRelatedFiles(oldStrmPath)
@@ -1345,7 +1333,7 @@ func (m *Monitor) handleMoveEvent(
 				oldStrmPath = m.findLocalStrmByFileName(account, event.FileName, event.FileCategory, config.PathMappings)
 			}
 			if oldStrmPath != "" {
-				if err := strmutil.SafeDeleteStrmFile(oldStrmPath, config.EnableHardDelete); err != nil {
+				if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
 					logger.S().Warnf("[Monitor] recreate DB无旧路径 清理旧STRM失败 %s: %v", oldStrmPath, err)
 				} else {
 					deletedRelated := deleteRelatedFiles(oldStrmPath)
@@ -1649,7 +1637,7 @@ func (m *Monitor) handleMoveEvent(
 				}
 			}
 		}
-		if err := strmutil.SafeDeleteStrmFile(oldStrmPath, config.EnableHardDelete); err != nil {
+		if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
 			m.appendLog(ctx, account, "move", false, cloudPath, oldStrmPath,
 				fmt.Sprintf("合并场景删除旧 STRM 失败: %v", err))
 			return err
@@ -1742,7 +1730,7 @@ func (m *Monitor) handleRenameEvent(
 				oldStrmPath = m.findLocalStrmByFileName(account, event.FileName, event.FileCategory, config.PathMappings)
 			}
 			if oldStrmPath != "" {
-				if err := strmutil.SafeDeleteStrmFile(oldStrmPath, config.EnableHardDelete); err != nil {
+				if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
 					logger.S().Warnf("[Monitor] recreate DB无旧路径 清理旧STRM失败 %s: %v", oldStrmPath, err)
 				} else {
 					deletedRelated := deleteRelatedFiles(oldStrmPath)
@@ -1986,7 +1974,7 @@ func (m *Monitor) handleRenameEvent(
 			}
 		}
 		// 2. 删旧 STRM（对齐 L1305: old_strm_path.unlink）
-		if err := strmutil.SafeDeleteStrmFile(oldStrmPath, config.EnableHardDelete); err != nil {
+		if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
 			m.appendLog(ctx, account, "rename", false, cloudPath, oldStrmPath,
 				fmt.Sprintf("合并场景删除旧 STRM 失败: %v", err))
 			return err
@@ -2159,7 +2147,7 @@ func (m *Monitor) cleanupOldStrmForOtherToMedia(
 
 	if foundPath != "" {
 		logger.S().Infof("[Monitor] OTHER_TO_MEDIA 清理旧STRM: 找到路径=%s (searchName=%s)", foundPath, searchName)
-		if err := strmutil.SafeDeleteStrmFile(foundPath, config.EnableHardDelete); err != nil {
+		if err := strmutil.DeleteStrmFile(foundPath); err != nil {
 			logger.S().Warnf("[Monitor] OTHER_TO_MEDIA 清理旧STRM失败 %s: %v", foundPath, err)
 		} else {
 			deletedRelated := deleteRelatedFiles(foundPath)
@@ -2196,7 +2184,7 @@ func (m *Monitor) deleteOldStrmAssetsAtPath(
 			return
 		}
 		for _, sp := range strmFiles {
-			if err := strmutil.SafeDeleteStrmFile(sp, config.EnableHardDelete); err == nil {
+			if err := strmutil.DeleteStrmFile(sp); err == nil {
 				deleteRelatedFiles(sp)
 			}
 		}
@@ -2209,7 +2197,7 @@ func (m *Monitor) deleteOldStrmAssetsAtPath(
 		oldFileName := filepath.Base(oldLocalPath)
 		oldStrmPath := filepath.Join(oldDir, getStrmFileName(oldFileName))
 		if _, err := os.Stat(oldStrmPath); err == nil {
-			if err := strmutil.SafeDeleteStrmFile(oldStrmPath, config.EnableHardDelete); err == nil {
+			if err := strmutil.DeleteStrmFile(oldStrmPath); err == nil {
 				deleteRelatedFiles(oldStrmPath)
 			}
 		}
@@ -2317,7 +2305,7 @@ func (m *Monitor) deleteOldStrmAtLocalPath(
 			return
 		}
 		for _, sp := range strmFiles {
-			if delErr := strmutil.SafeDeleteStrmFile(sp, config.EnableHardDelete); delErr == nil {
+			if delErr := strmutil.DeleteStrmFile(sp); delErr == nil {
 				deletedRelated := deleteRelatedFiles(sp)
 				logger.S().Infof("[Monitor] deleteOldStrmAtLocalPath: 已删除 %s (关联 %d)", sp, deletedRelated)
 			} else {
@@ -2330,7 +2318,7 @@ func (m *Monitor) deleteOldStrmAtLocalPath(
 		}
 	} else {
 		// 单文件：直接删除
-		if delErr := strmutil.SafeDeleteStrmFile(oldLocalPath, config.EnableHardDelete); delErr == nil {
+		if delErr := strmutil.DeleteStrmFile(oldLocalPath); delErr == nil {
 			deleteRelatedFiles(oldLocalPath)
 		}
 	}
@@ -2623,8 +2611,8 @@ func createRelatedAssetPlaceholders(strmPath, originalFileName string, extension
 }
 
 // deleteRelatedFiles 删除与 STRM 同名的相关文件（.nfo/.jpg/.srt 等）
-// 匹配规则：同目录下、文件名以 STRM stem 为前缀、非 .strm 后缀
-// 对齐 TS cleanRelatedFiles
+// 匹配规则：同目录下、文件名以 STRM stem 为前缀、且后缀为扩展名（.xxx）
+// 对齐 TS cleanRelatedFiles + moveOrRenameRelatedAssets 的安全匹配逻辑
 func deleteRelatedFiles(strmPath string) int {
 	dir := filepath.Dir(strmPath)
 	base := filepath.Base(strmPath)
@@ -2645,10 +2633,14 @@ func deleteRelatedFiles(strmPath string) int {
 		if name == base {
 			continue // 跳过 STRM 文件本身
 		}
-		// 同名前缀匹配（如 movie.nfo, movie.srt 匹配 movie.strm 的 stem "movie"）
+		// 同名前缀匹配 + 安全校验：rest 必须为空或以 . 开头（扩展名形式）
+		// 避免 "movie" 误匹配到 "movie_trailer.mp4" 等非关联文件
 		if strings.HasPrefix(name, stem) {
-			if err := os.Remove(filepath.Join(dir, name)); err == nil {
-				deleted++
+			rest := strings.TrimPrefix(name, stem)
+			if rest == "" || strings.HasPrefix(rest, ".") {
+				if err := os.Remove(filepath.Join(dir, name)); err == nil {
+					deleted++
+				}
 			}
 		}
 	}

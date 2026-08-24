@@ -1,76 +1,30 @@
-// Package strmutil STRM 文件通用工具：软删除/硬删除、pickcode 提取
+// Package strmutil STRM 文件通用工具：硬删除、pickcode 提取
 // task 与 monitor 共用，避免逻辑重复
 package strmutil
 
 import (
-	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 )
 
-// SafeDeleteStrmFile 单个 STRM 删除兜底：
-//   hardDelete=true  → os.Remove（原行为）
-//   hardDelete=false → 改名为 *.deleted.bak（保留文件本体可回滚，同时不再被媒体库识别为 .strm）
-func SafeDeleteStrmFile(strmPath string, hardDelete bool) error {
+// DeleteStrmFile 删除单个 STRM 文件（硬删除）
+func DeleteStrmFile(strmPath string) error {
 	if _, err := os.Stat(strmPath); os.IsNotExist(err) {
 		return nil
 	}
-	if hardDelete {
-		if err := os.Remove(strmPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+	if err := os.Remove(strmPath); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	// 软删除：加 .deleted.bak 后缀（避免与任何合法 .strm 冲突）
-	// 若已存在同名 .bak，则附加时间戳避免覆盖
-	bakPath := strmPath + ".deleted.bak"
-	if _, err := os.Stat(bakPath); err == nil {
-		bakPath = fmt.Sprintf("%s.%s.deleted.bak", strmPath, time.Now().Format("20060102-150405.000"))
-	}
-	return os.Rename(strmPath, bakPath)
+	return nil
 }
 
-// SafeDeletePath 目录或单文件兜底删除：
-//   hardDelete=true  → os.RemoveAll（原行为）
-//   hardDelete=false → 递归将所有 .strm 改名为 *.deleted.bak；其他文件与空目录保留
-func SafeDeletePath(localPath string, hardDelete bool) error {
+// DeletePath 删除目录或单文件（硬删除）
+func DeletePath(localPath string) error {
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {
 		return nil
 	}
-	if hardDelete {
-		return os.RemoveAll(localPath)
-	}
-	info, err := os.Stat(localPath)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		// 单文件：若是 .strm 则软删；其他文件保留（什么也不做）
-		if strings.EqualFold(filepath.Ext(localPath), ".strm") {
-			return SafeDeleteStrmFile(localPath, false)
-		}
-		return nil
-	}
-	// 目录：递归 .strm 文件软删
-	return filepath.WalkDir(localPath, func(p string, d os.DirEntry, werr error) error {
-		if werr != nil {
-			return nil // 走读错误跳过
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if !strings.EqualFold(filepath.Ext(p), ".strm") {
-			return nil
-		}
-		// 跳过已经是 .deleted.bak 的文件
-		if strings.HasSuffix(p, ".deleted.bak") {
-			return nil
-		}
-		return SafeDeleteStrmFile(p, false)
-	})
+	return os.RemoveAll(localPath)
 }
 
 // pickcodeRe 匹配 STRM 内容中 pickcode=xxx 部分（17位字母数字）
@@ -93,7 +47,7 @@ func ExtractPickcode(strmPath string) (string, error) {
 	return string(m[1]), nil
 }
 
-// IsDeletedBak 判断路径是否为软删除的 .deleted.bak 备份文件
+// IsDeletedBak 判断路径是否为软删除的 .deleted.bak 备份文件（保留用于兼容旧配置检测）
 func IsDeletedBak(p string) bool {
 	return strings.HasSuffix(p, ".deleted.bak")
 }

@@ -833,10 +833,9 @@ func cleanupOrphanStrms(
 
 	// auto_clean 直接硬删（不再生成 .deleted.bak 备份）
 	if mode == "auto_clean" {
-		hardDelete := true
-		deleted := 0
-		for _, p := range orphans {
-			if derr := strmutil.SafeDeleteStrmFile(p, hardDelete); derr != nil {
+	deleted := 0
+	for _, p := range orphans {
+		if derr := strmutil.DeleteStrmFile(p); derr != nil {
 				logger.S().Warnf("[cleanupOrphanStrms] 硬删孤儿 STRM 失败 %s: %v", p, derr)
 				if sseServer != nil {
 					sseServer.EmitLog(taskID, "warn", fmt.Sprintf("硬删孤儿STRM失败 %s: %v", p, derr))

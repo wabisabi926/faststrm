@@ -321,22 +321,42 @@ func HandleSettingsGET(deps EmbyDeps) http.HandlerFunc {
 	}
 }
 
+// LifeMonitorPatch 用于接收前端提交的 LifeMonitor 配置
+// 指针类型字段（*bool）可以区分"未提供"和"显式设置为 false"
+type LifeMonitorPatch struct {
+	Enabled                *bool    `json:"enabled"`
+	Accounts               []string `json:"accounts"`
+	PollInterval           int      `json:"pollInterval"`
+	PathMappings           any      `json:"pathMappings"`
+	RemoveEmptyDirs        *bool    `json:"removeEmptyDirs"`
+	EventTypes             any      `json:"eventTypes"`
+	MinFileSize            int64    `json:"minFileSize"`
+	FirstPullMode          string   `json:"firstPullMode"`
+	MoveMediaMode          string   `json:"moveMediaMode"`
+	StrmPrefix             string   `json:"strmPrefix"`
+	EnablePathEncoding     *bool    `json:"enablePathEncoding"`
+	Enable302              *bool    `json:"enable302"`
+	AutoDownloadMetadata   *bool    `json:"autoDownloadMetadata"`
+	DownloadExtensions     []string `json:"downloadExtensions"`
+	NotifyOnlyOnError      *bool    `json:"notifyOnlyOnError"`
+}
+
 // settingsPostBody 前端 Settings 页提交的嵌套 JSON 结构
 // 与 model.Settings 的 JSON 标签对齐，兼容 React SPA 的保存格式
 type settingsPostBody struct {
-	UserAgent          string                    `json:"user-agent"`
-	StrmExtensions     []string                  `json:"strmExtensions"`
-	DownloadExtensions []string                  `json:"downloadExtensions"`
-	MediaMountPath     []string                  `json:"mediaMountPath"`
-	StrmPrefix         string                    `json:"strmPrefix"`
-	EnablePathEncoding bool                      `json:"enablePathEncoding"`
-	Enable302          bool                      `json:"enable302"`
-	RemoveExtraFiles   bool                      `json:"removeExtraFiles"`
-	Download           *model.DownloadSettings   `json:"download"`
-	Strm               *model.StrmSettings       `json:"strm"`
-	Emby               *model.EmbySettings       `json:"emby"`
-	Telegram           *model.TelegramSettings   `json:"telegram"`
-	LifeMonitor        *model.LifeMonitorSettings `json:"lifeMonitor"`
+	UserAgent          string                   `json:"user-agent"`
+	StrmExtensions     []string                 `json:"strmExtensions"`
+	DownloadExtensions []string                 `json:"downloadExtensions"`
+	MediaMountPath     []string                 `json:"mediaMountPath"`
+	StrmPrefix         string                   `json:"strmPrefix"`
+	EnablePathEncoding bool                     `json:"enablePathEncoding"`
+	Enable302          bool                     `json:"enable302"`
+	RemoveExtraFiles   bool                     `json:"removeExtraFiles"`
+	Download           *model.DownloadSettings  `json:"download"`
+	Strm               *model.StrmSettings      `json:"strm"`
+	Emby               *model.EmbySettings      `json:"emby"`
+	Telegram           *model.TelegramSettings  `json:"telegram"`
+	LifeMonitor        *LifeMonitorPatch        `json:"lifeMonitor"`
 }
 
 // containsAsterisk 判定是否是脱敏值（含 *）
@@ -463,7 +483,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
 		// ====== LifeMonitor 嵌套对象 ======
 		if body.LifeMonitor != nil {
 			lm := settings.LifeMonitor
-			lm.Enabled = body.LifeMonitor.Enabled
+			// 使用指针类型检查，只有当字段被显式提供时才更新
+			if body.LifeMonitor.Enabled != nil {
+				lm.Enabled = *body.LifeMonitor.Enabled
+			}
 			if body.LifeMonitor.Accounts != nil {
 				lm.Accounts = body.LifeMonitor.Accounts
 			}
@@ -471,11 +494,28 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
 				lm.PollInterval = body.LifeMonitor.PollInterval
 			}
 			if body.LifeMonitor.PathMappings != nil {
-				lm.PathMappings = body.LifeMonitor.PathMappings
+				// PathMappings 使用 any 类型接收，需要通过 JSON 转换
+				if pathMappingsJSON, err := json.Marshal(body.LifeMonitor.PathMappings); err == nil {
+					var mappings []model.MonitorPathMapping
+					if err := json.Unmarshal(pathMappingsJSON, &mappings); err == nil {
+						lm.PathMappings = mappings
+					}
+				}
 			}
-			lm.RemoveEmptyDirs = body.LifeMonitor.RemoveEmptyDirs
-			lm.EventTypes = body.LifeMonitor.EventTypes
-			lm.MinFileSize = body.LifeMonitor.MinFileSize
+			if body.LifeMonitor.RemoveEmptyDirs != nil {
+				lm.RemoveEmptyDirs = *body.LifeMonitor.RemoveEmptyDirs
+			}
+			if body.LifeMonitor.EventTypes != nil {
+				if eventTypesJSON, err := json.Marshal(body.LifeMonitor.EventTypes); err == nil {
+					var eventTypes model.EventTypesSettings
+					if err := json.Unmarshal(eventTypesJSON, &eventTypes); err == nil {
+						lm.EventTypes = eventTypes
+					}
+				}
+			}
+			if body.LifeMonitor.MinFileSize > 0 {
+				lm.MinFileSize = body.LifeMonitor.MinFileSize
+			}
 			if body.LifeMonitor.FirstPullMode != "" {
 				lm.FirstPullMode = body.LifeMonitor.FirstPullMode
 			}
@@ -485,15 +525,23 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			if body.LifeMonitor.StrmPrefix != "" {
 				lm.StrmPrefix = body.LifeMonitor.StrmPrefix
 			}
-			lm.EnablePathEncoding = body.LifeMonitor.EnablePathEncoding
-		lm.Enable302 = body.LifeMonitor.Enable302
-		lm.AutoDownloadMetadata = body.LifeMonitor.AutoDownloadMetadata
-		if body.LifeMonitor.DownloadExtensions != nil {
-			lm.DownloadExtensions = body.LifeMonitor.DownloadExtensions
+			if body.LifeMonitor.EnablePathEncoding != nil {
+				lm.EnablePathEncoding = *body.LifeMonitor.EnablePathEncoding
+			}
+			if body.LifeMonitor.Enable302 != nil {
+				lm.Enable302 = *body.LifeMonitor.Enable302
+			}
+			if body.LifeMonitor.AutoDownloadMetadata != nil {
+				lm.AutoDownloadMetadata = *body.LifeMonitor.AutoDownloadMetadata
+			}
+			if body.LifeMonitor.DownloadExtensions != nil {
+				lm.DownloadExtensions = body.LifeMonitor.DownloadExtensions
+			}
+			if body.LifeMonitor.NotifyOnlyOnError != nil {
+				lm.NotifyOnlyOnError = *body.LifeMonitor.NotifyOnlyOnError
+			}
+			settings.LifeMonitor = lm
 		}
-		lm.EnableHardDelete = body.LifeMonitor.EnableHardDelete
-		settings.LifeMonitor = lm
-	}
 
 		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
 			logger.S().Errorf("[settings POST] save: %v", err)

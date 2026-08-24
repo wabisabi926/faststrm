@@ -1,6 +1,29 @@
 # FastStrm 变更日志
 
+## v1.0.5 (2026-08-24)
+
+### 🎯 核心可靠性增强：熔断保护 + 事件处理修复 + 关联文件安全
+
+### 🐛 关键 Bug 修复
+
+- **修复 type=17 (new_folder) 事件错误生成 STRM**：空文件夹事件被误判为创建事件而生成 STRM 文件，现添加 isNewFolderOnly 判断，type=17 仅写入数据库记录文件夹路径，不生成 STRM
+- **修复软删除/.bak 备份残留**：彻底移除 EnableHardDelete 配置项（后端 settings.go + 前端 settings.tsx），所有删除操作直接调用 os.Remove/RemoveAll，不再生成 .deleted.bak 备份文件
+- **修复移动/重命名事件目标路径已存在时被跳过**：local_move 模式下目标路径已存在时直接跳过，现改为 fallback 到 recreate 模式（清理旧 STRM + 重新生成），解决 115 先创建后移动的时序问题
+- **修复关联文件删除可能误删非关联文件**：deleteRelatedFiles 使用简单 stem 前缀匹配可能误删（如 "movie" 匹配到 "movie_trailer.mp4"），现添加扩展名验证，匹配后检查 remainder 必须为空或以 . 开头
+
+### 新增
+
+- **删除事件熔断保护**：当单次轮询中删除事件超过 100 条或占比超过 50% 时，自动跳过所有删除操作并记录 Warn 日志 + appendLog（类型 fuse），防止 API 异常返回大量删除事件导致大规模误删
+- **仅错误通知模式**：LifeMonitor 设置页新增「仅错误通知」开关（NotifyOnlyOnError），开启后正常操作（创建/删除/移动/重命名）不推送 Telegram 通知，仅在异常时推送
+
+### 优化
+
+- Emby 入库通知链路完善：添加 GetItemDetailWithRetry 重试方法（500ms/1s/2s 间隔）应对 Emby 异步写入延迟
+- Emby webhook URL 复制支持 HTTP 环境降级处理：navigator.clipboard 不可用时降级为 document.execCommand
+- 前后端硬删除配置统一：移除前端硬删除复选框 UI 及相关状态管理代码，后端移除 EnableHardDelete 字段
+
 ## v1.0.3 (2026-08-24)
+
 
 ### 🐛 关键 Bug 修复
 
