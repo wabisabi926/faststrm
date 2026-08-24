@@ -165,7 +165,7 @@ func (n *Notifier) handleMediaAdded(ctx context.Context, item ItemInfo) error {
 
 // handleMovieAdded 处理电影入库（对齐 TS handleMovieAdded）
 func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
-	detail, err := n.client.GetItemDetail(ctx, item.ID)
+	detail, err := n.client.GetItemDetailWithRetry(ctx, item.ID)
 	if err != nil || detail == nil {
 		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v", item.ID, err)
 		// 降级为简版通知
@@ -198,7 +198,7 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 	defer n.addedMu.Unlock()
 
 	// 获取详情用于通知（同步获取，失败则用 ItemInfo 兜底）
-	detail, err := n.client.GetItemDetail(ctx, item.ID)
+	detail, err := n.client.GetItemDetailWithRetry(ctx, item.ID)
 	if err != nil || detail == nil {
 		detail = &ItemDetail{
 			ID:                item.ID,
@@ -262,7 +262,7 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 
 	// 尝试获取剧集详情（用于海报、简介、评分、导演、主演等完整元数据）
 	var seriesDetail *ItemDetail
-	if d, err := n.client.GetItemDetail(ctx, seriesID); err == nil && d != nil {
+	if d, err := n.client.GetItemDetailWithRetry(ctx, seriesID); err == nil && d != nil {
 		seriesDetail = d
 	}
 
@@ -431,7 +431,7 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 	// 获取详情（用于简介和时长）
 	var detail *ItemDetail
 	if event.Item != nil && event.Item.ID != "" {
-		if d, err := n.client.GetItemDetail(ctx, event.Item.ID); err == nil && d != nil {
+		if d, err := n.client.GetItemDetailWithRetry(ctx, event.Item.ID); err == nil && d != nil {
 			detail = d
 		}
 	}

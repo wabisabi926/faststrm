@@ -158,6 +158,36 @@ func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail,
 	return &detail, nil
 }
 
+// GetItemDetailWithRetry 查询媒体详情，遇到 404 时带重试
+// 处理 Emby webhook 先于 item 入库的时序问题（Emby 触发 library.new 时 item 可能还未完全写入 DB）
+func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*ItemDetail, error) {
+	const maxRetries = 4
+	const initialDelay = 500 * time.Millisecond
+
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		detail, err := c.GetItemDetail(ctx, itemID)
+		if err == nil {
+			return detail, nil
+		}
+
+		if strings.Contains(err.Error(), "emby status 404") {
+			lastErr = err
+			if i < maxRetries-1 {
+				delay := initialDelay * time.Duration(1<<uint(i))
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+				continue
+			}
+		}
+		return nil, err
+	}
+	return nil, lastErr
+}
+
 // BuildImageURL 构造主图 URL：/emby/Items/{id}/Images/Primary?maxWidth=...
 // 注意：无论该 Item 是否实际拥有 Primary 图都会返回 URL，外层需调用 BuildImageURLIfAvailable 做存在性判断
 func (c *Client) BuildImageURL(itemID string, maxWidth int) string {
