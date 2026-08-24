@@ -26,6 +26,9 @@ var (
     sharedCmdHandler *notify.CommandHandler
     sharedDispatcher *notify.Dispatcher
     sharedMu          sync.Mutex
+    // sharedCleanupHandler：保存注入的清理按钮回调（启动时创建 cleanupInteraction 后注入）
+    // 目的：getCmdHandler 懒加载创建 CommandHandler 时能自动接上 cleanup 回调，不会漏
+    sharedCleanupHandler notify.CleanupCallbackHandler
 )
 
 // getPollingMgr 获取或创建共享 PollingManager
@@ -44,8 +47,31 @@ func getCmdHandler(bot *notify.TelegramBot, settingsStore *store.SettingsStore, 
     defer sharedMu.Unlock()
     if sharedCmdHandler == nil {
         sharedCmdHandler = notify.NewCommandHandler(bot, settingsStore, tasksStore, accountStore)
+        // 懒加载创建后自动注入 cleanup 回调（如果已经通过 SetSharedCleanupHandler 注入过）
+        if sharedCleanupHandler != nil {
+            sharedCmdHandler.SetCleanupCallbackHandler(sharedCleanupHandler)
+        }
     }
     return sharedCmdHandler
+}
+
+// SetSharedCleanupHandler 暴露给 server.go 在创建 StrmCleanupInteraction 后调用
+// 确保懒加载的 CommandHandler 在任何时机创建时都能拿到 cleanup 回调，STRM 清理按钮不会失效。
+func SetSharedCleanupHandler(h notify.CleanupCallbackHandler) {
+    sharedMu.Lock()
+    defer sharedMu.Unlock()
+    sharedCleanupHandler = h
+    // 如果已经有懒加载或正式创建的 CommandHandler，同步补上
+    if sharedCmdHandler != nil {
+        sharedCmdHandler.SetCleanupCallbackHandler(h)
+    }
+}
+
+// SharedCleanupHandler 让 server.go 拿到 cleanupHandler，用于 AutoPolling 中兜底 NewCommandHandler 后的注入。
+func SharedCleanupHandler() notify.CleanupCallbackHandler {
+    sharedMu.Lock()
+    defer sharedMu.Unlock()
+    return sharedCleanupHandler
 }
 
 // resetSharedPolling 重置共享实例（BotToken 变更时调用）
@@ -272,13 +298,47 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 			return
 		}
 
-		// 可选：设置 webhook
+		// ============ 热更新：让 deps 中的实例同步新配置，避免通知发往旧 Bot/ChatID ============
+		if deps.TelegramBot != nil {
+			deps.TelegramBot.UpdateCredentials(newTg.BotToken, newTg.ChatID)
+		}
+		if deps.Dispatcher != nil {
+			deps.Dispatcher.ApplySettings(newTg)
+		}
+		// 如果 deps.TelegramBot 本来是 nil（启动时未配置），但 Dispatcher 需要它，ApplySettings 内部已经懒创建了。
+		// 再把懒创建出来的 tg 回传到 deps.TelegramBot？其实不用，因为后续发通知是 dispatcher 走的，handler 层的 botFromSettings 会按 settings 临时建。
+		if deps.CommandHandler != nil {
+			// 若 deps.TelegramBot 已更新直接用；否则临时新建一个临时 bot 给 handler
+			botForCmd := deps.TelegramBot
+			if botForCmd == nil && newTg.BotToken != "" {
+				botForCmd = notify.NewTelegramBot(newTg.BotToken, newTg.ChatID)
+			}
+			if botForCmd != nil {
+				deps.CommandHandler.ReplaceBot(botForCmd)
+			}
+		}
+
+		// ============ 互斥：轮询 ↔ Webhook 不能共存 ============
 		if req.WebhookURL != "" {
+			// 切到 Webhook → 先停所有正在运行的 Polling（包括 server.go 注入的 deps.PollingManager 和懒加载的 sharedPollingMgr）
+			if deps.PollingManager != nil {
+				deps.PollingManager.Stop()
+			}
+			// resetSharedPolling() 已经在上面调用过，会 Stop sharedPollingMgr 并置 nil
+
 			wctx, wcancel := context.WithTimeout(r.Context(), 8*time.Second)
 			defer wcancel()
 			if err := probe.SetWebhook(wctx, req.WebhookURL, newTg.WebhookSecretToken); err != nil {
 				logger.S().Warnf("[notify/bot POST] setWebhook failed: %v", err)
 				// 不影响主流程
+			}
+		} else if req.AutoPolling == nil || *req.AutoPolling {
+			// 留空 WebhookURL + 用户没显式取消 AutoPolling → 切到轮询模式 → 删除 Webhook
+			dctx, dcancel := context.WithTimeout(r.Context(), 8*time.Second)
+			defer dcancel()
+			if err := probe.DeleteWebhook(dctx); err != nil {
+				logger.S().Warnf("[notify/bot POST] deleteWebhook (switch to polling): %v", err)
+				// 不影响主流程，用户可以点下方"启动"手动触发删除
 			}
 		}
 
@@ -438,10 +498,10 @@ func HandleNotifyPollingPOST(deps NotifyDeps) http.HandlerFunc {
 				return nil
 			}
 			if update.Message != nil {
-				return deps.CommandHandler.HandleMessage(ctx, *update.Message)
+				return cmdHandler.HandleMessage(ctx, *update.Message)
 			}
 			if update.CallbackQuery != nil {
-				return deps.CommandHandler.HandleCallbackQuery(ctx, *update.CallbackQuery)
+				return cmdHandler.HandleCallbackQuery(ctx, *update.CallbackQuery)
 			}
 			return nil
 		}

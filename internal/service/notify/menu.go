@@ -129,10 +129,10 @@ func BuildStatusMenu(status map[string]any) (string, [][]InlineKeyboardButton) {
 			if hasCookie {
 				emoji = "✅"
 			}
-			sb.WriteString(fmt.Sprintf("  %s %s — Cookie: %s\n", emoji, name, boolToText(hasCookie, "有效", "未设置")))
+			sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s %s — Cookie: %s\n", emoji, name, boolToText(hasCookie, "有效", "未设置")))
 		}
 		if len(accounts) == 0 {
-			sb.WriteString("  暂无账号\n")
+			sb.WriteString("\u00a0\u00a0暂无账号\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -147,10 +147,10 @@ func BuildStatusMenu(status map[string]any) (string, [][]InlineKeyboardButton) {
 			if running {
 				emoji = "▶️"
 			}
-			sb.WriteString(fmt.Sprintf("  %s %s — %s\n", emoji, acc, boolToText(running, "运行中", "已停止")))
+			sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s %s — %s\n", emoji, acc, boolToText(running, "运行中", "已停止")))
 		}
 		if len(monitors) == 0 {
-			sb.WriteString("  暂无监控\n")
+			sb.WriteString("\u00a0\u00a0暂无监控\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -161,10 +161,10 @@ func BuildStatusMenu(status map[string]any) (string, [][]InlineKeyboardButton) {
 		for _, t := range tasks {
 			name, _ := t["name"].(string)
 			progress, _ := t["progress"].(string)
-			sb.WriteString(fmt.Sprintf("  • %s %s\n", name, progress))
+			sb.WriteString(fmt.Sprintf("\u00a0\u00a0• %s %s\n", name, progress))
 		}
 		if len(tasks) == 0 {
-			sb.WriteString("  暂无运行中任务\n")
+			sb.WriteString("\u00a0\u00a0暂无运行中任务\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -177,7 +177,7 @@ func BuildStatusMenu(status map[string]any) (string, [][]InlineKeyboardButton) {
 		if connected {
 			emoji = "✅"
 		}
-		sb.WriteString(fmt.Sprintf("  %s 连接: %s\n", emoji, boolToText(connected, "已连接", "未连接")))
+		sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s 连接: %s\n", emoji, boolToText(connected, "已连接", "未连接")))
 	}
 
 	sb.WriteString(fmt.Sprintf("\n<b>⏰ 时间:</b> %s", nowFormatted()))

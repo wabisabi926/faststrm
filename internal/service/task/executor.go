@@ -35,18 +35,25 @@ type StrmRefresher interface {
 	RefreshOnDelete(ctx context.Context, filePath string) error
 }
 
+// TaskNotifier 任务状态通知接口（由 notify.Dispatcher 实现，可为 nil）
+type TaskNotifier interface {
+	NotifyDownloadComplete(ctx context.Context, taskName string, totalFiles, downloaded int, durationMs int64) error
+	NotifyError(ctx context.Context, taskName, errMsg string) error
+}
+
 // ExecutorDeps 执行器依赖
 type ExecutorDeps struct {
 	Client115        *client115.Client
-	AccountStore    AccountReader
+	AccountStore     AccountReader
 	SettingsStore    SettingsStore
-	SQLiteDB        *sql.DB
+	SQLiteDB         *sql.DB
 	TasksStore       TasksReaderWriter
 	StrmCache        StrmCacheWriter
-	EmbyRefresh      StrmRefresher        // Emby 刷库服务（可为 nil）
-	CleanupSubmitter CleanupBatchSubmitter // STRM 清理延迟批次提交器（可为 nil）
-	BaseURL          string                // 用于拼接 strmPrefix（302模式下可留空）
-	PublicBaseURL    string                // 公开可访问的 baseUrl（302 模式用户可配置）
+	EmbyRefresh      StrmRefresher         // Emby 刷库服务（可为 nil）
+	CleanupSubmitter CleanupBatchSubmitter  // STRM 清理延迟批次提交器（可为 nil）
+	Notifier         TaskNotifier           // 任务完成/失败通知（可为 nil）
+	BaseURL          string                 // 用于拼接 strmPrefix（302模式下可留空）
+	PublicBaseURL    string                 // 公开可访问的 baseUrl（302 模式用户可配置）
 }
 
 // ExecuteTask 执行一个任务（同步执行，调用方应开 goroutine 异步调用）
@@ -90,6 +97,18 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	sseServer := sse.GetServer()
 	taskStart := time.Now()
 
+	// 设置启动阶段
+	rt.SetState(task.ID, func(s *RuntimeState) {
+		s.Stage = StageStarting
+		s.StageDetail = "任务初始化中..."
+	})
+	sseServer.EmitProgress(sse.ProgressPayload{
+		TaskID:         task.ID,
+		OverallPercent: "0.00",
+		Stage:          StageStarting,
+		StageDetail:    "任务初始化中...",
+	})
+
 	// P0-4 STRM 执行历史埋点状态（defer 统一记录，避免每个 return 点重复代码）
 	// downloaded 提前声明，供 defer 闭包引用（后续 worker pool 累加）
 	histKind := db.StrmHistoryKindFull
@@ -121,6 +140,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		sseServer.EmitComplete(sse.CompletePayload{
 			TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds(),
 		})
+		if deps.Notifier != nil {
+			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
+		}
 		return ExecuteResult{Success: false, Reason: "bad_account", Message: msg}
 	}
 
@@ -146,6 +168,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		sseServer.EmitLog(task.ID, "error", msg)
 		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli() })
 		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
+		if deps.Notifier != nil {
+			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
+		}
 		return ExecuteResult{Success: true, TaskID: task.ID, Message: "started but failed at dir scan"}
 	}
 	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Got cid=%d for path %s", cid, task.OriginPath))
@@ -175,12 +200,28 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	//   listAllFilesRecursive 内部同时会严格校验 pickcode 有效性（对齐 MoviePilot）。
 	minFileSize := settings.Download.MinFileSize
 	blacklist := settings.Download.StrmGenerateBlacklist
-	fileEntries, err := listAllFilesRecursive(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist)
+	// 设置扫描阶段（心跳在 listAllFilesRecursive 内部每3s广播）
+	rt.SetState(task.ID, func(s *RuntimeState) {
+		s.Stage = StageScanning
+		s.StageDetail = "开始扫描云端目录..."
+	})
+	sseServer.EmitProgress(sse.ProgressPayload{
+		TaskID:         task.ID,
+		OverallPercent: "0.00",
+		Stage:          StageScanning,
+		StageDetail:    "开始扫描云端目录...",
+	})
+	fileEntries, err := listAllFilesRecursive(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist, task.ID, rt, sseServer)
 	if err != nil {
 		msg := "list files failed: " + err.Error()
+		histSuccess = false
+		histErrMsg = msg
 		sseServer.EmitLog(task.ID, "error", msg)
-		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli() })
+		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli(); s.Stage = StageFailed; s.StageDetail = msg })
 		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
+		if deps.Notifier != nil {
+			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
+		}
 		return ExecuteResult{Success: true, TaskID: task.ID}
 	}
 
@@ -196,6 +237,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		histKind = db.StrmHistoryKindIncrement
 	}
 	if incremental {
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Stage = StageIncremental
+			s.StageDetail = "正在进行增量比对..."
+		})
+		sseServer.EmitProgress(sse.ProgressPayload{
+			TaskID:         task.ID,
+			OverallPercent: "0.00",
+			Stage:          StageIncremental,
+			StageDetail:    "正在进行增量比对...",
+		})
 		snap, serr := db.ListSnapshotByAccount(deps.SQLiteDB, task.Account, task.OriginPath)
 		if serr != nil {
 			sseServer.EmitLog(task.ID, "warn", "增量快照读取失败，退化为全量: "+serr.Error())
@@ -236,6 +287,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	if incremental {
 		mode := strings.ToLower(strings.TrimSpace(settings.Download.IncrementalCleanupMode))
 		if mode != "" && mode != "off" {
+			rt.SetState(task.ID, func(s *RuntimeState) {
+				s.Stage = StageCleanup
+				s.StageDetail = "增量对账：扫描本地孤儿 STRM..."
+			})
+			sseServer.EmitProgress(sse.ProgressPayload{
+				TaskID:         task.ID,
+				OverallPercent: "0.00",
+				Stage:          StageCleanup,
+				StageDetail:    "增量对账：扫描本地孤儿 STRM...",
+			})
 			sseServer.EmitLog(task.ID, "info", "增量对账清理：开始扫描本地孤儿 STRM")
 			cloudPickcodes := buildCloudPickcodeSet(fileEntries)
 			orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
@@ -261,6 +322,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	if !incremental {
 		mode := strings.ToLower(strings.TrimSpace(settings.Download.FullSyncCleanupOrphans))
 		if mode != "" && mode != "off" {
+			rt.SetState(task.ID, func(s *RuntimeState) {
+				s.Stage = StageCleanup
+				s.StageDetail = "全量预扫：扫描本地孤儿 STRM..."
+			})
+			sseServer.EmitProgress(sse.ProgressPayload{
+				TaskID:         task.ID,
+				OverallPercent: "0.00",
+				Stage:          StageCleanup,
+				StageDetail:    "全量预扫：扫描本地孤儿 STRM...",
+			})
 			sseServer.EmitLog(task.ID, "info", "全量预扫清理：开始扫描本地孤儿 STRM")
 			var snapPickcodes map[string]struct{}
 			if deps.SQLiteDB != nil && task.Account != "" {
@@ -291,6 +362,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 
 	// 9) 写回 filePathDb（不仅 Enable302 反查需要，生活事件 move/rename 时也依赖 DB 反查旧路径）
 	if deps.SQLiteDB != nil {
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Stage = StageWritingDB
+			s.StageDetail = "正在写入文件索引数据库..."
+		})
+		sseServer.EmitProgress(sse.ProgressPayload{
+			TaskID:         task.ID,
+			OverallPercent: "0.00",
+			Stage:          StageWritingDB,
+			StageDetail:    "正在写入文件索引数据库...",
+		})
 		entries := make([]db.FilePathEntry, 0, len(fileEntries))
 		for _, f := range fileEntries {
 			if !isValidPickcode(f.PickCode) {
@@ -318,8 +399,11 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		histSuccess = false
 		histErrMsg = msg
 		sseServer.EmitLog(task.ID, "error", msg)
-		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli() })
+		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli(); s.Stage = StageFailed; s.StageDetail = msg })
 		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
+		if deps.Notifier != nil {
+			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
+		}
 		return ExecuteResult{Success: true, TaskID: task.ID}
 	}
 
@@ -344,6 +428,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	cacheLocalPaths := make([]string, 0, len(strmFiles))
 	var cacheMu sync.Mutex
 	if len(strmFiles) > 0 {
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Stage = StageGenerating
+			s.StageDetail = fmt.Sprintf("正在生成 %d 个 STRM 文件...", len(strmFiles))
+		})
+		sseServer.EmitProgress(sse.ProgressPayload{
+			TaskID:         task.ID,
+			OverallPercent: "0.00",
+			Stage:          StageGenerating,
+			StageDetail:    fmt.Sprintf("正在生成 %d 个 STRM 文件...", len(strmFiles)),
+		})
 		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("writing %d strm files (concurrency=%d, overwrite=%s)",
 			len(strmFiles), strmWorkers, settings.Download.OverwriteMode))
 		// P2-1：统一用 WorkerPool，不再每处手写 sem+wg 模板
@@ -433,6 +527,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 					dlWorkers = 10
 				}
 			}
+			rt.SetState(task.ID, func(s *RuntimeState) {
+				s.Stage = StageGenerating
+				s.StageDetail = fmt.Sprintf("正在下载 %d 个元数据文件...", len(dlFiles))
+			})
+			sseServer.EmitProgress(sse.ProgressPayload{
+				TaskID:         task.ID,
+				OverallPercent: "0.00",
+				Stage:          StageGenerating,
+				StageDetail:    fmt.Sprintf("正在下载 %d 个元数据文件...", len(dlFiles)),
+			})
 			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("downloading %d files (concurrency=%d)", len(dlFiles), dlWorkers))
 			runDownloads(runCtx, task.ID, dlFiles, task.TargetPath, task.Account, account.Cookie, deps.Client115,
 				dlWorkers, perFilePct, downloaded, totalFiles, rt, sseServer)
@@ -441,6 +545,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 
 	// ---- 11) removeExtraFiles：清理本地多余文件 ----
 	if task.RemoveExtraFiles {
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Stage = StageCleanup
+			s.StageDetail = "正在清理本地多余文件..."
+		})
+		sseServer.EmitProgress(sse.ProgressPayload{
+			TaskID:         task.ID,
+			OverallPercent: "95.00",
+			Stage:          StageCleanup,
+			StageDetail:    "正在清理本地多余文件...",
+		})
 		sseServer.EmitLog(task.ID, "info", "scanning for extra files to remove")
 		deleted, reqID, derr := removeExtraFiles(ctx, deps.CleanupSubmitter, task.ID, task.TargetPath, fileEntries, settings)
 		if derr != nil {
@@ -470,6 +584,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	//   遍历 DB 中该 account 条目 → 按 LifeMonitor.PathMappings 换算 localPath →
 	//   若 localPath 落在 TargetPath 范围内且本地文件不存在 → 判定幽灵并清理 DB 记录。
 	if deps.SQLiteDB != nil && task.Account != "" {
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Stage = StageFinalizing
+			s.StageDetail = "正在清理数据库幽灵记录..."
+		})
+		sseServer.EmitProgress(sse.ProgressPayload{
+			TaskID:         task.ID,
+			OverallPercent: "97.00",
+			Stage:          StageFinalizing,
+			StageDetail:    "正在清理数据库幽灵记录...",
+		})
 		targetAbs, aerr := filepath.Abs(task.TargetPath)
 		if aerr != nil {
 			targetAbs = task.TargetPath
@@ -537,6 +661,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 
 	// 11.5) 保存 STRM 生成缓存（供清理使用）
 	if deps.StrmCache != nil && len(cacheRelPaths) > 0 {
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Stage = StageFinalizing
+			s.StageDetail = "正在保存 STRM 缓存..."
+		})
+		sseServer.EmitProgress(sse.ProgressPayload{
+			TaskID:         task.ID,
+			OverallPercent: "99.00",
+			Stage:          StageFinalizing,
+			StageDetail:    "正在保存 STRM 缓存...",
+		})
 		cacheMu.Lock()
 		relSnapshot := append([]string(nil), cacheRelPaths...)
 		localSnapshot := append([]string(nil), cacheLocalPaths...)
@@ -562,18 +696,28 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		s.Status = StatusCompleted
 		s.DownloadedFiles = int(atomic.LoadInt64(downloaded))
 		s.EndedAt = time.Now().UnixMilli()
+		s.Stage = StageCompleted
+		dl := atomic.LoadInt64(downloaded)
+		s.StageDetail = fmt.Sprintf("任务完成，共处理 %d 个文件", dl)
 	})
 	dl := atomic.LoadInt64(downloaded)
+	durationMs := time.Since(taskStart).Milliseconds()
 	_, overall := perFilePct.Overall(totalFiles)
 	sseServer.EmitProgress(sse.ProgressPayload{
 		TaskID: task.ID, Done: true, OverallPercent: overall,
+		Stage: StageCompleted, StageDetail: fmt.Sprintf("任务完成，共处理 %d 个文件", dl),
 	})
 	sseServer.EmitComplete(sse.CompletePayload{
 		TaskID: task.ID, Status: string(StatusCompleted),
-		TotalFiles: totalFiles, DownloadedFiles: int(dl), DurationMs: time.Since(taskStart).Milliseconds(),
+		TotalFiles: totalFiles, DownloadedFiles: int(dl), DurationMs: durationMs,
 	})
 	sseServer.EmitLog(task.ID, "info",
-		fmt.Sprintf("Task done in %d ms: %d/%d files", time.Since(taskStart).Milliseconds(), dl, totalFiles))
+		fmt.Sprintf("Task done in %d ms: %d/%d files", durationMs, dl, totalFiles))
+
+	// 发送任务完成通知（仅在至少有一个文件成功处理时通知）
+	if deps.Notifier != nil && (dl > 0 || totalFiles == 0) {
+		_ = deps.Notifier.NotifyDownloadComplete(context.Background(), task.Name, totalFiles, int(dl), durationMs)
+	}
 
 	return ExecuteResult{Success: true, TaskID: task.ID}
 }

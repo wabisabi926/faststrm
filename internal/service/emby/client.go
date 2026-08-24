@@ -23,12 +23,27 @@ const (
 // ==================== 类型定义（对齐 TS emby/types.ts） ====================
 
 // WebhookEvent Emby Webhook 事件载荷
+// 参考：https://github.com/MediaBrowser/Wiki/blob/master/Webhook.md
 type WebhookEvent struct {
-	Event  string      `json:"Event"`
-	User   *UserInfo   `json:"User,omitempty"`
-	Item   *ItemInfo   `json:"Item,omitempty"`
-	Server *ServerInfo `json:"Server,omitempty"`
+	Event        string      `json:"Event"`
+	User         *UserInfo   `json:"User,omitempty"`
+	Item         *ItemInfo   `json:"Item,omitempty"`
+	Server       *ServerInfo `json:"Server,omitempty"`
+	DeviceID     string      `json:"DeviceId,omitempty"`
+	DeviceName   string      `json:"DeviceName,omitempty"`
+	Client       string      `json:"Client,omitempty"`
+	AppVersion   string      `json:"ApplicationVersion,omitempty"`
+	PlaybackInfo *PlaybackInfo `json:"PlaybackInfo,omitempty"`
 }
+
+// PlaybackInfo 播放事件附带的播放状态信息（部分事件会带）
+type PlaybackInfo struct {
+	PositionTicks    int64  `json:"PositionTicks,omitempty"`
+	PlaybackMethod   string `json:"PlayMethod,omitempty"`
+	IsPaused         bool   `json:"IsPaused,omitempty"`
+	IsAutomated      bool   `json:"IsAutomated,omitempty"`
+}
+
 
 // UserInfo Emby 用户信息
 type UserInfo struct {
@@ -144,6 +159,7 @@ func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail,
 }
 
 // BuildImageURL 构造主图 URL：/emby/Items/{id}/Images/Primary?maxWidth=...
+// 注意：无论该 Item 是否实际拥有 Primary 图都会返回 URL，外层需调用 BuildImageURLIfAvailable 做存在性判断
 func (c *Client) BuildImageURL(itemID string, maxWidth int) string {
 	if c.baseURL == "" || c.apiKey == "" || itemID == "" {
 		return ""
@@ -157,6 +173,50 @@ func (c *Client) BuildImageURL(itemID string, maxWidth int) string {
 		maxWidth,
 		url.QueryEscape(c.apiKey),
 	)
+}
+
+// BuildImageURLIfAvailable 仅当 imageTags 里存在图片时才返回合法 URL（避免 Telegram 404 后降级成纯文本）
+// 优先级：Backdrop（横版背景，通知里视觉效果更好） > Primary（竖版海报）
+// 注意：Emby ImageTags 的 key 大小写不固定（有 "backdrop"/"Backdrop"/"primary"/"Primary" 等变体），因此做大小写不敏感查找
+func (c *Client) BuildImageURLIfAvailable(itemID string, imageTags map[string]string, maxWidth int) string {
+	if len(imageTags) == 0 {
+		return ""
+	}
+	if maxWidth <= 0 {
+		maxWidth = 400
+	}
+	// 通用：大小写不敏感取 imageTag
+	getTag := func(keys ...string) string {
+		for _, k := range keys {
+			for mk, mv := range imageTags {
+				if strings.EqualFold(mk, k) && mv != "" {
+					return mv
+				}
+			}
+		}
+		return ""
+	}
+	// 优先 Backdrop 背景图（Telegram 大图展示更好看）
+	if tag := getTag("Backdrop", "backdrop"); tag != "" {
+		return fmt.Sprintf("%s/emby/Items/%s/Images/Backdrop?tag=%s&maxWidth=%d&api_key=%s",
+			c.baseURL,
+			url.PathEscape(itemID),
+			url.QueryEscape(tag),
+			maxWidth,
+			url.QueryEscape(c.apiKey),
+		)
+	}
+	// 其次 Primary 海报
+	if tag := getTag("Primary", "primary", "Thumb"); tag != "" {
+		return fmt.Sprintf("%s/emby/Items/%s/Images/Primary?tag=%s&maxWidth=%d&api_key=%s",
+			c.baseURL,
+			url.PathEscape(itemID),
+			url.QueryEscape(tag),
+			maxWidth,
+			url.QueryEscape(c.apiKey),
+		)
+	}
+	return ""
 }
 
 // ==================== 媒体库刷新 ====================

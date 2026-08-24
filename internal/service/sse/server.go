@@ -35,6 +35,8 @@ type ProgressPayload struct {
 	OverallPercent string `json:"overallPercent,omitempty"` // 总体："0.00"–"100.00"，必须字符串
 	Done           bool   `json:"done,omitempty"`
 	Error          string `json:"error,omitempty"`
+	Stage          string `json:"stage,omitempty"`          // 当前阶段：scanning/incremental/cleanup/writing_db/generating/finalizing
+	StageDetail    string `json:"stageDetail,omitempty"`    // 阶段详情描述（如"已处理 5 个目录, 120 个文件"）
 }
 
 // LogPayload 日志事件

@@ -281,7 +281,7 @@ export default function TelegramNotifyPage() {
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap gap-x-6 gap-y-3">
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="enabled"
@@ -292,15 +292,20 @@ export default function TelegramNotifyPage() {
                 启用通知
               </label>
             </div>
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="autoPolling"
-                checked={config.autoPolling !== false}
-                onCheckedChange={(checked) => setConfig({ ...config, autoPolling: checked === true })}
-              />
-              <label htmlFor="autoPolling" className="text-sm font-medium leading-none cursor-pointer">
-                启动时自动轮询
-              </label>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="autoPolling"
+                  checked={config.autoPolling !== false}
+                  onCheckedChange={(checked) => setConfig({ ...config, autoPolling: checked === true })}
+                />
+                <label htmlFor="autoPolling" className="text-sm font-medium leading-none cursor-pointer">
+                  启动时自动轮询
+                </label>
+              </div>
+              <p className="text-xs text-muted-foreground pl-6">
+                勾选后，下次启动服务时自动开轮询，无需公网也能接收 Bot 命令和按钮回复
+              </p>
             </div>
           </div>
           <div className="flex gap-2 shrink-0 flex-wrap">
@@ -314,6 +319,26 @@ export default function TelegramNotifyPage() {
             </Button>
           </div>
         </div>
+
+        <Alert className="py-2.5 bg-muted/40">
+          <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+          <AlertDescription className="text-xs leading-relaxed space-y-1">
+            <p className="font-medium text-foreground/90">两种接消息模式说明：</p>
+            <p>
+              · <span className="font-medium">轮询模式（家用推荐，WebhookURL 留空）</span>：
+              服务端每 5 秒主动去 Telegram 拉新消息。<span className="font-medium">不需要公网 IP、不需要域名</span>，延迟约 5 秒。
+              只要勾选上面"启动时自动轮询"或点下方"启动"，就能用 Bot 命令 / 按钮。
+            </p>
+            <p>
+              · <span className="font-medium">Webhook 模式（服务器/公网推荐）</span>：
+              Telegram 有新消息立刻推给你的公网域名，毫秒级。<span className="font-medium">必须要有公网可达的 HTTPS 域名</span>，
+              并在上方 WebhookURL 填入 <code className="font-mono text-[11px] bg-background px-1 py-0.5 rounded">https://你的域名/api/notify/webhook</code>。
+            </p>
+            <p className="text-muted-foreground">
+              · 两种模式互斥，Webhook 配置后轮询会自动停止；反之启动轮询时会自动删除 Webhook。家用/NAS/内网部署 → 直接留空用轮询即可。
+            </p>
+          </AlertDescription>
+        </Alert>
       </section>
 
       {/* 机器人状态 + 测试 */}

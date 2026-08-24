@@ -3,8 +3,13 @@ package notify
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -46,6 +51,27 @@ func (d *Dispatcher) SetWebhook(url string) {
 	d.webhook = NewWebhookSender(url)
 }
 
+// ApplySettings 热更新 Telegram 配置（通过 Web UI 保存配置后调用，避免重启服务）
+// 1) 更新内部 TelegramBot 的 Token/ChatID（如果 tg 还没创建则懒创建）
+// 2) 同步 enabled / webhook / dispatcher 内部缓存字段
+// 3) 如果启用了 WebhookURL，创建 WebhookSender；否则清空
+func (d *Dispatcher) ApplySettings(tg model.TelegramSettings) {
+	if d.tg == nil && tg.BotToken != "" {
+		d.tg = NewTelegramBot(tg.BotToken, tg.ChatID)
+	}
+	if d.tg != nil {
+		d.tg.UpdateCredentials(tg.BotToken, tg.ChatID)
+	}
+	d.botToken = tg.BotToken
+	d.chatID = tg.ChatID
+	d.enabled = tg.Enabled && tg.BotToken != "" && tg.ChatID != ""
+	if tg.WebhookURL != "" {
+		d.webhook = NewWebhookSender(tg.WebhookURL)
+	} else {
+		d.webhook = nil
+	}
+}
+
 func (d *Dispatcher) isConfigured() bool {
 	return d.tg != nil && d.enabled && d.botToken != "" && d.chatID != ""
 }
@@ -68,12 +94,66 @@ func (d *Dispatcher) NotifyWithPhoto(ctx context.Context, caption, photoURL stri
 		logger.S().Debug("Telegram not configured, skipping photo send")
 		return nil
 	}
-	if err := d.tg.SendPhoto(ctx, d.tg.chatID, caption, photoURL); err != nil {
-		logger.S().Errorf("Failed to send Telegram photo: %v", err)
-		return err
+	// 先下载图片到本地临时文件，再 multipart 上传到 Telegram（对齐 qmediasync）
+	// 原因：绝大多数 Emby 部署在内网（192.168.x.x / 127.0.0.1 / 局域网域名），
+	// Telegram 官方服务器无法主动抓取 URL，会导致 sendPhoto 失败或返回空图。
+	tmpPath, err := downloadImageToTemp(ctx, photoURL)
+	if err != nil {
+		logger.S().Warnf("下载 Emby 图片失败，降级为纯文本通知: %v", err)
+		if err2 := d.tg.SendNotification(ctx, caption); err2 != nil {
+			return err2
+		}
+		d.sendWebhookText(ctx, caption)
+		return nil
+	}
+	defer func() { _ = os.Remove(tmpPath) }() // 无论如何发送完清理临时文件
+
+	if err := d.tg.SendPhotoFromFile(ctx, d.tg.chatID, caption, tmpPath); err != nil {
+		logger.S().Errorf("SendPhotoFromFile 失败，降级为纯文本通知: %v", err)
+		if err2 := d.tg.SendNotification(ctx, caption); err2 != nil {
+			return err2
+		}
+		d.sendWebhookText(ctx, caption)
+		return nil
 	}
 	d.sendWebhookText(ctx, caption)
 	return nil
+}
+
+// downloadImageToTemp 把 URL 图片下载到系统临时目录，返回临时文件路径（调用方负责 os.Remove）
+// 会自动根据 URL 判断后缀（.jpg/.png/无后缀都走 .jpg 默认，Telegram sendPhoto 实际看内容不看扩展名）
+func downloadImageToTemp(ctx context.Context, imgURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imgURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	httpCli := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpCli.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("http status %d", resp.StatusCode)
+	}
+	// 根据 URL 扩展名选择临时文件后缀，兜底 .jpg
+	ext := filepath.Ext(imgURL)
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp":
+		// 合法后缀直接用
+	default:
+		ext = ".jpg"
+	}
+	f, err := os.CreateTemp("", "emby-photo-*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("create temp: %w", err)
+	}
+	defer f.Close()
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		_ = os.Remove(f.Name())
+		return "", fmt.Errorf("copy body: %w", err)
+	}
+	return f.Name(), nil
 }
 
 func (d *Dispatcher) NotifyTaskStatus(ctx context.Context, taskName, status, detail string) error {
@@ -109,8 +189,26 @@ func (d *Dispatcher) dispatchRaw(ctx context.Context, n *Notification) error {
 	}
 
 	if n.ImageFile != "" || n.ImageURL != "" {
-		if err := d.tg.SendPhoto(ctx, d.chatID, n.Content, n.ImageURL); err != nil {
-			logger.S().Warnf("Dispatch photo failed, fallback to text: %v", err)
+		// 优先本地文件（ImageFile），否则 ImageURL 下载到临时文件再上传
+		var finalPath string
+		var needCleanup bool
+		if n.ImageFile != "" {
+			finalPath = n.ImageFile
+		} else {
+			p, err := downloadImageToTemp(ctx, n.ImageURL)
+			if err != nil {
+				logger.S().Warnf("Dispatch photo: 下载图片失败，降级纯文本: %v", err)
+				d.sendWebhookNotification(ctx, n)
+				return d.tg.SendNotification(ctx, n.Content)
+			}
+			finalPath = p
+			needCleanup = true
+		}
+		if needCleanup {
+			defer func() { _ = os.Remove(finalPath) }()
+		}
+		if err := d.tg.SendPhotoFromFile(ctx, d.chatID, n.Content, finalPath); err != nil {
+			logger.S().Warnf("Dispatch photo: SendPhotoFromFile 失败，降级纯文本: %v", err)
 			d.sendWebhookNotification(ctx, n)
 			return d.tg.SendNotification(ctx, n.Content)
 		}

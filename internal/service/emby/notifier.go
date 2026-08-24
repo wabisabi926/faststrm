@@ -1,5 +1,6 @@
 // Emby Webhook 事件分发器 + 通知模板
 // 对齐 frontend/src/lib/emby/notifierDispatcher.ts 和 notifierTemplates.ts
+// 参考移植：qmediasync (D:\下载\AI\qmediasync) 通知模板的优点
 package emby
 
 import (
@@ -24,8 +25,8 @@ const (
 	PlaybackDedupWindow = 60 * time.Second
 	// PlaybackCacheTTL 播放缓存条目 TTL（5 分钟）
 	PlaybackCacheTTL = 5 * time.Minute
-	// ImageMaxWidth 通知图片默认最大宽度
-	ImageMaxWidth = 400
+	// ImageMaxWidth 通知图片默认最大宽度（对齐 qmediasync 竖版海报效果）
+	ImageMaxWidth = 720
 )
 
 // ==================== Dispatcher 接口 ====================
@@ -110,11 +111,10 @@ func (n *Notifier) HandleWebhookEvent(ctx context.Context, event WebhookEvent) e
 
 	logger.S().Infof("[Emby] 收到事件: %s, 项目: %s", event.Event, event.Item.Name)
 
-	// 防御：Emby 未配置时 client 为 nil，直接跳过详情/图片相关处理
-	if n.client == nil {
-		logger.S().Warnf("[Emby] EmbyClient 未初始化，跳过事件 %s 处理", event.Event)
-		return nil
-	}
+	// 注意：client 为 nil（Emby 未配置 URL/APIKey）时不全局跳过，
+	// 因为播放通知、删除通知有降级逻辑，无需 EmbyClient 也能发送；
+	// 入库通知在获取详情失败时也会降级为简版通知。
+	// 各 handler 内部已正确处理 client == nil 的情况。
 
 	switch event.Event {
 	case "library.new":
@@ -169,13 +169,13 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 	if err != nil || detail == nil {
 		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v", item.ID, err)
 		// 降级为简版通知
-		msg := fmt.Sprintf("<b>📺 Emby 电影入库通知</b>\n\n<b>%s</b>\n\n⏰ 入库时间: %s\n\n<i>（详情获取失败，已降级为简版通知）</i>",
+		msg := fmt.Sprintf("<b>📚 Emby 电影入库通知</b>\n\n<b>%s</b>\n\n⏰ 入库时间: %s\n\n<i>（详情获取失败，已降级为简版通知）</i>",
 			orDefault(item.Name, "未知"), formatNow())
 		return n.dispatcher.Notify(ctx, msg)
 	}
 
 	msg := FormatMovieNotification(detail, "library.new")
-	photoURL := n.client.BuildImageURL(item.ID, ImageMaxWidth)
+	photoURL := n.client.BuildImageURLIfAvailable(item.ID, detail.ImageTags, ImageMaxWidth)
 	if photoURL != "" {
 		if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
 			// 图片发送失败降级纯文本
@@ -260,7 +260,7 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 		return
 	}
 
-	// 尝试获取剧集详情（用于海报和简介）
+	// 尝试获取剧集详情（用于海报、简介、评分、导演、主演等完整元数据）
 	var seriesDetail *ItemDetail
 	if d, err := n.client.GetItemDetail(ctx, seriesID); err == nil && d != nil {
 		seriesDetail = d
@@ -268,15 +268,16 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 
 	var msg string
 	if seriesDetail != nil {
-		msg = FormatSeriesNotification(seriesDetail.Name, buf.episodes, "library.new")
+		// 用剧集级完整元数据构造通知（qmediasync 风格：评分/导演/主演/入库时间都从 seriesDetail 取）
+		msg = FormatSeriesNotification(seriesDetail, buf.episodes, "library.new")
 	} else {
-		msg = fmt.Sprintf("<b>📺 Emby 电视剧入库通知</b>\n\n<b>%s</b>\n📺 入库季集: %s\n⏰ 入库时间: %s",
+		msg = fmt.Sprintf("<b>📚 Emby 电视剧入库通知</b>\n\n<b>%s</b>\n📺 入库季集: %s\n⏰ 入库时间: %s",
 			buf.seriesName, formatSeasonEpisodes(buf.episodes), formatNow())
 	}
 
-	// 优先带海报发送
+	// 优先带海报发送（优先 Backdrop 背景图）
 	if seriesDetail != nil {
-		photoURL := n.client.BuildImageURL(seriesID, ImageMaxWidth)
+		photoURL := n.client.BuildImageURLIfAvailable(seriesID, seriesDetail.ImageTags, ImageMaxWidth)
 		if photoURL != "" {
 			if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
 				logger.S().Warnf("[Emby] 剧集图片通知失败，降级纯文本: %v", err)
@@ -310,9 +311,10 @@ func (n *Notifier) handleMediaDeleted(ctx context.Context, item ItemInfo) error 
 // handleMovieDeleted 处理电影删除（对齐 TS handleMovieDeleted）
 func (n *Notifier) handleMovieDeleted(ctx context.Context, item ItemInfo) error {
 	detail := &ItemDetail{
-		ID:   item.ID,
-		Name: item.Name,
-		Type: item.Type,
+		ID:             item.ID,
+		Name:           item.Name,
+		Type:           item.Type,
+		ProductionYear: 0, // ItemInfo 里没有年份，不显示
 	}
 	msg := FormatDeletedMovieNotification(detail)
 	return n.dispatcher.Notify(ctx, msg)
@@ -375,7 +377,7 @@ func (n *Notifier) handleSeriesEpisodeDeleted(ctx context.Context, item ItemInfo
 	n.deletedTimers[seriesID] = timer
 }
 
-// flushDeletedEpisodeBuffer 刷新删除缓冲（对齐 TS flushDeletedEpisodeBuffer）
+// flushDeletedEpisodeBuffer 刷新删除缓冲
 func (n *Notifier) flushDeletedEpisodeBuffer(ctx context.Context, seriesID string) {
 	n.deletedMu.Lock()
 	timer := n.deletedTimers[seriesID]
@@ -401,12 +403,12 @@ func (n *Notifier) flushDeletedEpisodeBuffer(ctx context.Context, seriesID strin
 		return
 	}
 
-	// 用缓冲中的剧集列表格式化删除通知
+	// 用缓冲中的剧集列表格式化删除通知（显示具体删了哪些季集，对齐 qmediasync）
 	detail := &ItemDetail{
 		Name:       buf.seriesName,
 		SeriesName: buf.seriesName,
 	}
-	msg := FormatDeletedSeriesNotification(detail)
+	msg := FormatDeletedSeriesNotification(detail, buf.episodes)
 	_ = n.dispatcher.Notify(ctx, msg)
 }
 
@@ -419,7 +421,7 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 		return nil
 	}
 
-	// 去重（60 秒内不重复）
+	// 去重（60 秒内不重复，含设备信息避免不同设备误去重）
 	cacheKey := n.buildPlaybackCacheKey(event)
 	if n.isPlaybackDuplicate(cacheKey) {
 		logger.S().Infof("[Emby] 播放事件 60s 内重复，跳过: %s", cacheKey)
@@ -449,11 +451,36 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 		user = event.User
 	}
 
-	msg := FormatPlaybackNotification(event.Event, detail, user)
+	// 从 Webhook 事件中取 PositionTicks（用于播放进度百分比）
+	var positionTicks int64
+	if event.PlaybackInfo != nil {
+		positionTicks = event.PlaybackInfo.PositionTicks
+	}
 
-	// 带海报发送
-	if event.Item != nil && event.Item.ID != "" {
-		photoURL := n.client.BuildImageURL(event.Item.ID, ImageMaxWidth)
+	msg := FormatPlaybackNotification(
+		event.Event,
+		detail,
+		user,
+		event.DeviceName,
+		event.Client,
+		positionTicks,
+	)
+
+	// 带海报发送（优先用 detail.ImageTags，其次用 Webhook.Item.ImageTags）
+	var itemImageTags map[string]string
+	if detail != nil && len(detail.ImageTags) > 0 {
+		itemImageTags = detail.ImageTags
+	} else if event.Item != nil {
+		itemImageTags = event.Item.ImageTags
+	}
+	photoItemID := ""
+	if detail != nil && detail.ID != "" {
+		photoItemID = detail.ID
+	} else if event.Item != nil {
+		photoItemID = event.Item.ID
+	}
+	if photoItemID != "" {
+		photoURL := n.client.BuildImageURLIfAvailable(photoItemID, itemImageTags, ImageMaxWidth)
 		if photoURL != "" {
 			if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
 				logger.S().Warnf("[Emby] 播放图片通知失败，降级纯文本: %v", err)
@@ -465,7 +492,7 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 	return n.dispatcher.Notify(ctx, msg)
 }
 
-// buildPlaybackCacheKey 构建播放事件去重 key
+// buildPlaybackCacheKey 构建播放事件去重 key（含设备信息，避免不同设备误去重）
 func (n *Notifier) buildPlaybackCacheKey(event WebhookEvent) string {
 	var userID, itemType, itemName string
 	if event.User != nil {
@@ -475,7 +502,9 @@ func (n *Notifier) buildPlaybackCacheKey(event WebhookEvent) string {
 		itemType = event.Item.Type
 		itemName = event.Item.Name
 	}
-	return fmt.Sprintf("%s_%s_%s_%s", userID, itemType, itemName, event.Event)
+	// 设备信息也加入 key，避免同一用户不同设备触发被去重
+	return fmt.Sprintf("%s_%s_%s_%s_%s_%s",
+		userID, itemType, itemName, event.Event, event.DeviceName, event.Client)
 }
 
 // isPlaybackDuplicate 检查播放事件是否在去重窗口内重复
@@ -500,117 +529,132 @@ func (n *Notifier) isPlaybackDuplicate(cacheKey string) bool {
 	return false
 }
 
-// ==================== 通知模板（对齐 TS notifierTemplates.ts） ====================
+// ==================== 通知模板（对齐 qmediasync 风格） ====================
 
-// FormatMovieNotification 格式化电影通知
+// FormatMovieNotification 格式化电影入库通知
+// 移植自 qmediasync：📚标题 + 导演 + 主演 + DateCreated入库时间 + Backdrop优先图
 func FormatMovieNotification(item *ItemDetail, eventType string) string {
 	if item == nil {
 		return ""
 	}
 	genres := "暂无数据"
 	if len(item.Genres) > 0 {
-		genres = strings.Join(item.Genres, ", ")
+		genres = strings.Join(item.Genres, " · ")
 	}
-	actors := "暂无数据"
-	if len(item.People) > 0 {
-		var names []string
-		for _, p := range item.People {
-			if p.Type == "Actor" {
-				names = append(names, p.Name)
-				if len(names) >= 5 {
-					break
-				}
-			}
-		}
-		if len(names) > 0 {
-			actors = strings.Join(names, ", ")
-		}
-	}
+	director := extractDirector(item.People)
+	actors := extractActors(item.People, 5)
 	overview := orDefault(item.Overview, "暂无简介")
 	rating := "暂无数据"
 	if item.CommunityRating > 0 {
 		rating = strconv.FormatFloat(item.CommunityRating, 'f', 1, 64)
 	}
 	addedTime := formatDateCreated(item.DateCreated)
-	year := "未知"
+	year := ""
 	if item.ProductionYear > 0 {
-		year = strconv.Itoa(item.ProductionYear)
+		year = fmt.Sprintf(" (%d)", item.ProductionYear)
+	}
+	// 简介截断 240 字，避免 caption 超长
+	runes := []rune(overview)
+	if len(runes) > 240 {
+		overview = string(runes[:240]) + "..."
 	}
 
-	return strings.TrimSpace(fmt.Sprintf(`%s <b>Emby 电影入库通知</b>
-
-<b>%s</b> (%s)
-
-🆔 评分: %s
-🎬 类型: %s
-👤 主演: %s
-⏰ 入库时间: %s
-
-📝 简介
-%s`,
-		GetEventTypeEmoji(eventType),
-		orDefault(item.Name, "未知"),
-		year,
-		rating,
-		genres,
-		actors,
-		addedTime,
-		overview,
-	))
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📚 Emby 电影入库通知\n\n<b>%s</b>%s\n\n",
+		orDefault(item.Name, "未知"), year))
+	sb.WriteString(fmt.Sprintf("🆔 评分: %s\n", rating))
+	sb.WriteString(fmt.Sprintf("🎬 类型: %s\n", genres))
+	if director != "" {
+		sb.WriteString(fmt.Sprintf("🎥 导演: %s\n", director))
+	}
+	sb.WriteString(fmt.Sprintf("👥 主演: %s\n", actors))
+	sb.WriteString(fmt.Sprintf("⏰ 入库时间: %s\n\n", addedTime))
+	sb.WriteString(fmt.Sprintf("📝 简介\n%s", overview))
+	return strings.TrimSpace(sb.String())
 }
 
-// FormatSeriesNotification 格式化电视剧通知
-func FormatSeriesNotification(series string, episodes []ItemDetail, eventType string) string {
+// FormatSeriesNotification 格式化电视剧入库通知（seriesDetail 为剧集级详情，episodes 为本次入库的集）
+// 移植自 qmediasync：从 seriesDetail 取完整元数据 + 导演主演 + 真实入库时间
+func FormatSeriesNotification(seriesDetail *ItemDetail, episodes []ItemDetail, eventType string) string {
+	if seriesDetail == nil {
+		return ""
+	}
 	seasonEpisodesStr := formatSeasonEpisodes(episodes)
 	seasonEpisodesLine := ""
 	if seasonEpisodesStr != "" {
 		seasonEpisodesLine = fmt.Sprintf("📺 入库季集: %s\n", seasonEpisodesStr)
 	}
 
-	// 从 episodes 中提取 overview（取第一个非空的）
-	overview := "暂无简介"
-	for _, ep := range episodes {
-		if ep.Overview != "" {
-			overview = ep.Overview
-			break
+	// 元数据优先从 seriesDetail 取（剧集级信息最准确），缺失才从 episodes 兜底
+	overview := orDefault(seriesDetail.Overview, "暂无简介")
+	if overview == "暂无简介" {
+		for _, ep := range episodes {
+			if ep.Overview != "" {
+				overview = ep.Overview
+				break
+			}
 		}
 	}
+	runes := []rune(overview)
+	if len(runes) > 240 {
+		overview = string(runes[:240]) + "..."
+	}
 
-	// 从 episodes 中提取 genres
 	genres := "暂无数据"
-	for _, ep := range episodes {
-		if len(ep.Genres) > 0 {
-			genres = strings.Join(ep.Genres, ", ")
-			break
+	if len(seriesDetail.Genres) > 0 {
+		genres = strings.Join(seriesDetail.Genres, " · ")
+	} else {
+		for _, ep := range episodes {
+			if len(ep.Genres) > 0 {
+				genres = strings.Join(ep.Genres, " · ")
+				break
+			}
 		}
 	}
 
-	// 年份
-	year := "未知"
-	for _, ep := range episodes {
-		if ep.ProductionYear > 0 {
-			year = strconv.Itoa(ep.ProductionYear)
-			break
+	year := ""
+	if seriesDetail.ProductionYear > 0 {
+		year = fmt.Sprintf(" (%d)", seriesDetail.ProductionYear)
+	} else {
+		for _, ep := range episodes {
+			if ep.ProductionYear > 0 {
+				year = fmt.Sprintf(" (%d)", ep.ProductionYear)
+				break
+			}
 		}
 	}
 
-	return strings.TrimSpace(fmt.Sprintf(`%s <b>Emby 电视剧入库通知</b>
+	rating := "暂无数据"
+	if seriesDetail.CommunityRating > 0 {
+		rating = strconv.FormatFloat(seriesDetail.CommunityRating, 'f', 1, 64)
+	} else {
+		for _, ep := range episodes {
+			if ep.CommunityRating > 0 {
+				rating = strconv.FormatFloat(ep.CommunityRating, 'f', 1, 64)
+				break
+			}
+		}
+	}
 
-<b>%s</b> (%s)
-%s🆔 评分: 暂无数据
-🎬 类型: %s
-⏰ 入库时间: %s
+	director := extractDirector(seriesDetail.People)
+	actors := extractActors(seriesDetail.People, 5)
 
-📝 简介
-%s`,
-		GetEventTypeEmoji(eventType),
-		orDefault(series, "未知"),
-		year,
-		seasonEpisodesLine,
-		genres,
-		formatNow(),
-		overview,
-	))
+	// 入库时间：优先 seriesDetail.DateCreated，兜底当前时间
+	addedTime := formatDateCreated(seriesDetail.DateCreated)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📚 Emby 电视剧入库通知\n\n<b>%s</b>%s\n\n",
+		orDefault(seriesDetail.Name, "未知"), year))
+	sb.WriteString(seasonEpisodesLine)
+	sb.WriteString(fmt.Sprintf("🆔 评分: %s\n", rating))
+	sb.WriteString(fmt.Sprintf("🎬 类型: %s\n", genres))
+	if director != "" {
+		sb.WriteString(fmt.Sprintf("🎥 导演: %s\n", director))
+	}
+	sb.WriteString(fmt.Sprintf("👥 主演: %s\n", actors))
+	sb.WriteString(fmt.Sprintf("⏰ 入库时间: %s\n\n", addedTime))
+	sb.WriteString(fmt.Sprintf("📝 简介\n%s", overview))
+	return strings.TrimSpace(sb.String())
 }
 
 // FormatDeletedMovieNotification 格式化电影删除通知
@@ -618,17 +662,22 @@ func FormatDeletedMovieNotification(item *ItemDetail) string {
 	if item == nil {
 		return ""
 	}
-	return strings.TrimSpace(fmt.Sprintf(`🗑️ <b>Emby 媒体删除通知</b>
+	year := ""
+	if item.ProductionYear > 0 {
+		year = fmt.Sprintf(" (%d)", item.ProductionYear)
+	}
+	return strings.TrimSpace(fmt.Sprintf(`🗑️ Emby 媒体删除通知
 
-<b>电影名称：</b>%s
+<b>%s</b>%s
 ⏰ 删除时间: %s`,
 		orDefault(item.Name, "未知"),
+		year,
 		formatNow(),
 	))
 }
 
-// FormatDeletedSeriesNotification 格式化电视剧删除通知
-func FormatDeletedSeriesNotification(item *ItemDetail) string {
+// FormatDeletedSeriesNotification 格式化电视剧删除通知（episodes 传入可显示具体删了哪些季集，对齐 qmediasync）
+func FormatDeletedSeriesNotification(item *ItemDetail, episodes []ItemDetail) string {
 	if item == nil {
 		return ""
 	}
@@ -636,54 +685,85 @@ func FormatDeletedSeriesNotification(item *ItemDetail) string {
 	if item.SeriesName != "" {
 		name = item.SeriesName
 	}
-	return strings.TrimSpace(fmt.Sprintf(`🗑️ <b>Emby 媒体删除通知</b>
+	seasonEpisodesStr := formatSeasonEpisodes(episodes)
+	var seasonEpisodesLine string
+	if seasonEpisodesStr != "" {
+		seasonEpisodesLine = fmt.Sprintf("📺 删除季集: %s\n", seasonEpisodesStr)
+	}
+	return strings.TrimSpace(fmt.Sprintf(`🗑️ Emby 媒体删除通知
 
-<b>电视剧名称：</b>%s
-⏰ 删除时间: %s`,
+<b>%s</b>
+%s⏰ 删除时间: %s`,
 		name,
+		seasonEpisodesLine,
 		formatNow(),
 	))
 }
 
-// FormatPlaybackNotification 格式化播放通知
-func FormatPlaybackNotification(event string, item *ItemDetail, user *UserInfo) string {
+// FormatPlaybackNotification 格式化播放通知（开始/暂停/结束）
+// 移植自 qmediasync：设备格式简化、进度百分比（positionTicks/runtimeTicks）、简介缩短至100字
+func FormatPlaybackNotification(event string, item *ItemDetail, user *UserInfo, deviceName, client string, positionTicks int64) string {
 	if item == nil {
 		return ""
 	}
-	titleLine := fmt.Sprintf("%s <b>%s %s</b>\n",
+	var sb strings.Builder
+
+	// 标题行：▶️ 播放开始 <名称>
+	title := orDefault(item.Name, "未知")
+	sb.WriteString(fmt.Sprintf("%s %s <b>%s</b>\n",
 		GetEventTypeEmoji(event),
 		GetEventTypeName(event),
-		orDefault(item.Name, "未知"),
-	)
+		title,
+	))
 
-	var sb strings.Builder
-	sb.WriteString(titleLine)
-
+	// 👤 用户
 	userName := "未知"
 	if user != nil && user.Name != "" {
 		userName = user.Name
 	}
 	sb.WriteString(fmt.Sprintf("👤 用户: %s\n", userName))
 
+	// 📱 设备: 设备名 (客户端) —— 简化格式，对齐 qmediasync
+	if deviceName != "" || client != "" {
+		deviceStr := ""
+		if deviceName != "" && client != "" {
+			deviceStr = fmt.Sprintf("%s (%s)", deviceName, client)
+		} else if deviceName != "" {
+			deviceStr = deviceName
+		} else {
+			deviceStr = client
+		}
+		sb.WriteString(fmt.Sprintf("📱 设备: %s\n", deviceStr))
+	}
+
+	// 电视剧相关
 	if item.Type == "Episode" {
 		if item.SeriesName != "" {
 			sb.WriteString(fmt.Sprintf("📺 电视剧: %s\n", item.SeriesName))
 		}
 		if item.ParentIndexNumber > 0 && item.IndexNumber > 0 {
-			sb.WriteString(fmt.Sprintf("👟 季集: S%dE%d\n", item.ParentIndexNumber, item.IndexNumber))
+			sb.WriteString(fmt.Sprintf("🗂️ 季集: S%dE%d\n", item.ParentIndexNumber, item.IndexNumber))
 		}
 	}
 
-	// 时长
-	if item.RunTimeTicks > 0 {
+	// ⏱️ 时长/进度 —— 移植 qmediasync 的百分比显示
+	if positionTicks > 0 && item.RunTimeTicks > 0 {
+		positionStr := FormatTicksToTime(positionTicks)
+		runtimeStr := FormatTicksToTime(item.RunTimeTicks)
+		percentage := float64(positionTicks) / float64(item.RunTimeTicks) * 100
+		sb.WriteString(fmt.Sprintf("⏱️ 进度: %s / %s (%.0f%%)\n", positionStr, runtimeStr, percentage))
+	} else if item.RunTimeTicks > 0 {
 		sb.WriteString(fmt.Sprintf("⏱️ 时长: %s\n", FormatTicksToTime(item.RunTimeTicks)))
 	}
 
-	// 播放结束：无额外观看时长信息（WebhookEvent 不含 PlaybackInfo）
-	// 简介
+	// ⌛ 观看时长（仅暂停/停止时显示，对齐 qmediasync 截图底部）
+	if (event == "playback.pause" || event == "playback.stop") && positionTicks > 0 {
+		sb.WriteString(fmt.Sprintf("⌛ 观看时长: %s\n", formatWatchedDuration(positionTicks)))
+	}
+
+	// 📝 简介（对齐 qmediasync 截取 100 字）
 	if item.Overview != "" {
 		overview := item.Overview
-		// 截断长简介
 		runes := []rune(overview)
 		if len(runes) > 100 {
 			overview = string(runes[:100]) + "..."
@@ -707,12 +787,27 @@ func FormatTicksToTime(ticks int64) string {
 	return fmt.Sprintf("%02d:%02d", minutes, seconds)
 }
 
+// formatWatchedDuration 把 ticks 转为中文"观看时长"描述（qmediasync 风格："12分钟"/"1小时5分钟"）
+func formatWatchedDuration(ticks int64) string {
+	totalSeconds := ticks / 10_000_000
+	// 不到 1 分钟按 1 分钟显示，避免"0分钟"
+	if totalSeconds < 60 {
+		return "1分钟"
+	}
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	if hours > 0 {
+		return fmt.Sprintf("%d小时%d分钟", hours, minutes)
+	}
+	return fmt.Sprintf("%d分钟", minutes)
+}
+
 // GetEventTypeEmoji 根据事件类型返回对应 emoji
-// 🎬 入库 / 🗑 删除 / ▶️ 播放 / ⏸ 暂停 / ⏹ 停止
+// 📚 入库 / 🗑 删除 / ▶️ 播放 / ⏸ 暂停 / ⏹ 停止
 func GetEventTypeEmoji(eventType string) string {
 	switch eventType {
 	case "library.new":
-		return "🎬"
+		return "📚"
 	case "library.deleted":
 		return "🗑️"
 	case "playback.start":
@@ -744,9 +839,44 @@ func GetEventTypeName(eventType string) string {
 	}
 }
 
+// ==================== 人物提取辅助 ====================
+
+// extractDirector 从 People 中提取第一个 Director 类型的人物（qmediasync 缺少导演字段，此处新增补充）
+func extractDirector(people []Person) string {
+	for _, p := range people {
+		if strings.EqualFold(p.Type, "Director") {
+			return p.Name
+		}
+	}
+	return ""
+}
+
+// extractActors 从 People 中提取前 max 个 Actor 类型的人物，逗号分隔；max <= 0 返回全部
+func extractActors(people []Person, max int) string {
+	if len(people) == 0 {
+		return "暂无数据"
+	}
+	var names []string
+	count := 0
+	for _, p := range people {
+		if strings.EqualFold(p.Type, "Actor") {
+			names = append(names, p.Name)
+			count++
+			if max > 0 && count >= max {
+				break
+			}
+		}
+	}
+	if len(names) == 0 {
+		return "暂无数据"
+	}
+	return strings.Join(names, ", ")
+}
+
 // ==================== 内部辅助 ====================
 
 // formatSeasonEpisodes 从剧集列表构建季集分组并格式化（对齐 TS formatSeasonEpisodes）
+// 输出示例：S1E1-E3,E5; S2E1,E2
 func formatSeasonEpisodes(episodes []ItemDetail) string {
 	// 构建 season -> []episode map
 	seasons := make(map[int][]int)
@@ -787,16 +917,16 @@ func formatSeasonEpisodes(episodes []ItemDetail) string {
 			continue
 		}
 
-		// 格式化连续区间
+		// 格式化连续区间（连续 E1-E3，不连续 E1,E3,E5）
 		var sb strings.Builder
 		start := unique[0]
 		prev := unique[0]
 		for i := 1; i < len(unique); i++ {
 			if unique[i] != prev+1 {
 				if start == prev {
-					sb.WriteString(fmt.Sprintf("E%d, ", start))
+					sb.WriteString(fmt.Sprintf("E%d,", start))
 				} else {
-					sb.WriteString(fmt.Sprintf("E%d-E%d, ", start, prev))
+					sb.WriteString(fmt.Sprintf("E%d-E%d,", start, prev))
 				}
 				start = unique[i]
 			}
@@ -808,6 +938,10 @@ func formatSeasonEpisodes(episodes []ItemDetail) string {
 			sb.WriteString(fmt.Sprintf("E%d-E%d", start, prev))
 		}
 		parts = append(parts, fmt.Sprintf("S%d%s", season, sb.String()))
+	}
+	// 替换成 "S1E1-E3, E5" 风格（逗号后加空格更美观）
+	for i, p := range parts {
+		parts[i] = strings.ReplaceAll(p, ",", ", ")
 	}
 	return strings.Join(parts, "; ")
 }

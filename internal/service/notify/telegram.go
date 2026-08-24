@@ -110,6 +110,19 @@ func NewTelegramBot(botToken, chatID string) *TelegramBot {
 	}
 }
 
+// UpdateCredentials 热更新 BotToken 和 ChatID（保存配置后调用，避免重启）
+func (b *TelegramBot) UpdateCredentials(botToken, chatID string) {
+	if botToken != "" {
+		b.botToken = botToken
+	}
+	if chatID != "" {
+		b.chatID = chatID
+	}
+}
+
+// ChatID 返回当前 chatID（用于只读场景）
+func (b *TelegramBot) ChatID() string { return b.chatID }
+
 // baseURL 返回 Telegram API 基础 URL
 func (b *TelegramBot) baseURL() string {
 	return "https://api.telegram.org/bot" + b.botToken

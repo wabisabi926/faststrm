@@ -47,6 +47,11 @@ func NewCommandHandler(bot *TelegramBot, settings *store.SettingsStore, tasks *s
 	}
 }
 
+// ReplaceBot 热更新内部 TelegramBot 引用（保存配置 / 换 BotToken 后调用）
+func (h *CommandHandler) ReplaceBot(bot *TelegramBot) {
+	h.bot = bot
+}
+
 // SetMenuActions 注入菜单动作接口实现
 func (h *CommandHandler) SetMenuActions(actions MenuActions) {
 	h.menuActions = actions
@@ -247,7 +252,7 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 						emoji = "✅"
 						cookieState = "有效"
 					}
-					sb.WriteString(fmt.Sprintf("  %s <b>%s</b> — %s\n", emoji, name, cookieState))
+					sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s <b>%s</b> — %s\n", emoji, name, cookieState))
 				}
 				sb.WriteString("\n")
 			}
@@ -256,7 +261,7 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 			if monitors, ok := status["monitors"].([]map[string]any); ok {
 				sb.WriteString("<b>📺 监控</b>\n")
 				if len(monitors) == 0 {
-					sb.WriteString("  暂无账号监控\n")
+					sb.WriteString("\u00a0\u00a0暂无账号监控\n")
 				} else {
 					for _, m := range monitors {
 						acc, _ := m["account"].(string)
@@ -267,7 +272,7 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 							emoji = "▶️"
 							state = "运行中"
 						}
-						sb.WriteString(fmt.Sprintf("  %s <b>%s</b> — %s\n", emoji, acc, state))
+						sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s <b>%s</b> — %s\n", emoji, acc, state))
 					}
 				}
 				sb.WriteString("\n")
@@ -277,12 +282,12 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 			if runningTasks, ok := status["runningTasks"].([]map[string]any); ok {
 				sb.WriteString(fmt.Sprintf("<b>🎬 运行中任务</b> (%d)\n", len(runningTasks)))
 				if len(runningTasks) == 0 {
-					sb.WriteString("  无\n")
+					sb.WriteString("\u00a0\u00a0无\n")
 				} else {
 					for _, t := range runningTasks {
 						name, _ := t["name"].(string)
 						progress, _ := t["progress"].(string)
-						sb.WriteString(fmt.Sprintf("  • %s — %s\n", name, progress))
+						sb.WriteString(fmt.Sprintf("\u00a0\u00a0• %s — %s\n", name, progress))
 					}
 				}
 				sb.WriteString("\n")
@@ -293,9 +298,9 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 				sb.WriteString("<b>🎞️ Emby</b>\n")
 				connected, _ := emby["connected"].(bool)
 				if connected {
-					sb.WriteString("  ✅ 已连接\n")
+					sb.WriteString("\u00a0\u00a0✅ 已连接\n")
 				} else {
-					sb.WriteString("  ⚠️ 未连接\n")
+					sb.WriteString("\u00a0\u00a0⚠️ 未连接\n")
 				}
 				sb.WriteString("\n")
 			}
@@ -316,7 +321,7 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 				emoji = "✅"
 				cookieState = "有效"
 			}
-			sb.WriteString(fmt.Sprintf("  %s <b>%s</b> — %s\n", emoji, acc.Name, cookieState))
+			sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s <b>%s</b> — %s\n", emoji, acc.Name, cookieState))
 		}
 		sb.WriteString(fmt.Sprintf("\n<b>🎬 任务</b>: %d 个\n\n", len(tasks)))
 	}
@@ -325,7 +330,7 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 	if s, err := h.settings.ReadSettings(); err == nil {
 		sb.WriteString("<b>🔔 事件开关</b>\n")
 		et := s.LifeMonitor.EventTypes
-		sb.WriteString(fmt.Sprintf("  创建: %s | 删除: %s | 移动: %s | 重命名: %s\n",
+		sb.WriteString(fmt.Sprintf("\u00a0\u00a0创建: %s | 删除: %s | 移动: %s | 重命名: %s\n",
 			boolToText(et.Create, "✅", "❌"),
 			boolToText(et.Remove, "✅", "❌"),
 			boolToText(et.Move, "✅", "❌"),
@@ -368,7 +373,7 @@ func (h *CommandHandler) handleAccounts(ctx context.Context, chatID string) erro
 			cookieState = "已设置"
 		}
 		sb.WriteString(fmt.Sprintf("%s <b>%s</b>\n", emoji, acc.Name))
-		sb.WriteString(fmt.Sprintf("   Cookie: %s\n\n", cookieState))
+		sb.WriteString(fmt.Sprintf("\u00a0\u00a0\u00a0Cookie: %s\n\n", cookieState))
 	}
 	sb.WriteString("💡 Cookie 过期时可在 Web UI 账号管理页扫码刷新。")
 	return h.bot.SendMessage(ctx, chatID, sb.String(), "HTML")

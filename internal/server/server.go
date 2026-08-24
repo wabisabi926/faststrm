@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/handler"
@@ -147,6 +148,12 @@ func Run(cfg *config.AppConfig) error {
 		taskRuntime, execDeps, embyClient, embyRefresh,
 	)
 
+	// 延迟注入 Notifier：dispatcher 在 initPhase6Deps 内创建
+	// 1) 更新外部 execDeps（影响后续 RegisterRoutes 中 taskDeps）
+	execDeps.Notifier = notifyDeps.Dispatcher
+	// 2) 注入到调度器内部 deps（调度器内部持有参数副本的指针）
+	scheduler.SetNotifier(notifyDeps.Dispatcher)
+
 	// 延迟注入 TelegramBot 到 cleanupInteraction（在 initPhase6Deps 创建 notifyDeps.TelegramBot 之后）
 	if cleanupInteraction != nil && notifyDeps.TelegramBot != nil {
 		cleanupInteraction.SetBot(notifyDeps.TelegramBot)
@@ -165,6 +172,61 @@ func Run(cfg *config.AppConfig) error {
 				logger.S().Warnf("[Phase6] auto-start monitor failed: %v", err)
 			}
 		}()
+	}
+
+	// ==================== Telegram 开机自动轮询（AutoPolling） ====================
+	if initSettings != nil {
+		tg := initSettings.Telegram
+		if tg.Enabled && tg.AutoPolling && tg.BotToken != "" && notifyDeps.TelegramBot != nil {
+			// Webhook 与轮询互斥：有 webhook 配置但也开了 AutoPolling 时，优先按用户勾选走轮询
+			if tg.WebhookURL != "" {
+				logger.S().Infof("[Telegram] AutoPolling 已启用，忽略 WebhookURL 配置")
+			}
+			// 1) 确保删除 webhook（轮询与 webhook 互斥）
+			delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := notifyDeps.TelegramBot.DeleteWebhook(delCtx); err != nil {
+				logger.S().Warnf("[Telegram] AutoPolling deleteWebhook (may be none): %v", err)
+			}
+			delCancel()
+
+			// 2) 确保 PollingManager 已创建（启动时 tgBot != nil 时 initPhase6Deps 已创建，但兜底）
+			pollingMgr := notifyDeps.PollingManager
+			if pollingMgr == nil {
+				pollingMgr = notify.NewPollingManager(notifyDeps.TelegramBot)
+				notifyDeps.PollingManager = pollingMgr
+			}
+			// 3) 确保 CommandHandler 已创建（兜底）
+			cmdHandler := notifyDeps.CommandHandler
+			if cmdHandler == nil {
+				cmdHandler = notify.NewCommandHandler(notifyDeps.TelegramBot, settingsStore, tasksStore, accountStore)
+				notifyDeps.CommandHandler = cmdHandler
+				// 兜底新建时补上 cleanup 回调（否则 STRM 清理确认按钮无响应）
+				if ch := handler.SharedCleanupHandler(); ch != nil {
+					cmdHandler.SetCleanupCallbackHandler(ch)
+				}
+			}
+
+			// 4) 启动轮询：将 update 分发给 CommandHandler
+			handlerFn := func(ctx context.Context, update notify.Update) error {
+				if cmdHandler == nil {
+					return nil
+				}
+				if update.Message != nil {
+					return cmdHandler.HandleMessage(ctx, *update.Message)
+				}
+				if update.CallbackQuery != nil {
+					return cmdHandler.HandleCallbackQuery(ctx, *update.CallbackQuery)
+				}
+				return nil
+			}
+			if err := pollingMgr.Start(context.Background(), handlerFn); err != nil {
+				logger.S().Warnf("[Telegram] AutoPolling 启动失败: %v", err)
+			} else {
+				logger.S().Infof("[Telegram] AutoPolling 已自动启动（每 5 秒检查一次新消息）")
+			}
+		} else if tg.BotToken != "" {
+			logger.S().Infof("[Telegram] Bot 已配置，但 AutoPolling 未勾选，跳过自动轮询（可在设置中开启或通过 API /api/notify/polling 手动启动）")
+		}
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -360,6 +422,11 @@ func RegisterRoutes(
 		notifyDeps.CommandHandler.SetCleanupCallbackHandler(cleanupInteraction)
 		logger.S().Infof("[Phase6] cleanup interaction 已注入 TG CommandHandler")
 	}
+	// 额外：注册到 handler 包的全局 cleanup 回调，保证懒加载创建的 CommandHandler 也能拿到清理按钮回调
+	// （场景：启动时未配置 Bot，后来通过 API 保存配置 → /api/notify/polling 启动轮询时懒加载 cmdHandler）
+	if cleanupInteraction != nil {
+		handler.SetSharedCleanupHandler(cleanupInteraction)
+	}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodPost, Path: "/api/strmCleanup/scan", Handler: corsJWT(handler.HandleStrmCleanupScanPOST(strmCleanupDeps))},
 		{Method: http.MethodPost, Path: "/api/strmCleanup/execute", Handler: corsJWT(handler.HandleStrmCleanupExecutePOST(strmCleanupDeps))},
@@ -419,6 +486,10 @@ func initPhase6Deps(
 		dispatcher.SetEnabled(true)
 	}
 	dispatcher.SetWebhook(tgSettings.WebhookURL)
+
+	// 延迟注入 Notifier 到 execDeps（因为 dispatcher 刚创建好）
+	// execDeps 是参数值拷贝，本函数内修改影响 menuActionsAdapter
+	execDeps.Notifier = dispatcher
 
 	var pollingMgr *notify.PollingManager
 	var cmdHandler *notify.CommandHandler

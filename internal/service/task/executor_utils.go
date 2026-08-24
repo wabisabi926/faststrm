@@ -228,6 +228,7 @@ func urlPathEncode(s string) string {
 // blacklist：STRM 文件名黑名单关键词列表（空 = 不启用）。
 // 对齐 MoviePilot StrmGenerater.should_generate_strm + not_blacklist_key。
 // pickcode 校验：STRM 文件必须是 17 位字母数字的有效 pickcode
+// 新增：taskID/rt/sseServer 用于扫描阶段的进度心跳广播（大库场景下避免 UI 显示 0% 卡死）
 func listAllFilesRecursive(
 	ctx context.Context,
 	c115 *client115.Client,
@@ -238,6 +239,9 @@ func listAllFilesRecursive(
 	downloadExts map[string]struct{},
 	minFileSize int64,
 	blacklist []string,
+	taskID string,
+	rt *Runtime,
+	sseServer *sse.Server,
 ) ([]*fileItem, error) {
 	type stackEntry struct {
 		cid     int64
@@ -255,6 +259,46 @@ func listAllFilesRecursive(
 	cidSeen := make(map[int64]struct{})
 	dirCount, fileCount, matchCount := 0, 0, 0
 	logger.S().Infof("[listAllFilesRecursive] start cid=%d originPath=%s", rootCID, originPath)
+
+	// ---- 扫描进度心跳：每 3 秒广播一次（让 UI 知道后台还活着） ----
+	heartbeatStop := make(chan struct{})
+	defer close(heartbeatStop)
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		lastDir, lastFile, lastMatch := -1, -1, -1
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// 只有数字有变化时才广播，减少无意义流量
+				if dirCount == lastDir && fileCount == lastFile && matchCount == lastMatch {
+					continue
+				}
+				lastDir, lastFile, lastMatch = dirCount, fileCount, matchCount
+				detail := fmt.Sprintf("已扫描 %d 个目录, %d 个文件 (命中 %d 个媒体)", dirCount, fileCount, matchCount)
+				if taskID != "" && rt != nil {
+					rt.SetState(taskID, func(s *RuntimeState) {
+						s.Stage = StageScanning
+						s.StageDetail = detail
+					})
+				}
+				if sseServer != nil && taskID != "" {
+					sseServer.EmitProgress(sse.ProgressPayload{
+						TaskID:         taskID,
+						OverallPercent: "0.00",
+						Stage:          StageScanning,
+						StageDetail:    detail,
+					})
+				}
+				logger.S().Debugf("[listAllFilesRecursive] heartbeat task=%s: %s", taskID, detail)
+			}
+		}
+	}()
+
 	defer func() {
 		logger.S().Infof("[listAllFilesRecursive] done dirs=%d files=%d matched=%d totalOut=%d", dirCount, fileCount, matchCount, len(out))
 	}()

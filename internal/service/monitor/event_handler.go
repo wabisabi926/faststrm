@@ -2666,27 +2666,27 @@ func (nm *NotifyMerger) flush() {
 
 	// 构建摘要消息
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📊 STRM 操作摘要（%d条事件）:\n", len(entries)))
+	sb.WriteString(fmt.Sprintf("📊 <b>STRM 操作摘要</b>（%d 条事件）:\n", len(entries)))
 	if counts["create"] > 0 {
-		sb.WriteString(fmt.Sprintf("  ✅ 生成: %d\n", counts["create"]))
+		sb.WriteString(fmt.Sprintf("\u00a0\u00a0✅ 生成: %d\n", counts["create"]))
 	}
 	if counts["delete"] > 0 {
-		sb.WriteString(fmt.Sprintf("  🗑️ 删除: %d\n", counts["delete"]))
+		sb.WriteString(fmt.Sprintf("\u00a0\u00a0🗑️ 删除: %d\n", counts["delete"]))
 	}
 	if counts["move"] > 0 {
-		sb.WriteString(fmt.Sprintf("  📁 移动: %d\n", counts["move"]))
+		sb.WriteString(fmt.Sprintf("\u00a0\u00a0📁 移动: %d\n", counts["move"]))
 	}
 	if counts["rename"] > 0 {
-		sb.WriteString(fmt.Sprintf("  ✏️ 重命名: %d\n", counts["rename"]))
+		sb.WriteString(fmt.Sprintf("\u00a0\u00a0✏️ 重命名: %d\n", counts["rename"]))
 	}
 	// 列出最多5条明细
 	maxDetail := 5
 	for i, e := range entries {
 		if i >= maxDetail {
-			sb.WriteString(fmt.Sprintf("  ...及其他 %d 条\n", len(entries)-maxDetail))
+			sb.WriteString(fmt.Sprintf("\u00a0\u00a0...及其他 %d 条\n", len(entries)-maxDetail))
 			break
 		}
-		sb.WriteString(fmt.Sprintf("  · %s: %s\n", e.kind, e.cloudPath))
+		sb.WriteString(fmt.Sprintf("\u00a0\u00a0· %s: %s\n", e.kind, e.cloudPath))
 	}
 
 	if err := nm.notifier.Notify(context.Background(), sb.String()); err != nil {
@@ -2696,13 +2696,14 @@ func (nm *NotifyMerger) flush() {
 
 // ==================== STRM 通知（统一 Notification 对象 + 富文本 HTML 格式） ====================
 
-// notifyCreate 发送创建通知（P2-8: 同时加入合并队列）
+// notifyCreate 发送创建通知
+// 发送策略二选一（避免一条事件发两条）：
+//   · 实现了 NotificationDispatcher（新路径）：富文本卡片 + 按钮，单独发送
+//   · 回退到单纯 Notifier：进入合并器汇总成摘要消息后再推送
 func (m *Monitor) notifyCreate(ctx context.Context, account, cloudPath, kindLabel, localPath string, size int64) {
 	if m.notifier == nil {
 		return
 	}
-	// P2-8: 加入合并队列
-	m.notifyMerger.Add(notifyEntry{kind: "create", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel, size: size})
 	builder := notify.NewStrmNotifyBuilder()
 	n := builder.BuildCreateNotification(notify.STRMCreateInput{
 		Account:   account,
@@ -2711,19 +2712,18 @@ func (m *Monitor) notifyCreate(ctx context.Context, account, cloudPath, kindLabe
 		LocalPath: localPath,
 		FileSize:  size,
 	})
-	if !m.tryDispatchNotification(ctx, n) {
-		if err := m.notifier.Notify(ctx, n.Content); err != nil {
-			logger.S().Warnf("[Monitor] 创建通知发送失败: %v", err)
-		}
+	if m.tryDispatchNotification(ctx, n) {
+		return
 	}
+	// 回退模式：只走合并器，后续合并器 flush 时统一推送摘要（不再单独发一条，避免重复）
+	m.notifyMerger.Add(notifyEntry{kind: "create", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel, size: size})
 }
 
-// notifyDelete 发送删除通知（P2-8: 同时加入合并队列）
+// notifyDelete 发送删除通知
 func (m *Monitor) notifyDelete(ctx context.Context, account, cloudPath, kindLabel, localPath string) {
 	if m.notifier == nil {
 		return
 	}
-	m.notifyMerger.Add(notifyEntry{kind: "delete", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel})
 	builder := notify.NewStrmNotifyBuilder()
 	n := builder.BuildDeleteNotification(notify.STRMDeleteInput{
 		Account:   account,
@@ -2731,19 +2731,18 @@ func (m *Monitor) notifyDelete(ctx context.Context, account, cloudPath, kindLabe
 		CloudPath: cloudPath,
 		LocalPath: localPath,
 	})
-	if !m.tryDispatchNotification(ctx, n) {
-		if err := m.notifier.Notify(ctx, n.Content); err != nil {
-			logger.S().Warnf("[Monitor] 删除通知发送失败: %v", err)
-		}
+	if m.tryDispatchNotification(ctx, n) {
+		return
 	}
+	// 回退模式：只走合并器
+	m.notifyMerger.Add(notifyEntry{kind: "delete", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel})
 }
 
-// notifyMove 发送移动通知（P2-8: 同时加入合并队列）
+// notifyMove 发送移动通知
 func (m *Monitor) notifyMove(ctx context.Context, account, cloudPath, kindLabel, localPath string) {
 	if m.notifier == nil {
 		return
 	}
-	m.notifyMerger.Add(notifyEntry{kind: "move", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel})
 	builder := notify.NewStrmNotifyBuilder()
 	n := builder.BuildMoveNotification(notify.STRMMoveInput{
 		Account:   account,
@@ -2751,19 +2750,18 @@ func (m *Monitor) notifyMove(ctx context.Context, account, cloudPath, kindLabel,
 		CloudPath: cloudPath,
 		LocalPath: localPath,
 	})
-	if !m.tryDispatchNotification(ctx, n) {
-		if err := m.notifier.Notify(ctx, n.Content); err != nil {
-			logger.S().Warnf("[Monitor] 移动通知发送失败: %v", err)
-		}
+	if m.tryDispatchNotification(ctx, n) {
+		return
 	}
+	// 回退模式：只走合并器
+	m.notifyMerger.Add(notifyEntry{kind: "move", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel})
 }
 
-// notifyRename 发送重命名通知（P2-8: 同时加入合并队列）
+// notifyRename 发送重命名通知
 func (m *Monitor) notifyRename(ctx context.Context, account, cloudPath, kindLabel, localPath string) {
 	if m.notifier == nil {
 		return
 	}
-	m.notifyMerger.Add(notifyEntry{kind: "rename", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel})
 	builder := notify.NewStrmNotifyBuilder()
 	n := builder.BuildRenameNotification(notify.STRMRenameInput{
 		Account:   account,
@@ -2771,9 +2769,9 @@ func (m *Monitor) notifyRename(ctx context.Context, account, cloudPath, kindLabe
 		CloudPath: cloudPath,
 		LocalPath: localPath,
 	})
-	if !m.tryDispatchNotification(ctx, n) {
-		if err := m.notifier.Notify(ctx, n.Content); err != nil {
-			logger.S().Warnf("[Monitor] 重命名通知发送失败: %v", err)
-		}
+	if m.tryDispatchNotification(ctx, n) {
+		return
 	}
+	// 回退模式：只走合并器
+	m.notifyMerger.Add(notifyEntry{kind: "rename", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel})
 }

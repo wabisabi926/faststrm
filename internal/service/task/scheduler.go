@@ -75,6 +75,15 @@ func (s *Scheduler) Init(deps ExecutorDeps, ts TasksReaderWriter, settings Setti
 	return nil
 }
 
+// SetNotifier 更新内部 deps 的 Notifier（用于 dispatcher 创建后延迟注入）
+func (s *Scheduler) SetNotifier(n TaskNotifier) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deps != nil {
+		s.deps.Notifier = n
+	}
+}
+
 // Stop 停止调度器（服务关闭时调用）
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
