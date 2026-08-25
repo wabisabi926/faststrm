@@ -722,19 +722,6 @@ func (m *Monitor) handleDeleteEvent(
 		}
 	}
 
-	// P0-3: 网盘存在性校验 — 如果文件仍在网盘上，跳过删除（可能只是移动事件被误报为删除）
-	// 对齐参考项目: cloud_file_item = storagechain.get_file_item(p115client, file_id)
-	//               if cloud_file_item: return  # 文件仍存在，不删除本地 STRM
-	if lifeClient != nil && lifeClient.FsClient() != nil && event.FileID != "" && event.FileID != "0" {
-		if fileExists, err := m.checkCloudFileExists(ctx, lifeClient, event.FileID, event.FileName); err == nil && fileExists {
-			logger.S().Infof("[Monitor] 网盘文件仍存在，跳过删除: fid=%s name=%s cloudPath=%s",
-				event.FileID, event.FileName, cloudPath)
-			m.appendLog(ctx, account, "delete", true, cloudPath, mapping.localPath,
-				"跳过: 网盘文件仍存在（可能为移动事件）")
-			return nil
-		}
-	}
-
 	// 文件夹事件：递归删除目录（P1-5 Delete 安全兜底）
 	if event.FileCategory == 0 {
 		if err := strmutil.DeletePath(mapping.localPath); err != nil {
@@ -785,24 +772,6 @@ func (m *Monitor) handleDeleteEvent(
 	}
 
 	return nil
-}
-
-// checkCloudFileExists 通过 FsFiles API 检查文件是否仍存在于网盘
-// 对齐参考项目 storagechain.get_file_item(file_id) 存在性校验
-func (m *Monitor) checkCloudFileExists(ctx context.Context, lifeClient *client115.LifeClient, fileID, fileName string) (bool, error) {
-	fsClient := lifeClient.FsClient()
-	if fsClient == nil {
-		return false, fmt.Errorf("fsClient not initialized")
-	}
-	// 用 file_id 作为 cid 查询：如果文件仍存在，API 会返回其信息
-	// 对齐参考项目: file_item = p115client.fs_files(cid=file_id)
-	resp, err := fsClient.FsFiles(ctx, fileID, 1, 0, lifeClient.Cookie())
-	if err != nil || resp == nil || !resp.State {
-		// API 失败或 state=false → 文件不存在（已删除）
-		return false, nil
-	}
-	// 如果返回了数据，说明文件仍存在
-	return len(resp.Data) > 0, nil
 }
 
 // handleMoveRenameQuadrant 对齐参考项目 MoviePilot MonitorLife.move() 的四象限决策矩阵

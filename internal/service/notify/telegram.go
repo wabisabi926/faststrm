@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 	"golang.org/x/net/proxy"
 )
@@ -59,6 +60,14 @@ func NewTelegramBot(botToken, chatID string) *TelegramBot {
 // NewTelegramBotWithProxy 创建带 HTTP/SOCKS5 代理的 TelegramBot
 func NewTelegramBotWithProxy(botToken, chatID, proxyURL string) (*TelegramBot, error) {
 	return newBotWithProxy(botToken, chatID, proxyURL)
+}
+
+// CreateBotFromSettings 从配置创建 TelegramBot（自动读取代理设置）
+func CreateBotFromSettings(settings model.TelegramSettings) (*TelegramBot, error) {
+	if settings.ProxyURL != "" {
+		return NewTelegramBotWithProxy(settings.BotToken, settings.ChatID, settings.ProxyURL)
+	}
+	return NewTelegramBot(settings.BotToken, settings.ChatID), nil
 }
 
 func newBot(botToken, chatID, proxyURL string) *TelegramBot {
@@ -173,6 +182,13 @@ func (b *TelegramBot) ChatID() string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.chatID
+}
+
+// ProxyURL 返回当前代理 URL（空字符串表示无代理）
+func (b *TelegramBot) ProxyURL() string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.proxyURL
 }
 
 // BotToken 返回当前 Bot Token（dispatcher 用）
@@ -385,9 +401,37 @@ func (b *TelegramBot) SendPhoto(ctx context.Context, chatID, caption, photoURLOr
 	return nil
 }
 
-// SendPhotoFromFile 兼容旧签名（内部直接走 SendPhoto）
+// SendPhotoWithRetry 带指数退避重试（对齐 SendMessageWithRetry）
+func (b *TelegramBot) SendPhotoWithRetry(ctx context.Context, chatID, caption, photoURLOrPath string) error {
+	maxRetries := 2
+	if b.hasProxy {
+		maxRetries = 3
+	}
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			wait := time.Duration(attempt*attempt) * time.Second
+			logger.S().Warnf("[Telegram] 图片重试第 %d 次（等待 %v）: %v", attempt, wait, lastErr)
+			time.Sleep(wait)
+		}
+		sendErr := b.SendPhoto(ctx, chatID, caption, photoURLOrPath)
+		if sendErr == nil {
+			if attempt > 0 {
+				logger.S().Infof("[Telegram] 图片重试发送成功（第 %d 次）", attempt)
+			}
+			return nil
+		}
+		lastErr = sendErr
+		if !isTimeoutError(sendErr) {
+			break // 非超时类错误不重试
+		}
+	}
+	return fmt.Errorf("telegram send photo retries exhausted: %w", lastErr)
+}
+
+// SendPhotoFromFile 兼容旧签名（内部使用 SendPhotoWithRetry）
 func (b *TelegramBot) SendPhotoFromFile(ctx context.Context, chatID, caption, filePath string) error {
-	return b.SendPhoto(ctx, chatID, caption, filePath)
+	return b.SendPhotoWithRetry(ctx, chatID, caption, filePath)
 }
 
 // SetMyCommands 设置 Bot 菜单命令

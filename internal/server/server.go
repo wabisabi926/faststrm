@@ -479,7 +479,11 @@ func initPhase6Deps(
 	// 优先构造持久 TelegramBot（若启动时已配置 BotToken）；否则留 nil，由 handler 在请求时按 settings 临时构造
 	var tgBot *notify.TelegramBot
 	if tgSettings.BotToken != "" {
-		tgBot = notify.NewTelegramBot(tgSettings.BotToken, tgSettings.ChatID)
+		var err error
+		tgBot, err = notify.CreateBotFromSettings(tgSettings)
+		if err != nil {
+			logger.S().Errorf("[Telegram] 创建 Bot 失败: %v", err)
+		}
 	}
 	dispatcher := notify.NewDispatcher(tgBot)
 	if tgSettings.Enabled {

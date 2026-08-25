@@ -129,7 +129,12 @@ func (deps NotifyDeps) botFromSettings(tg model.TelegramSettings) *notify.Telegr
 	if tg.BotToken == "" {
 		return nil
 	}
-	return notify.NewTelegramBot(tg.BotToken, tg.ChatID)
+	bot, err := notify.CreateBotFromSettings(tg)
+	if err != nil {
+		logger.S().Errorf("[notify] CreateBotFromSettings failed: %v", err)
+		return notify.NewTelegramBot(tg.BotToken, tg.ChatID)
+	}
+	return bot
 }
 
 // parseUserID 兼容 JSON number / string / json.Number 三种 userId 输入

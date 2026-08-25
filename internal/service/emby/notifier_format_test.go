@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestFormatMovieNotification_NoDirector 验证电影入库通知不含导演字段（V3：对齐 QMS 去导演）
+// TestFormatMovieNotification_NoDirector 验证电影入库通知不含导演字段（qmediasync 风格）
 func TestFormatMovieNotification_NoDirector(t *testing.T) {
 	item := &ItemDetail{
 		Name:            "功夫熊猫",
@@ -25,31 +25,28 @@ func TestFormatMovieNotification_NoDirector(t *testing.T) {
 		t.Fatal("输出不应为空")
 	}
 	if strings.Contains(out, "导演") {
-		t.Errorf("V3 要求去掉导演字段，但输出含导演: %s", out)
+		t.Errorf("要求去掉导演字段，但输出含导演: %s", out)
 	}
-	if !strings.HasPrefix(out, "<b>📚 Emby 电影入库通知</b>") {
-		t.Errorf("应以 📚 Emby 电影入库通知 开头, 实际 %s", out)
+	if !strings.HasPrefix(out, "功夫熊猫 (2008)") {
+		t.Errorf("应以 功夫熊猫 (2008) 开头, 实际 %s", out)
 	}
-	if !strings.Contains(out, "功夫熊猫 (2008)") {
-		t.Errorf("Content 应含片名(年份), 实际 %s", out)
+	if !strings.Contains(out, "🆔 评分: 8.2") {
+		t.Errorf("应含 🆔 评分: 8.2, 实际 %s", out)
 	}
-	if !strings.Contains(out, "评分：") {
-		t.Errorf("应含全角冒号 评分：, 实际 %s", out)
+	if !strings.Contains(out, "🎬 类型: 动画, 动作") {
+		t.Errorf("应含 🎬 类型: 动画, 动作, 实际 %s", out)
 	}
-	if !strings.Contains(out, "8.2") {
-		t.Errorf("应含评分 8.2, 实际 %s", out)
+	if !strings.Contains(out, "👤 主演: 演员A, 演员B") {
+		t.Errorf("应含 👤 主演: 演员A, 演员B, 实际 %s", out)
 	}
-	if !strings.Contains(out, "类型：") {
-		t.Errorf("应含全角冒号 类型：, 实际 %s", out)
+	if !strings.Contains(out, "⏰ 入库时间:") {
+		t.Errorf("应含 ⏰ 入库时间:, 实际 %s", out)
 	}
-	if !strings.Contains(out, "主演：") {
-		t.Errorf("应含全角冒号 主演：, 实际 %s", out)
+	if !strings.Contains(out, "📝 简介") {
+		t.Errorf("应含 📝 简介 独立段落, 实际 %s", out)
 	}
-	if !strings.Contains(out, "入库时间：") {
-		t.Errorf("应含全角冒号 入库时间：, 实际 %s", out)
-	}
-	if !strings.Contains(out, "简介：") {
-		t.Errorf("应含全角冒号 简介：, 实际 %s", out)
+	if !strings.Contains(out, "一只熊猫成为神龙大侠的故事") {
+		t.Errorf("应含简介内容, 实际 %s", out)
 	}
 }
 
@@ -60,9 +57,10 @@ func TestFormatMovieNotification_NilItem(t *testing.T) {
 	}
 }
 
-// TestFormatMovieNotification_OverviewTruncated 验证简介超长被截断
+// TestFormatMovieNotification_OverviewTruncated 验证简介超长被截断为100字（对齐 qmediasync）
 func TestFormatMovieNotification_OverviewTruncated(t *testing.T) {
-	long := strings.Repeat("一二三四五六七八", 40)
+	// 100字以上才会被截断
+	long := strings.Repeat("一二三四五六七八九十", 11) // 110字
 	item := &ItemDetail{
 		Name:     "长简介电影",
 		Overview: long,
@@ -72,9 +70,76 @@ func TestFormatMovieNotification_OverviewTruncated(t *testing.T) {
 	if !strings.Contains(out, "...") {
 		t.Errorf("超长简介应被截断加 ..., 实际 %s", out)
 	}
+	// 验证截断位置在100字处
+	expectedPrefix := long[:100]
+	if !strings.Contains(out, expectedPrefix) {
+		t.Errorf("应包含前100字, 实际 %s", out)
+	}
 }
 
-// TestFormatSeriesNotification_NoDirector 验证剧集入库通知不含导演字段
+// TestFormatMovieNotification_OverviewNotTruncated 验证100字以内简介不截断
+func TestFormatMovieNotification_OverviewNotTruncated(t *testing.T) {
+	short := strings.Repeat("一二三四五六七八九十", 5) // 50字
+	item := &ItemDetail{
+		Name:     "短简介电影",
+		Overview: short,
+		People:   []Person{},
+	}
+	out := FormatMovieNotification(item, "library.new")
+	if strings.Contains(out, "...") {
+		t.Errorf("100字以内简介不应被截断, 实际 %s", out)
+	}
+}
+
+// TestFormatSeriesNotification_SeasonEpisodesPosition 验证季集信息插入入库时间之前（对齐 qmediasync）
+func TestFormatSeriesNotification_SeasonEpisodesPosition(t *testing.T) {
+	series := &ItemDetail{
+		Name:          "测试剧集",
+		ProductionYear: 2024,
+		Genres:        []string{"剧情"},
+		Overview:      "测试简介",
+		DateCreated:   "2026-01-01T00:00:00.000Z",
+		People:        []Person{},
+	}
+	episodes := []ItemDetail{
+		{IndexNumber: 1, ParentIndexNumber: 1},
+		{IndexNumber: 2, ParentIndexNumber: 1},
+	}
+	out := FormatSeriesNotification(series, episodes, "library.new")
+
+	// 验证季集信息包含正确格式
+	if !strings.Contains(out, "📺 入库季集:") {
+		t.Errorf("应含 📺 入库季集:, 实际 %s", out)
+	}
+
+	// 验证季集信息在入库时间之前
+	seasonIdx := strings.Index(out, "📺 入库季集:")
+	timeIdx := strings.Index(out, "⏰ 入库时间:")
+	if seasonIdx == -1 || timeIdx == -1 {
+		t.Fatal("应包含季集和入库时间")
+	}
+	if seasonIdx > timeIdx {
+		t.Errorf("季集信息应在入库时间之前, 实际顺序错误")
+	}
+}
+
+// TestFormatSeriesNotification_NoEpisodes 验证无季集时不显示季集行
+func TestFormatSeriesNotification_NoEpisodes(t *testing.T) {
+	series := &ItemDetail{
+		Name:          "测试剧集",
+		ProductionYear: 2024,
+		Genres:        []string{"剧情"},
+		Overview:      "测试简介",
+		DateCreated:   "2026-01-01T00:00:00.000Z",
+		People:        []Person{},
+	}
+	out := FormatSeriesNotification(series, nil, "library.new")
+	if strings.Contains(out, "📺 入库季集:") {
+		t.Errorf("无季集时不应显示季集行, 实际 %s", out)
+	}
+}
+
+// TestFormatSeriesNotification_NoDirector 验证剧集入库通知不含导演字段（qmediasync 风格）
 func TestFormatSeriesNotification_NoDirector(t *testing.T) {
 	series := &ItemDetail{
 		Name:            "权力的游戏",
@@ -96,13 +161,28 @@ func TestFormatSeriesNotification_NoDirector(t *testing.T) {
 		t.Fatal("输出不应为空")
 	}
 	if strings.Contains(out, "导演") {
-		t.Errorf("V3 要求去掉导演字段，但输出含导演: %s", out)
+		t.Errorf("要求去掉导演字段，但输出含导演: %s", out)
 	}
-	if !strings.HasPrefix(out, "<b>📚 Emby 剧集入库通知</b>") {
-		t.Errorf("应以 📚 Emby 剧集入库通知 开头, 实际 %s", out)
+	if !strings.HasPrefix(out, "权力的游戏 (2011)") {
+		t.Errorf("应以 权力的游戏 (2011) 开头, 实际 %s", out)
 	}
-	if !strings.Contains(out, "权力的游戏 (2011)") {
-		t.Errorf("Content 应含片名(年份), 实际 %s", out)
+	if !strings.Contains(out, "🆔 评分: 9.2") {
+		t.Errorf("应含 🆔 评分: 9.2, 实际 %s", out)
+	}
+	if !strings.Contains(out, "🎬 类型: 剧情, 奇幻") {
+		t.Errorf("应含 🎬 类型: 剧情, 奇幻, 实际 %s", out)
+	}
+	if !strings.Contains(out, "👤 主演: 演员C") {
+		t.Errorf("应含 👤 主演: 演员C, 实际 %s", out)
+	}
+	if !strings.Contains(out, "⏰ 入库时间:") {
+		t.Errorf("应含 ⏰ 入库时间:, 实际 %s", out)
+	}
+	if !strings.Contains(out, "📝 简介") {
+		t.Errorf("应含 📝 简介 独立段落, 实际 %s", out)
+	}
+	if !strings.Contains(out, "七大王国争霸") {
+		t.Errorf("应含简介内容, 实际 %s", out)
 	}
 }
 
@@ -134,8 +214,8 @@ func TestFormatDeletedSeriesNotification_UsesFormatMessage(t *testing.T) {
 	}
 }
 
-// TestFormatPlaybackNotification_NoEmojiPrefix 验证播放通知无 emoji 前缀，全角冒号
-func TestFormatPlaybackNotification_NoEmojiPrefix(t *testing.T) {
+// TestFormatPlaybackNotification_QMSStyle 验证播放通知为 qmediasync 风格（emoji 前缀 + 半角冒号）
+func TestFormatPlaybackNotification_QMSStyle(t *testing.T) {
 	item := &ItemDetail{
 		Name:         "功夫熊猫",
 		Type:         "Movie",
@@ -147,11 +227,18 @@ func TestFormatPlaybackNotification_NoEmojiPrefix(t *testing.T) {
 	if !strings.Contains(out, "播放开始") {
 		t.Errorf("标题应含 播放开始, 实际 %s", out)
 	}
-	if !strings.Contains(out, "用户：测试用户") {
-		t.Errorf("应含 用户：测试用户, 实际 %s", out)
+	if !strings.Contains(out, "👤 用户: 测试用户") {
+		t.Errorf("应含 👤 用户: 测试用户, 实际 %s", out)
 	}
-	if strings.Contains(out, "👤") {
-		t.Errorf("Content 不应有 emoji 前缀, 实际 %s", out)
+	if !strings.Contains(out, "📱 设备: iPhone (Emby iOS)") {
+		t.Errorf("应含 📱 设备: iPhone (Emby iOS), 实际 %s", out)
+	}
+	// positionTicks=0 时显示时长而非进度
+	if !strings.Contains(out, "⏱️ 时长") {
+		t.Errorf("showProgress=true 且 positionTicks=0 应显示时长, 实际 %s", out)
+	}
+	if !strings.Contains(out, "📝 简介") {
+		t.Errorf("showOverview=true 应显示简介段落, 实际 %s", out)
 	}
 }
 
@@ -163,13 +250,13 @@ func TestFormatPlaybackNotification_ShowProgressTrue(t *testing.T) {
 	}
 	user := &UserInfo{Name: "u"}
 	out := FormatPlaybackNotification("playback.pause", item, user, "dev", "client", 300000000, true, false)
-	if !strings.Contains(out, "播放进度：") {
+	if !strings.Contains(out, "📊 播放进度") {
 		t.Errorf("showProgress=true 应显示播放进度, 实际 %s", out)
 	}
 	if !strings.Contains(out, "50%") {
 		t.Errorf("应含 50%%, 实际 %s", out)
 	}
-	if !strings.Contains(out, "观看时长：") {
+	if !strings.Contains(out, "⏱️ 观看时长") {
 		t.Errorf("pause 事件应显示观看时长, 实际 %s", out)
 	}
 }
@@ -183,14 +270,13 @@ func TestFormatPlaybackNotification_ShowProgressFalse(t *testing.T) {
 	}
 	user := &UserInfo{Name: "u"}
 	out := FormatPlaybackNotification("playback.stop", item, user, "dev", "client", 300000000, false, false)
-	if strings.Contains(out, "播放进度：") {
+	if strings.Contains(out, "📊 播放进度") {
 		t.Errorf("showProgress=false 不应显示播放进度, 实际 %s", out)
 	}
-	// 注意：检查 <b>时长：</b> 而非 "时长："，否则会误匹配 "观看时长："
-	if strings.Contains(out, "<b>时长：</b>") {
+	if strings.Contains(out, "⏱️ 时长") {
 		t.Errorf("showProgress=false 不应显示时长字段, 实际 %s", out)
 	}
-	if !strings.Contains(out, "观看时长：") {
+	if !strings.Contains(out, "⏱️ 观看时长") {
 		t.Errorf("stop 事件应显示观看时长, 实际 %s", out)
 	}
 }
@@ -204,12 +290,12 @@ func TestFormatPlaybackNotification_ShowOverviewTrueFalse(t *testing.T) {
 	user := &UserInfo{Name: "u"}
 
 	outOn := FormatPlaybackNotification("playback.start", item, user, "", "", 0, false, true)
-	if !strings.Contains(outOn, "简介：") {
+	if !strings.Contains(outOn, "📝 简介") {
 		t.Errorf("showOverview=true 应显示简介, 实际 %s", outOn)
 	}
 
 	outOff := FormatPlaybackNotification("playback.start", item, user, "", "", 0, false, false)
-	if strings.Contains(outOff, "简介：") {
+	if strings.Contains(outOff, "📝 简介") {
 		t.Errorf("showOverview=false 不应显示简介, 实际 %s", outOff)
 	}
 }
@@ -222,11 +308,11 @@ func TestFormatPlaybackNotification_EpisodeSeasonEpisode(t *testing.T) {
 	}
 	user := &UserInfo{Name: "u"}
 	out := FormatPlaybackNotification("playback.start", item, user, "TV", "Emby", 0, false, false)
-	if !strings.Contains(out, "电视剧：电视剧A") {
-		t.Errorf("应含 电视剧：电视剧A, 实际 %s", out)
+	if !strings.Contains(out, "📺 电视剧: 电视剧A") {
+		t.Errorf("应含 📺 电视剧: 电视剧A, 实际 %s", out)
 	}
-	if !strings.Contains(out, "季集：S2E5") {
-		t.Errorf("应含 季集：S2E5, 实际 %s", out)
+	if !strings.Contains(out, "🎬 季集: S2E5") {
+		t.Errorf("应含 🎬 季集: S2E5, 实际 %s", out)
 	}
 }
 

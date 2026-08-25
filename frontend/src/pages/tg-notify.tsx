@@ -15,6 +15,7 @@ interface TelegramConfig {
   webhookUrl?: string;
   enabled?: boolean;
   autoPolling?: boolean;
+  proxyUrl?: string;
 }
 
 interface BotInfo {
@@ -70,6 +71,7 @@ export default function TelegramNotifyPage() {
               webhookUrl: telegram.webhookUrl || "",
               enabled: telegram.enabled !== false,
               autoPolling: telegram.autoPolling !== false,
+              proxyUrl: telegram.proxyUrl || "",
             });
           }
         } catch (e) {
@@ -101,6 +103,7 @@ export default function TelegramNotifyPage() {
         webhookUrl: config.webhookUrl,
         enabled: config.enabled !== false,
         autoPolling: config.autoPolling !== false,
+        proxyUrl: config.proxyUrl,
       });
 
       if (response.data.success) {
@@ -114,6 +117,7 @@ export default function TelegramNotifyPage() {
           webhookUrl: response.data.webhook?.result?.url || "",
           enabled: config.enabled !== false,
           autoPolling: config.autoPolling !== false,
+          proxyUrl: config.proxyUrl || "",
         });
         await loadBotInfo();
       }
@@ -278,6 +282,17 @@ export default function TelegramNotifyPage() {
             onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">留空使用轮询模式（5秒延迟），填写则使用 Webhook（毫秒级）</p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="proxyUrl">代理 URL <span className="text-xs text-muted-foreground">（可选）</span></Label>
+          <Input
+            id="proxyUrl"
+            placeholder="socks5://127.0.0.1:7890 或 http://127.0.0.1:7890"
+            value={config.proxyUrl || ""}
+            onChange={(e) => setConfig({ ...config, proxyUrl: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">支持 HTTP/HTTPS/SOCKS5 协议，国内访问 Telegram 时填写</p>
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

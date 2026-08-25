@@ -137,6 +137,7 @@ type TelegramSettings struct {
 	WebhookSecretToken string                 `json:"webhookSecretToken,omitempty"`
 	Enabled            bool                   `json:"enabled"`
 	AutoPolling        bool                   `json:"autoPolling,omitempty"`
+	ProxyURL           string                 `json:"proxyUrl,omitempty"` // 支持 HTTP/SOCKS5 代理
 	AllowedUsers       []int64                `json:"allowedUsers"`
 	AccountAlerts      *AccountAlertsSettings `json:"accountAlerts,omitempty"`
 }

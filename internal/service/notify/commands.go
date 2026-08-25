@@ -104,10 +104,12 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 
 	if !strings.HasPrefix(text, "/") {
 		reply := fmt.Sprintf("👋 你好 %s！\n\nFastStrm Bot 支持以下操作：\n\n"+
+			"• /start — 打开主菜单\n"+
 			"• /status — 查看系统状态\n"+
 			"• /scan — 打开 STRM 操作菜单\n"+
 			"• /cleanup — 打开 STRM 操作菜单\n"+
-			"• /accounts — 查看账号列表\n\n"+
+			"• /accounts — 查看账号列表\n"+
+			"• /help — 显示所有命令\n\n"+
 			"输入 /start 打开操作菜单。", username)
 		return h.bot.SendMessage(ctx, chatID, reply, "HTML")
 	}
@@ -272,89 +274,89 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 						emoji = "✅"
 						cookieState = "有效"
 					}
-					sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s <b>%s</b> — %s\n", emoji, name, cookieState))
-				}
-				sb.WriteString("\n")
+					sb.WriteString(fmt.Sprintf("%s %s — %s\n", emoji, name, cookieState))
 			}
+			sb.WriteString("\n")
+		}
 
-			// 监控状态
-			if monitors, ok := status["monitors"].([]map[string]any); ok {
-				sb.WriteString("<b>📺 监控</b>\n")
-				if len(monitors) == 0 {
-					sb.WriteString("\u00a0\u00a0暂无账号监控\n")
-				} else {
-					for _, m := range monitors {
-						acc, _ := m["account"].(string)
-						running, _ := m["running"].(bool)
-						emoji := "⏸️"
-						state := "已停止"
-						if running {
-							emoji = "▶️"
-							state = "运行中"
-						}
-						sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s <b>%s</b> — %s\n", emoji, acc, state))
+		// 监控状态
+		if monitors, ok := status["monitors"].([]map[string]any); ok {
+			sb.WriteString("<b>📺 监控</b>\n")
+			if len(monitors) == 0 {
+				sb.WriteString("暂无账号监控\n")
+			} else {
+				for _, m := range monitors {
+					acc, _ := m["account"].(string)
+					running, _ := m["running"].(bool)
+					emoji := "⏸️"
+					state := "已停止"
+					if running {
+						emoji = "▶️"
+						state = "运行中"
 					}
+					sb.WriteString(fmt.Sprintf("%s %s — %s\n", emoji, acc, state))
 				}
-				sb.WriteString("\n")
 			}
+			sb.WriteString("\n")
+		}
 
-			// 运行中任务
-			if runningTasks, ok := status["runningTasks"].([]map[string]any); ok {
-				sb.WriteString(fmt.Sprintf("<b>🎬 运行中任务</b> (%d)\n", len(runningTasks)))
-				if len(runningTasks) == 0 {
-					sb.WriteString("\u00a0\u00a0无\n")
-				} else {
-					for _, t := range runningTasks {
-						name, _ := t["name"].(string)
-						progress, _ := t["progress"].(string)
-						sb.WriteString(fmt.Sprintf("\u00a0\u00a0• %s — %s\n", name, progress))
-					}
+		// 运行中任务
+		if runningTasks, ok := status["runningTasks"].([]map[string]any); ok {
+			sb.WriteString(fmt.Sprintf("<b>🎬 运行中任务</b> (%d)\n", len(runningTasks)))
+			if len(runningTasks) == 0 {
+				sb.WriteString("无\n")
+			} else {
+				for _, t := range runningTasks {
+					name, _ := t["name"].(string)
+					progress, _ := t["progress"].(string)
+					sb.WriteString(fmt.Sprintf("• %s — %s\n", name, progress))
 				}
-				sb.WriteString("\n")
 			}
+			sb.WriteString("\n")
+		}
 
-			// Emby 状态
-			if emby, ok := status["emby"].(map[string]any); ok {
-				sb.WriteString("<b>🎞️ Emby</b>\n")
-				connected, _ := emby["connected"].(bool)
-				if connected {
-					sb.WriteString("\u00a0\u00a0✅ 已连接\n")
-				} else {
-					sb.WriteString("\u00a0\u00a0⚠️ 未连接\n")
-				}
-				sb.WriteString("\n")
+		// Emby 状态
+		if emby, ok := status["emby"].(map[string]any); ok {
+			sb.WriteString("<b>🎞️ Emby</b>\n")
+			connected, _ := emby["connected"].(bool)
+			if connected {
+				sb.WriteString("<b>✅ 已连接</b>\n")
+			} else {
+				sb.WriteString("<b>⚠️ 未连接</b>\n")
 			}
+			sb.WriteString("\n")
 		}
-	} else {
-		// 回退：直接从 store 读取
-		accounts := h.accounts.List()
-		tasks, err := h.tasks.ReadTasks()
-		if err != nil {
-			logger.S().Warnf("read tasks for status failed: %v", err)
-		}
-		sb.WriteString("<b>👥 账号</b>\n")
-		for _, acc := range accounts {
-			hasCookie := acc.Cookie != ""
-			emoji := "⚠️"
-			cookieState := "未设置"
-			if hasCookie {
-				emoji = "✅"
-				cookieState = "有效"
-			}
-			sb.WriteString(fmt.Sprintf("\u00a0\u00a0%s <b>%s</b> — %s\n", emoji, acc.Name, cookieState))
-		}
-		sb.WriteString(fmt.Sprintf("\n<b>🎬 任务</b>: %d 个\n\n", len(tasks)))
 	}
+} else {
+	// 回退：直接从 store 读取
+	accounts := h.accounts.List()
+	tasks, err := h.tasks.ReadTasks()
+	if err != nil {
+		logger.S().Warnf("read tasks for status failed: %v", err)
+	}
+	sb.WriteString("<b>👥 账号</b>\n")
+	for _, acc := range accounts {
+		hasCookie := acc.Cookie != ""
+		emoji := "⚠️"
+		cookieState := "未设置"
+		if hasCookie {
+			emoji = "✅"
+			cookieState = "有效"
+		}
+		sb.WriteString(fmt.Sprintf("%s %s — %s\n", emoji, acc.Name, cookieState))
+	}
+	sb.WriteString(fmt.Sprintf("\n<b>🎬 任务</b>: %d 个\n\n", len(tasks)))
+}
 
-	// 事件开关状态（从 settings 读取）
-	if s, err := h.settings.ReadSettings(); err == nil {
-		sb.WriteString("<b>🔔 事件开关</b>\n")
-		et := s.LifeMonitor.EventTypes
-		sb.WriteString(fmt.Sprintf("\u00a0\u00a0创建: %s | 删除: %s | 移动: %s | 重命名: %s\n",
-			boolToText(et.Create, "✅", "❌"),
-			boolToText(et.Remove, "✅", "❌"),
-			boolToText(et.Move, "✅", "❌"),
-			boolToText(et.Rename, "✅", "❌")))
+// 事件开关状态（从 settings 读取）
+if s, err := h.settings.ReadSettings(); err == nil {
+	sb.WriteString("<b>🔔 事件开关</b>\n")
+	et := s.LifeMonitor.EventTypes
+	sb.WriteString(fmt.Sprintf("创建: %s | 删除: %s | 移动: %s | 重命名: %s\n",
+		boolToText(et.Create, "✅", "❌"),
+		boolToText(et.Remove, "✅", "❌"),
+		boolToText(et.Move, "✅", "❌"),
+		boolToText(et.Rename, "✅", "❌")))
 	}
 
 	sb.WriteString(fmt.Sprintf("\n<b>⏰ %s</b>", nowFormatted()))

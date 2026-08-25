@@ -123,15 +123,26 @@ func (d *Dispatcher) SetWebhook(url string) {
 }
 
 // ApplySettings 热更新 Telegram 配置（通过 Web UI 保存配置后调用，避免重启服务）
-// 1) 更新内部 TelegramBot 的 Token/ChatID（如果 tg 还没创建则懒创建）
+// 1) 更新内部 TelegramBot 的 Token/ChatID/代理（如果代理变更则重建 Bot）
 // 2) 同步 enabled / webhook / dispatcher 内部缓存字段
 // 3) 如果启用了 WebhookURL，创建 WebhookSender；否则清空
 func (d *Dispatcher) ApplySettings(tg model.TelegramSettings) {
+	// 如果代理配置变更，需要重建 Bot
 	if d.tg == nil && tg.BotToken != "" {
-		d.tg = NewTelegramBot(tg.BotToken, tg.ChatID)
-	}
-	if d.tg != nil {
-		d.tg.UpdateCredentials(tg.BotToken, tg.ChatID)
+		if bot, err := CreateBotFromSettings(tg); err == nil {
+			d.tg = bot
+		}
+	} else if d.tg != nil {
+		// 检查代理是否变更
+		if d.tg.ProxyURL() != tg.ProxyURL {
+			if bot, err := CreateBotFromSettings(tg); err == nil {
+				d.tg = bot
+			} else {
+				logger.S().Errorf("[Telegram] 重建 Bot 失败: %v", err)
+			}
+		} else {
+			d.tg.UpdateCredentials(tg.BotToken, tg.ChatID)
+		}
 	}
 	d.botToken = tg.BotToken
 	d.chatID = tg.ChatID

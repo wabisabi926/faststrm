@@ -463,27 +463,7 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error {
 		return err
 	}
 
-	// 5. 熔断保护：统计删除事件数量和占比，防止 API 异常导致大规模误删
-	totalEvents := len(events)
-	deleteCount := 0
-	for _, e := range events {
-		if client115.DeleteEventTypes[e.Type] {
-			deleteCount++
-		}
-	}
-	shortCircuitDeletes := false
-	if totalEvents > 0 {
-		deleteRatio := float64(deleteCount) / float64(totalEvents)
-		if deleteCount > 100 || deleteRatio > 0.5 {
-			shortCircuitDeletes = true
-			logger.S().Warnf("[Monitor] 触发熔断保护: 删除事件 count=%d total=%d ratio=%.1f%%, 将跳过所有删除事件",
-				deleteCount, totalEvents, deleteRatio*100)
-			m.appendLog(ctx, account, "fuse", true, "", "",
-				fmt.Sprintf("熔断保护: 删除事件 %d/%d (%.0f%%), 跳过所有删除操作", deleteCount, totalEvents, deleteRatio*100))
-		}
-	}
-
-	// 6. 逐个处理事件（游标过滤，不需要 in-memory dedup）
+	// 5. 逐个处理事件（游标过滤，不需要 in-memory dedup）
 	var counts PollCounts
 	ctx2 := WithPollCounts(ctx, &counts)
 	maxEventID := int64(0)
@@ -498,12 +478,6 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error {
 	for _, event := range events {
 		if ctx2.Err() != nil {
 			break
-		}
-
-		// 熔断保护：跳过所有删除事件
-		if shortCircuitDeletes && client115.DeleteEventTypes[event.Type] {
-			counts.AddSkipped("熔断保护: 跳过删除事件")
-			continue
 		}
 
 		counts.AddEntered()

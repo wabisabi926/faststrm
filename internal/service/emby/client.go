@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,12 +37,19 @@ type WebhookEvent struct {
 	PlaybackInfo *PlaybackInfo `json:"PlaybackInfo,omitempty"`
 }
 
-// PlaybackInfo 播放事件附带的播放状态信息（部分事件会带）
+// PlaybackInfo 播放事件附带的播放状态信息（对齐 qmediasync EmbyPlaybackInfo）
 type PlaybackInfo struct {
-	PositionTicks    int64  `json:"PositionTicks,omitempty"`
-	PlaybackMethod   string `json:"PlayMethod,omitempty"`
-	IsPaused         bool   `json:"IsPaused,omitempty"`
-	IsAutomated      bool   `json:"IsAutomated,omitempty"`
+	PositionTicks    int64           `json:"PositionTicks,omitempty"`
+	PlaySessionID    string          `json:"PlaySessionId,omitempty"`
+	PlaybackMethod   string          `json:"PlayMethod,omitempty"`
+	IsPaused         bool            `json:"IsPaused,omitempty"`
+	IsAutomated      bool            `json:"IsAutomated,omitempty"`
+	MediaSource      *MediaSource    `json:"MediaSource,omitempty"`
+}
+
+// MediaSource 媒体源信息（对齐 qmediasync EmbyMediaSource）
+type MediaSource struct {
+	RunTimeTicks int64 `json:"RunTimeTicks,omitempty"`
 }
 
 
@@ -98,6 +106,18 @@ type Person struct {
 	Type string `json:"Type"`
 }
 
+// UserPolicy Emby 用户权限
+type UserPolicy struct {
+	EnableAllFolders bool `json:"EnableAllFolders"`
+}
+
+// UserDto Emby 用户信息（对齐 qmediasync UserDto）
+type UserDto struct {
+	Name   string     `json:"Name"`
+	ID     string     `json:"Id"`
+	Policy UserPolicy `json:"Policy"`
+}
+
 // ==================== Client ====================
 
 // Client Emby REST API 客户端
@@ -105,6 +125,11 @@ type Client struct {
 	baseURL string
 	apiKey  string
 	http    *http.Client
+
+	// 缓存的有权限用户 ID（对齐 qmediasync embyUserId）
+	// 避免每次获取详情都重复请求用户列表
+	mu      sync.Mutex
+	embyUserID string
 }
 
 // NewClient 创建 Emby 客户端
@@ -118,12 +143,21 @@ func NewClient(baseURL, apiKey string) *Client {
 	}
 }
 
-// GetItemDetail 查询媒体详情：GET /emby/Items/{id}?api_key=...
+// GetItemDetail 查询媒体详情：优先使用用户上下文 /emby/Users/{userID}/Items/{id}
+// 若获取用户失败则降级为 /emby/Items/{id}（无用户上下文）
+// 对齐 qmediasync GetItemDetailByUser 实现
 func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail, error) {
 	if c.baseURL == "" || c.apiKey == "" || itemID == "" {
 		return nil, fmt.Errorf("invalid params: baseURL empty=%v apiKey empty=%v itemID=%q", c.baseURL == "", c.apiKey == "", itemID)
 	}
 
+	// 优先使用用户上下文（对齐 qmediasync 实现）
+	userID, err := c.getEmbyUserID(ctx)
+	if err == nil && userID != "" {
+		return c.GetItemDetailByUser(ctx, itemID, userID)
+	}
+
+	// 降级：使用无用户上下文的端点（兼容单用户 Emby 实例）
 	u := fmt.Sprintf("%s/emby/Items/%s?api_key=%s",
 		c.baseURL,
 		url.PathEscape(itemID),
@@ -458,4 +492,123 @@ func (c *Client) Ping(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// ==================== 用户上下文（对齐 qmediasync GetEmbyItemDetail 逻辑） ====================
+
+// GetUsersWithAllLibrariesAccess 获取有权访问所有媒体库的用户列表
+// GET /emby/Users?api_key=... 筛选 Policy.EnableAllFolders=true 的用户
+func (c *Client) GetUsersWithAllLibrariesAccess(ctx context.Context) ([]UserDto, error) {
+	if c.baseURL == "" || c.apiKey == "" {
+		return nil, fmt.Errorf("emby not configured")
+	}
+
+	u := fmt.Sprintf("%s/emby/Users?api_key=%s", c.baseURL, url.QueryEscape(c.apiKey))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request emby users: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("emby get users status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	var users []UserDto
+	if err := json.Unmarshal(body, &users); err != nil {
+		return nil, fmt.Errorf("decode json: %w", err)
+	}
+
+	// 筛选有权限的用户
+	var usersWithAllAccess []UserDto
+	for _, user := range users {
+		if user.Policy.EnableAllFolders {
+			usersWithAllAccess = append(usersWithAllAccess, user)
+		}
+	}
+	return usersWithAllAccess, nil
+}
+
+// getEmbyUserID 获取缓存的有权限用户 ID
+// 首次调用时查询用户列表并缓存，后续直接返回缓存值
+func (c *Client) getEmbyUserID(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.embyUserID != "" {
+		return c.embyUserID, nil
+	}
+
+	users, err := c.GetUsersWithAllLibrariesAccess(ctx)
+	if err != nil {
+		return "", fmt.Errorf("get emby users: %w", err)
+	}
+	if len(users) == 0 {
+		return "", fmt.Errorf("no user with access to all libraries found")
+	}
+
+	c.embyUserID = users[0].ID
+	return c.embyUserID, nil
+}
+
+// InvalidateUserCache 清除用户缓存（用户权限变更时调用）
+func (c *Client) InvalidateUserCache() {
+	c.mu.Lock()
+	c.embyUserID = ""
+	c.mu.Unlock()
+}
+
+// GetItemDetailByUser 使用用户上下文查询媒体详情
+// GET /emby/Users/{userID}/Items/{id}?api_key=...
+// 对齐 qmediasync GetItemDetailByUser 实现
+func (c *Client) GetItemDetailByUser(ctx context.Context, itemID, userID string) (*ItemDetail, error) {
+	if c.baseURL == "" || c.apiKey == "" || itemID == "" {
+		return nil, fmt.Errorf("invalid params: baseURL empty=%v apiKey empty=%v itemID=%q", c.baseURL == "", c.apiKey == "", itemID)
+	}
+
+	u := fmt.Sprintf("%s/emby/Users/%s/Items/%s?api_key=%s",
+		c.baseURL,
+		url.PathEscape(userID),
+		url.PathEscape(itemID),
+		url.QueryEscape(c.apiKey),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request emby: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("emby status %d for item %s", resp.StatusCode, itemID)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	var detail ItemDetail
+	if err := json.Unmarshal(body, &detail); err != nil {
+		return nil, fmt.Errorf("decode json: %w", err)
+	}
+	return &detail, nil
 }
