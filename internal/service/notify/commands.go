@@ -60,6 +60,7 @@ func (h *CommandHandler) SetMenuActions(actions MenuActions) {
 // BotCommandList 返回 Bot 菜单命令列表
 func (h *CommandHandler) BotCommandList() []BotCommand {
 	return []BotCommand{
+		{Command: "start", Description: "🚀 打开主菜单"},
 		{Command: "status", Description: "📊 系统状态"},
 		{Command: "scan", Description: "🔍 全量对账"},
 		{Command: "cleanup", Description: "🧹 清理孤儿"},

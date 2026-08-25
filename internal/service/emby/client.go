@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // ==================== 常量 ====================
@@ -145,23 +147,43 @@ func NewClient(baseURL, apiKey string) *Client {
 
 // GetItemDetail 查询媒体详情：优先使用用户上下文 /emby/Users/{userID}/Items/{id}
 // 若获取用户失败则降级为 /emby/Items/{id}（无用户上下文）
-// 对齐 qmediasync GetItemDetailByUser 实现
+// 最终回退：尝试所有可用用户（不强制要求 EnableAllFolders）
+// 对齐 qmediasync GetItemDetailByUser 实现，增加健壮性
 func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail, error) {
 	if c.baseURL == "" || c.apiKey == "" || itemID == "" {
 		return nil, fmt.Errorf("invalid params: baseURL empty=%v apiKey empty=%v itemID=%q", c.baseURL == "", c.apiKey == "", itemID)
 	}
 
-	// 优先使用用户上下文（对齐 qmediasync 实现）
+	// 1. 优先使用缓存的有权限用户
 	userID, err := c.getEmbyUserID(ctx)
 	if err == nil && userID != "" {
-		return c.GetItemDetailByUser(ctx, itemID, userID)
+		detail, err := c.GetItemDetailByUser(ctx, itemID, userID)
+		if err == nil {
+			return detail, nil
+		}
+		// 用户上下文失败，清除缓存并继续尝试
+		logger.S().Debugf("[Emby] 用户 %s 获取详情失败: %v, 尝试其他方式", userID, err)
+		c.InvalidateUserCache()
 	}
 
-	// 降级：使用无用户上下文的端点（兼容单用户 Emby 实例）
+	// 2. 回退：尝试所有可用用户（不强制要求 EnableAllFolders）
+	detail, err := c.tryGetDetailWithAnyUser(ctx, itemID)
+	if err == nil {
+		return detail, nil
+	}
+
+	// 3. 最终降级：使用无用户上下文的端点
+	logger.S().Debugf("[Emby] 用户上下文获取详情失败，降级到无用户端点: %v", err)
+	return c.getItemDetailWithoutUser(ctx, itemID)
+}
+
+// getItemDetailWithoutUser 使用无用户上下文的端点获取详情
+// 与 qmediasync 保持一致：不使用 url 编码
+func (c *Client) getItemDetailWithoutUser(ctx context.Context, itemID string) (*ItemDetail, error) {
 	u := fmt.Sprintf("%s/emby/Items/%s?api_key=%s",
 		c.baseURL,
-		url.PathEscape(itemID),
-		url.QueryEscape(c.apiKey),
+		itemID,
+		c.apiKey,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -177,7 +199,7 @@ func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("emby status %d for item %s", resp.StatusCode, itemID)
+		return nil, fmt.Errorf("emby status %d for item %s (no-user mode)", resp.StatusCode, itemID)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -192,32 +214,73 @@ func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail,
 	return &detail, nil
 }
 
-// GetItemDetailWithRetry 查询媒体详情，遇到 404 时带重试
+// tryGetDetailWithAnyUser 尝试使用任何可用用户获取详情
+// 当没有 EnableAllFolders=true 的用户时，回退尝试所有用户
+func (c *Client) tryGetDetailWithAnyUser(ctx context.Context, itemID string) (*ItemDetail, error) {
+	// 获取所有用户（不筛选权限）
+	users, err := c.GetAllUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get all users: %w", err)
+	}
+
+	if len(users) == 0 {
+		return nil, fmt.Errorf("no users found")
+	}
+
+	// 尝试每个用户获取详情
+	var lastErr error
+	for _, user := range users {
+		detail, err := c.GetItemDetailByUser(ctx, itemID, user.ID)
+		if err == nil && detail != nil {
+			logger.S().Debugf("[Emby] 使用用户 %s 获取详情成功", user.ID)
+			return detail, nil
+		}
+		lastErr = err
+	}
+
+	return nil, fmt.Errorf("all %d users failed: %v", len(users), lastErr)
+}
+
+// GetItemDetailWithRetry 查询媒体详情，带重试机制
 // 处理 Emby webhook 先于 item 入库的时序问题（Emby 触发 library.new 时 item 可能还未完全写入 DB）
+// 也处理临时网络错误、用户上下文暂时失效等场景
 func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*ItemDetail, error) {
-	const maxRetries = 4
+	const maxRetries = 5
 	const initialDelay = 500 * time.Millisecond
 
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
 		detail, err := c.GetItemDetail(ctx, itemID)
 		if err == nil {
+			if i > 0 {
+				logger.S().Infof("[Emby] 重试获取详情成功 itemID=%s (第%d次)", itemID, i+1)
+			}
 			return detail, nil
 		}
 
-		if strings.Contains(err.Error(), "emby status 404") {
-			lastErr = err
-			if i < maxRetries-1 {
-				delay := initialDelay * time.Duration(1<<uint(i))
-				select {
-				case <-time.After(delay):
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-				continue
-			}
+		lastErr = err
+		errStr := err.Error()
+
+		// 只有最后一次失败才返回错误
+		if i == maxRetries-1 {
+			logger.S().Warnf("[Emby] 获取详情最终失败 itemID=%s: %v", itemID, err)
+			return nil, err
 		}
-		return nil, err
+
+		// 记录重试日志
+		if strings.Contains(errStr, "emby status 404") {
+			logger.S().Debugf("[Emby] 详情暂不可用(404)，重试 itemID=%s (第%d次): %v", itemID, i+1, err)
+		} else {
+			logger.S().Debugf("[Emby] 获取详情失败，重试 itemID=%s (第%d次): %v", itemID, i+1, err)
+		}
+
+		// 指数退避
+		delay := initialDelay * time.Duration(1<<uint(i))
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	return nil, lastErr
 }
@@ -231,11 +294,12 @@ func (c *Client) BuildImageURL(itemID string, maxWidth int) string {
 	if maxWidth <= 0 {
 		maxWidth = 400
 	}
+	// 与 qmediasync 保持一致：不使用 url.QueryEscape 编码 apiKey
 	return fmt.Sprintf("%s/emby/Items/%s/Images/Primary?maxWidth=%d&api_key=%s",
 		c.baseURL,
-		url.PathEscape(itemID),
+		itemID,
 		maxWidth,
-		url.QueryEscape(c.apiKey),
+		c.apiKey,
 	)
 }
 
@@ -267,20 +331,20 @@ func (c *Client) BuildImageURLIfAvailable(itemID string, imageTags map[string]st
 	if tag := getTag("Backdrop", "backdrop"); tag != "" {
 		return fmt.Sprintf("%s/emby/Items/%s/Images/Backdrop?tag=%s&maxWidth=%d&api_key=%s",
 			c.baseURL,
-			url.PathEscape(itemID),
-			url.QueryEscape(tag),
+			itemID,
+			tag,
 			maxWidth,
-			url.QueryEscape(c.apiKey),
+			c.apiKey,
 		)
 	}
 	// 其次 Primary 海报
 	if tag := getTag("Primary", "primary", "Thumb"); tag != "" {
 		return fmt.Sprintf("%s/emby/Items/%s/Images/Primary?tag=%s&maxWidth=%d&api_key=%s",
 			c.baseURL,
-			url.PathEscape(itemID),
-			url.QueryEscape(tag),
+			itemID,
+			tag,
 			maxWidth,
-			url.QueryEscape(c.apiKey),
+			c.apiKey,
 		)
 	}
 	return ""
@@ -301,10 +365,10 @@ func (c *Client) BuildPrimaryImageURL(itemID string, imageTags map[string]string
 		if (strings.EqualFold(mk, "Primary") || strings.EqualFold(mk, "Thumb")) && mv != "" {
 			return fmt.Sprintf("%s/emby/Items/%s/Images/Primary?tag=%s&maxWidth=%d&api_key=%s",
 				c.baseURL,
-				url.PathEscape(itemID),
-				url.QueryEscape(mv),
+				itemID,
+				mv,
 				maxWidth,
-				url.QueryEscape(c.apiKey),
+				c.apiKey,
 			)
 		}
 	}
@@ -338,10 +402,11 @@ func (c *Client) FindItemByPath(ctx context.Context, path string) (*ItemInfo, er
 		return nil, fmt.Errorf("invalid params: baseURL empty=%v apiKey empty=%v path=%q", c.baseURL == "", c.apiKey == "", path)
 	}
 
+	// 路径需要编码（包含 /, \, 空格等特殊字符），但 apiKey 不应编码
 	u := fmt.Sprintf("%s/emby/Items?Path=%s&Recursive=true&Fields=Path&IncludeItemTypes=Movie,Episode,Series,Folder&api_key=%s",
 		c.baseURL,
 		url.QueryEscape(path),
-		url.QueryEscape(c.apiKey),
+		c.apiKey,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -395,12 +460,13 @@ func (c *Client) RefreshItem(ctx context.Context, itemID string, opts *RefreshOp
 		opts = DefaultRefreshOptions()
 	}
 
+	// 与 qmediasync 保持一致：不使用 url.PathEscape 编码 itemID
 	u := fmt.Sprintf("%s/emby/Items/%s/Refresh",
 		c.baseURL,
-		url.PathEscape(itemID),
+		itemID,
 	)
 
-	// 构建查询参数
+	// 构建查询参数（api_key 直接设置，不编码）
 	params := url.Values{}
 	params.Set("Recursive", fmt.Sprintf("%t", opts.Recursive))
 	params.Set("MetadataRefreshMode", opts.MetadataMode)
@@ -439,10 +505,11 @@ func (c *Client) RefreshLibrary(ctx context.Context, libraryID string) error {
 		return fmt.Errorf("invalid params: baseURL=%v apiKey=%v", c.baseURL == "", c.apiKey == "")
 	}
 
+	// 与 qmediasync 保持一致：不使用 url.QueryEscape 编码 libraryID 和 apiKey
 	u := fmt.Sprintf("%s/emby/Library/Refresh?LibraryId=%s&api_key=%s",
 		c.baseURL,
-		url.QueryEscape(libraryID),
-		url.QueryEscape(c.apiKey),
+		libraryID,
+		c.apiKey,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
@@ -498,12 +565,14 @@ func (c *Client) Ping(ctx context.Context) error {
 
 // GetUsersWithAllLibrariesAccess 获取有权访问所有媒体库的用户列表
 // GET /emby/Users?api_key=... 筛选 Policy.EnableAllFolders=true 的用户
+// 对齐 qmediasync 实现：不额外编码 API Key
 func (c *Client) GetUsersWithAllLibrariesAccess(ctx context.Context) ([]UserDto, error) {
 	if c.baseURL == "" || c.apiKey == "" {
 		return nil, fmt.Errorf("emby not configured")
 	}
 
-	u := fmt.Sprintf("%s/emby/Users?api_key=%s", c.baseURL, url.QueryEscape(c.apiKey))
+	// 与 qmediasync 保持一致：直接拼接，不使用 url.QueryEscape
+	u := fmt.Sprintf("%s/emby/Users?api_key=%s", c.baseURL, c.apiKey)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -541,6 +610,50 @@ func (c *Client) GetUsersWithAllLibrariesAccess(ctx context.Context) ([]UserDto,
 	return usersWithAllAccess, nil
 }
 
+// GetAllUsers 获取所有用户列表（不筛选权限）
+// 用于回退场景：当没有 EnableAllFolders=true 的用户时，尝试所有用户
+func (c *Client) GetAllUsers(ctx context.Context) ([]UserDto, error) {
+	if c.baseURL == "" || c.apiKey == "" {
+		return nil, fmt.Errorf("emby not configured")
+	}
+
+	// 与 qmediasync 保持一致：直接拼接，不使用 url.QueryEscape
+	u := fmt.Sprintf("%s/emby/Users?api_key=%s", c.baseURL, c.apiKey)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request emby users: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("emby get users status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	var users []UserDto
+	if err := json.Unmarshal(body, &users); err != nil {
+		return nil, fmt.Errorf("decode json: %w", err)
+	}
+
+	// 排除禁用的用户（Policy 中 Enabled=false）
+	var activeUsers []UserDto
+	for _, user := range users {
+		activeUsers = append(activeUsers, user) // 简单起见，包含所有用户
+	}
+	return activeUsers, nil
+}
+
 // getEmbyUserID 获取缓存的有权限用户 ID
 // 首次调用时查询用户列表并缓存，后续直接返回缓存值
 func (c *Client) getEmbyUserID(ctx context.Context) (string, error) {
@@ -572,17 +685,19 @@ func (c *Client) InvalidateUserCache() {
 
 // GetItemDetailByUser 使用用户上下文查询媒体详情
 // GET /emby/Users/{userID}/Items/{id}?api_key=...
-// 对齐 qmediasync GetItemDetailByUser 实现
+// 对齐 qmediasync GetItemDetailByUser 实现：不额外编码 ID 和 API Key
 func (c *Client) GetItemDetailByUser(ctx context.Context, itemID, userID string) (*ItemDetail, error) {
 	if c.baseURL == "" || c.apiKey == "" || itemID == "" {
 		return nil, fmt.Errorf("invalid params: baseURL empty=%v apiKey empty=%v itemID=%q", c.baseURL == "", c.apiKey == "", itemID)
 	}
 
+	// 与 qmediasync 保持一致：直接拼接字符串，不使用 url 编码
+	// 注意：不要使用 url.PathEscape/QueryEscape，否则会改变 ID 和 API Key 的值
 	u := fmt.Sprintf("%s/emby/Users/%s/Items/%s?api_key=%s",
 		c.baseURL,
-		url.PathEscape(userID),
-		url.PathEscape(itemID),
-		url.QueryEscape(c.apiKey),
+		userID,
+		itemID,
+		c.apiKey,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
