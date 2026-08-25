@@ -13,6 +13,7 @@ import AccountAlertsPage from "@/pages/account-alerts";
 import TgNotifyPage from "@/pages/tg-notify";
 import EmbyNotifyPage from "@/pages/emby-notify";
 import LogDetailPage from "@/pages/log-detail";
+import AccountSecurityPage from "@/pages/account-security";
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/account-alerts" element={<AccountAlertsPage />} />
           <Route path="/tg-notify" element={<TgNotifyPage />} />
           <Route path="/emby-notify" element={<EmbyNotifyPage />} />
+          <Route path="/account-security" element={<AccountSecurityPage />} />
           <Route path="/notify" element={<Navigate to="/tg-notify" replace />} />
           <Route path="/notify/users" element={<Navigate to="/tg-notify" replace />} />
           <Route path="/log/:taskId" element={<LogDetailPage />} />

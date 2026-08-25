@@ -28,32 +28,31 @@ const (
 // WebhookEvent Emby Webhook 事件载荷
 // 参考：https://github.com/MediaBrowser/Wiki/blob/master/Webhook.md
 type WebhookEvent struct {
-	Event        string      `json:"Event"`
-	User         *UserInfo   `json:"User,omitempty"`
-	Item         *ItemInfo   `json:"Item,omitempty"`
-	Server       *ServerInfo `json:"Server,omitempty"`
-	DeviceID     string      `json:"DeviceId,omitempty"`
-	DeviceName   string      `json:"DeviceName,omitempty"`
-	Client       string      `json:"Client,omitempty"`
-	AppVersion   string      `json:"ApplicationVersion,omitempty"`
+	Event        string        `json:"Event"`
+	User         *UserInfo     `json:"User,omitempty"`
+	Item         *ItemInfo     `json:"Item,omitempty"`
+	Server       *ServerInfo   `json:"Server,omitempty"`
+	DeviceID     string        `json:"DeviceId,omitempty"`
+	DeviceName   string        `json:"DeviceName,omitempty"`
+	Client       string        `json:"Client,omitempty"`
+	AppVersion   string        `json:"ApplicationVersion,omitempty"`
 	PlaybackInfo *PlaybackInfo `json:"PlaybackInfo,omitempty"`
 }
 
 // PlaybackInfo 播放事件附带的播放状态信息（对齐 qmediasync EmbyPlaybackInfo）
 type PlaybackInfo struct {
-	PositionTicks    int64           `json:"PositionTicks,omitempty"`
-	PlaySessionID    string          `json:"PlaySessionId,omitempty"`
-	PlaybackMethod   string          `json:"PlayMethod,omitempty"`
-	IsPaused         bool            `json:"IsPaused,omitempty"`
-	IsAutomated      bool            `json:"IsAutomated,omitempty"`
-	MediaSource      *MediaSource    `json:"MediaSource,omitempty"`
+	PositionTicks  int64        `json:"PositionTicks,omitempty"`
+	PlaySessionID  string       `json:"PlaySessionId,omitempty"`
+	PlaybackMethod string       `json:"PlayMethod,omitempty"`
+	IsPaused       bool         `json:"IsPaused,omitempty"`
+	IsAutomated    bool         `json:"IsAutomated,omitempty"`
+	MediaSource    *MediaSource `json:"MediaSource,omitempty"`
 }
 
 // MediaSource 媒体源信息（对齐 qmediasync EmbyMediaSource）
 type MediaSource struct {
 	RunTimeTicks int64 `json:"RunTimeTicks,omitempty"`
 }
-
 
 // UserInfo Emby 用户信息
 type UserInfo struct {
@@ -130,8 +129,12 @@ type Client struct {
 
 	// 缓存的有权限用户 ID（对齐 qmediasync embyUserId）
 	// 避免每次获取详情都重复请求用户列表
-	mu      sync.Mutex
+	mu         sync.Mutex
 	embyUserID string
+
+	// onUserIDChange 用户ID变更回调（Notifier用于跨Client实例缓存userID）
+	// 获取到userID时回调传入userID，失效时回调传入空字符串
+	onUserIDChange func(userID string)
 }
 
 // NewClient 创建 Emby 客户端
@@ -149,35 +152,36 @@ func NewClient(baseURL, apiKey string) *Client {
 	}
 }
 
-// GetItemDetail 查询媒体详情：优先使用用户上下文 /emby/Users/{userID}/Items/{id}
-// 若获取用户失败则降级为 /emby/Items/{id}（无用户上下文）
-// 最终回退：尝试所有可用用户（不强制要求 EnableAllFolders）
-// 对齐 qmediasync GetItemDetailByUser 实现，增加健壮性
+// GetItemDetail 查询媒体详情（对齐 qmediasync GetEmbyItemDetail 实现）
+// 1. 获取有权限用户（EnableAllFolders=true）
+// 2. 使用用户上下文查询详情
+// 3. 若没有权限用户，回退尝试所有用户
+// 4. 最终降级到无用户上下文
 func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail, error) {
 	if c.baseURL == "" || c.apiKey == "" || itemID == "" {
 		return nil, fmt.Errorf("invalid params: baseURL empty=%v apiKey empty=%v itemID=%q", c.baseURL == "", c.apiKey == "", itemID)
 	}
 
-	// 1. 优先使用缓存的有权限用户
+	// 1. 获取有权限的用户（对齐 qmediasync）
 	userID, err := c.getEmbyUserID(ctx)
 	if err == nil && userID != "" {
 		detail, err := c.GetItemDetailByUser(ctx, itemID, userID)
 		if err == nil {
 			return detail, nil
 		}
-		// 用户上下文失败，清除缓存并继续尝试
-		logger.S().Debugf("[Emby] 用户 %s 获取详情失败: %v, 尝试其他方式", userID, err)
+		// 用户上下文失败，清除缓存
+		logger.S().Warnf("[Emby] 用户 %s 获取详情失败: %v", userID, err)
 		c.InvalidateUserCache()
 	}
 
-	// 2. 回退：尝试所有可用用户（不强制要求 EnableAllFolders）
+	// 2. 回退：尝试所有用户（不强制要求 EnableAllFolders）
 	detail, err := c.tryGetDetailWithAnyUser(ctx, itemID)
 	if err == nil {
 		return detail, nil
 	}
 
-	// 3. 最终降级：使用无用户上下文的端点
-	logger.S().Debugf("[Emby] 用户上下文获取详情失败，降级到无用户端点: %v", err)
+	// 3. 最终降级：使用无用户上下文
+	logger.S().Warnf("[Emby] 用户上下文获取详情失败，降级到无用户端点: %v", err)
 	return c.getItemDetailWithoutUser(ctx, itemID)
 }
 
@@ -246,8 +250,10 @@ func (c *Client) tryGetDetailWithAnyUser(ctx context.Context, itemID string) (*I
 }
 
 // GetItemDetailWithRetry 查询媒体详情，带重试机制
-// 处理 Emby webhook 先于 item 入库的时序问题（Emby 触发 library.new 时 item 可能还未完全写入 DB）
-// 也处理临时网络错误、用户上下文暂时失效等场景
+// 对齐 qmediasync 实现：
+// - 处理 Emby webhook 先于 item 入库的时序问题
+// - 处理临时网络错误、用户上下文暂时失效等场景
+// - 失败时返回 nil（qmediasync 风格：不发送降级通知）
 func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*ItemDetail, error) {
 	const maxRetries = 5
 	const initialDelay = 500 * time.Millisecond
@@ -255,7 +261,7 @@ func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*It
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
 		detail, err := c.GetItemDetail(ctx, itemID)
-		if err == nil {
+		if err == nil && detail != nil {
 			if i > 0 {
 				logger.S().Infof("[Emby] 重试获取详情成功 itemID=%s (第%d次)", itemID, i+1)
 			}
@@ -263,19 +269,19 @@ func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*It
 		}
 
 		lastErr = err
-		errStr := err.Error()
-
-		// 只有最后一次失败才返回错误
-		if i == maxRetries-1 {
-			logger.S().Warnf("[Emby] 获取详情最终失败 itemID=%s: %v", itemID, err)
-			return nil, err
+		if err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "emby status 404") {
+				logger.S().Debugf("[Emby] 详情暂不可用(404)，重试 itemID=%s (第%d次): %v", itemID, i+1, err)
+			} else {
+				logger.S().Debugf("[Emby] 获取详情失败，重试 itemID=%s (第%d次): %v", itemID, i+1, err)
+			}
 		}
 
-		// 记录重试日志
-		if strings.Contains(errStr, "emby status 404") {
-			logger.S().Debugf("[Emby] 详情暂不可用(404)，重试 itemID=%s (第%d次): %v", itemID, i+1, err)
-		} else {
-			logger.S().Debugf("[Emby] 获取详情失败，重试 itemID=%s (第%d次): %v", itemID, i+1, err)
+		// 最后一次失败
+		if i == maxRetries-1 {
+			logger.S().Errorf("[Emby] 获取详情最终失败 itemID=%s: %v", itemID, lastErr)
+			return nil, lastErr
 		}
 
 		// 指数退避
@@ -677,6 +683,10 @@ func (c *Client) getEmbyUserID(ctx context.Context) (string, error) {
 	}
 
 	c.embyUserID = users[0].ID
+	// 回调通知 Notifier 缓存（跨 Client 实例复用，对齐 qmediasync 全局 embyUserId）
+	if c.onUserIDChange != nil {
+		c.onUserIDChange(c.embyUserID)
+	}
 	return c.embyUserID, nil
 }
 
@@ -685,6 +695,10 @@ func (c *Client) InvalidateUserCache() {
 	c.mu.Lock()
 	c.embyUserID = ""
 	c.mu.Unlock()
+	// 回调通知 Notifier 清除缓存
+	if c.onUserIDChange != nil {
+		c.onUserIDChange("")
+	}
 }
 
 // GetItemDetailByUser 使用用户上下文查询媒体详情

@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Settings, LifeBuoy, Shield, UserCog, FolderOpen } from "lucide-react";
+import { Settings, LifeBuoy, FolderOpen, Eraser } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Tooltip,
@@ -20,7 +20,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import axiosInstance, { getUsername, setUsername, clearToken, clearUsername } from "@/lib/axios";
+import axiosInstance from "@/lib/axios";
 import type { AxiosError } from "axios";
 import { StrmCleanupCard } from "./StrmCleanupCard";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
@@ -116,7 +116,7 @@ const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
 };
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"basic" | "monitor" | "security">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "monitor" | "cleanup">("basic");
   const [data, setData] = useState<Settings>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -157,14 +157,6 @@ export default function SettingsPage() {
   const [mountDryRunLoading, setMountDryRunLoading] = useState(false);
   const [mountSyncing, setMountSyncing] = useState(false);
   const [lastSyncApply, setLastSyncApply] = useState<MountSyncApplyData>(null);
-
-  // Change credentials states (merged username + password)
-  const [currentPwd, setCurrentPwd] = useState("");
-  const [newUsername, setNewUsername] = useState("");
-  const [newPwd, setNewPwd] = useState("");
-  const [confirmPwd, setConfirmPwd] = useState("");
-  const [savingCredentials, setSavingCredentials] = useState(false);
-  const [currentUsername, setCurrentUsername] = useState("admin");
 
   // Life monitor states
   const [accounts, setAccounts] = useState<string[]>([]);
@@ -266,12 +258,6 @@ export default function SettingsPage() {
         // Load monitor states
         await refreshMonitorStates();
 
-        // 加载当前用户名
-        const savedUsername = getUsername();
-        if (savedUsername) {
-          setCurrentUsername(savedUsername);
-        }
-
         // 加载媒体挂载路径试运行快照
         await fetchMountDryRun();
       } catch (err) {
@@ -363,91 +349,6 @@ export default function SettingsPage() {
       console.error("applyMountSync failed:", e);
     } finally {
       setMountSyncing(false);
-    }
-  };
-
-  const handleSaveCredentials = async () => {
-    const trimmedUsername = newUsername.trim();
-    const trimmedPwd = newPwd.trim();
-    const trimmedConfirm = confirmPwd.trim();
-
-    if (!currentPwd) {
-      toast.error("请输入当前密码");
-      return;
-    }
-
-    const hasUsernameChange = trimmedUsername.length > 0;
-    const hasPasswordChange = trimmedPwd.length > 0;
-
-    if (!hasUsernameChange && !hasPasswordChange) {
-      toast.error("请至少填写一项修改");
-      return;
-    }
-
-    if (hasUsernameChange) {
-      if (
-        trimmedUsername.length < 3 ||
-        trimmedUsername.length > 32
-      ) {
-        toast.error("用户名长度需在 3-32 位之间");
-        return;
-      }
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedUsername)) {
-        toast.error("用户名只能包含字母、数字和下划线，且以字母或下划线开头");
-        return;
-      }
-      if (/^\d+$/.test(trimmedUsername)) {
-        toast.error("用户名不能为纯数字");
-        return;
-      }
-      if (trimmedUsername === currentUsername) {
-        toast.error("新用户名不能与当前用户名相同");
-        return;
-      }
-    }
-
-    if (hasPasswordChange) {
-      if (trimmedPwd.length < 6) {
-        toast.error("密码至少 6 位");
-        return;
-      }
-      if (trimmedPwd !== trimmedConfirm) {
-        toast.error("两次输入的新密码不一致");
-        return;
-      }
-    }
-
-    setSavingCredentials(true);
-    try {
-      await axiosInstance.post("/api/auth/change-credentials", {
-        currentPassword: currentPwd,
-        newUsername: trimmedUsername || undefined,
-        newPassword: trimmedPwd || undefined,
-        confirmPassword: trimmedConfirm || undefined,
-      });
-
-      toast.success("保存成功");
-
-      if (hasUsernameChange) {
-        setUsername(trimmedUsername);
-        clearToken();
-        clearUsername();
-        window.location.href = "/login";
-        return;
-      }
-
-      setCurrentPwd("");
-      setNewUsername("");
-      setNewPwd("");
-      setConfirmPwd("");
-    } catch (err: unknown) {
-      const axiosErr = err as
-        | { response?: { data?: { error?: string } } }
-        | undefined;
-      const msg = axiosErr?.response?.data?.error || "保存失败";
-      toast.error(msg);
-    } finally {
-      setSavingCredentials(false);
     }
   };
 
@@ -720,20 +621,20 @@ export default function SettingsPage() {
 
   return (
     <>
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-4 sm:space-y-6 pb-24">
       {/* Page Title */}
-      <div>
-        <h1 className="text-2xl font-semibold">设置</h1>
+      <div className="px-1">
+        <h1 className="text-xl sm:text-2xl font-semibold">设置</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          配置全局选项、生活事件监控及安全
+          配置全局选项、生活事件监控与 STRM 清理
         </p>
       </div>
 
-      {/* Tab Bar */}
-      <div className="flex gap-1 border-b border-border overflow-x-auto scrollbar-none -mx-1 px-1">
+      {/* Tab Bar - 移动端横向滚动不换行 */}
+      <div className="flex flex-nowrap gap-1 border-b border-border overflow-x-auto scrollbar-none -mx-1 px-1">
         <button
           onClick={() => setActiveTab("basic")}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+          className={`shrink-0 px-2.5 sm:px-4 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
             activeTab === "basic"
               ? "text-foreground"
               : "text-muted-foreground hover:text-foreground"
@@ -747,7 +648,7 @@ export default function SettingsPage() {
         </button>
         <button
           onClick={() => setActiveTab("monitor")}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+          className={`shrink-0 px-2.5 sm:px-4 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
             activeTab === "monitor"
               ? "text-foreground"
               : "text-muted-foreground hover:text-foreground"
@@ -760,16 +661,16 @@ export default function SettingsPage() {
           )}
         </button>
         <button
-          onClick={() => setActiveTab("security")}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-            activeTab === "security"
+          onClick={() => setActiveTab("cleanup")}
+          className={`shrink-0 px-2.5 sm:px-4 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
+            activeTab === "cleanup"
               ? "text-foreground"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Shield className="inline-block h-4 w-4 mr-1" />
-          清理与安全
-          {activeTab === "security" && (
+          <Eraser className="inline-block h-4 w-4 mr-1" />
+          STRM清理
+          {activeTab === "cleanup" && (
             <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
           )}
         </button>
@@ -779,7 +680,7 @@ export default function SettingsPage() {
       {activeTab === "basic" && (
         <div className="space-y-6">
           {/* 基础设置 */}
-          <section className="border rounded-md p-4 sm:p-5 space-y-5">
+          <section className="border rounded-md p-3 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">基础设置</h2>
               <p className="text-xs text-muted-foreground mt-1">全局 User-Agent 与文件扩展名配置</p>
@@ -824,7 +725,7 @@ export default function SettingsPage() {
           </section>
 
           {/* STRM 生成设置 */}
-          <section className="border rounded-md p-4 sm:p-5 space-y-5">
+          <section className="border rounded-md p-3 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">STRM 生成设置（全局默认）</h2>
               <p className="text-xs text-muted-foreground mt-1">
@@ -944,7 +845,7 @@ export default function SettingsPage() {
           </section>
 
           {/* 下载限流配置 */}
-          <section className="border rounded-md p-4 sm:p-5 space-y-5">
+          <section className="border rounded-md p-3 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">下载限流配置</h2>
               <p className="text-xs text-muted-foreground mt-1">控制 115 API 与下载的并发上限</p>
@@ -1051,7 +952,7 @@ export default function SettingsPage() {
             <h2 className="text-base font-medium">媒体挂载路径</h2>
             <div className="grid grid-cols-1 gap-4">
               <div className="space-y-2 md:col-span-2">
-                <div className="flex flex-wrap items-end justify-between gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
                   <div>
                     <Label>媒体挂载路径 (mediaMountPath)</Label>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -1061,13 +962,14 @@ export default function SettingsPage() {
                       不建议手工修改 settings.json。
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     <Button
                       variant="outline"
                       size="sm"
                       type="button"
                       onClick={fetchMountDryRun}
                       disabled={mountDryRunLoading || mountSyncing}
+                      className="w-full sm:w-auto"
                     >
                       {mountDryRunLoading ? "计算中..." : "刷新视图"}
                     </Button>
@@ -1077,13 +979,14 @@ export default function SettingsPage() {
                       type="button"
                       onClick={applyMountSync}
                       disabled={mountSyncing || !mountDryRun?.diff.changed}
+                      className="w-full sm:w-auto"
                     >
                       {mountSyncing ? "同步中..." : "立即同步并持久化"}
                     </Button>
                   </div>
                 </div>
 
-                <div className="rounded-md border p-3 space-y-3 bg-muted/30">
+                <div className="rounded-md border p-2.5 sm:p-3 space-y-3 bg-muted/30">
                   {mountDryRunLoading && !mountDryRun ? (
                     <p className="text-sm text-muted-foreground">正在计算期望集合...</p>
                   ) : mountDryRun && mountDryRun.computed.length === 0 ? (
@@ -1138,9 +1041,21 @@ export default function SettingsPage() {
                           return (
                             <li
                               key={row.prefix}
-                              className="flex flex-wrap items-center gap-2 rounded border bg-background px-3 py-2"
+                              className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1.5 sm:gap-2 rounded border bg-background px-2.5 sm:px-3 py-2"
                             >
-                              <span className="font-mono break-all flex-1 min-w-0">{row.prefix}</span>
+                              <Tooltip>
+                                <TooltipTrigger asChild className="min-w-0 flex-1">
+                                  <span
+                                    className="block font-mono whitespace-nowrap overflow-hidden text-ellipsis text-xs sm:text-sm"
+                                    title={row.prefix}
+                                  >
+                                    {row.prefix}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="font-mono text-xs max-w-[90vw] break-all whitespace-normal">
+                                  {row.prefix}
+                                </TooltipContent>
+                              </Tooltip>
                               <span
                                 className={
                                   "px-1.5 py-0.5 rounded text-[11px] border " +
@@ -1214,8 +1129,8 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <div className="pt-2 flex gap-2 items-center">
-            <Button disabled={saving} onClick={onSave}>
+          <div className="pt-2 flex gap-2 items-center sticky bottom-0 bg-background/95 backdrop-blur-sm py-3 -mx-3 sm:-mx-4 md:-mx-6 px-3 sm:px-4 md:px-6 border-t">
+            <Button disabled={saving} onClick={onSave} className="flex-1 sm:flex-initial">
               {saving ? "保存中..." : "保存设置"}
             </Button>
           </div>
@@ -1225,7 +1140,7 @@ export default function SettingsPage() {
       {/* Tab 2: 生活事件 */}
       {activeTab === "monitor" && (
         <div className="space-y-6">
-          <section className="border rounded-md p-4 sm:p-5 space-y-5">
+          <section className="border rounded-md p-3 sm:p-5 space-y-5">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h2 className="text-base font-medium">115 生活事件监控</h2>
               <div className="flex items-center gap-2">
@@ -1419,7 +1334,7 @@ export default function SettingsPage() {
                 <Label>路径映射（115 网盘路径 → 本地保存路径）</Label>
                 <div className="space-y-3">
                   {pathMappings.map((mapping, index) => (
-                    <div key={index} className="flex gap-2 items-center">
+                    <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
                       <Select
                         value={mapping.account || "__all__"}
                         onValueChange={(val) => {
@@ -1428,7 +1343,7 @@ export default function SettingsPage() {
                           setPathMappings(updated);
                         }}
                       >
-                        <SelectTrigger className="w-[140px]">
+                        <SelectTrigger className="w-full sm:w-[120px] shrink-0">
                           <SelectValue placeholder="全部账号" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1438,79 +1353,82 @@ export default function SettingsPage() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <div className="flex-1 flex gap-1 items-center">
-                        <Input
-                          value={mapping.cloudPath}
-                          onChange={(e) => {
-                            const updated = [...pathMappings];
-                            updated[index] = { ...updated[index], cloudPath: e.target.value };
-                            setPathMappings(updated);
-                          }}
-                          placeholder="115 网盘路径，如 /电影"
-                          className="flex-1"
-                        />
-                        <TooltipProvider delayDuration={100}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                                  onClick={() => openCloudPicker(index, mapping.account)}
-                                  title={mapping.account ? "选择网盘目录" : ""}
-                                  disabled={!mapping.account || accounts.length === 0}
-                                >
-                                  <FolderOpen className="w-4 h-4" />
-                                </Button>
-                              </span>
-                            </TooltipTrigger>
-                            {!mapping.account && (
-                              <TooltipContent side="top" className="max-w-[240px]">
-                                <p>全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
-                              </TooltipContent>
-                            )}
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <span className="text-muted-foreground">→</span>
-                      <div className="flex-1 flex gap-1 items-center">
-                        <Input
-                          value={mapping.localPath}
-                          onChange={(e) => {
-                            const updated = [...pathMappings];
-                            updated[index] = { ...updated[index], localPath: e.target.value };
-                            setPathMappings(updated);
-                          }}
-                          placeholder="本地路径，如/app/data/media/电影"
-                          className="flex-1"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() => openLocalPicker(index)}
-                          title="选择本地目录"
-                        >
-                          <FolderOpen className="w-4 h-4" />
-                        </Button>
+                      <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
+                        <div className="flex gap-1 items-center">
+                          <Input
+                            value={mapping.cloudPath}
+                            onChange={(e) => {
+                              const updated = [...pathMappings];
+                              updated[index] = { ...updated[index], cloudPath: e.target.value };
+                              setPathMappings(updated);
+                            }}
+                            placeholder="115 网盘路径，如 /电影"
+                            className="flex-1 min-w-0"
+                          />
+                          <TooltipProvider delayDuration={100}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex shrink-0">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() => openCloudPicker(index, mapping.account)}
+                                    title={mapping.account ? "选择网盘目录" : ""}
+                                    disabled={!mapping.account || accounts.length === 0}
+                                  >
+                                    <FolderOpen className="w-4 h-4" />
+                                  </Button>
+                                </span>
+                              </TooltipTrigger>
+                              {!mapping.account && (
+                                <TooltipContent side="top" className="max-w-[240px]">
+                                  <p>全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
+                                </TooltipContent>
+                              )}
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                        <span className="text-muted-foreground hidden sm:inline">→</span>
+                        <div className="flex gap-1 items-center">
+                          <Input
+                            value={mapping.localPath}
+                            onChange={(e) => {
+                              const updated = [...pathMappings];
+                              updated[index] = { ...updated[index], localPath: e.target.value };
+                              setPathMappings(updated);
+                            }}
+                            placeholder="本地路径，如/app/data/media/电影"
+                            className="flex-1 min-w-0"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => openLocalPicker(index)}
+                            title="选择本地目录"
+                          >
+                            <FolderOpen className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </div>
                       <Button
                         variant="destructive"
                         size="sm"
                         onClick={() => removePathMapping(index)}
+                        className="w-full sm:w-auto shrink-0"
                       >
                         删除
                       </Button>
                     </div>
                   ))}
                 </div>
-                <div className="flex gap-2 items-center">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <Select
                     value={newMappingAccount}
                     onValueChange={setNewMappingAccount}
                   >
-                    <SelectTrigger className="w-[140px]">
+                    <SelectTrigger className="w-full sm:w-[120px] shrink-0">
                       <SelectValue placeholder="全部账号" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1520,56 +1438,58 @@ export default function SettingsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <div className="flex-1 flex gap-1 items-center">
-                    <Input
-                      value={newCloudPath}
-                      onChange={(e) => setNewCloudPath(e.target.value)}
-                      placeholder="115 网盘路径，如 /电影"
-                      className="flex-1"
-                    />
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="inline-flex">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon"
-                              onClick={openNewCloudPicker}
-                              title={newMappingAccount !== "__all__" ? "选择网盘目录" : ""}
-                              disabled={newMappingAccount === "__all__" || accounts.length === 0}
-                            >
-                              <FolderOpen className="w-4 h-4" />
-                            </Button>
-                          </span>
-                        </TooltipTrigger>
-                        {newMappingAccount === "__all__" && (
-                          <TooltipContent side="top" className="max-w-[240px]">
-                            <p>全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
-                          </TooltipContent>
-                        )}
-                      </Tooltip>
-                    </TooltipProvider>
+                  <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
+                    <div className="flex gap-1 items-center">
+                      <Input
+                        value={newCloudPath}
+                        onChange={(e) => setNewCloudPath(e.target.value)}
+                        placeholder="115 网盘路径，如 /电影"
+                        className="flex-1 min-w-0"
+                      />
+                      <TooltipProvider delayDuration={100}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex shrink-0">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={openNewCloudPicker}
+                                title={newMappingAccount !== "__all__" ? "选择网盘目录" : ""}
+                                disabled={newMappingAccount === "__all__" || accounts.length === 0}
+                              >
+                                <FolderOpen className="w-4 h-4" />
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          {newMappingAccount === "__all__" && (
+                            <TooltipContent side="top" className="max-w-[240px]">
+                              <p>全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
+                            </TooltipContent>
+                          )}
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                    <span className="text-muted-foreground hidden sm:inline">→</span>
+                    <div className="flex gap-1 items-center">
+                      <Input
+                        value={newLocalPath}
+                        onChange={(e) => setNewLocalPath(e.target.value)}
+                        placeholder="本地路径，如/app/data/media/电影"
+                        className="flex-1 min-w-0"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={openNewLocalPicker}
+                        title="选择本地目录"
+                      >
+                        <FolderOpen className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <span className="text-muted-foreground">→</span>
-                  <div className="flex-1 flex gap-1 items-center">
-                    <Input
-                      value={newLocalPath}
-                      onChange={(e) => setNewLocalPath(e.target.value)}
-                      placeholder="本地路径，如/app/data/media/电影"
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={openNewLocalPicker}
-                      title="选择本地目录"
-                    >
-                      <FolderOpen className="w-4 h-4" />
-                    </Button>
-                  </div>
-                  <Button size="sm" onClick={addPathMapping}>
+                  <Button size="sm" onClick={addPathMapping} className="w-full sm:w-auto shrink-0">
                     添加
                   </Button>
                 </div>
@@ -1670,8 +1590,8 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <div className="pt-2 flex flex-wrap gap-2 items-center">
-            <Button disabled={saving} onClick={onSave}>
+          <div className="pt-2 flex flex-wrap gap-2 items-center sticky bottom-0 bg-background/95 backdrop-blur-sm py-3 -mx-3 sm:-mx-4 md:-mx-6 px-3 sm:px-4 md:px-6 border-t">
+            <Button disabled={saving} onClick={onSave} className="flex-1 sm:flex-initial">
               {saving ? "保存中..." : "保存设置"}
             </Button>
             <Button
@@ -1681,6 +1601,7 @@ export default function SettingsPage() {
                 selectedAccounts.length === 0 ||
                 pathMappings.length === 0
               }
+              className="flex-1 sm:flex-initial"
             >
               保存并启动监控
             </Button>
@@ -1695,81 +1616,19 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Tab 3: 清理与安全 */}
-      {activeTab === "security" && (
+      {/* Tab 3: STRM清理 */}
+      {activeTab === "cleanup" && (
         <div className="space-y-6">
-          <section className="border rounded-md p-4 sm:p-5 space-y-5">
+          <section className="border rounded-md p-3 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">STRM 清理</h2>
               <p className="text-xs text-muted-foreground mt-1">扫描本地与网盘的一致性，清理失效 STRM</p>
             </div>
             <StrmCleanupCard />
           </section>
-
-          <section className="border rounded-md p-4 sm:p-5 space-y-5">
-            <div className="flex items-center gap-2">
-              <UserCog className="h-5 w-5" />
-              <h2 className="text-base font-medium">修改用户名和密码</h2>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              当前用户：<span className="font-medium text-foreground">{currentUsername}</span>
-            </p>
-            <div className="grid gap-4 max-w-sm">
-              <div className="space-y-3">
-                <Label htmlFor="currentPassword">当前密码</Label>
-                <Input
-                  id="currentPassword"
-                  type="password"
-                  value={currentPwd}
-                  onChange={(e) => setCurrentPwd(e.target.value)}
-                  placeholder="输入当前密码"
-                />
-              </div>
-              <div className="space-y-3">
-                <Label htmlFor="newUsername">
-                  新用户名 <span className="text-muted-foreground font-normal text-xs">（如不修改请留空）</span>
-                </Label>
-                <Input
-                  id="newUsername"
-                  value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value)}
-                  placeholder="3-32 位，字母/数字/下划线"
-                />
-              </div>
-              <div className="space-y-3">
-                <Label htmlFor="newPassword">
-                  新密码 <span className="text-muted-foreground font-normal text-xs">（如不修改请留空）</span>
-                </Label>
-                <Input
-                  id="newPassword"
-                  type="password"
-                  value={newPwd}
-                  onChange={(e) => setNewPwd(e.target.value)}
-                  placeholder="至少 6 位"
-                />
-              </div>
-              <div className="space-y-3">
-                <Label htmlFor="confirmPassword">确认新密码</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  value={confirmPwd}
-                  onChange={(e) => setConfirmPwd(e.target.value)}
-                  placeholder="再次输入新密码"
-                  disabled={!newPwd.trim()}
-                />
-              </div>
-              <Button
-                disabled={savingCredentials}
-                onClick={handleSaveCredentials}
-                className="mt-2"
-              >
-                {savingCredentials ? "保存中..." : "保存"}
-              </Button>
-            </div>
-          </section>
         </div>
       )}
+
     </div>
 
     {/* Directory Picker Dialogs */}

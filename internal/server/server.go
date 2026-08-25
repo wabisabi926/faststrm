@@ -531,8 +531,8 @@ func initPhase6Deps(
 		}
 		return s.Emby
 	}
-	embyNotifier := emby.NewNotifier(embyClient, dispatcher, embySettingsFn)
-	embySyncDel := emby.NewSyncDelete(embyClient, dispatcher, embySettingsFn)
+	embyNotifier := emby.NewNotifier(dispatcher, embySettingsFn)
+	embySyncDel := emby.NewSyncDelete(dispatcher, embySettingsFn)
 	embyNotifier.SetSyncDelete(embySyncDel)
 	if filePathRepo != nil {
 		embySyncDel.SetFilePathDb(filePathRepo)

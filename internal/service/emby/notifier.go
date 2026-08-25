@@ -56,8 +56,8 @@ type episodeBuffer struct {
 // ==================== Notifier ====================
 
 // Notifier Emby Webhook 事件分发器
+// 对齐 qmediasync 实现：不缓存 Client，每次从当前配置动态创建
 type Notifier struct {
-	client     *Client
 	dispatcher NotifierDispatcher
 	settingsFn SettingsProvider
 
@@ -77,12 +77,19 @@ type Notifier struct {
 	// 播放事件去重
 	playbackMu    sync.Mutex
 	playbackCache map[string]time.Time
+
+	// Emby用户ID缓存（对齐 qmediasync 包级 embyUserId 变量）
+	// 跨 Client 实例复用，避免每次通知都重复请求 /emby/Users
+	userMu       sync.Mutex
+	embyUserID   string
+	cachedURL    string // 缓存对应的 Emby URL，配置变更时自动失效
+	cachedAPIKey string // 缓存对应的 Emby APIKey
 }
 
 // NewNotifier 创建 Notifier
-func NewNotifier(client *Client, dispatcher NotifierDispatcher, settingsFn SettingsProvider) *Notifier {
+// 注意：不再接收 client 参数，改为通过 getClient() 动态创建
+func NewNotifier(dispatcher NotifierDispatcher, settingsFn SettingsProvider) *Notifier {
 	return &Notifier{
-		client:        client,
 		dispatcher:    dispatcher,
 		settingsFn:    settingsFn,
 		addedBuffer:   make(map[string]*episodeBuffer),
@@ -93,9 +100,56 @@ func NewNotifier(client *Client, dispatcher NotifierDispatcher, settingsFn Setti
 	}
 }
 
+// getClient 从当前设置动态创建 Emby Client（对齐 qmediasync 行为）
+// 每次调用都读取最新配置并创建新 Client，确保 Web UI 修改设置后立即生效
+// 同时注入缓存的 embyUserID（若配置未变更），避免重复请求 /emby/Users
+func (n *Notifier) getClient() *Client {
+	s := n.settingsFn()
+	if s.URL == "" || s.APIKey == "" {
+		return nil
+	}
+	client := NewClient(s.URL, s.APIKey)
+
+	// 注入缓存的用户ID + 设置回调（对齐 qmediasync 包级 embyUserId 变量）
+	n.userMu.Lock()
+	if n.cachedURL == s.URL && n.cachedAPIKey == s.APIKey && n.embyUserID != "" {
+		// 配置未变更，注入缓存的 userID，Client.getEmbyUserID 会直接命中缓存
+		client.embyUserID = n.embyUserID
+	} else {
+		// 配置已变更或首次调用，清除旧缓存
+		n.embyUserID = ""
+		n.cachedURL = s.URL
+		n.cachedAPIKey = s.APIKey
+	}
+	n.userMu.Unlock()
+
+	// 设置回调：Client 获取到 userID 时缓存到 Notifier，失效时清除
+	client.onUserIDChange = func(userID string) {
+		n.userMu.Lock()
+		if userID == "" {
+			n.embyUserID = ""
+		} else {
+			n.embyUserID = userID
+		}
+		n.userMu.Unlock()
+	}
+
+	return client
+}
+
 // SetSyncDelete 注入 SyncDelete 实例（可选）
 func (n *Notifier) SetSyncDelete(sd *SyncDelete) {
 	n.syncDelete = sd
+}
+
+// InvalidateClientCache 清除 Client 及用户ID缓存
+// 配置变更时由 handler/emby.go 调用，确保下次使用最新配置
+func (n *Notifier) InvalidateClientCache() {
+	n.userMu.Lock()
+	n.embyUserID = ""
+	n.cachedURL = ""
+	n.cachedAPIKey = ""
+	n.userMu.Unlock()
 }
 
 // ==================== 主事件分发 ====================
@@ -166,8 +220,10 @@ func (n *Notifier) handleMediaAdded(ctx context.Context, item ItemInfo) error {
 
 // handleMovieAdded 处理电影入库（对齐 TS handleMovieAdded）
 func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
+	// 从当前配置动态创建 Client（对齐 qmediasync 行为）
+	client := n.getClient()
 	// Emby client 未配置时降级：用 webhook 中的 ItemInfo 直接通知
-	if n.client == nil {
+	if client == nil {
 		logger.S().Warnf("[Emby] Emby client 未配置，降级处理电影入库 id=%s", item.ID)
 		metadata := map[string]string{
 			"类型":   "电影",
@@ -178,7 +234,7 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 		return n.dispatcher.Notify(ctx, msg)
 	}
 
-	detail, err := n.client.GetItemDetailWithRetry(ctx, item.ID)
+	detail, err := client.GetItemDetailWithRetry(ctx, item.ID)
 	if err != nil || detail == nil {
 		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v", item.ID, err)
 		// 降级：用 webhook 中的 ItemInfo 构造通知（仅基础信息）
@@ -191,7 +247,7 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 	}
 
 	msg := FormatMovieNotification(detail, "library.new")
-	photoURL := n.client.BuildImageURLIfAvailable(item.ID, detail.ImageTags, ImageMaxWidth)
+	photoURL := client.BuildImageURLIfAvailable(item.ID, detail.ImageTags, ImageMaxWidth)
 	if photoURL != "" {
 		if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
 			// 图片发送失败降级纯文本
@@ -213,11 +269,13 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 	n.addedMu.Lock()
 	defer n.addedMu.Unlock()
 
+	// 从当前配置动态创建 Client（对齐 qmediasync 行为）
+	client := n.getClient()
 	// 获取详情用于通知（同步获取，失败则用 ItemInfo 兜底）
 	var detail *ItemDetail
-	if n.client != nil {
+	if client != nil {
 		var err error
-		detail, err = n.client.GetItemDetailWithRetry(ctx, item.ID)
+		detail, err = client.GetItemDetailWithRetry(ctx, item.ID)
 		if err != nil {
 			logger.S().Warnf("[Emby] 获取剧集详情失败 id=%s: %v", item.ID, err)
 		}
@@ -285,8 +343,11 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 
 	// 尝试获取剧集详情（用于海报、简介、评分、导演、主演等完整元数据）
 	var seriesDetail *ItemDetail
-	if d, err := n.client.GetItemDetailWithRetry(ctx, seriesID); err == nil && d != nil {
-		seriesDetail = d
+	client := n.getClient()
+	if client != nil {
+		if d, err := client.GetItemDetailWithRetry(ctx, seriesID); err == nil && d != nil {
+			seriesDetail = d
+		}
 	}
 
 	var msg string
@@ -308,7 +369,7 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 
 	// 优先带海报发送（优先 Backdrop 背景图）
 	if seriesDetail != nil {
-		photoURL := n.client.BuildImageURLIfAvailable(seriesID, seriesDetail.ImageTags, ImageMaxWidth)
+		photoURL := client.BuildImageURLIfAvailable(seriesID, seriesDetail.ImageTags, ImageMaxWidth)
 		if photoURL != "" {
 			if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
 				logger.S().Warnf("[Emby] 剧集图片通知失败，降级纯文本: %v", err)
@@ -498,8 +559,9 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 	}
 
 	// 3. 仅当需要简介时才请求详情（简介不在 Webhook 中）
-	if showOverview && n.client != nil && event.Item != nil && event.Item.ID != "" {
-		if detail, err := n.client.GetItemDetailWithRetry(ctx, event.Item.ID); err == nil && detail != nil {
+	client := n.getClient()
+	if showOverview && client != nil && event.Item != nil && event.Item.ID != "" {
+		if detail, err := client.GetItemDetailWithRetry(ctx, event.Item.ID); err == nil && detail != nil {
 			item.Overview = detail.Overview
 			item.ProductionYear = detail.ProductionYear
 			item.CommunityRating = detail.CommunityRating
@@ -526,13 +588,16 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 
 	// 5. 带海报发送（优先使用 Webhook/详情中的 ImageTags）
 	if item.ID != "" {
-		photoURL := n.client.BuildPrimaryImageURL(item.ID, item.ImageTags, ImageMaxWidth)
-		if photoURL != "" {
-			if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
-				logger.S().Warnf("[Emby] 播放图片通知失败，降级纯文本: %v", err)
-				return n.dispatcher.Notify(ctx, msg)
+		client := n.getClient()
+		if client != nil {
+			photoURL := client.BuildPrimaryImageURL(item.ID, item.ImageTags, ImageMaxWidth)
+			if photoURL != "" {
+				if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
+					logger.S().Warnf("[Emby] 播放图片通知失败，降级纯文本: %v", err)
+					return n.dispatcher.Notify(ctx, msg)
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 	return n.dispatcher.Notify(ctx, msg)

@@ -245,6 +245,19 @@ jobs:
       run: |
         set -euo pipefail
         go mod download
+        
+        # 安装 rsrc 工具用于嵌入 Windows 图标
+        go install github.com/akavel/rsrc@latest
+        
+        # 生成 Windows 图标资源文件
+        if [ -f "cmd/server/favicon.ico" ]; then
+          echo "Generating icon resource from favicon.ico..."
+          rsrc -ico="cmd/server/favicon.ico" -o="cmd/server/rsrc.syso" -arch=amd64
+          echo "Icon resource generated successfully."
+        else
+          echo "Warning: favicon.ico not found, skipping icon embedding."
+        fi
+        
         OUT_DIR="faststrm_windows_amd64"
         mkdir -p "$OUT_DIR"
         CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \

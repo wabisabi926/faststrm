@@ -201,6 +201,11 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			return
 		}
 
+		// 保存后清除 Notifier 的 Client 缓存，确保下次获取最新配置
+		if deps.EmbyNotifier != nil {
+			deps.EmbyNotifier.InvalidateClientCache()
+		}
+
 		// 返回保存后的配置（apiKey 脱敏）
 		saved := em
 		saved.APIKey = maskAPIKey(em.APIKey)

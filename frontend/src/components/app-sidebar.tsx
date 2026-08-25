@@ -1,4 +1,4 @@
-import { ListChecks, Inbox, Settings, Github, Bot, History, Activity, Bell, ShieldAlert } from "lucide-react";
+import { ListChecks, Inbox, Settings, Github, Bot, History, Activity, Bell, ShieldAlert, UserCog } from "lucide-react";
 
 import {
   Sidebar,
@@ -32,6 +32,11 @@ const items = [
     title: "设置",
     url: "/settings",
     icon: Settings,
+  },
+  {
+    title: "账号安全",
+    url: "/account-security",
+    icon: UserCog,
   },
 ];
 
@@ -73,7 +78,7 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarContent>
         <div className="p-4 border-b border-border/50">
-          <Link to="/task" className="flex items-center gap-3 group">
+          <Link to="/account" className="flex items-center gap-3 group">
             <img
               src="/logo.png"
               alt="Fast Strm Logo"

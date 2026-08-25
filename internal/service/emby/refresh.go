@@ -14,8 +14,8 @@ import (
 )
 
 // MediaServerRefresh 媒体服务器刷新服务
+// 对齐 qmediasync：不缓存 Client，每次动态创建
 type MediaServerRefresh struct {
-	client     *Client
 	settingsFn func() model.EmbySettings
 
 	debounceMap map[string]*time.Timer
@@ -23,17 +23,26 @@ type MediaServerRefresh struct {
 }
 
 // NewMediaServerRefresh 创建刷新服务
-func NewMediaServerRefresh(client *Client, settingsFn func() model.EmbySettings) *MediaServerRefresh {
+// 注意：不再接收 client 参数，改为动态创建
+func NewMediaServerRefresh(_ *Client, settingsFn func() model.EmbySettings) *MediaServerRefresh {
 	return &MediaServerRefresh{
-		client:      client,
 		settingsFn:  settingsFn,
 		debounceMap: make(map[string]*time.Timer),
 	}
 }
 
+// getClient 从当前设置动态创建 Emby Client
+func (r *MediaServerRefresh) getClient() *Client {
+	s := r.settingsFn()
+	if s.URL == "" || s.APIKey == "" {
+		return nil
+	}
+	return NewClient(s.URL, s.APIKey)
+}
+
 // RefreshByPath 按路径刷新（带防抖）
 func (r *MediaServerRefresh) RefreshByPath(ctx context.Context, filePath string) error {
-	if r == nil || r.client == nil {
+	if r == nil {
 		return nil
 	}
 
@@ -98,6 +107,12 @@ func (r *MediaServerRefresh) RefreshOnDelete(ctx context.Context, filePath strin
 func (r *MediaServerRefresh) doRefresh(ctx context.Context, filePath string) {
 	logger.S().Infof("[Emby] 开始刷库: %s", filePath)
 
+	client := r.getClient()
+	if client == nil {
+		logger.S().Warnf("[Emby] Emby 未配置，跳过刷库: %s", filePath)
+		return
+	}
+
 	itemID := r.findItemByPathRecursive(ctx, filePath)
 	if itemID == "" {
 		logger.S().Warnf("[Emby] 无法找到 Item: %s", filePath)
@@ -105,7 +120,7 @@ func (r *MediaServerRefresh) doRefresh(ctx context.Context, filePath string) {
 	}
 
 	opts := DefaultRefreshOptions()
-	if err := r.client.RefreshItem(ctx, itemID, opts); err != nil {
+	if err := client.RefreshItem(ctx, itemID, opts); err != nil {
 		logger.S().Warnf("[Emby] 刷新失败 item=%s path=%s: %v", itemID, filePath, err)
 		return
 	}
@@ -115,9 +130,13 @@ func (r *MediaServerRefresh) doRefresh(ctx context.Context, filePath string) {
 
 // findItemByPathRecursive 递归父目录查找 Item
 func (r *MediaServerRefresh) findItemByPathRecursive(ctx context.Context, filePath string) string {
+	client := r.getClient()
+	if client == nil {
+		return ""
+	}
 	path := filePath
 	for {
-		item, err := r.client.FindItemByPath(ctx, path)
+		item, err := client.FindItemByPath(ctx, path)
 		if err != nil {
 			logger.S().Debugf("[Emby] 查找 Item 失败 path=%s: %v", path, err)
 		} else if item != nil {
@@ -169,8 +188,8 @@ func (r *MediaServerRefresh) String() string {
 // RefreshLibrary 按库类型刷新媒体库
 // libType: "movie" | "tv" | "all"
 func (r *MediaServerRefresh) RefreshLibrary(ctx context.Context, libType string) error {
-	if r == nil || r.client == nil {
-		return fmt.Errorf("emby client not configured")
+	if r == nil {
+		return fmt.Errorf("media server refresh not initialized")
 	}
 
 	settings := r.settingsFn()
@@ -178,23 +197,28 @@ func (r *MediaServerRefresh) RefreshLibrary(ctx context.Context, libType string)
 		return fmt.Errorf("emby not configured")
 	}
 
+	client := r.getClient()
+	if client == nil {
+		return fmt.Errorf("emby client not configured")
+	}
+
 	libraryID := settings.LibraryID
 	switch libType {
 	case "movie", "tv", "series":
 		if libraryID == "" {
-			if err := r.client.RefreshLibrary(ctx, ""); err != nil {
+			if err := client.RefreshLibrary(ctx, ""); err != nil {
 				return fmt.Errorf("refresh %s library failed: %w", libType, err)
 			}
 			logger.S().Infof("[Emby] %s 库刷新已触发 (全部库)", libType)
 			return nil
 		}
-		if err := r.client.RefreshLibrary(ctx, libraryID); err != nil {
+		if err := client.RefreshLibrary(ctx, libraryID); err != nil {
 			return fmt.Errorf("refresh %s library failed: %w", libType, err)
 		}
 		logger.S().Infof("[Emby] %s 库刷新已触发 (id=%s)", libType, libraryID)
 		return nil
 	case "all":
-		if err := r.client.RefreshLibrary(ctx, ""); err != nil {
+		if err := client.RefreshLibrary(ctx, ""); err != nil {
 			return fmt.Errorf("refresh all libraries failed: %w", err)
 		}
 		logger.S().Infof("[Emby] 全部媒体库刷新已触发")
@@ -222,8 +246,9 @@ func (r *MediaServerRefresh) GetStatus() map[string]any {
 		return result
 	}
 
-	if r.client != nil {
-		if err := r.client.Ping(context.Background()); err == nil {
+	client := r.getClient()
+	if client != nil {
+		if err := client.Ping(context.Background()); err == nil {
 			result["connected"] = true
 		}
 	}

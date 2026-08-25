@@ -3,9 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
+	"time"
 
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/server"
@@ -13,9 +17,9 @@ import (
 )
 
 // 以下变量通过 ldflags 在构建时注入：
-//   go build -ldflags="-X 'main.version=v1.0.8' -X 'main.BuildDate=2026-08-25'"
+//   go build -ldflags="-X 'main.version=v1.0.9' -X 'main.BuildDate=2026-08-25'"
 var (
-	version   = "v1.0.8"
+	version   = "v1.0.9"
 	BuildDate = "unknown"
 )
 
@@ -46,10 +50,69 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 3. 启动 HTTP server
-	if err := server.Run(cfg); err != nil {
-		logger.S().Fatalf("server.Run failed: %v", err)
+	// 3. 计算服务器 URL 并初始化系统托盘
+	serverURL := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	readyCh := make(chan bool, 1)
+	quitCh := make(chan struct{}, 1)
+
+	initTray(serverURL, readyCh, quitCh)
+
+	// 4. 启动 HTTP server（在 goroutine 中，以便托盘可以接收就绪信号）
+	go func() {
+		if err := server.Run(cfg); err != nil {
+			logger.S().Fatalf("server.Run failed: %v", err)
+			os.Exit(1)
+		}
+	}()
+
+	// 5. 等待服务器就绪后通知托盘
+	// server.Run 内部在启动时会打印日志，但我们无法直接知道它何时就绪。
+	// 简单起见，等待 1 秒后假设服务器已就绪（或让托盘自行检测）
+	go func() {
+		// 给服务器启动一些时间
+		waitForServer(serverURL, readyCh)
+	}()
+
+	// 6. 等待关闭信号
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case <-sigCh:
+		logger.S().Infof("收到关闭信号，正在退出...")
+	case <-quitCh:
+		logger.S().Infof("托盘请求退出，正在关闭...")
 	}
+
+	logger.S().Infof("FastStrm 已关闭")
+}
+
+// waitForServer 等待服务器就绪（尝试 HTTP 请求，最多等待 30 秒）
+func waitForServer(url string, readyCh chan<- bool) {
+	maxAttempts := 30
+	for i := 0; i < maxAttempts; i++ {
+		time.Sleep(time.Second)
+		if isServerUp(url) {
+			readyCh <- true
+			return
+		}
+	}
+	// 超时后仍然通知（托盘会自行检测）
+	readyCh <- true
+}
+
+// isServerUp 检查服务器是否响应
+func isServerUp(url string) bool {
+	if url == "" {
+		return false
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusFound
 }
 
 func getDefaultRoot() string {

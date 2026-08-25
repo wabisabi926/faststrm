@@ -10,7 +10,7 @@ import (
 
 // appVersion 显示在前端 sidebar footer
 // 通过 ldflags 在构建时注入：-X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${VERSION}'
-var appVersion = "1.0.8"
+var appVersion = "1.0.9"
 
 //go:embed all:spa
 var spaFS embed.FS
@@ -33,7 +33,12 @@ func SPAHandler() http.HandlerFunc {
 		// 尝试从 embed.FS 读取文件
 		if data, err := fs.ReadFile(spaSub, cleanPath); err == nil {
 			w.Header().Set("Content-Type", contentType(cleanPath))
-			w.Header().Set("Cache-Control", "public, max-age=86400")
+			// index.html 始终不缓存，确保 SPA 入口点始终获取最新版本
+			if cleanPath == "index.html" {
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			} else {
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+			}
 			w.Write(data)
 			return
 		}

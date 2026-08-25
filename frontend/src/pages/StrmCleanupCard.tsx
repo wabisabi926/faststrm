@@ -787,16 +787,17 @@ export function StrmCleanupCard() {
             </div>
 
             {/* 操作工具栏 */}
-            {(scanResult.totalStale > 0 || scanResult.totalMissing > 0) && (
-              <div className="rounded-md border p-3 space-y-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium">一键操作：</span>
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
+                <span className="text-sm font-medium shrink-0">一键操作：</span>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                   <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
                     <AlertDialogTrigger asChild>
                       <Button
                         variant="destructive"
                         size="sm"
                         disabled={scanResult.totalStale === 0 || executing}
+                        className="w-full sm:w-auto"
                       >
                         <Trash2 className="mr-2 size-4" />
                         {executing ? "删除中..." : `清理全部失效 (${scanResult.totalStale})`}
@@ -825,6 +826,7 @@ export function StrmCleanupCard() {
                       <Button
                         size="sm"
                         disabled={scanResult.totalMissing === 0 || executing}
+                        className="w-full sm:w-auto"
                       >
                         <Zap className="mr-2 size-4" />
                         {executing ? "生成中..." : `补生成全部漏项 (${scanResult.totalMissing})`}
@@ -855,6 +857,7 @@ export function StrmCleanupCard() {
                           variant="outline"
                           size="sm"
                           disabled={executing}
+                          className="w-full sm:w-auto"
                         >
                           <RefreshCw className="mr-2 size-4" />
                           {executing ? "执行中..." : "清理失效 + 补生成漏项"}
@@ -879,11 +882,11 @@ export function StrmCleanupCard() {
                     </AlertDialog>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  提示：先清理失效 STRM 避免冲突，再补生成缺失项。建议执行完后重新扫描验证。
-                </p>
               </div>
-            )}
+              <p className="text-xs text-muted-foreground">
+                提示：先清理失效 STRM 避免冲突，再补生成缺失项。建议执行完后重新扫描验证。
+              </p>
+            </div>
 
             {/* 操作日志 */}
             {logs.length > 0 && (
@@ -933,7 +936,7 @@ export function StrmCleanupCard() {
                         <Badge>完成</Badge>
                       )}
                     </div>
-                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       <span>网盘文件：{m.remoteFileCount}</span>
                       <span>本地 STRM：{m.localStrmCount}</span>
                       <span className="text-destructive">失效：{m.staleStrms.length}</span>

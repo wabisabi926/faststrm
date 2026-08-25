@@ -318,7 +318,7 @@ export default function EmbyNotifyPage() {
       )}
 
       {/* Emby 连接配置 */}
-      <section className="border rounded-md p-4 sm:p-5 space-y-5">
+      <section className="border rounded-md p-3 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Server className="h-5 w-5" />
           <h2 className="text-base font-medium">Emby 连接配置</h2>
@@ -365,7 +365,7 @@ export default function EmbyNotifyPage() {
       </section>
 
       {/* 通知设置 */}
-      <section className="border rounded-md p-4 sm:p-5 space-y-5">
+      <section className="border rounded-md p-3 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Bell className="h-5 w-5" />
           <h2 className="text-base font-medium">通知设置</h2>
@@ -459,7 +459,7 @@ export default function EmbyNotifyPage() {
       </section>
 
       {/* 媒体库刷库配置 */}
-      <section className="border rounded-md p-4 sm:p-5 space-y-5">
+      <section className="border rounded-md p-3 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Database className="h-5 w-5" />
           <h2 className="text-base font-medium">媒体库刷库配置</h2>
@@ -533,7 +533,7 @@ export default function EmbyNotifyPage() {
       </section>
 
       {/* Webhook 配置指引 */}
-      <section className="border rounded-md p-4 sm:p-5 space-y-5">
+      <section className="border rounded-md p-3 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <Play className="h-5 w-5" />
           <h2 className="text-base font-medium">Webhook 配置指引</h2>
@@ -609,7 +609,7 @@ export default function EmbyNotifyPage() {
       </section>
 
       {/* 删除同步设置 */}
-      <section className="border rounded-md p-4 sm:p-5 space-y-5">
+      <section className="border rounded-md p-3 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">
           <XCircle className="h-5 w-5" />
           <h2 className="text-base font-medium">删除同步</h2>
@@ -687,12 +687,103 @@ export default function EmbyNotifyPage() {
             <Label>路径映射（Emby 路径 → 115 网盘路径）</Label>
             {(settings.syncDeletePathMappings || []).map((mapping, index) => (
               <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="flex-1 flex gap-1 items-center">
+                <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
+                  <div className="flex gap-1 items-center">
+                    <Input
+                      className="flex-1 min-w-0"
+                      placeholder="Emby 路径前缀，如 /app/data/strm/电影"
+                      value={mapping.embyPath}
+                      onChange={(e) => updatePathMapping(index, "embyPath", e.target.value)}
+                    />
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="shrink-0 inline-flex">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="shrink-0"
+                              onClick={() => openFolderPickerForMapping(index)}
+                            >
+                              <FolderOpen className="h-4 w-4" />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          选择包含 STRM 文件的本地目录
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <span className="text-muted-foreground hidden sm:inline self-center">→</span>
+                  <span className="text-muted-foreground sm:hidden w-full text-center">↓</span>
+                  <div className="flex gap-1 items-center">
+                    <Input
+                      className="flex-1 min-w-0"
+                      placeholder="网盘路径前缀，如 /电影"
+                      value={mapping.cloudPath}
+                      onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
+                    />
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="shrink-0 inline-flex">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="shrink-0"
+                              disabled={!mapping.account}
+                              onClick={() => openCloudPickerForMapping(index)}
+                            >
+                              <HardDrive className="h-4 w-4" />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {mapping.account ? "选择网盘目录" : "请先选择具体账号"}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Select
+                    value={mapping.account || "__all__"}
+                    onValueChange={(v) => updatePathMapping(index, "account", v === "__all__" ? "" : v)}
+                  >
+                    <SelectTrigger className="w-full sm:w-[120px] h-9">
+                      <SelectValue placeholder="账号（可选）" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">遍历全部账号</SelectItem>
+                      {accounts.map((acc) => (
+                        <SelectItem key={acc} value={acc}>
+                          {acc}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => removePathMapping(index)}
+                    className="w-full sm:w-auto"
+                  >
+                    删除
+                  </Button>
+                </div>
+              </div>
+            ))}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
+                <div className="flex gap-1 items-center">
                   <Input
-                    className="flex-1"
-                    placeholder="Emby 路径前缀，如 /app/data/strm/电影"
-                    value={mapping.embyPath}
-                    onChange={(e) => updatePathMapping(index, "embyPath", e.target.value)}
+                    className="flex-1 min-w-0"
+                    placeholder="Emby 路径前缀"
+                    value={newMappingEmbyPath}
+                    onChange={(e) => setNewMappingEmbyPath(e.target.value)}
                   />
                   <TooltipProvider>
                     <Tooltip>
@@ -703,7 +794,7 @@ export default function EmbyNotifyPage() {
                             variant="outline"
                             size="icon"
                             className="shrink-0"
-                            onClick={() => openFolderPickerForMapping(index)}
+                            onClick={openFolderPickerForNew}
                           >
                             <FolderOpen className="h-4 w-4" />
                           </Button>
@@ -717,12 +808,12 @@ export default function EmbyNotifyPage() {
                 </div>
                 <span className="text-muted-foreground hidden sm:inline">→</span>
                 <span className="text-muted-foreground sm:hidden">↓</span>
-                <div className="flex-1 flex gap-1 items-center">
+                <div className="flex gap-1 items-center">
                   <Input
-                    className="flex-1"
-                    placeholder="网盘路径前缀，如 /电影"
-                    value={mapping.cloudPath}
-                    onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
+                    className="flex-1 min-w-0"
+                    placeholder="网盘路径前缀"
+                    value={newMappingCloudPath}
+                    onChange={(e) => setNewMappingCloudPath(e.target.value)}
                   />
                   <TooltipProvider>
                     <Tooltip>
@@ -733,24 +824,26 @@ export default function EmbyNotifyPage() {
                             variant="outline"
                             size="icon"
                             className="shrink-0"
-                            disabled={!mapping.account}
-                            onClick={() => openCloudPickerForMapping(index)}
+                            disabled={!newMappingAccount}
+                            onClick={openCloudPickerForNew}
                           >
                             <HardDrive className="h-4 w-4" />
                           </Button>
                         </span>
                       </TooltipTrigger>
                       <TooltipContent>
-                        {mapping.account ? "选择网盘目录" : "请先选择具体账号"}
+                        {newMappingAccount ? "选择网盘目录" : "请先选择具体账号"}
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
                 </div>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <Select
-                  value={mapping.account || "__all__"}
-                  onValueChange={(v) => updatePathMapping(index, "account", v === "__all__" ? "" : v)}
+                  value={newMappingAccount || "__all__"}
+                  onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
                 >
-                  <SelectTrigger className="w-[130px] h-10">
+                  <SelectTrigger className="w-full sm:w-[120px] h-9">
                     <SelectValue placeholder="账号（可选）" />
                   </SelectTrigger>
                   <SelectContent>
@@ -762,94 +855,10 @@ export default function EmbyNotifyPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => removePathMapping(index)}
-                >
-                  删除
+                <Button size="sm" onClick={addPathMapping} className="w-full sm:w-auto">
+                  添加
                 </Button>
               </div>
-            ))}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex-1 flex gap-1 items-center">
-                <Input
-                  className="flex-1"
-                  placeholder="Emby 路径前缀"
-                  value={newMappingEmbyPath}
-                  onChange={(e) => setNewMappingEmbyPath(e.target.value)}
-                />
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="shrink-0 inline-flex">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0"
-                          onClick={openFolderPickerForNew}
-                        >
-                          <FolderOpen className="h-4 w-4" />
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      选择包含 STRM 文件的本地目录
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <span className="text-muted-foreground hidden sm:inline">→</span>
-              <span className="text-muted-foreground sm:hidden">↓</span>
-              <div className="flex-1 flex gap-1 items-center">
-                <Input
-                  className="flex-1"
-                  placeholder="网盘路径前缀"
-                  value={newMappingCloudPath}
-                  onChange={(e) => setNewMappingCloudPath(e.target.value)}
-                />
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="shrink-0 inline-flex">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0"
-                          disabled={!newMappingAccount}
-                          onClick={openCloudPickerForNew}
-                        >
-                          <HardDrive className="h-4 w-4" />
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {newMappingAccount ? "选择网盘目录" : "请先选择具体账号"}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <Select
-                value={newMappingAccount || "__all__"}
-                onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
-              >
-                <SelectTrigger className="w-[130px] h-10">
-                  <SelectValue placeholder="账号（可选）" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">遍历全部账号</SelectItem>
-                  {accounts.map((acc) => (
-                    <SelectItem key={acc} value={acc}>
-                      {acc}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button size="sm" onClick={addPathMapping}>
-                添加
-              </Button>
             </div>
             <p className="text-xs text-muted-foreground">
               只有匹配到 Emby 路径前缀的删除事件才会被处理。账号留空时遍历所有 115 账号删除 DB 记录。
@@ -870,14 +879,6 @@ export default function EmbyNotifyPage() {
           </div>
         </div>
       </section>
-
-      {/* 注意事项 */}
-      <Alert>
-        <Eye className="h-4 w-4" />
-        <AlertDescription>
-          <strong>注意：</strong>本页面需要配置正确的 Emby URL 和 API Key。如果使用 Docker 部署，请确保 Emby 容器可以访问到 faststrm 服务。
-        </AlertDescription>
-      </Alert>
 
       {/* 本地文件夹选择器：用于 Emby 路径前缀的快速选择 */}
       <LocalDirectoryTreeDialog

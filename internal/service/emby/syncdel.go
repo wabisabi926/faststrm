@@ -50,7 +50,6 @@ type FilePathDb interface {
 
 // SyncDelete 删除同步器
 type SyncDelete struct {
-	client     *Client
 	dispatcher NotifierDispatcher
 	settingsFn SettingsProvider
 	filePathDb FilePathDb
@@ -59,9 +58,9 @@ type SyncDelete struct {
 }
 
 // NewSyncDelete 创建 SyncDelete
-func NewSyncDelete(client *Client, dispatcher NotifierDispatcher, settingsFn SettingsProvider) *SyncDelete {
+// 注意：不再接收 client 参数，SyncDelete 不直接调用 Emby API
+func NewSyncDelete(dispatcher NotifierDispatcher, settingsFn SettingsProvider) *SyncDelete {
 	return &SyncDelete{
-		client:     client,
 		dispatcher: dispatcher,
 		settingsFn: settingsFn,
 		dedupCache: make(map[string]time.Time),
@@ -288,9 +287,9 @@ func (s *SyncDelete) deleteByItemType(
 	// 从 settings 构造 SyncDeleteOptions（P0 增强）
 	settings := s.settingsFn()
 	opts := SyncDeleteOptions{
-		DeleteSymlink:   settings.SyncDeleteDeleteSymlink,
-		RemoveVersions:  settings.SyncDeleteRemoveVersions,
-		ItemName:        itemName,
+		DeleteSymlink:  settings.SyncDeleteDeleteSymlink,
+		RemoveVersions: settings.SyncDeleteRemoveVersions,
+		ItemName:       itemName,
 	}
 
 	switch itemType {
@@ -441,7 +440,8 @@ func deleteStrmFile(strmPath string, rootDirs []string, opts SyncDeleteOptions) 
 //
 // title 提取规则：去掉常见分辨率/编码后缀（4K/1080P/2160P/720P/H265/H264 等）
 // 例：itemName="Movie (2020) - 1080p.mkv" → title="Movie (2020) -"
-//   扫描同目录下 "Movie (2020) -*.strm" 全部删除
+//
+//	扫描同目录下 "Movie (2020) -*.strm" 全部删除
 func deleteMultiVersionStrms(strmPath string, itemName string, rootDirs []string, opts SyncDeleteOptions) (deletedFiles int, deletedDirs int) {
 	dir := filepath.Dir(strmPath)
 	title := extractTitleForMultiVersion(itemName)
@@ -486,7 +486,8 @@ func deleteMultiVersionStrms(strmPath string, itemName string, rootDirs []string
 // extractTitleForMultiVersion 从 itemName 中提取多版本匹配用的 title 前缀
 // 去掉分辨率/编码后缀：4K/1080P/2160P/720P/H265/H264/HEVC/AV1 等
 // 例："Movie (2020) - 1080p.mkv" → "Movie (2020) -"
-//     "Movie (2020) - 4K HDR.mkv" → "Movie (2020) -"
+//
+//	"Movie (2020) - 4K HDR.mkv" → "Movie (2020) -"
 func extractTitleForMultiVersion(itemName string) string {
 	if itemName == "" {
 		return ""

@@ -9,8 +9,8 @@ import (
 func TestFormatMovieNotification_NoDirector(t *testing.T) {
 	item := &ItemDetail{
 		Name:            "功夫熊猫",
-		ProductionYear:   2008,
-		CommunityRating:  8.2,
+		ProductionYear:  2008,
+		CommunityRating: 8.2,
 		Genres:          []string{"动画", "动作"},
 		Overview:        "一只熊猫成为神龙大侠的故事",
 		DateCreated:     "2026-01-01T00:00:00.000Z",
@@ -94,12 +94,12 @@ func TestFormatMovieNotification_OverviewNotTruncated(t *testing.T) {
 // TestFormatSeriesNotification_SeasonEpisodesPosition 验证季集信息插入入库时间之前（对齐 qmediasync）
 func TestFormatSeriesNotification_SeasonEpisodesPosition(t *testing.T) {
 	series := &ItemDetail{
-		Name:          "测试剧集",
+		Name:           "测试剧集",
 		ProductionYear: 2024,
-		Genres:        []string{"剧情"},
-		Overview:      "测试简介",
-		DateCreated:   "2026-01-01T00:00:00.000Z",
-		People:        []Person{},
+		Genres:         []string{"剧情"},
+		Overview:       "测试简介",
+		DateCreated:    "2026-01-01T00:00:00.000Z",
+		People:         []Person{},
 	}
 	episodes := []ItemDetail{
 		{IndexNumber: 1, ParentIndexNumber: 1},
@@ -126,12 +126,12 @@ func TestFormatSeriesNotification_SeasonEpisodesPosition(t *testing.T) {
 // TestFormatSeriesNotification_NoEpisodes 验证无季集时不显示季集行
 func TestFormatSeriesNotification_NoEpisodes(t *testing.T) {
 	series := &ItemDetail{
-		Name:          "测试剧集",
+		Name:           "测试剧集",
 		ProductionYear: 2024,
-		Genres:        []string{"剧情"},
-		Overview:      "测试简介",
-		DateCreated:   "2026-01-01T00:00:00.000Z",
-		People:        []Person{},
+		Genres:         []string{"剧情"},
+		Overview:       "测试简介",
+		DateCreated:    "2026-01-01T00:00:00.000Z",
+		People:         []Person{},
 	}
 	out := FormatSeriesNotification(series, nil, "library.new")
 	if strings.Contains(out, "📺 入库季集:") {
@@ -143,8 +143,8 @@ func TestFormatSeriesNotification_NoEpisodes(t *testing.T) {
 func TestFormatSeriesNotification_NoDirector(t *testing.T) {
 	series := &ItemDetail{
 		Name:            "权力的游戏",
-		ProductionYear:   2011,
-		CommunityRating:  9.2,
+		ProductionYear:  2011,
+		CommunityRating: 9.2,
 		Genres:          []string{"剧情", "奇幻"},
 		Overview:        "七大王国争霸",
 		DateCreated:     "2026-01-01T00:00:00.000Z",
