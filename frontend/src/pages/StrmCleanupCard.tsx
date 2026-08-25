@@ -112,11 +112,16 @@ type LogEntry = {
 };
 
 type ReconcileItem = {
+  account: string;
+  cloudPath: string;
+  localPath: string;
   cloudFileCount: number;
   localStrmCount: number;
   dbRecordCount: number;
-  staleStrms: unknown[];
-  missingStrms: unknown[];
+  durationMs?: number;
+  staleStrms: StaleStrm[];
+  missingStrms: MissingStrm[];
+  error?: string;
 };
 
 type ReconcileResponse = {
@@ -224,6 +229,36 @@ export function StrmCleanupCard() {
       const totalDb = data.results?.reduce((s: number, r: ReconcileItem) => s + r.dbRecordCount, 0) || 0;
       const totalStale = data.results?.reduce((s: number, r: ReconcileItem) => s + r.staleStrms.length, 0) || 0;
       const totalMissing = data.results?.reduce((s: number, r: ReconcileItem) => s + r.missingStrms.length, 0) || 0;
+
+      // 更新 scanResult 以驱动统计面板和操作工具栏
+      const durationMs = data.results?.reduce((s: number, r: ReconcileItem) => s + (r.durationMs || 0), 0) || 0;
+      const mappings: MappingResult[] = (data.results || []).map((r, idx) => ({
+        mappingId: `reconcile-${idx}`,
+        account: r.account,
+        cloudPath: r.cloudPath,
+        localPath: r.localPath,
+        remoteFileCount: r.cloudFileCount,
+        localStrmCount: r.localStrmCount,
+        staleStrms: (r.staleStrms || []).map((s: Omit<StaleStrm, "localPath" | "mappingId">) => ({
+          ...s,
+          localPath: r.localPath,
+          mappingId: `reconcile-${idx}`,
+        })),
+        missingStrms: (r.missingStrms || []).map((m: Omit<MissingStrm, "mappingId">) => ({
+          ...m,
+          mappingId: `reconcile-${idx}`,
+        })),
+        error: r.error,
+      }));
+      setScanResult({
+        totalRemoteFiles: totalCloud,
+        totalLocalStrms: totalLocal,
+        totalStale,
+        totalMissing,
+        durationMs,
+        mappings,
+      });
+
       appendLog("全量对账", `云端:${totalCloud} 本地:${totalLocal} DB:${totalDb} 失效:${totalStale} 缺失:${totalMissing}`, true);
       toast.success(`全量对账完成`, {
         description: `云端: ${totalCloud} | 本地STRM: ${totalLocal} | DB记录: ${totalDb} | 失效: ${totalStale} | 缺失: ${totalMissing}`,
