@@ -249,7 +249,7 @@ jobs:
         # 安装 rsrc 工具用于嵌入 Windows 图标
         go install github.com/akavel/rsrc@latest
         
-        # 生成 Windows 图标资源文件
+        # 生成 Windows 图标资源文件（仅在 Windows 构建时使用，之后立即删除）
         if [ -f "cmd/server/favicon.ico" ]; then
           echo "Generating icon resource from favicon.ico..."
           rsrc -ico="cmd/server/favicon.ico" -o="cmd/server/rsrc.syso" -arch=amd64
@@ -268,6 +268,11 @@ jobs:
               -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${APP_VERSION}' \
               -X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${APP_VERSION}'" \
             -o "${OUT_DIR}/faststrm.exe" ./cmd/server/
+        
+        # 关键：删除 rsrc.syso，避免后续 Linux 构建时产生 ARM64 重定位错误
+        rm -f cmd/server/rsrc.syso
+        echo "Cleaned up rsrc.syso for cross-platform builds"
+        
         cp -r internal/web "${OUT_DIR}/web" 2>/dev/null || true
         (cd "${OUT_DIR}" && zip -q -r "../${OUT_DIR}.zip" .)
         ls -lh "${OUT_DIR}.zip"
