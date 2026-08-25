@@ -206,6 +206,17 @@ func Run(cfg *config.AppConfig) error {
 				}
 			}
 
+			// 3.5) 注册 Bot 命令菜单（SetMyCommands）— 让 /start /help 等出现在 Bot 菜单
+			{
+				regCtx, regCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := notifyDeps.TelegramBot.SetMyCommands(regCtx, cmdHandler.BotCommandList()); err != nil {
+					logger.S().Warnf("[Telegram] SetMyCommands 失败: %v", err)
+				} else {
+					logger.S().Infof("[Telegram] Bot 命令菜单已注册（%d 个命令）", len(cmdHandler.BotCommandList()))
+				}
+				regCancel()
+			}
+
 			// 4) 启动轮询：将 update 分发给 CommandHandler
 			handlerFn := func(ctx context.Context, update notify.Update) error {
 				if cmdHandler == nil {

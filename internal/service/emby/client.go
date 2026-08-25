@@ -135,9 +135,13 @@ type Client struct {
 }
 
 // NewClient 创建 Emby 客户端
+// 自动剥离 URL 末尾的 /emby 路径（用户可能配置 http://host/emby 或 http://host:port）
 func NewClient(baseURL, apiKey string) *Client {
+	baseURL = strings.TrimRight(baseURL, "/")
+	// 移除可能的 /emby 前缀（Emby API 路径已由各方法拼接）
+	baseURL = strings.TrimSuffix(baseURL, "/emby")
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL: baseURL,
 		apiKey:  apiKey,
 		http: &http.Client{
 			Timeout: DefaultTimeout,

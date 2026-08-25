@@ -166,10 +166,22 @@ func (n *Notifier) handleMediaAdded(ctx context.Context, item ItemInfo) error {
 
 // handleMovieAdded 处理电影入库（对齐 TS handleMovieAdded）
 func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
+	// Emby client 未配置时降级：用 webhook 中的 ItemInfo 直接通知
+	if n.client == nil {
+		logger.S().Warnf("[Emby] Emby client 未配置，降级处理电影入库 id=%s", item.ID)
+		metadata := map[string]string{
+			"类型":   "电影",
+			"入库时间": formatNow(),
+			"备注":   "Emby API 未连接，无法获取详情",
+		}
+		msg := notify.FormatMessage("📚 Emby 入库通知", orDefault(item.Name, "未知"), metadata)
+		return n.dispatcher.Notify(ctx, msg)
+	}
+
 	detail, err := n.client.GetItemDetailWithRetry(ctx, item.ID)
 	if err != nil || detail == nil {
 		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v", item.ID, err)
-		// 降级为简版通知（统一走 FormatMessage）
+		// 降级：用 webhook 中的 ItemInfo 构造通知（仅基础信息）
 		metadata := map[string]string{
 			"入库时间": formatNow(),
 			"备注":   "详情获取失败，已降级为简版通知",
@@ -202,8 +214,15 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 	defer n.addedMu.Unlock()
 
 	// 获取详情用于通知（同步获取，失败则用 ItemInfo 兜底）
-	detail, err := n.client.GetItemDetailWithRetry(ctx, item.ID)
-	if err != nil || detail == nil {
+	var detail *ItemDetail
+	if n.client != nil {
+		var err error
+		detail, err = n.client.GetItemDetailWithRetry(ctx, item.ID)
+		if err != nil {
+			logger.S().Warnf("[Emby] 获取剧集详情失败 id=%s: %v", item.ID, err)
+		}
+	}
+	if detail == nil {
 		detail = &ItemDetail{
 			ID:                item.ID,
 			Name:              item.Name,
@@ -479,7 +498,7 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 	}
 
 	// 3. 仅当需要简介时才请求详情（简介不在 Webhook 中）
-	if showOverview && event.Item != nil && event.Item.ID != "" {
+	if showOverview && n.client != nil && event.Item != nil && event.Item.ID != "" {
 		if detail, err := n.client.GetItemDetailWithRetry(ctx, event.Item.ID); err == nil && detail != nil {
 			item.Overview = detail.Overview
 			item.ProductionYear = detail.ProductionYear

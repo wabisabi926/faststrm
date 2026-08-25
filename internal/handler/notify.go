@@ -498,6 +498,12 @@ func HandleNotifyPollingPOST(deps NotifyDeps) http.HandlerFunc {
 		if cmdHandler == nil {
 			cmdHandler = getCmdHandler(bot, deps.SettingsStore, deps.TasksStore, deps.AccountStore)
 		}
+		// 注册 Bot 命令菜单（SetMyCommands）
+		if err := bot.SetMyCommands(ctx, cmdHandler.BotCommandList()); err != nil {
+			logger.S().Warnf("[notify/polling POST] SetMyCommands 失败: %v", err)
+		} else {
+			logger.S().Infof("[notify/polling POST] Bot 命令菜单已注册")
+		}
 		handlerFn := func(ctx context.Context, update notify.Update) error {
 			if cmdHandler == nil {
 				return nil
