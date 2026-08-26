@@ -17,9 +17,9 @@ import (
 )
 
 // 以下变量通过 ldflags 在构建时注入：
-//   go build -ldflags="-X 'main.version=v1.0.9' -X 'main.BuildDate=2026-08-25'"
+//   go build -ldflags="-X 'main.version=v1.1.0' -X 'main.BuildDate=2026-08-26'"
 var (
-	version   = "v1.0.9"
+	version   = "v1.1.0"
 	BuildDate = "unknown"
 )
 
@@ -51,13 +51,18 @@ func main() {
 	}
 
 	// 3. 计算服务器 URL 并初始化系统托盘
-	serverURL := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	//    注意：cfg.Server.Host 可能是 0.0.0.0（监听所有网卡），但给用户展示/跳转时必须用 localhost。
+	//    保持监听 Host 原样（仍接受局域网/外部访问），只在"显示层"转换 Host。
+	listenAddr := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	displayAddr := displayURL(cfg.Server.Host, cfg.Server.Port)
 	readyCh := make(chan bool, 1)
 	quitCh := make(chan struct{}, 1)
 
-	initTray(serverURL, readyCh, quitCh)
+	initTray(listenAddr, displayAddr, readyCh, quitCh)
 
 	// 4. 启动 HTTP server（在 goroutine 中，以便托盘可以接收就绪信号）
+	//    cfg.Server.Host（可能 0.0.0.0）始终传给 server.Run，保证局域网绑定；
+	//    启动日志在 server.Run 内部按 displayAddr 打印成 http://localhost:PORT 给用户看。
 	go func() {
 		if err := server.Run(cfg); err != nil {
 			logger.S().Fatalf("server.Run failed: %v", err)
@@ -69,8 +74,8 @@ func main() {
 	// server.Run 内部在启动时会打印日志，但我们无法直接知道它何时就绪。
 	// 简单起见，等待 1 秒后假设服务器已就绪（或让托盘自行检测）
 	go func() {
-		// 给服务器启动一些时间
-		waitForServer(serverURL, readyCh)
+		// 给服务器启动一些时间 — 用 displayAddr 做健康检查（避免发 GET 到 0.0.0.0 在部分网络配置下失败）
+		waitForServer(displayAddr, readyCh)
 	}()
 
 	// 6. 等待关闭信号
@@ -147,4 +152,14 @@ func getDefaultRoot() string {
 	}
 	// Docker 镜像内默认路径
 	return "/app/.config"
+}
+
+// displayURL 把监听 host（0.0.0.0/::/空）转换成用户浏览器实际可访问的地址。
+// 注意：本函数仅用于"展示/跳转/健康检查"，不改变真实 HTTP 监听的 host（仍用 cfg.Server.Host 绑定）。
+func displayURL(host string, port int) string {
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "localhost"
+	}
+	return fmt.Sprintf("http://%s:%d", host, port)
 }

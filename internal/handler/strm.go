@@ -27,6 +27,9 @@ var (
 	proxyHTTPClient     *http.Client
 )
 
+// 进入 proxy 并发数限流的最大等待时间（Bottleneck.Enter 排队超时）
+const bottleneckEnterTimeout = 500 * time.Millisecond
+
 func getProxyHTTPClient() *http.Client {
 	proxyHTTPClientOnce.Do(func() {
 		proxyHTTPClient = &http.Client{
@@ -145,7 +148,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		var redirectCheckStatus *int
 
 		if finalDecision == strm.DecisionRedirect {
-			check := strm.RedirectCheck(r.Context(), cdnURL, accountName, account.Cookie, userAgent, routeCfg.RedirectCheckTimeoutMs)
+			check := strm.RedirectCheck(r.Context(), cdnURL, accountName, account.Cookie, userAgent, routeCfg.RedirectCheckTimeout)
 			s := check.Status
 			redirectCheckStatus = &s
 			if !check.OK {
@@ -170,7 +173,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		// 限流：proxy 单独的 Bottleneck，确保不会超并发
 		if finalDecision == strm.DecisionProxy {
 			bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, routeCfg.AccountProxyConcurrencyLimit)
-			enterCtx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
+			enterCtx, cancel := context.WithTimeout(r.Context(), bottleneckEnterTimeout)
 			enterErr := bn.Enter(enterCtx)
 			cancel()
 			if enterErr != nil {
@@ -258,7 +261,7 @@ func handleProxy(
 	// 建连超时 + 客户端断连传播
 	ctx, cancel := context.WithCancelCause(r.Context())
 	defer cancel(nil)
-	connTimer := time.AfterFunc(ConnectTimeoutMs, func() {
+	connTimer := time.AfterFunc(strm.ConnectTimeout, func() {
 		cancel(fmt.Errorf("proxy connect timeout"))
 	})
 
@@ -336,7 +339,4 @@ func handleProxy(
 		}
 	}
 }
-
-// ConnectTimeoutMs proxy 建连超时
-const ConnectTimeoutMs = 30_000
 

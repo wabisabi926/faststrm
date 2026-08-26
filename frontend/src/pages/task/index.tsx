@@ -1,9 +1,8 @@
 import { DataTable } from "@/components/data-table";
 import { AddTaskDialog } from "./components/AddTaskDialog";
-import { TaskScheduleDialog, TaskSchedule } from "./components/TaskScheduleDialog";
+import { TaskScheduleDialog } from "./components/TaskScheduleDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -20,134 +19,32 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import axiosInstance from "@/lib/axios";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { 
-  Play, 
-  Square, 
-  FileText, 
-  Edit, 
-  Trash2, 
+import {
+  Play,
+  Square,
+  FileText,
+  Edit,
+  Trash2,
   Plus,
-  CheckCircle,
-  XCircle,
   AlertCircle,
   FolderX,
   Loader2,
   RefreshCw,
   Clock,
-  User,
-  FolderOpen
 } from "lucide-react";
-
-// Task 类型
-export type Task = {
-  id: string;
-  accountType: string;
-  account: string;
-  originPath: string;
-  targetPath: string;
-  strmType: string;
-  strmPrefix: string;
-  removeExtraFiles?: boolean;
-  enable302?: boolean;
-  name: string;
-  status: "pending" | "processing" | "success" | "failed" | "cancelled";
-  error?: string | null;
-  schedule?: TaskSchedule;
-  _computedNextRunAt?: number | null;
-  runtime?: {
-    status?: string;
-    startedAt?: number;
-    endedAt?: number;
-    error?: string;
-    totalFiles?: number;
-    downloadedFiles?: number;
-    deletedFiles?: number;
-    stage?: string;
-    stageDetail?: string;
-  };
-};
-
-// 阶段配置：中文标签、颜色、图标
-const STAGE_CONFIG: Record<string, { label: string; className: string; icon: string }> = {
-  starting:    { label: "启动中",     className: "bg-slate-500/20 text-slate-300 border-slate-500/30",   icon: "⏳" },
-  scanning:    { label: "扫描目录",   className: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",      icon: "🔍" },
-  incremental: { label: "增量比对",   className: "bg-violet-500/20 text-violet-300 border-violet-500/30",  icon: "📊" },
-  cleanup:     { label: "清理文件",   className: "bg-amber-500/20 text-amber-300 border-amber-500/30",    icon: "🧹" },
-  writing_db:  { label: "写入数据库", className: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30", icon: "💾" },
-  generating:  { label: "生成STRM",   className: "bg-blue-500/20 text-blue-300 border-blue-500/30",      icon: "⚡" },
-  finalizing:  { label: "收尾处理",   className: "bg-teal-500/20 text-teal-300 border-teal-500/30",      icon: "🔧" },
-  completed:   { label: "已完成",     className: "bg-green-500/20 text-green-300 border-green-500/30",    icon: "✅" },
-  failed:      { label: "失败",       className: "bg-red-500/20 text-red-300 border-red-500/30",        icon: "❌" },
-};
-
-function getStageCfg(stage?: string) {
-  if (!stage) return null;
-  return STAGE_CONFIG[stage] || { label: stage, className: "bg-muted text-muted-foreground border-border", icon: "📌" };
-}
-
-// 格式化毫秒为人类可读的时间："12分34秒" / "1时02分30秒"
-function formatElapsed(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return "0秒";
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  if (h > 0) return `${h}时${pad(m)}分${pad(s)}秒`;
-  if (m > 0) return `${m}分${pad(s)}秒`;
-  return `${s}秒`;
-}
-
-// 计算任务已用时间（考虑 startedAt / endedAt）
-function computeElapsedMs(task: Task, nowTs: number): number {
-  const start = task.runtime?.startedAt;
-  if (!start) return 0;
-  const end = task.status === "processing" ? nowTs : (task.runtime?.endedAt || nowTs);
-  return end - start;
-}
-
-// 后端状态到前端状态的映射
-const STATUS_MAP: Record<string, Task["status"]> = {
-  pending: "pending",
-  running: "processing",
-  completed: "success",
-  failed: "failed",
-  cancelled: "cancelled",
-};
-
-// 状态图标和颜色映射
-const getStatusConfig = (status: Task["status"]) => {
-  const configs = {
-    pending: { icon: AlertCircle, color: "bg-slate-500/20 text-slate-300 hover:bg-slate-500/30", label: "待处理" },
-    processing: { icon: AlertCircle, color: "bg-blue-500/20 text-blue-300 hover:bg-blue-500/30", label: "处理中" },
-    success: { icon: CheckCircle, color: "bg-green-500/20 text-green-300 hover:bg-green-500/30", label: "成功" },
-    failed: { icon: XCircle, color: "bg-red-500/20 text-red-300 hover:bg-red-500/30", label: "失败" },
-    cancelled: { icon: XCircle, color: "bg-gray-500/20 text-gray-300 hover:bg-gray-500/30", label: "已取消" }
-  };
-  return configs[status] || { icon: CheckCircle, color: "bg-muted text-muted-foreground border border-border hover:bg-muted/80", label: "空闲" };
-};
-
-// UI 样式常量
-const BUTTON_STYLES = {
-  disabled: "opacity-30 cursor-not-allowed bg-muted hover:bg-muted",
-  enabled: "hover:bg-green-500/10 hover:text-green-500",
-  loading: "text-blue-500",
-  icon: {
-    disabled: "text-muted-foreground",
-    enabled: "text-foreground"
-  }
-} as const;
-
-const ACCOUNT_STYLES = {
-  busy: "border-orange-500/30 bg-orange-500/10 text-orange-500",
-  normal: ""
-} as const;
-
-// 状态标签常量
-const STATUS_LABELS = {
-  starting: "启动中",
-  running: "运行中"
-} as const;
+import { MobileTaskCard } from "./MobileTaskCard";
+import {
+  type Task,
+  STATUS_MAP,
+  getStatusConfig,
+  getStageCfg,
+  computeElapsedMs,
+  formatElapsed,
+  BUTTON_STYLES,
+  ACCOUNT_STYLES,
+  STATUS_LABELS,
+} from "./types";
+import type { TaskApiResponse } from "@/types/api";
 
 export default function Home() {
   const [data, setData] = useState<Task[]>([]);
@@ -166,6 +63,8 @@ export default function Home() {
   useEffect(() => {
     const t = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(t);
+    // 仅做挂壁时钟，无外部依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 检查账户是否有任务正在运行或启动
@@ -202,6 +101,8 @@ export default function Home() {
   useEffect(() => {
     fetchTasks();
     fetchAccounts();
+    // 依赖为 setState + axios 单例，引用稳定；故意不写依赖避免重复加载
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 获取任务列表
@@ -211,7 +112,7 @@ export default function Home() {
       const res = await axiosInstance.get("/api/tasks");
       const payload = res.data;
       const tasks = Array.isArray(payload) ? payload : (payload.tasks || []);
-      const mapped: Task[] = tasks.map((t: any) => ({
+      const mapped: Task[] = tasks.map((t: TaskApiResponse) => ({
         id: t.id || '',
         name: t.name || '',
         account: t.account || '',
@@ -223,7 +124,7 @@ export default function Home() {
         removeExtraFiles: t.removeExtraFiles ?? false,
         enable302: t.enable302 ?? false,
         // 使用状态映射将后端状态转换为前端状态
-        status: STATUS_MAP[t.runtime?.status || t.status] || "pending",
+        status: STATUS_MAP[(t.runtime?.status || t.status || "") as keyof typeof STATUS_MAP] || "pending",
         error: t.runtime?.error ?? null,
         schedule: t.schedule ? {
           enabled: t.schedule.enabled ?? false,
@@ -825,226 +726,6 @@ export default function Home() {
     );
   }
 
-  // Mobile card renderer for a single task
-  const renderMobileCard = (task: Task) => {
-    const { status, label } = getTaskDisplayStatus(task);
-    const config = getStatusConfig(status);
-    const StatusIcon = config.icon;
-    const hasError = status === "failed" && task.error;
-    const stageCfg = getStageCfg(task.runtime?.stage);
-    const isRunning = status === "processing";
-    const isScanning = task.runtime?.stage === "scanning" && isRunning;
-    const elapsedMs = computeElapsedMs(task, nowTs);
-    const elapsedStr = task.runtime?.startedAt ? formatElapsed(elapsedMs) : "";
-    const totalFiles = task.runtime?.totalFiles;
-    const downloadedFiles = task.runtime?.downloadedFiles;
-    const isStarting = startingTasks.has(task.id);
-    const isDisabled = isTaskDisabled(task);
-    const isBusy = isAccountBusy(task.account);
-
-    // Schedule info
-    const sched = task.schedule;
-    const enabled = !!sched?.enabled;
-    const nextRun = task._computedNextRunAt ?? sched?.nextRunAt ?? null;
-    let schedText = "";
-    if (enabled && nextRun) {
-      const d = new Date(nextRun);
-      const now = new Date();
-      const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-      const pad = (n: number) => n.toString().padStart(2, "0");
-      const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      const dateStr = sameDay ? `今天 ${t}` : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${t}`;
-      const modeLabel = sched.mode === "interval" ? `每${sched.intervalMinutes}分` : sched.mode === "daily" ? `每天${sched.time}` : `每周${sched.time}`;
-      schedText = `${modeLabel} · ${dateStr}`;
-    }
-
-    return (
-      <Card key={task.id} className="py-0 shadow-sm">
-        <CardContent className="p-3 space-y-3">
-          {/* Header: task id + status */}
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-                {task.id.slice(0, 8)}
-              </code>
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <Badge
-                className={`${config.color} border-0 ${hasError ? "cursor-help" : ""} text-xs`}
-                title={hasError ? `失败原因: ${task.error}` : undefined}
-              >
-                <StatusIcon className={`w-3 h-3 mr-1 ${hasError ? "animate-pulse" : ""}`} />
-                {label}
-              </Badge>
-            </div>
-          </div>
-
-          {/* Account info */}
-          <div className="flex items-center gap-2 min-w-0">
-            <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            <Badge variant="outline" className={`text-xs shrink-0 ${isBusy ? ACCOUNT_STYLES.busy : ""}`}>
-              {task.accountType}
-            </Badge>
-            <span className={`text-sm truncate ${isBusy ? "text-orange-700 font-medium" : ""}`}>
-              {task.account}
-            </span>
-            {isBusy && <span className="text-orange-600 text-xs">●</span>}
-          </div>
-
-          {/* Paths */}
-          <div className="space-y-1.5 text-xs">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              <span className="text-muted-foreground">远程：</span>
-              <span className="truncate font-mono" title={task.originPath}>{task.originPath}</span>
-            </div>
-            <div className="flex items-center gap-1.5 min-w-0">
-              <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              <span className="text-muted-foreground">本地：</span>
-              <span className="truncate font-mono" title={task.targetPath}>{task.targetPath}</span>
-            </div>
-          </div>
-
-          {/* Stage + progress */}
-          {(isRunning || status === "success" || status === "failed") && (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {stageCfg && (
-                  <Badge variant="outline" className={`${stageCfg.className} border text-xs`}>
-                    <span className="mr-1 text-xs">{stageCfg.icon}</span>
-                    {stageCfg.label}
-                  </Badge>
-                )}
-                {elapsedStr && (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground font-mono bg-muted/50 rounded px-1.5 py-0.5">
-                    <Clock className="w-3 h-3" />
-                    {elapsedStr}
-                  </span>
-                )}
-              </div>
-              {task.runtime?.stageDetail && (
-                <div className="text-[11px] text-muted-foreground leading-tight">
-                  {task.runtime.stageDetail}
-                </div>
-              )}
-              {/* Progress bar */}
-              {isScanning ? (
-                <div className="relative w-full h-2 bg-muted rounded-md overflow-hidden">
-                  <div
-                    className="absolute inset-y-0 left-0 w-full opacity-60"
-                    style={{
-                      backgroundImage: "linear-gradient(90deg, rgba(6,182,212,0) 0%, rgba(6,182,212,0.4) 50%, rgba(6,182,212,0) 100%)",
-                      backgroundSize: "200% 100%",
-                      animation: "skeleton-shimmer 1.4s linear infinite",
-                    }}
-                  />
-                  <div
-                    className="absolute inset-y-0 left-0 bg-cyan-500/70 rounded-md"
-                    style={{ width: "18%", animation: "scanning-sweep 2.4s ease-in-out infinite" }}
-                  />
-                </div>
-              ) : totalFiles && totalFiles > 0 && downloadedFiles !== undefined ? (
-                <>
-                  <div className="w-full h-2 bg-muted rounded-md overflow-hidden">
-                    <div
-                      className={`h-full rounded-md transition-all duration-500 ${
-                        status === "failed" ? "bg-red-500/80" :
-                        status === "success" ? "bg-green-500/80" :
-                        "bg-blue-500/80"
-                      }`}
-                      style={{ width: `${Math.min(100, Math.round((downloadedFiles / totalFiles) * 100))}%` }}
-                    />
-                  </div>
-                  <div className="text-[11px] text-muted-foreground font-mono">
-                    {downloadedFiles} / {totalFiles} 个文件 ({Math.round((downloadedFiles / totalFiles) * 100)}%)
-                  </div>
-                </>
-              ) : isRunning ? (
-                <div className="w-full h-2 bg-muted rounded-md overflow-hidden relative">
-                  <div
-                    className="absolute inset-y-0 left-0 bg-blue-400/60 rounded-md"
-                    style={{ width: "25%", animation: "scanning-sweep 2s ease-in-out infinite" }}
-                  />
-                </div>
-              ) : null}
-            </div>
-          )}
-
-          {/* Schedule */}
-          {enabled && (
-            <div className="flex items-center gap-1.5 text-xs">
-              <Clock className="w-3 h-3 text-indigo-500" />
-              <span className="text-indigo-700 font-medium">定时：</span>
-              <span className="text-muted-foreground">{schedText}</span>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/50">
-            <div className="flex gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => startTask(task.id)}
-                disabled={isDisabled}
-                className={`h-7 w-7 p-0 ${isDisabled ? BUTTON_STYLES.disabled : task.status === "processing" ? "bg-blue-500/20" : BUTTON_STYLES.enabled}`}
-                title="开始任务"
-              >
-                {isStarting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
-                ) : task.status === "processing" ? (
-                  <div className="w-2.5 h-2.5 bg-blue-600 rounded-full animate-pulse"></div>
-                ) : (
-                  <Play className={`w-3.5 h-3.5 ${isDisabled ? "text-muted-foreground" : "text-foreground"}`} />
-                )}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => cancelTask(task.id)} className="h-7 w-7 p-0" title="取消任务">
-                <Square className="w-3.5 h-3.5" />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => goToLog(task.id)} className="h-7 w-7 p-0" title="查看日志">
-                <FileText className="w-3.5 h-3.5" />
-              </Button>
-              <TaskScheduleDialog
-                task={task}
-                onSuccess={fetchTasks}
-                trigger={
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={`h-7 w-7 p-0 ${task.schedule?.enabled ? "text-indigo-600" : ""}`}
-                    title="配置定时任务"
-                  >
-                    <Clock className="w-3.5 h-3.5" />
-                  </Button>
-                }
-              />
-              <AddTaskDialog
-                task={task}
-                accounts={accounts}
-                accountsLoading={accountsLoading}
-                onSuccess={fetchTasks}
-                trigger={
-                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="编辑任务">
-                    <Edit className="w-3.5 h-3.5" />
-                  </Button>
-                }
-              />
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-500/10 shrink-0"
-              onClick={() => setDeleteDialogOpen(task.id)}
-              title="删除任务"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
-
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       {/* 动画 keyframes */}
@@ -1097,7 +778,24 @@ export default function Home() {
         </div>
       ) : isMobile ? (
         <div className="space-y-2.5">
-          {data.map((task) => renderMobileCard(task))}
+          {data.map((task) => (
+            <MobileTaskCard
+              key={task.id}
+              task={task}
+              nowTs={nowTs}
+              startingTasks={startingTasks}
+              accounts={accounts}
+              accountsLoading={accountsLoading}
+              isAccountBusy={isAccountBusy}
+              isTaskDisabled={isTaskDisabled}
+              getTaskDisplayStatus={getTaskDisplayStatus}
+              startTask={startTask}
+              cancelTask={cancelTask}
+              goToLog={goToLog}
+              fetchTasks={fetchTasks}
+              setDeleteDialogOpen={setDeleteDialogOpen}
+            />
+          ))}
         </div>
       ) : (
         <DataTable columns={columns} data={data} />

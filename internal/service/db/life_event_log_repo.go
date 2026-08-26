@@ -68,6 +68,9 @@ func NewLifeEventLogRepo(db *sql.DB) (*LifeEventLogRepo, error) {
 
 // AppendLog 追加一条事件处理日志
 func (r *LifeEventLogRepo) AppendLog(ctx context.Context, log LifeEventLog) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
 	if log.Timestamp == 0 {
 		log.Timestamp = NowMs()
 	}
@@ -100,6 +103,9 @@ type LifeEventLogQuery struct {
 
 // Query 查询事件日志（按时间倒序）
 func (r *LifeEventLogRepo) Query(ctx context.Context, q LifeEventLogQuery) ([]LifeEventLog, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
 	where := []string{"1=1"}
 	args := []any{}
 	if q.Account != "" {
@@ -195,6 +201,9 @@ FROM life_event_logs WHERE %s ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
 
 // DeleteByID 按 ID 删除单条日志
 func (r *LifeEventLogRepo) DeleteByID(ctx context.Context, id int64) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, nil
+	}
 	res, err := r.db.ExecContext(ctx, `DELETE FROM life_event_logs WHERE id = ?`, id)
 	if err != nil {
 		return false, err
@@ -205,6 +214,9 @@ func (r *LifeEventLogRepo) DeleteByID(ctx context.Context, id int64) (bool, erro
 
 // CleanupOld 清理指定时间之前的日志
 func (r *LifeEventLogRepo) CleanupOld(ctx context.Context, beforeMs int64) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
 	res, err := r.db.ExecContext(ctx, `DELETE FROM life_event_logs WHERE timestamp < ?`, beforeMs)
 	if err != nil {
 		return 0, err
@@ -214,6 +226,9 @@ func (r *LifeEventLogRepo) CleanupOld(ctx context.Context, beforeMs int64) (int6
 
 // ClearAll 清空所有日志
 func (r *LifeEventLogRepo) ClearAll(ctx context.Context) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
 	res, err := r.db.ExecContext(ctx, `DELETE FROM life_event_logs`)
 	if err != nil {
 		return 0, err
@@ -223,6 +238,9 @@ func (r *LifeEventLogRepo) ClearAll(ctx context.Context) (int64, error) {
 
 // Stats 返回统计信息（总数 + 成功数 + 失败数）
 func (r *LifeEventLogRepo) Stats(ctx context.Context) (total, success, failed int64, err error) {
+	if r == nil || r.db == nil {
+		return 0, 0, 0, nil
+	}
 	row := r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END), 0) FROM life_event_logs`)
 	if err = row.Scan(&total, &success, &failed); err != nil {
 		return 0, 0, 0, err

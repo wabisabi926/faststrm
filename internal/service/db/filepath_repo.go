@@ -396,7 +396,11 @@ type FilePathRepo struct {
 }
 
 // NewFilePathRepo 创建 FilePathRepo
+// db 为 nil 时返回零值实例，方法调用时通过 nil 守卫安全降级
 func NewFilePathRepo(db *sql.DB) *FilePathRepo {
+	if db == nil {
+		return nil
+	}
 	return &FilePathRepo{db: db}
 }
 

@@ -20,13 +20,22 @@
 
 ## 📌 版本公告
 
-> **🎉 v0.9.7 已发布 — 115 生活事件监控全面修复**
->
-> - 🔧 修复生活事件监控无法连接 115 服务器的问题
-> - 🛣️ 修复部分文件事件无法解析路径的问题
-> - 🔄 新增 API 域名自动切换，规避网络异常
-> - ⏱️ 事件轮询更快，默认 10 秒
-> - 完整变更说明：[版本更新日志](版本更新日志)
+**🎉 v1.1.0 已发布 — 代码质量全面加固 + Windows 登录地址修复 + 监控状态按钮语义修正**
+
+- 🏗️ **代码质量加固** ：Handler 层补齐 24 个单元测试（Account CRUD 15 个 + STRM 参数校验 9 个），修复 UpdateAccount 改名时 Cookie 不同步的回归 Bug
+
+- 🛡️ **前端类型安全** ：定义 `TaskApiResponse` / `DirectoryNodeApi` 等 4 个接口，替换 5 处 `any` 类型；为 7 处纯初始化 `useEffect` 添加依赖说明，避免误改
+
+- ⏱️ **时间常量标准化** ：超时/TTL 常量统一使用 `time.Duration`，消除魔法数字（10\*time.Minute 代替裸写 600000ms），JSON 协议保持兼容
+
+- 🚪 **Windows 地址显示修复** ：托盘菜单 / 启动日志中监听地址 `0.0.0.0`、`[::]` 自动替换为 `localhost`，实际监听地址不变，解决 Windows 下默认打开 0.0.0.0 无法访问的问题
+
+- 🔧 **监控状态按钮修正** ：账号不存在时按钮从"停止"改为"从监控列表移除"；异常时保留启动/停止 + 移除双按钮；待保存配置场景显示灰色 disabled「待保存」
+
+- 🧩 **兼容性** ：飞牛 fNOS、Docker、Linux/ARM64 等其他端地址显示与监听行为保持不变，不受本次修改影响
+
+完整变更说明：[版本更新日志](版本更新日志)
+
 ---
 
 ## 🚩 目录导航
@@ -79,13 +88,14 @@
 
 | 层级 | 技术选型 |
 |------|---------|
-| 前端 / 后端一体化 | **Next.js 15** (App Router + TypeScript + Turbopack) |
+| 后端 | **Go**（Gin + SQLite） |
+| 前端 | **Vite + React + React Router** |
 | UI 组件 | **shadcn/ui** + **Tailwind CSS** + **Radix UI** |
-| 数据库 | **SQLite** (better-sqlite3) |
-| 115 协议 | p115client 理念自研 SDK（Web + iOS API 双通道） |
-| 任务调度 | 原生 async 调度器 + cron 表达式 |
-| 速率控制 | 账号级令牌桶 + 指数退避重试 |
-| 部署 | **Docker**（linux/amd64 + linux/arm64） |
+| 数据库 | **SQLite** |
+| 115 协议 | 自研 SDK（Web + iOS API 双通道） |
+| 通知渠道 | Telegram Bot / Emby Webhook |
+| 系统托盘 | **systray**（Windows / Linux / macOS） |
+| 部署 | **Docker**（linux/amd64 + linux/arm64）+ Windows exe + 飞牛 fNOS |
 
 ---
 
@@ -93,4 +103,4 @@
 
 欢迎提交 [Issue](https://github.com/wabisabi926/faststrm/issues) 和 [Pull Request](https://github.com/wabisabi926/faststrm/pulls) 来改进这个项目。
 
-<!-- v0.9.6 sync trigger -->
+<!-- v1.1.0 sync trigger -->

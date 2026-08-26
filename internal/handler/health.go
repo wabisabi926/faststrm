@@ -13,7 +13,7 @@ type HealthResponse struct {
 }
 
 // appVersion 通过 ldflags 在构建时注入，默认值兜底
-var appVersion = "1.0.9"
+var appVersion = "1.1.0"
 
 // Health 健康检查
 func Health(w http.ResponseWriter, r *http.Request) {

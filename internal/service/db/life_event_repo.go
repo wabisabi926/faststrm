@@ -58,6 +58,9 @@ func NewLifeEventRepo(db *sql.DB) (*LifeEventRepo, error) {
 
 // Insert 写入事件
 func (r *LifeEventRepo) Insert(ctx context.Context, e LifeEvent) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
 	res, err := r.db.ExecContext(ctx, `INSERT INTO life_events(account, event_type, folder_path, payload_json, processed, created_at)
 VALUES (?, ?, ?, ?, ?, ?)`,
 		e.Account, e.EventType, e.FolderPath, e.PayloadJSON, e.Processed, e.CreatedAt)
@@ -69,6 +72,9 @@ VALUES (?, ?, ?, ?, ?, ?)`,
 
 // ListPending 取未处理的事件（FIFO）
 func (r *LifeEventRepo) ListPending(ctx context.Context, account string, limit int) ([]LifeEvent, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
 	if limit <= 0 {
 		limit = 200
 	}
@@ -91,6 +97,9 @@ FROM life_events WHERE account = ? AND processed = 0 ORDER BY created_at ASC, id
 
 // MarkProcessed 批量标记
 func (r *LifeEventRepo) MarkProcessed(ctx context.Context, ids []int64) error {
+	if r == nil || r.db == nil {
+		return nil
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -105,6 +114,9 @@ func (r *LifeEventRepo) MarkProcessed(ctx context.Context, ids []int64) error {
 
 // PurgeOld 删除 created_at < beforeMs 的 processed 事件
 func (r *LifeEventRepo) PurgeOld(ctx context.Context, beforeMs int64) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
 	res, err := r.db.ExecContext(ctx, `DELETE FROM life_events WHERE processed = 1 AND created_at < ?`, beforeMs)
 	if err != nil {
 		return 0, err
@@ -117,6 +129,9 @@ func (r *LifeEventRepo) PurgeOld(ctx context.Context, beforeMs int64) (int64, er
 // SaveCursor 保存账号的事件游标（fromID + fromTime）
 // 对齐参考项目：重启后从 DB 恢复游标，避免重复处理已处理事件
 func (r *LifeEventRepo) SaveCursor(ctx context.Context, account string, fromID, fromTime int64) error {
+	if r == nil || r.db == nil {
+		return nil
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO life_event_cursor (account, from_id, from_time, updated_at)
 		VALUES (?, ?, ?, ?)
@@ -130,6 +145,9 @@ func (r *LifeEventRepo) SaveCursor(ctx context.Context, account string, fromID, 
 
 // LoadCursor 读取账号的事件游标
 func (r *LifeEventRepo) LoadCursor(ctx context.Context, account string) (fromID, fromTime int64, err error) {
+	if r == nil || r.db == nil {
+		return 0, 0, nil
+	}
 	err = r.db.QueryRowContext(ctx,
 		`SELECT from_id, from_time FROM life_event_cursor WHERE account = ?`, account).Scan(&fromID, &fromTime)
 	if err == sql.ErrNoRows {

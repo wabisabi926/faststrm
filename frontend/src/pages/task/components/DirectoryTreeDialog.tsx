@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { DirectoryNodeApi } from "@/types/api";
 
 interface TreeNode {
   name: string;
@@ -100,7 +101,7 @@ export function DirectoryTreeDialog({
           });
 
           if (response.data.code === 200) {
-            const children: TreeNode[] = (response.data.data || []).map((child: any) => ({
+            const children: TreeNode[] = (response.data.data || []).map((child: DirectoryNodeApi) => ({
               ...child,
               path: currentPath ? `${currentPath}/${child.name}` : child.name,
             }));

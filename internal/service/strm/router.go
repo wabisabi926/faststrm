@@ -24,13 +24,12 @@ import (
 // ==================== 常量 ====================
 
 const (
-	URLCacheTTL        = 5 * 60 * 1000        // 5 分钟（毫秒）
-	ReachableCacheTTL  = 4 * 60 * 1000        // 4 分钟
-	ReachableCacheMax  = 256                   // 简单 LRU 上限
-	URLCacheMax        = 512
-	ConnectTimeoutMs   = 30_000                // proxy 模式建连超时
-	// P0-3 负面缓存 TTL：115 API 失败后短时间内不重试，避免雪崩
-	URLNegativeCacheTTL = 10 * 1000            // 10 秒
+	URLCacheTTL          = 5 * time.Minute
+	ReachableCacheTTL    = 4 * time.Minute
+	ReachableCacheMax    = 256
+	URLCacheMax          = 512
+	ConnectTimeout       = 30 * time.Second // proxy 模式建连超时
+	URLNegativeCacheTTL  = 10 * time.Second // P0-3 负面缓存 TTL：115 API 失败后短时间内不重试，避免雪崩
 )
 
 // RouteDecision 路由决策
@@ -84,15 +83,15 @@ type lruEntry[V any] struct {
 type simpleLRU[V any] struct {
 	mu      sync.Mutex
 	maxSize int
-	ttlMs   int
+	ttl     time.Duration
 	order   *list.List                 // 链表头=最老，链表尾=最新
 	items   map[string]*list.Element   // key -> *list.Element (value = *lruEntry)
 }
 
-func newSimpleLRU[V any](maxSize, ttlMs int) *simpleLRU[V] {
+func newSimpleLRU[V any](maxSize int, ttl time.Duration) *simpleLRU[V] {
 	return &simpleLRU[V]{
 		maxSize: maxSize,
-		ttlMs:   ttlMs,
+		ttl:     ttl,
 		order:   list.New(),
 		items:   make(map[string]*list.Element),
 	}
@@ -100,7 +99,7 @@ func newSimpleLRU[V any](maxSize, ttlMs int) *simpleLRU[V] {
 
 func (c *simpleLRU[V]) Get(key string) (V, bool) {
 	var zero V
-	now := time.Now().UnixMilli()
+	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	el, ok := c.items[key]
@@ -108,7 +107,7 @@ func (c *simpleLRU[V]) Get(key string) (V, bool) {
 		return zero, false
 	}
 	entry := el.Value.(*lruEntry[V])
-	if entry.expires <= now {
+	if time.UnixMilli(entry.expires).Before(now) {
 		c.order.Remove(el)
 		delete(c.items, key)
 		return zero, false
@@ -119,7 +118,7 @@ func (c *simpleLRU[V]) Get(key string) (V, bool) {
 }
 
 func (c *simpleLRU[V]) Set(key string, value V) {
-	exp := time.Now().UnixMilli() + int64(c.ttlMs)
+	exp := time.Now().Add(c.ttl).UnixMilli()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if el, ok := c.items[key]; ok {
@@ -403,17 +402,17 @@ func RedirectCheck(
 	ctx context.Context,
 	cdnURL string,
 	accountName, cookie, userAgent string,
-	timeoutMs int,
+	timeout time.Duration,
 ) ReachableResult {
 	cacheKey := accountName + "|" + cdnURL
 	if cached, ok := reachableCache.Get(cacheKey); ok {
 		return cached
 	}
 
-	if timeoutMs <= 0 {
-		timeoutMs = 5000
+	if timeout <= 0 {
+		timeout = 5 * time.Second
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, cdnURL, nil)
@@ -463,7 +462,7 @@ func ResolveDownloadUrl(
 	// 2) 负面缓存命中（短时间内已失败过，不重试）
 	if negErr, ok := urlNegativeCache.Get(cacheKey); ok {
 		return nil, fmt.Errorf("cached 115 download error (retry in %ds): %w",
-			URLNegativeCacheTTL/1000, negErr)
+			int(URLNegativeCacheTTL.Seconds()), negErr)
 	}
 	// 3) singleflight 合并并发相同 key 的调用
 	meta, err := urlCallGroup.Do(cacheKey, func() (*client115.DownloadUrlMeta, error) {
@@ -481,9 +480,9 @@ func ResolveDownloadUrl(
 
 // StrmRouteConfig 从 config 中取 STRM 路由策略（兜底默认）
 func StrmRouteConfig(cfg *config.AppConfig) struct {
-	ForceProxyUaTokens         []string
+	ForceProxyUaTokens           []string
 	AccountProxyConcurrencyLimit int
-	RedirectCheckTimeoutMs     int
+	RedirectCheckTimeout         time.Duration
 } {
 	st := cfg.Settings.Strm
 	tokens := st.ForceProxyUaTokens
@@ -494,18 +493,18 @@ func StrmRouteConfig(cfg *config.AppConfig) struct {
 	if proxyLimit <= 0 {
 		proxyLimit = model.DefaultSettings().Strm.AccountProxyConcurrencyLimit
 	}
-	checkTimeout := st.RedirectCheckTimeoutMs
+	checkTimeout := st.RedirectCheckTimeout()
 	if checkTimeout <= 0 {
-		checkTimeout = model.DefaultSettings().Strm.RedirectCheckTimeoutMs
+		checkTimeout = model.DefaultSettings().Strm.RedirectCheckTimeout()
 	}
 	return struct {
 		ForceProxyUaTokens           []string
 		AccountProxyConcurrencyLimit int
-		RedirectCheckTimeoutMs       int
+		RedirectCheckTimeout         time.Duration
 	}{
 		ForceProxyUaTokens:           tokens,
 		AccountProxyConcurrencyLimit: proxyLimit,
-		RedirectCheckTimeoutMs:       checkTimeout,
+		RedirectCheckTimeout:         checkTimeout,
 	}
 }
 

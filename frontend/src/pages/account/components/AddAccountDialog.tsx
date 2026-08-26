@@ -3,7 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useForm } from "react-hook-form";
 
-import axiosInstance from "@/lib/axios";
+import { axios, axiosInstance } from "@/lib/axios";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -109,9 +109,14 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
       setOpen(false);
       form.reset();
       setCookieMode("qrcode");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("提交失败详情:", err);
-      const errorMsg = err?.response?.data?.error || err?.message || "操作失败";
+      let errorMsg = "操作失败";
+      if (axios.isAxiosError(err)) {
+        errorMsg = (err.response?.data as { error?: string } | undefined)?.error || err.message || errorMsg;
+      } else if (err instanceof Error) {
+        errorMsg = err.message || errorMsg;
+      }
       toast.error(errorMsg);
     } finally {
       setLoading(false);

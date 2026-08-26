@@ -27,8 +27,8 @@ type EnterFullScanResult struct {
 }
 
 const (
-	fullScanTimeoutMs     = 10 * 60 * 1000 // 10 分钟
-	monitorResumeGraceMs  = 5 * 60 * 1000  // 5 分钟
+	fullScanTimeout    = 10 * time.Minute
+	monitorResumeGrace = 5 * time.Minute
 )
 
 // StateManager 全局状态管理器（单例）
@@ -72,9 +72,8 @@ func (m *StateManager) TryEnterFullScan(account, taskId string) EnterFullScanRes
 	defer m.mu.Unlock()
 
 	existing := m.states[account]
-	if existing != nil && existing.ActiveTaskId != "" {
-		elapsed := time.Now().UnixMilli() - existing.ActiveTaskStartAt
-		if elapsed < fullScanTimeoutMs {
+	if existing != nil && existing.ActiveTaskId != "" && existing.ActiveTaskStartAt > 0 {
+		if time.Since(time.UnixMilli(existing.ActiveTaskStartAt)) < fullScanTimeout {
 			return EnterFullScanResult{Ok: false, Reason: "task_running"}
 		}
 	}
@@ -112,7 +111,7 @@ func (m *StateManager) ExitFullScan(account string) {
 
 	// 如果监控被挂起，设置恢复宽限期
 	if current.MonitorSuspendedUntil > 0 && time.Now().UnixMilli() < current.MonitorSuspendedUntil {
-		resumeGrace := time.Now().UnixMilli() + monitorResumeGraceMs
+		resumeGrace := time.Now().Add(monitorResumeGrace).UnixMilli()
 		state.MonitorSuspendedUntil = min(current.MonitorSuspendedUntil, resumeGrace)
 		state.MonitorSuspendedBy = current.MonitorSuspendedBy
 	}
@@ -149,7 +148,7 @@ func (m *StateManager) IsAccountInFullScan(account string) bool {
 	if s == nil || s.ActiveTaskId == "" {
 		return false
 	}
-	return time.Now().UnixMilli()-s.ActiveTaskStartAt < fullScanTimeoutMs
+	return s.ActiveTaskStartAt > 0 && time.Since(time.UnixMilli(s.ActiveTaskStartAt)) < fullScanTimeout
 }
 
 // ==================== 监控挂起/恢复 ====================
@@ -164,7 +163,7 @@ func (m *StateManager) SuspendMonitorForFullScan(account string) {
 	if state == nil {
 		state = &AccountRuntimeState{}
 	}
-	state.MonitorSuspendedUntil = time.Now().UnixMilli() + fullScanTimeoutMs
+	state.MonitorSuspendedUntil = time.Now().Add(fullScanTimeout).UnixMilli()
 	state.MonitorSuspendedBy = "fullscan"
 	m.states[account] = state
 	m.saveToDisk()
@@ -261,7 +260,7 @@ func (m *StateManager) loadFromDisk() {
 
 		// 清理过期的全量扫描锁
 		if state.ActiveTaskId != "" && state.ActiveTaskStartAt > 0 {
-			if now-state.ActiveTaskStartAt < fullScanTimeoutMs {
+			if time.Since(time.UnixMilli(state.ActiveTaskStartAt)) < fullScanTimeout {
 				cleaned.ActiveTaskId = state.ActiveTaskId
 				cleaned.ActiveTaskStartAt = state.ActiveTaskStartAt
 			} else {

@@ -93,6 +93,8 @@ export default function AccountPage() {
 
   useEffect(() => {
     fetchAccounts();
+    // 依赖为 setState + axios 单例，引用稳定；故意不写依赖避免重复加载
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

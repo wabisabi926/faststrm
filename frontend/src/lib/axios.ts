@@ -1,5 +1,8 @@
 import axios from 'axios';
 
+// 供 catch (e) 块内调用 axios.isAxiosError(e) 做类型守卫
+export { axios };
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 function getToken(): string | null {

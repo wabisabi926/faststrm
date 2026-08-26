@@ -12,14 +12,18 @@ import (
 )
 
 var (
-	trayServerURL   string
+	trayListenURL   string // 真实监听地址（用于 isServerUp 连到真实绑定的网卡，0.0.0.0 时仍可用）
+	trayDisplayURL  string // 给用户看/开浏览器的地址：0.0.0.0 → localhost
 	trayServerReady bool
 	trayOnQuit      chan struct{}
 )
 
 // initTray 初始化系统托盘（Windows 专用）
-func initTray(url string, readyCh <-chan bool, quitCh chan struct{}) {
-	trayServerURL = url
+//   - listenAddr:  真实监听 URL，例如 http://0.0.0.0:8090（内部健康检查用）
+//   - displayAddr: 给用户展示/跳转到浏览器的 URL，例如 http://localhost:8090
+func initTray(listenAddr, displayAddr string, readyCh <-chan bool, quitCh chan struct{}) {
+	trayListenURL = listenAddr
+	trayDisplayURL = displayAddr
 	trayOnQuit = quitCh
 
 	// 启动托盘
@@ -73,11 +77,11 @@ func onTrayReady() {
 		for {
 			select {
 			case <-mOpen.ClickedCh:
-				openBrowser(trayServerURL)
+				openBrowser(trayDisplayURL)
 			case <-mAbout.ClickedCh:
 				// 显示关于信息
-				fmt.Printf("关于 FastStrm: 版本=%s, 架构=%s/%s, 服务器=%s\n",
-					version, runtime.GOOS, runtime.GOARCH, trayServerURL)
+				fmt.Printf("关于 FastStrm: 版本=%s, 架构=%s/%s, 管理地址=%s (监听 %s)\n",
+					version, runtime.GOOS, runtime.GOARCH, trayDisplayURL, trayListenURL)
 				systray.SetTooltip(fmt.Sprintf("FastStrm %s - 关于信息已记录", version))
 			case <-mQuit.ClickedCh:
 				if trayOnQuit != nil {
@@ -111,7 +115,7 @@ func updateTrayStatus(mStatus, mServer *systray.MenuItem) {
 		tooltip := "FastStrm - 启动中..."
 
 		if trayServerReady {
-			if isServerUp(trayServerURL) {
+			if isServerUp(trayListenURL) {
 				status = "运行中"
 				serverStatus = "已就绪"
 				tooltip = fmt.Sprintf("FastStrm %s - 运行中", version)

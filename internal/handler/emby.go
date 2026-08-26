@@ -429,7 +429,8 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			if body.Strm.AccountProxyConcurrencyLimit > 0 {
 				settings.Strm.AccountProxyConcurrencyLimit = body.Strm.AccountProxyConcurrencyLimit
 			}
-			if body.Strm.RedirectCheckTimeoutMs >= 500 {
+			// RedirectCheckTimeout 最小 500ms，低于此值视为无效配置（不更新）
+			if time.Duration(body.Strm.RedirectCheckTimeoutMs)*time.Millisecond >= 500*time.Millisecond {
 				settings.Strm.RedirectCheckTimeoutMs = body.Strm.RedirectCheckTimeoutMs
 			}
 		}

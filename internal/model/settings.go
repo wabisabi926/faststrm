@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Settings 对应 settings.json 顶层结构
@@ -316,6 +317,58 @@ func DefaultSettings() *Settings {
 // intPtr 返回 int 的指针（用于设置可选配置字段）
 func intPtr(v int) *int {
 	return &v
+}
+
+// ==================== time.Duration 便捷 getter ====================
+// 字段保留 JSON 里的 int/int64（毫秒/秒/分钟单位，保持兼容），
+// 内部实现统一用 time.Duration，避免调用方到处写 `time.Duration(x) * time.Millisecond`。
+
+// RedirectCheckTimeout STRM 重定向可达性检查超时。默认 5s。
+func (s *StrmSettings) RedirectCheckTimeout() time.Duration {
+	if s.RedirectCheckTimeoutMs <= 0 {
+		return 5 * time.Second
+	}
+	return time.Duration(s.RedirectCheckTimeoutMs) * time.Millisecond
+}
+
+// PollInterval 生活监控轮询间隔。默认 10s，最小值 1s，0 用默认。
+func (l *LifeMonitorSettings) PollIntervalDur() time.Duration {
+	if l.PollInterval <= 0 {
+		return 10 * time.Second
+	}
+	return time.Duration(l.PollInterval) * time.Second
+}
+
+// RetryDelay 生活监控拉取失败重试间隔。默认 1s。
+func (l *LifeMonitorSettings) RetryDelay() time.Duration {
+	if l.RetryDelayMs <= 0 {
+		return time.Second
+	}
+	return time.Duration(l.RetryDelayMs) * time.Millisecond
+}
+
+// TransferStallTimeout 单个事件处理无进展超时；0 表示不限制（返回 0 让调用方判断）。
+func (l *LifeMonitorSettings) TransferStallTimeout() time.Duration {
+	if l.TransferStallTimeoutMinutes <= 0 {
+		return 0
+	}
+	return time.Duration(l.TransferStallTimeoutMinutes) * time.Minute
+}
+
+// DedupWindow 去重窗口。默认 24h。
+func (l *LifeMonitorSettings) DedupWindow() time.Duration {
+	if l.DedupWindowHours <= 0 {
+		return 24 * time.Hour
+	}
+	return time.Duration(l.DedupWindowHours) * time.Hour
+}
+
+// RateLimit 115 API 调用最小间隔。默认 1s。
+func (l *LifeMonitorSettings) RateLimit() time.Duration {
+	if l.RateLimitMs <= 0 {
+		return time.Second
+	}
+	return time.Duration(l.RateLimitMs) * time.Millisecond
 }
 
 // ==================== P1-4 高级模板渲染 ====================

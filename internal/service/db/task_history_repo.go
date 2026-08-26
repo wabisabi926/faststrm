@@ -92,6 +92,9 @@ func NewTaskHistoryRepo(db *sql.DB) (*TaskHistoryRepo, error) {
 
 // CreateExecution 创建一条执行记录（返回新 id）
 func (r *TaskHistoryRepo) CreateExecution(ctx context.Context, e TaskExecution) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
 	summaryB, _ := json.Marshal(e.Summary)
 	res, err := r.db.ExecContext(ctx, `INSERT INTO task_executions
 (task_id, account, origin_path, target_path, status, started_at, ended_at, duration_ms, summary_json, error, created_at)
@@ -106,6 +109,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 // UpdateExecution 局部更新
 func (r *TaskHistoryRepo) UpdateExecution(ctx context.Context, id int64, patch map[string]any) error {
+	if r == nil || r.db == nil {
+		return nil
+	}
 	if len(patch) == 0 {
 		return nil
 	}
@@ -128,6 +134,9 @@ func (r *TaskHistoryRepo) UpdateExecution(ctx context.Context, id int64, patch m
 
 // CompleteExecution 快速标记完成（对应 TS completeTaskExecution）
 func (r *TaskHistoryRepo) CompleteExecution(ctx context.Context, id int64, status string, summary TaskExecutionSummary, errStr string, durationMs int64) error {
+	if r == nil || r.db == nil {
+		return nil
+	}
 	patch := map[string]any{
 		"status":       status,
 		"summary_json": summary,
@@ -145,6 +154,9 @@ func (r *TaskHistoryRepo) CompleteExecution(ctx context.Context, id int64, statu
 
 // AddLog 追加一条日志
 func (r *TaskHistoryRepo) AddLog(ctx context.Context, executionID int64, seq int, line string) error {
+	if r == nil || r.db == nil {
+		return nil
+	}
 	_, err := r.db.ExecContext(ctx, `INSERT INTO task_logs(execution_id, seq, line, created_at) VALUES (?, ?, ?, ?)`,
 		executionID, seq, line, NowMs())
 	return err
@@ -161,6 +173,9 @@ type TaskHistoryQuery struct {
 
 // Query 查询执行历史
 func (r *TaskHistoryRepo) Query(ctx context.Context, q TaskHistoryQuery) ([]TaskExecution, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
 	where := []string{"1=1"}
 	args := []any{}
 	if q.TaskID != "" {
@@ -211,6 +226,9 @@ FROM task_executions WHERE %s ORDER BY created_at DESC, id DESC LIMIT ?`, join(w
 
 // GetLogs 读取某执行的日志（按 seq asc，可 limit）
 func (r *TaskHistoryRepo) GetLogs(ctx context.Context, executionID int64, limit int) ([]string, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
 	if limit <= 0 {
 		limit = 20000
 	}

@@ -187,7 +187,24 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 		}
 
 		if lookupName != req.Name {
+			// 改名：先把除 Name 外的其他字段一并同步（Cookie/AccountType/Account/Password/URL），
+			// 避免「同时改名字 + 改 Cookie」场景下非 Name 字段更新被悄悄丢弃
 			acc.Name = req.Name
+			if req.Cookie != "" {
+				acc.Cookie = req.Cookie
+			}
+			if req.AccountType != "" {
+				acc.AccountType = req.AccountType
+			}
+			if req.Account != "" {
+				acc.Account = req.Account
+			}
+			if req.Password != "" {
+				acc.Password = req.Password
+			}
+			if req.URL != "" {
+				acc.URL = req.URL
+			}
 			acc.LastCookieCheck = now
 			acc.CookieValid = &cookieValid
 			if err := accountStore.Delete(lookupName); err != nil {

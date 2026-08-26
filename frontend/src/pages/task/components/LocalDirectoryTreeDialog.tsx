@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import axiosInstance from "@/lib/axios";
+import { axios, axiosInstance } from "@/lib/axios";
 import { ChevronRight, ChevronDown, Folder, Loader2, HardDrive, AlertCircle, CheckCircle2 } from "lucide-react";
 import {
   Dialog,
@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { DirectoryNodeApi } from "@/types/api";
 
 interface TreeNode {
   name: string;
@@ -106,7 +107,7 @@ export function LocalDirectoryTreeDialog({
         });
 
         if (response.data.code === 200) {
-          const children = (response.data.data || []).map((n: any) => ({ ...n, id: String(n.id) }));
+          const children = (response.data.data || []).map((n: DirectoryNodeApi) => ({ ...n, id: String(n.id) }));
           const updatedTree = updateTreeNode(tree, node.id, {
             ...node,
             children: children,
@@ -203,9 +204,13 @@ export function LocalDirectoryTreeDialog({
           (listRes.data && listRes.data.message) ||
           "无法访问该路径（请检查沙箱授权 / 权限 / 路径是否存在）",
       });
-    } catch (e: any) {
-      const msg =
-        e?.response?.data?.message || e?.message || "校验路径时网络错误";
+    } catch (e: unknown) {
+      let msg = "校验路径时网络错误";
+      if (axios.isAxiosError(e)) {
+        msg = (e.response?.data as { message?: string } | undefined)?.message || e.message || msg;
+      } else if (e instanceof Error) {
+        msg = e.message || msg;
+      }
       setManualCheck({ status: "err", message: msg });
     }
   };

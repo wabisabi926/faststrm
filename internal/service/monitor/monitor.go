@@ -108,11 +108,7 @@ func NewMonitor(
 	// 初始化去重器
 	var dedup *EventDeduplicator
 	if config.EnableDedup {
-		dedupWindow := time.Duration(config.DedupWindowHours) * time.Hour
-		if dedupWindow <= 0 {
-			dedupWindow = 24 * time.Hour
-		}
-		dedup = NewEventDeduplicator(dedupWindow)
+		dedup = NewEventDeduplicator(config.DedupWindow())
 	}
 
 	var dbPtr *sql.DB
@@ -169,11 +165,7 @@ func (m *Monitor) Start(ctx context.Context, account string) error {
 	// 初始化 API 限流器
 	var rateLimiter *client115.APIRateLimiter
 	if config.EnableRateLimit {
-		rateLimitInterval := time.Duration(config.RateLimitMs) * time.Millisecond
-		if rateLimitInterval <= 0 {
-			rateLimitInterval = 1 * time.Second
-		}
-		rateLimiter = client115.NewAPIRateLimiter(rateLimitInterval)
+		rateLimiter = client115.NewAPIRateLimiter(config.RateLimit())
 	}
 
 	accMon := &AccountMonitor{
@@ -198,7 +190,7 @@ func (m *Monitor) Start(ctx context.Context, account string) error {
 	m.accounts[account] = accMon
 	m.mu.Unlock()
 
-	logger.S().Infof("[Monitor] 启动监控: account=%s, 轮询间隔=%ds", account, config.PollInterval)
+	logger.S().Infof("[Monitor] 启动监控: account=%s, 轮询间隔=%v", account, config.PollIntervalDur())
 
 	go m.pollLoop(accCtx, account)
 
@@ -267,11 +259,7 @@ func (m *Monitor) Refresh() {
 
 	// 更新去重器配置
 	if config.EnableDedup && m.dedup == nil {
-		dedupWindow := time.Duration(config.DedupWindowHours) * time.Hour
-		if dedupWindow <= 0 {
-			dedupWindow = 24 * time.Hour
-		}
-		m.dedup = NewEventDeduplicator(dedupWindow)
+		m.dedup = NewEventDeduplicator(config.DedupWindow())
 	} else if !config.EnableDedup {
 		m.dedup = nil
 	}
@@ -381,7 +369,7 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 // 使用 time.Timer 而非 time.Ticker，以支持动态调整轮询间隔
 func (m *Monitor) pollLoop(ctx context.Context, account string) {
 	config := m.settingsFn()
-	interval := time.Duration(pollIntervalSeconds(config.PollInterval)) * time.Second
+	interval := pollIntervalDur(config)
 
 	// 首次立即触发
 	timer := time.NewTimer(0)
@@ -420,7 +408,7 @@ func (m *Monitor) pollLoop(ctx context.Context, account string) {
 
 			// 重置 timer（读取最新间隔，支持热重载）
 			config = m.settingsFn()
-			interval = time.Duration(pollIntervalSeconds(config.PollInterval)) * time.Second
+			interval = pollIntervalDur(config)
 			timer.Reset(interval)
 		}
 	}
@@ -582,10 +570,7 @@ func (m *Monitor) pullEventsWithRetry(
 	if maxRetries <= 0 {
 		maxRetries = 3
 	}
-	retryDelayMs := config.RetryDelayMs
-	if retryDelayMs <= 0 {
-		retryDelayMs = 1000
-	}
+	retryDelay := config.RetryDelay()
 
 	var lastErr error
 	for attempt := maxRetries; attempt >= 0; attempt-- {
@@ -607,7 +592,7 @@ func (m *Monitor) pullEventsWithRetry(
 		}
 
 		// 指数退避
-		delay := time.Duration(maxRetries-attempt+1) * time.Duration(retryDelayMs) * time.Millisecond
+		delay := time.Duration(maxRetries-attempt+1) * retryDelay
 		logger.S().Warnf("[Monitor] 拉取事件失败 account=%s, 剩余重试=%d, 等待=%v: %v",
 			account, attempt, delay, err)
 
@@ -768,12 +753,12 @@ func (m *Monitor) markAccountError(account, errMsg string) {
 	}
 }
 
-// pollIntervalSeconds 计算轮询间隔（秒），最小 5
-func pollIntervalSeconds(configured int) int {
-	if configured < 5 {
-		return 30
+// pollIntervalDur 计算轮询间隔（最小 5s，低于 5 兜底到 30s 防止配置打错打崩 115 API）
+func pollIntervalDur(s model.LifeMonitorSettings) time.Duration {
+	if s.PollInterval < 5 {
+		return 30 * time.Second
 	}
-	return configured
+	return s.PollIntervalDur()
 }
 
 // GetDedupStats 获取去重器统计信息
