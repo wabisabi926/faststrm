@@ -29,9 +29,9 @@ const (
 	// ImageMaxWidth 通知图片默认最大宽度（对齐 qmediasync 竖版海报效果）
 	ImageMaxWidth = 720
 	// metadataPollIntervalDefault 刮削轮询间隔默认值
-	metadataPollIntervalDefault = 5 * time.Second
+	metadataPollIntervalDefault = 3 * time.Second
 	// metadataPollTimeoutDefault 刮削轮询超时默认值
-	metadataPollTimeoutDefault = 5 * time.Minute
+	metadataPollTimeoutDefault = 60 * time.Second
 )
 
 // 刮削轮询参数（变量而非常量，方便测试时覆盖）
