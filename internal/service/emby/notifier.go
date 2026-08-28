@@ -28,10 +28,16 @@ const (
 	PlaybackCacheTTL = 5 * time.Minute
 	// ImageMaxWidth 通知图片默认最大宽度（对齐 qmediasync 竖版海报效果）
 	ImageMaxWidth = 720
-	// MetadataPollInterval 刮削轮询间隔（每 5 秒查一次 Emby 详情 API）
-	MetadataPollInterval = 5 * time.Second
-	// MetadataPollTimeout 刮削轮询超时（最多等 5 分钟，国内 TMDB 刮削慢但也该完成了）
-	MetadataPollTimeout = 5 * time.Minute
+	// metadataPollIntervalDefault 刮削轮询间隔默认值
+	metadataPollIntervalDefault = 5 * time.Second
+	// metadataPollTimeoutDefault 刮削轮询超时默认值
+	metadataPollTimeoutDefault = 5 * time.Minute
+)
+
+// 刮削轮询参数（变量而非常量，方便测试时覆盖）
+var (
+	metadataPollInterval = metadataPollIntervalDefault
+	metadataPollTimeout  = metadataPollTimeoutDefault
 )
 
 // ==================== Dispatcher 接口 ====================
@@ -159,12 +165,12 @@ func isMetadataReady(detail *ItemDetail) bool {
 //
 // 策略:
 //  1. 首次立即查一次 → 已有数据（重新扫描）→ 直接返回，不轮询
-//  2. 首次没数据 → 每 MetadataPollInterval 查一次
-//  3. 超过 MetadataPollTimeout → 放弃等待，返回最后一次查到的（兜底）
+//  2. 首次没数据 → 每 metadataPollInterval 查一次
+//  3. 超过 metadataPollTimeout → 放弃等待，返回最后一次查到的（兜底）
 //  4. ctx 取消 → 立即返回
 func (n *Notifier) waitForMetadata(ctx context.Context, client *Client, itemID string) (*ItemDetail, error) {
 	// 给等待一个总超时（防止永远等）
-	waitCtx, waitCancel := context.WithTimeout(ctx, MetadataPollTimeout)
+	waitCtx, waitCancel := context.WithTimeout(ctx, metadataPollTimeout)
 	defer waitCancel()
 
 	var lastDetail *ItemDetail
@@ -178,8 +184,8 @@ func (n *Notifier) waitForMetadata(ctx context.Context, client *Client, itemID s
 	}
 
 	// 没数据 → 轮询等刮削
-	logger.S().Infof("[Emby] 刮削元数据未就绪，开始轮询等待 id=%s timeout=%v", itemID, MetadataPollTimeout)
-	ticker := time.NewTicker(MetadataPollInterval)
+	logger.S().Infof("[Emby] 刮削元数据未就绪，开始轮询等待 id=%s timeout=%v", itemID, metadataPollTimeout)
+	ticker := time.NewTicker(metadataPollInterval)
 	defer ticker.Stop()
 	polls := 0
 
@@ -202,7 +208,7 @@ func (n *Notifier) waitForMetadata(ctx context.Context, client *Client, itemID s
 			}
 			lastDetail = detail
 			if isMetadataReady(detail) {
-				logger.S().Infof("[Emby] 刮削元数据已就绪 id=%s polls=%d waited=%v", itemID, polls, time.Duration(polls)*MetadataPollInterval)
+				logger.S().Infof("[Emby] 刮削元数据已就绪 id=%s polls=%d waited=%v", itemID, polls, time.Duration(polls)*metadataPollInterval)
 				return detail, nil
 			}
 			if polls%6 == 0 { // 每 30s 打一次日志（5s * 6）
