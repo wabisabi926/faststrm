@@ -45,9 +45,9 @@ jobs:
 
     - name: Run Go tests with coverage
       run: |
-        # 排除 SPA embed 产物、node_modules 里的 Go 代码（vendor）、本地调试工具（tools/）
-        # tools/check_db 等为一次性调试脚本，依赖硬编码本地路径，无法在 CI 中运行
-        PKGS=$(go list ./... | grep -v '/tools/')
+        # 排除 SPA embed 产物、node_modules 里的 Go 代码（vendor）、本地调试工具（tools/、scripts/*.go）
+        # tools/check_db、scripts/probe_db.go 等为一次性调试脚本，依赖硬编码本地路径，无法在 CI 中运行
+        PKGS=$(go list ./... | grep -v -E '/tools/|/scripts/')
         COVERPKGS=$(echo "$PKGS" | paste -sd, -)
         go test $PKGS -count=1 -coverprofile=coverage.out \
           -coverpkg="$COVERPKGS" \

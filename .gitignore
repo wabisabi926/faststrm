@@ -63,6 +63,9 @@ tmp/
 # ==== 本地调试工具（依赖硬编码本地路径，不进仓库）====
 # tools/check_db 等为一次性调试脚本，请保留在本地开发环境
 tools/
+# scripts/probe_db.go 为临时 SQLite 探查脚本，依赖本地路径
+# 后续新增的 Go 调试脚本请统一放到 tools/ 目录（已被忽略）
+scripts/probe_db.go
 
 # ==== Vite / React ====
 frontend/node_modules/
