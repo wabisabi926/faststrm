@@ -2,7 +2,7 @@ log:
   file: logs/faststrm.log
 httpHost: :8090
 strm:
-  videoExt: [.mp4, .mkv, .ts, .avi, .mov, .wmv, .flv, .rmvb, .webm]
+  videoExt: [.mp4, .mkv, .ts, .avi, .mov, .wmv, .flv, .rmvb, .webm, .iso]
   minVideoSize: 52428800
   metaExt: [.nfo, .ass, .srt, .ssa, .sub, .vtt, .jpg, .jpeg, .png, .bmp]
 adminUsername: admin
