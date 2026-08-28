@@ -270,9 +270,13 @@ func DefaultSettings() *Settings {
 			RedirectCheckTimeoutMs:       5000,
 		},
 		Emby: EmbySettings{
-			RefreshOnCreate: true,
-			RefreshOnDelete: true,
-			DebounceSeconds: 10,
+			NotifyMediaAdded:     true,
+			NotifyMediaRemoved:   true,
+			NotifyPlayback:       true,
+			PlaybackShowProgress: true,
+			RefreshOnCreate:      true,
+			RefreshOnDelete:      true,
+			DebounceSeconds:      10,
 		},
 		Telegram: TelegramSettings{
 			AccountAlerts: &AccountAlertsSettings{

@@ -41,7 +41,7 @@ export const DEFAULT_NOTIFY_SETTINGS: EmbySettings = {
   syncDeleteEnabled: false,
   syncDeleteDryRun: true,
   syncDeleteNotify: true,
-  refreshOnCreate: false,
-  refreshOnDelete: false,
+  refreshOnCreate: true,
+  refreshOnDelete: true,
   debounceSeconds: 10,
 };
