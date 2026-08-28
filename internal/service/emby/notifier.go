@@ -28,6 +28,10 @@ const (
 	PlaybackCacheTTL = 5 * time.Minute
 	// ImageMaxWidth 通知图片默认最大宽度（对齐 qmediasync 竖版海报效果）
 	ImageMaxWidth = 720
+	// MetadataPollInterval 刮削轮询间隔（每 5 秒查一次 Emby 详情 API）
+	MetadataPollInterval = 5 * time.Second
+	// MetadataPollTimeout 刮削轮询超时（最多等 5 分钟，国内 TMDB 刮削慢但也该完成了）
+	MetadataPollTimeout = 5 * time.Minute
 )
 
 // ==================== Dispatcher 接口 ====================
@@ -116,6 +120,96 @@ func (n *Notifier) getDetailWithSemaphore(ctx context.Context, client *Client, i
 		return nil, ctx.Err()
 	}
 	return client.GetItemDetailWithRetry(ctx, itemID)
+}
+
+// isMetadataReady 判断 ItemDetail 的刮削元数据是否已就绪
+// Emby library.new webhook 在 Item 创建时就发了，但此时刮削可能还没完成
+// 我们用 Overview/Genres/ImageTags/Primary 任一非空作为"刮削完成"的标志
+func isMetadataReady(detail *ItemDetail) bool {
+	if detail == nil {
+		return false
+	}
+	// 有简介 → 刮削完成
+	if detail.Overview != "" {
+		return true
+	}
+	// 有流派 → 刮削完成
+	if len(detail.Genres) > 0 {
+		return true
+	}
+	// 有 Primary 海报 → 刮削完成
+	if detail.ImageTags != nil {
+		if _, ok := detail.ImageTags["Primary"]; ok {
+			return true
+		}
+	}
+	// 有评分 → 刮削完成
+	if detail.CommunityRating > 0 {
+		return true
+	}
+	// 有年份（部分源不返回但 Overview 也没的话可能是未刮削）
+	if detail.ProductionYear > 0 && detail.People != nil {
+		return true
+	}
+	return false
+}
+
+// waitForMetadata 轮询 Emby 详情 API，等刮削元数据就绪后返回
+// 解决国内 Emby 刮削慢导致 webhook 到了但元数据还没落库的问题
+//
+// 策略:
+//  1. 首次立即查一次 → 已有数据（重新扫描）→ 直接返回，不轮询
+//  2. 首次没数据 → 每 MetadataPollInterval 查一次
+//  3. 超过 MetadataPollTimeout → 放弃等待，返回最后一次查到的（兜底）
+//  4. ctx 取消 → 立即返回
+func (n *Notifier) waitForMetadata(ctx context.Context, client *Client, itemID string) (*ItemDetail, error) {
+	// 给等待一个总超时（防止永远等）
+	waitCtx, waitCancel := context.WithTimeout(ctx, MetadataPollTimeout)
+	defer waitCancel()
+
+	var lastDetail *ItemDetail
+	var lastErr error
+
+	// 首次立即查一次（已有刮削数据的话直接返回，不轮询）
+	lastDetail, lastErr = n.getDetailWithSemaphore(waitCtx, client, itemID)
+	if lastErr == nil && isMetadataReady(lastDetail) {
+		logger.S().Debugf("[Emby] 刮削元数据已就绪（首次查询）id=%s", itemID)
+		return lastDetail, nil
+	}
+
+	// 没数据 → 轮询等刮削
+	logger.S().Infof("[Emby] 刮削元数据未就绪，开始轮询等待 id=%s timeout=%v", itemID, MetadataPollTimeout)
+	ticker := time.NewTicker(MetadataPollInterval)
+	defer ticker.Stop()
+	polls := 0
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			logger.S().Warnf("[Emby] 轮询刮削超时，放弃等待 id=%s polls=%d err=%v", itemID, polls, waitCtx.Err())
+			if lastDetail != nil {
+				return lastDetail, nil // 返回最后一次查到的（可能部分字段有了）
+			}
+			return nil, waitCtx.Err()
+
+		case <-ticker.C:
+			polls++
+			detail, err := n.getDetailWithSemaphore(waitCtx, client, itemID)
+			if err != nil {
+				lastErr = err
+				logger.S().Debugf("[Emby] 轮询刮削第%d次失败 id=%s: %v", polls, itemID, err)
+				continue
+			}
+			lastDetail = detail
+			if isMetadataReady(detail) {
+				logger.S().Infof("[Emby] 刮削元数据已就绪 id=%s polls=%d waited=%v", itemID, polls, time.Duration(polls)*MetadataPollInterval)
+				return detail, nil
+			}
+			if polls%6 == 0 { // 每 30s 打一次日志（5s * 6）
+				logger.S().Infof("[Emby] 轮询刮削中 id=%s polls=%d ...", itemID, polls)
+			}
+		}
+	}
 }
 // getClient 从当前设置动态创建 Emby Client（对齐 qmediasync 行为）
 // 每次调用都读取最新配置并创建新 Client，确保 Web UI 修改设置后立即生效
@@ -239,7 +333,7 @@ func (n *Notifier) handleMediaAdded(ctx context.Context, item ItemInfo) error {
 func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 	// 从当前配置动态创建 Client（对齐 qmediasync 行为）
 	client := n.getClient()
-	// Emby client 未配置时：用 webhook 自带字段发通知
+	// Emby client 未配置时：用 webhook 自带字段发通知（没法轮询刮削）
 	if client == nil {
 		logger.S().Warnf("[Emby] Emby client 未配置，使用 webhook 字段发电影入库通知 id=%s", item.ID)
 		detail := itemInfoToDetail(item)
@@ -250,13 +344,14 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 	// 先用 webhook 自带字段构造 ItemDetail（Overview/Genres/ProductionYear/ImageTags 都有）
 	webhookDetail := itemInfoToDetail(item)
 
-	// 再请求详情补充 People（演员）和 CommunityRating（评分）
-	detail, err := n.getDetailWithSemaphore(ctx, client, item.ID)
+	// 轮询等待刮削完成（首次已有数据则不轮询，超时兜底）
+	// 解决国内 Emby 刮削慢导致 webhook 到了但元数据还没落库的问题
+	detail, err := n.waitForMetadata(ctx, client, item.ID)
 	if err != nil || detail == nil {
-		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v，使用 webhook 字段发通知（缺演员/评分）", item.ID, err)
+		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v，使用 webhook 字段发通知", item.ID, err)
 		detail = webhookDetail
 	} else {
-		// merge：webhook 有 overview/genres/year，详情有 people/rating，互补
+		// merge：详情 API 的数据覆盖 webhook 的（刮削完成后详情更完整）
 		if len(detail.People) > 0 {
 			webhookDetail.People = detail.People
 		}
@@ -303,11 +398,11 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 
 	// 从当前配置动态创建 Client（对齐 qmediasync 行为）
 	client := n.getClient()
-	// 获取详情用于通知（同步获取，失败则用 ItemInfo 兜底）
+	// 轮询等待刮削完成（解决国内刮削慢时序问题）
 	var detail *ItemDetail
 	if client != nil {
 		var err error
-		detail, err = n.getDetailWithSemaphore(ctx, client, item.ID)
+		detail, err = n.waitForMetadata(ctx, client, item.ID)
 		if err != nil {
 			logger.S().Warnf("[Emby] 获取剧集详情失败 id=%s: %v", item.ID, err)
 		}
