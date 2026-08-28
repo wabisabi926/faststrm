@@ -64,6 +64,10 @@ type Notifier struct {
 	// 可选：删除同步实例（library.deleted 事件触发）
 	syncDelete *SyncDelete
 
+	// detailSem 限制同时请求 Emby /Items/{id} 详情的并发数
+	// 详情只补 People/Rating，不值得开大量并发打爆 Emby
+	detailSem chan struct{}
+
 	// 剧集入库缓冲
 	addedMu     sync.Mutex
 	addedBuffer map[string]*episodeBuffer
@@ -97,9 +101,22 @@ func NewNotifier(dispatcher NotifierDispatcher, settingsFn SettingsProvider) *No
 		deletedBuffer: make(map[string]*episodeBuffer),
 		deletedTimers: make(map[string]*time.Timer),
 		playbackCache: make(map[string]time.Time),
+		detailSem:     make(chan struct{}, 3), // 最多 3 个并发详情请求
 	}
 }
 
+
+// getDetailWithSemaphore 在调用 GetItemDetailWithRetry 前获取并发令牌
+// 防止密集入库时大量 goroutine 同时打爆 Emby HTTP 连接池
+func (n *Notifier) getDetailWithSemaphore(ctx context.Context, client *Client, itemID string) (*ItemDetail, error) {
+	select {
+	case n.detailSem <- struct{}{}:
+		defer func() { <-n.detailSem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return client.GetItemDetailWithRetry(ctx, itemID)
+}
 // getClient 从当前设置动态创建 Emby Client（对齐 qmediasync 行为）
 // 每次调用都读取最新配置并创建新 Client，确保 Web UI 修改设置后立即生效
 // 同时注入缓存的 embyUserID（若配置未变更），避免重复请求 /emby/Users
@@ -234,7 +251,7 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 	webhookDetail := itemInfoToDetail(item)
 
 	// 再请求详情补充 People（演员）和 CommunityRating（评分）
-	detail, err := client.GetItemDetailWithRetry(ctx, item.ID)
+	detail, err := n.getDetailWithSemaphore(ctx, client, item.ID)
 	if err != nil || detail == nil {
 		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v，使用 webhook 字段发通知（缺演员/评分）", item.ID, err)
 		detail = webhookDetail
@@ -290,7 +307,7 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 	var detail *ItemDetail
 	if client != nil {
 		var err error
-		detail, err = client.GetItemDetailWithRetry(ctx, item.ID)
+		detail, err = n.getDetailWithSemaphore(ctx, client, item.ID)
 		if err != nil {
 			logger.S().Warnf("[Emby] 获取剧集详情失败 id=%s: %v", item.ID, err)
 		}
@@ -360,7 +377,7 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 	var seriesDetail *ItemDetail
 	client := n.getClient()
 	if client != nil {
-		if d, err := client.GetItemDetailWithRetry(ctx, seriesID); err == nil && d != nil {
+		if d, err := n.getDetailWithSemaphore(ctx, client, seriesID); err == nil && d != nil {
 			seriesDetail = d
 		}
 	}
@@ -576,7 +593,7 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 	// 3. 仅当需要简介时才请求详情（简介不在 Webhook 中）
 	client := n.getClient()
 	if showOverview && client != nil && event.Item != nil && event.Item.ID != "" {
-		if detail, err := client.GetItemDetailWithRetry(ctx, event.Item.ID); err == nil && detail != nil {
+		if detail, err := n.getDetailWithSemaphore(ctx, client, event.Item.ID); err == nil && detail != nil {
 			item.Overview = detail.Overview
 			item.ProductionYear = detail.ProductionYear
 			item.CommunityRating = detail.CommunityRating

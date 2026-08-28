@@ -20,7 +20,7 @@ import (
 
 const (
 	// DefaultTimeout HTTP 默认超时（对齐 TS DEFAULT_TIMEOUT）
-	DefaultTimeout = 10 * time.Second
+	DefaultTimeout = 5 * time.Second
 )
 
 // ==================== 类型定义（对齐 TS emby/types.ts） ====================
@@ -265,8 +265,8 @@ func (c *Client) tryGetDetailWithAnyUser(ctx context.Context, itemID string) (*I
 // - 处理临时网络错误、用户上下文暂时失效等场景
 // - 失败时返回 nil（qmediasync 风格：不发送降级通知）
 func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*ItemDetail, error) {
-	const maxRetries = 5
-	const initialDelay = 500 * time.Millisecond
+	const maxRetries = 2
+	const initialDelay = 200 * time.Millisecond
 
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
