@@ -61,17 +61,27 @@ type UserInfo struct {
 }
 
 // ItemInfo Emby Webhook 项基础信息（含 Path 用于删除同步）
+// ItemInfo Emby webhook Item 字段（对齐 Emby 实际推送的 payload）
+// Emby 的 library.new webhook 已携带 Overview/Genres/ProductionYear，
+// 不需要额外调 /Items/{id} 详情接口就能构造完整通知
+// （只有 People/CommunityRating 需要详情接口补充）
 type ItemInfo struct {
 	ID                string            `json:"Id"`
 	Name              string            `json:"Name"`
 	Type              string            `json:"Type,omitempty"`
 	MediaType         string            `json:"MediaType,omitempty"`
 	Path              string            `json:"Path,omitempty"`
+	FileName          string            `json:"FileName,omitempty"`
+	IsFolder          bool              `json:"IsFolder,omitempty"`
 	SeriesName        string            `json:"SeriesName,omitempty"`
 	SeriesID          string            `json:"SeriesId,omitempty"`
+	SeasonName        string            `json:"SeasonName,omitempty"`
 	SeasonID          string            `json:"SeasonId,omitempty"`
 	ParentIndexNumber int               `json:"ParentIndexNumber,omitempty"`
 	IndexNumber       int               `json:"IndexNumber,omitempty"`
+	ProductionYear    int               `json:"ProductionYear,omitempty"`
+	Genres            []string          `json:"Genres,omitempty"`
+	Overview          string            `json:"Overview,omitempty"`
 	ImageTags         map[string]string `json:"ImageTags,omitempty"`
 }
 

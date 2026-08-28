@@ -222,28 +222,43 @@ func (n *Notifier) handleMediaAdded(ctx context.Context, item ItemInfo) error {
 func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 	// 从当前配置动态创建 Client（对齐 qmediasync 行为）
 	client := n.getClient()
-	// Emby client 未配置时降级：用 webhook 中的 ItemInfo 直接通知
+	// Emby client 未配置时：用 webhook 自带字段发通知
 	if client == nil {
-		logger.S().Warnf("[Emby] Emby client 未配置，降级处理电影入库 id=%s", item.ID)
-		metadata := map[string]string{
-			"类型":   "电影",
-			"入库时间": formatNow(),
-			"备注":   "Emby API 未连接，无法获取详情",
-		}
-		msg := notify.FormatMessage("📚 Emby 入库通知", orDefault(item.Name, "未知"), metadata)
+		logger.S().Warnf("[Emby] Emby client 未配置，使用 webhook 字段发电影入库通知 id=%s", item.ID)
+		detail := itemInfoToDetail(item)
+		msg := FormatMovieNotification(detail, "library.new")
 		return n.dispatcher.Notify(ctx, msg)
 	}
 
+	// 先用 webhook 自带字段构造 ItemDetail（Overview/Genres/ProductionYear/ImageTags 都有）
+	webhookDetail := itemInfoToDetail(item)
+
+	// 再请求详情补充 People（演员）和 CommunityRating（评分）
 	detail, err := client.GetItemDetailWithRetry(ctx, item.ID)
 	if err != nil || detail == nil {
-		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v", item.ID, err)
-		// 降级：用 webhook 中的 ItemInfo 构造通知（仅基础信息）
-		metadata := map[string]string{
-			"入库时间": formatNow(),
-			"备注":   "详情获取失败，已降级为简版通知",
+		logger.S().Warnf("[Emby] 获取电影详情失败 id=%s: %v，使用 webhook 字段发通知（缺演员/评分）", item.ID, err)
+		detail = webhookDetail
+	} else {
+		// merge：webhook 有 overview/genres/year，详情有 people/rating，互补
+		if len(detail.People) > 0 {
+			webhookDetail.People = detail.People
 		}
-		msg := notify.FormatMessage("📚 Emby 电影入库通知", orDefault(item.Name, "未知"), metadata)
-		return n.dispatcher.Notify(ctx, msg)
+		if detail.CommunityRating > 0 {
+			webhookDetail.CommunityRating = detail.CommunityRating
+		}
+		if len(detail.Overview) > 0 {
+			webhookDetail.Overview = detail.Overview
+		}
+		if len(detail.Genres) > 0 {
+			webhookDetail.Genres = detail.Genres
+		}
+		if detail.ProductionYear > 0 {
+			webhookDetail.ProductionYear = detail.ProductionYear
+		}
+		if len(detail.ImageTags) > 0 {
+			webhookDetail.ImageTags = detail.ImageTags
+		}
+		detail = webhookDetail
 	}
 
 	msg := FormatMovieNotification(detail, "library.new")
@@ -655,6 +670,25 @@ const qmediasyncNotificationTemplate = `%s
 %s`
 
 // FormatMovieNotification 格式化电影入库通知（qmediasync 风格模板）
+
+// itemInfoToDetail 从 webhook ItemInfo 构造 ItemDetail
+// Emby library.new webhook 自带 Overview/Genres/ProductionYear/ImageTags，
+// 只有 People 和 CommunityRating 需要额外的 /Items/{id} 详情请求
+func itemInfoToDetail(item ItemInfo) *ItemDetail {
+	return &ItemDetail{
+		ID:                item.ID,
+		Name:              item.Name,
+		Type:              item.Type,
+		SeriesName:        item.SeriesName,
+		SeasonName:        item.SeasonName,
+		ParentIndexNumber: item.ParentIndexNumber,
+		IndexNumber:       item.IndexNumber,
+		ProductionYear:    item.ProductionYear,
+		Genres:            item.Genres,
+		Overview:          item.Overview,
+		ImageTags:         item.ImageTags,
+	}
+}
 func FormatMovieNotification(item *ItemDetail, eventType string) string {
 	if item == nil {
 		return ""
