@@ -32,11 +32,11 @@ jobs:
         elif [ -f ".changes/${VERSION}.md" ]; then
           echo "Found .changes/${VERSION}.md"
           NOTES_CONTENT=$(cat ".changes/${VERSION}.md")
-        # 其次从 docs/CHANGELOG.md 提取对应版本
-        elif [ -f "docs/CHANGELOG.md" ]; then
-          echo "Extracting v${VERSION} section from docs/CHANGELOG.md"
-          NOTES_CONTENT=$(awk "/^## v${VERSION}[[:space:]]/{found=1; next} /^## v/{if(found) exit} found" docs/CHANGELOG.md)
-        fi
+        # 其次从 wiki_drafts/版本更新日志.md 提取对应版本
+          elif [ -f "wiki_drafts/版本更新日志.md" ]; then
+            echo "Extracting v${VERSION} section from wiki_drafts/版本更新日志.md"
+            NOTES_CONTENT=$(awk "/^## v${VERSION}[[:space:]]/{found=1; next} /^## v/{if(found) exit} found" "wiki_drafts/版本更新日志.md")
+          fi
 
         if [ -n "$NOTES_CONTENT" ]; then
           echo "Using custom release notes."
