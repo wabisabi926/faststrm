@@ -100,12 +100,15 @@ jobs:
         go-version: '1.25'
         cache: true
 
+    - name: Install golangci-lint (goinstall 用本地 Go 1.25 编译，避开 release 是 go1.24 构建的版本不匹配)
+      run: |
+        go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+      env:
+        GOPROXY: https://proxy.golang.org,direct
+
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v6
-      with:
-        version: v1.64.8
-        args: --timeout=5m --config .golangci.yml
-        skip-save-cache: true
+      run: |
+        golangci-lint run --timeout=5m --config .golangci.yml ./...
       env:
         GOPROXY: https://proxy.golang.org,direct
 
