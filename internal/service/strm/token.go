@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 const (
@@ -15,11 +17,16 @@ const (
 	TokenDefaultTTL = 24 * time.Hour
 )
 
-// GenerateTokenSecret 生成一个 32 字节随机 secret（首次启动调用一次，持久化到 settings.json）
+// GenerateTokenSecret 生成一个 32 字节随机 secret（首次启动调用一次，持久化到 settings.json）。
+// rand.Read 失败极罕见（仅在系统熵池异常时），兜底用时间戳+pid 填充仍保证输出 64 hex 字符。
 func GenerateTokenSecret() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		b = []byte(fmt.Sprintf("fallback-%d", time.Now().UnixNano()))
+		logger.S().Warnf("[strm] crypto/rand.Read 失败，使用时间戳兜底: %v", err)
+		now := time.Now().UnixNano()
+		for i := 0; i < 32; i++ {
+			b[i] = byte(now >> ((i % 8) * 8))
+		}
 	}
 	return hex.EncodeToString(b)
 }

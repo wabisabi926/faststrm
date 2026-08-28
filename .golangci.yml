@@ -26,6 +26,24 @@ linters-settings:
     max-complexity: 25
     # 测试文件圈复杂度天然偏高（场景覆盖分支多），通过 exclude-rules 排除
 
+# ============================================================
+# 技术债登记册：16 个高复杂度函数（cyclop > 25），均带 //nolint:cyclop 注释
+# 这些函数处理状态机 / 事件处理 / 设置项映射逻辑，分支天然密集，
+# 拆分反而会降低可读性。中长期重构计划：
+#   1. 提取分支表驱动（map[state]handler）替代 if-else 链
+#   2. 用 strategy 模式封装 handler 子步骤
+#   3. 优先处理 Top 3（ExecuteTask / handleMoveEvent / handleRenameEvent）
+# 新增高复杂度函数时请评估是否可以拆分；如确实无法拆分，
+# 在函数上方加 //nolint:cyclop 注释并在本登记册追加条目。
+# ============================================================
+# Top 5（按复杂度排序，数字为当前 cyclop 测量值）：
+#   ExecuteTask              executor.go        112  任务执行主循环
+#   handleMoveEvent          event_move.go       96  115 移动事件处理
+#   handleRenameEvent        event_rename.go     90  115 重命名事件处理
+#   processEvent             event_handler.go    58  事件分发
+#   HandleSettingsPOST      emby.go              51  Emby 设置 POST handler
+# 其余 11 个函数：见各文件 //nolint:cyclop 注释处
+
 issues:
   exclude-dirs:
     - frontend/node_modules
