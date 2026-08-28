@@ -257,6 +257,9 @@ func DefaultSettings() *Settings {
 		StrmExtensions:     append([]string{}, DefaultStrmExtensions...),
 		DownloadExtensions: append([]string{}, DefaultDownloadExtensions...),
 		MediaMountPath:     []string{},
+		Enable302:          true, // 302 重定向 —— STRM 核心路由能力
+		EnablePathEncoding: true, // URL 路径编码 —— 含特殊字符的路径不编码会挂
+		RemoveExtraFiles:   true, // 删除多余 STRM —— 清理体验默认开启
 		Download: DownloadSettings{
 			StrmMaxConcurrent:     intPtr(20), // STRM 写入并发数默认 20
 			AutoDownloadMetadata:  true,       // 默认开启，保持向后兼容
