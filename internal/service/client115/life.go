@@ -45,24 +45,24 @@ var BehaviorTypeToName = map[int]string{
 
 // BehaviorNameToType 行为类型名称(string) -> 编号(int) 映射
 var BehaviorNameToType = map[string]int{
-	"upload_image_file":  1,
-	"upload_file":        2,
-	"star_image":         3,
-	"star_file":          4,
-	"move_image_file":    5,
-	"move_file":          6,
-	"browse_image":       7,
-	"browse_video":       8,
-	"browse_audio":       9,
-	"browse_document":    10,
-	"receive_files":      14,
-	"new_folder":         17,
-	"copy_folder":        18,
-	"folder_label":       19,
-	"folder_rename":      20,
-	"delete_file":        22,
-	"copy_file":          23,
-	"file_rename":        24,
+	"upload_image_file": 1,
+	"upload_file":       2,
+	"star_image":        3,
+	"star_file":         4,
+	"move_image_file":   5,
+	"move_file":         6,
+	"browse_image":      7,
+	"browse_video":      8,
+	"browse_audio":      9,
+	"browse_document":   10,
+	"receive_files":     14,
+	"new_folder":        17,
+	"copy_folder":       18,
+	"folder_label":      19,
+	"folder_rename":     20,
+	"delete_file":       22,
+	"copy_file":         23,
+	"file_rename":       24,
 }
 
 // CreateEventTypes 创建类事件（上传/新建/复制/接收）
@@ -131,9 +131,9 @@ type LifeClient struct {
 	fsClient   *Client // 复用 Client 通用请求能力（列目录 / 取路径等）
 
 	// 路径解析缓存
-	pathCache      sync.Map // key: parentID, value: cachedPathEntry —— 存 parentDirPath（含自身名）→ 兼容旧缓存结构
-	pathCacheMu    sync.RWMutex
-	pathCacheTTL   time.Duration
+	pathCache    sync.Map // key: parentID, value: cachedPathEntry —— 存 parentDirPath（含自身名）→ 兼容旧缓存结构
+	pathCacheMu  sync.RWMutex
+	pathCacheTTL time.Duration
 
 	// API 域名轮换
 	useAlternateHost bool
@@ -492,9 +492,9 @@ func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]f
 	}
 
 	var resp struct {
-		State    bool                 `json:"state"`
+		State     bool                  `json:"state"`
 		Ancestors []fsMediaAncestorNode `json:"ancestors"`
-		ErrMsg   string               `json:"errmsg,omitempty"`
+		ErrMsg    string                `json:"errmsg,omitempty"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parse fs_files_media response: %w (body=%s)", err, truncateBody(body, 256))
@@ -507,9 +507,9 @@ func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]f
 
 // ResolveDirPath 通过 cid 获取文件夹的完整云端路径（包含文件夹自身名称）。
 // 三级回退：
-//  1) 内存缓存 pathCache (key=cid)
-//  2) FsFilesMediaAncestors(cid) 祖先链 +  在父目录中 FsFiles 回查自身 Name
-//  3) 失败返回空串+error（不再伪造 /unknown/ 虚拟路径）
+//  1. 内存缓存 pathCache (key=cid)
+//  2. FsFilesMediaAncestors(cid) 祖先链 +  在父目录中 FsFiles 回查自身 Name
+//  3. 失败返回空串+error（不再伪造 /unknown/ 虚拟路径）
 func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, error) {
 	if cid == "" || cid == "0" {
 		return "", nil // 根目录没有路径
@@ -675,18 +675,18 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 					}
 				}
 				if !foundAtRoot {
-				// 不在根目录 → 遍历根目录下每个子文件夹（cid），递归列其内容，找到 cid==fileID 且名匹配时返回 parentName/fileName
-				dirCount := 0
-				for i := range resp.Data {
-					e := &resp.Data[i]
-					if !e.IsDir {
-						continue
+					// 不在根目录 → 遍历根目录下每个子文件夹（cid），递归列其内容，找到 cid==fileID 且名匹配时返回 parentName/fileName
+					dirCount := 0
+					for i := range resp.Data {
+						e := &resp.Data[i]
+						if !e.IsDir {
+							continue
+						}
+						dirCount++
 					}
-					dirCount++
-				}
-				logger.S().Infof("[LifeClient] ResolvePathByFileID 根目录列到 %d 个子文件夹，开始遍历查找 fid=%s name=%s",
-					dirCount, fileID, fileName)
-				for i := range resp.Data {
+					logger.S().Infof("[LifeClient] ResolvePathByFileID 根目录列到 %d 个子文件夹，开始遍历查找 fid=%s name=%s",
+						dirCount, fileID, fileName)
+					for i := range resp.Data {
 						e := &resp.Data[i]
 						if !e.IsDir {
 							continue

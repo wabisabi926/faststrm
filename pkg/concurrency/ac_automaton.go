@@ -21,7 +21,7 @@ type acNode struct {
 // StringMatcher 是 Aho-Corasick 不区分大小写的多模式匹配器。
 // 构建一次可在多文本上并发只读使用。
 type StringMatcher struct {
-	root   *acNode
+	root         *acNode
 	patternCount int // 输入模式总数（用于 AC vs contains 的阈值判断）
 }
 

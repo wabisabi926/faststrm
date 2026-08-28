@@ -12,8 +12,8 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/model"
-	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 )
 
 // ================================================================

@@ -204,15 +204,15 @@ func TestShouldGenerateStrm_BlacklistContains(t *testing.T) {
 	// 若需 glob 风格如 "*-trailer.*"，可后续引入 path.Match。
 	blacklist := []string{"trailer", "sample", ".cd2."}
 	cases := []struct {
-		name   string
-		want   bool
+		name string
+		want bool
 	}{
 		{"Avatar.2009.mkv", true},
-		{"Avatar.2009-trailer.mkv", false},        // 命中 trailer
-		{"Sample.avi", false},                      // 命中 sample（大小写不敏感）
-		{"movie.cd2.mkv", false},                    // 命中 .cd2. 子串
-		{"my TRAILER video.mp4", false},             // 大小写不敏感
-		{"nothing_special_here.iso", true},          // 未命中
+		{"Avatar.2009-trailer.mkv", false}, // 命中 trailer
+		{"Sample.avi", false},              // 命中 sample（大小写不敏感）
+		{"movie.cd2.mkv", false},           // 命中 .cd2. 子串
+		{"my TRAILER video.mp4", false},    // 大小写不敏感
+		{"nothing_special_here.iso", true}, // 未命中
 	}
 	for _, c := range cases {
 		reason, pass := shouldGenerateStrm(c.name, 1<<30, 0, blacklist)

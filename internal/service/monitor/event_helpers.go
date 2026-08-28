@@ -64,8 +64,8 @@ func matchPathMapping(cloudPath string, mappings []model.MonitorPathMapping, acc
 // cleanupOldStrmForOtherToMedia 在 OTHER_TO_MEDIA 象限清理旧 STRM
 // 场景：文件从非媒体目录移动/重命名到媒体目录
 // 旧 STRM 可能存在于以下位置：
-//   1. 旧云路径映射的本地目录（如 oldCloudPath="小王子" → 本地旧目录）
-//   2. 通过文件名在映射本地目录中查找
+//  1. 旧云路径映射的本地目录（如 oldCloudPath="小王子" → 本地旧目录）
+//  2. 通过文件名在映射本地目录中查找
 func (m *Monitor) cleanupOldStrmForOtherToMedia(
 	ctx context.Context,
 	account string,
@@ -175,9 +175,9 @@ func (m *Monitor) deleteOldStrmAssetsAtPath(
 // cleanupOldStrmByFileID 清理同 file_id 的旧 STRM 文件
 // 对齐参考项目 create() L1590-1626：DB 中存在同 file_id 但不同路径的旧记录时，删除旧 STRM
 // 搜索策略：
-//   1. 通过旧 cloudPath 在当前映射中查找旧 localPath
-//   2. 如果找不到，在 MediaMountPath 扩展目录中按文件名搜索
-//   3. 如果还找不到，在当前映射目录中按文件名搜索
+//  1. 通过旧 cloudPath 在当前映射中查找旧 localPath
+//  2. 如果找不到，在 MediaMountPath 扩展目录中按文件名搜索
+//  3. 如果还找不到，在当前映射目录中按文件名搜索
 func (m *Monitor) cleanupOldStrmByFileID(
 	account string,
 	fileID string,
@@ -620,4 +620,3 @@ func (m *Monitor) appendLog(ctx context.Context, account, eventType string, succ
 		Message:   message,
 	})
 }
-

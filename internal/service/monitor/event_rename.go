@@ -386,4 +386,3 @@ func (m *Monitor) handleRenameEvent(
 	m.notifyRename(ctx, account, cloudPath, "文件", newStrmPath)
 	return nil
 }
-

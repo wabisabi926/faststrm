@@ -115,7 +115,6 @@ func NewNotifier(dispatcher NotifierDispatcher, settingsFn SettingsProvider) *No
 	}
 }
 
-
 // getDetailWithSemaphore 在调用 GetItemDetailWithRetry 前获取并发令牌
 // 防止密集入库时大量 goroutine 同时打爆 Emby HTTP 连接池
 func (n *Notifier) getDetailWithSemaphore(ctx context.Context, client *Client, itemID string) (*ItemDetail, error) {
@@ -217,6 +216,7 @@ func (n *Notifier) waitForMetadata(ctx context.Context, client *Client, itemID s
 		}
 	}
 }
+
 // getClient 从当前设置动态创建 Emby Client（对齐 qmediasync 行为）
 // 每次调用都读取最新配置并创建新 Client，确保 Web UI 修改设置后立即生效
 // 同时注入缓存的 embyUserID（若配置未变更），避免重复请求 /emby/Users
@@ -628,9 +628,9 @@ func (n *Notifier) flushDeletedEpisodeBuffer(ctx context.Context, seriesID strin
 
 // handlePlaybackEvent 处理播放事件（对齐 qmediasync 方案）
 // 核心优化：
-//   1. 播放进度直接从 Webhook.PlaybackInfo.MediaSource 获取，无需请求详情
-//   2. 图片优先使用 Webhook.Item.ImageTags，避免额外 API 调用
-//   3. 仅当 showOverview=true 时才请求详情（简介不在 Webhook 中）
+//  1. 播放进度直接从 Webhook.PlaybackInfo.MediaSource 获取，无需请求详情
+//  2. 图片优先使用 Webhook.Item.ImageTags，避免额外 API 调用
+//  3. 仅当 showOverview=true 时才请求详情（简介不在 Webhook 中）
 func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) error {
 	settings := n.settingsFn()
 	if !settings.NotifyPlayback {

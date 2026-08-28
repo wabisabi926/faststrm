@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 
+	"github.com/zeromicro/go-zero/rest"
+
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/handler"
 	"github.com/wabisabi926/faststrm/internal/model"
@@ -14,7 +16,6 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/rest"
 )
 
 // RegisterRoutes 注册全部 HTTP 路由
@@ -191,9 +192,9 @@ func RegisterRoutes(
 		ClientFactory: func(name string) (*client115.Client, error) {
 			return client115.NewClient(""), nil
 		},
-		TasksStore:    tasksStore,
-		StrmCache:     strmCacheStore,
-		Interaction:   cleanupInteraction,
+		TasksStore:  tasksStore,
+		StrmCache:   strmCacheStore,
+		Interaction: cleanupInteraction,
 	}
 	// P0 注入 cleanupInteraction 到 TG CommandHandler（处理 inline 按钮回调）
 	if cleanupInteraction != nil && notifyDeps.CommandHandler != nil {

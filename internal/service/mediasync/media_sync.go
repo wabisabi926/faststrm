@@ -60,14 +60,14 @@ type NginxResult struct {
 }
 
 type SyncResult struct {
-	Changed           bool                      `json:"changed"`
-	Added             []string                  `json:"added"`
-	Removed           []string                  `json:"removed"`
-	Kept              []string                  `json:"kept"`
-	Final             []string                  `json:"final"`
+	Changed           bool                       `json:"changed"`
+	Added             []string                   `json:"added"`
+	Removed           []string                   `json:"removed"`
+	Kept              []string                   `json:"kept"`
+	Final             []string                   `json:"final"`
 	EntriesWithSource []MediaMountEntryWithLabel `json:"entriesWithSource"`
-	Nginx             NginxResult               `json:"nginx"`
-	Error             string                    `json:"error,omitempty"`
+	Nginx             NginxResult                `json:"nginx"`
+	Error             string                     `json:"error,omitempty"`
 }
 
 type DryRunResponse struct {

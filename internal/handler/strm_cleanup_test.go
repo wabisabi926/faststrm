@@ -217,7 +217,7 @@ func TestScanMappingFromCache_AllMatch(t *testing.T) {
 	}
 
 	m := MappingScanRequest{
-		Account: "test",
+		Account:   "test",
 		LocalPath: localPath,
 	}
 

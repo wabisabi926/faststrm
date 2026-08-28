@@ -19,13 +19,13 @@ import (
 // - 对每个注册任务用 mode + 规则判断 "now 是否应该触发"
 // - 不依赖 cron 库，保持依赖干净
 type Scheduler struct {
-	mu         sync.Mutex
+	mu          sync.Mutex
 	initialized bool
-	jobs       map[string]*registeredJob
-	ticker     *time.Ticker
-	stopCh     chan struct{}
-	deps       *ExecutorDeps
-	executing  map[string]bool
+	jobs        map[string]*registeredJob
+	ticker      *time.Ticker
+	stopCh      chan struct{}
+	deps        *ExecutorDeps
+	executing   map[string]bool
 }
 
 type registeredJob struct {
@@ -158,9 +158,9 @@ func (s *Scheduler) RefreshAll(ts TasksReaderWriter) {
 
 // Status 返回当前调度器状态
 type SchedulerStatus struct {
-	Initialized bool                                `json:"initialized"`
-	Registered  int                                 `json:"registeredCount"`
-	Tasks       []map[string]any                    `json:"tasks"`
+	Initialized bool             `json:"initialized"`
+	Registered  int              `json:"registeredCount"`
+	Tasks       []map[string]any `json:"tasks"`
 }
 
 func (s *Scheduler) Status() SchedulerStatus {

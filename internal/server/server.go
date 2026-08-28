@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/service"
+	"github.com/zeromicro/go-zero/rest"
+	"go.uber.org/zap/zapcore"
+
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/handler"
 	"github.com/wabisabi926/faststrm/internal/model"
@@ -18,10 +23,6 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/internal/web"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/core/logx"
-	"github.com/zeromicro/go-zero/core/service"
-	"github.com/zeromicro/go-zero/rest"
-	"go.uber.org/zap/zapcore"
 )
 
 // Run 启动 go-zero HTTP 服务
@@ -146,7 +147,7 @@ func Run(cfg *config.AppConfig) error {
 		EmbyRefresh:      embyRefresh,
 		CleanupSubmitter: &cleanupSubmitterAdapter{interaction: cleanupInteraction},
 		BaseURL:          baseURL,
-		PublicBaseURL:     cfg.Settings.StrmPrefix,
+		PublicBaseURL:    cfg.Settings.StrmPrefix,
 	}
 	_ = scheduler.Init(execDeps, tasksStore, store.NewSettingsAdapter(settingsStore))
 

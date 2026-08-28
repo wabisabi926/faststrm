@@ -96,11 +96,11 @@ func TestStrmHistoryListByKind(t *testing.T) {
 	kinds := []StrmHistoryKind{StrmHistoryKindFull, StrmHistoryKindMonitor, StrmHistoryKindDelete}
 	for i, k := range kinds {
 		_, err := InsertStrmHistory(db, StrmHistoryEntry{
-			TaskID: "task-list",
-			Kind:   k,
-			Account: "acc1",
-			Success: true,
-			TotalFiles: i + 1,
+			TaskID:       "task-list",
+			Kind:         k,
+			Account:      "acc1",
+			Success:      true,
+			TotalFiles:   i + 1,
 			SuccessFiles: i + 1,
 		})
 		if err != nil {
@@ -171,10 +171,10 @@ func TestStrmHistoryListLimit(t *testing.T) {
 	// 插入10条
 	for i := 0; i < 10; i++ {
 		_, err := InsertStrmHistory(db, StrmHistoryEntry{
-			TaskID: "task-limit",
-			Kind:   StrmHistoryKindFull,
-			Account: "acc1",
-			Success: true,
+			TaskID:     "task-limit",
+			Kind:       StrmHistoryKindFull,
+			Account:    "acc1",
+			Success:    true,
 			TotalFiles: i,
 		})
 		if err != nil {

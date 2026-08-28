@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
@@ -50,10 +51,10 @@ type ExecutorDeps struct {
 	TasksStore       TasksReaderWriter
 	StrmCache        StrmCacheWriter
 	EmbyRefresh      StrmRefresher         // Emby 刷库服务（可为 nil）
-	CleanupSubmitter CleanupBatchSubmitter  // STRM 清理延迟批次提交器（可为 nil）
-	Notifier         TaskNotifier           // 任务完成/失败通知（可为 nil）
-	BaseURL          string                 // 用于拼接 strmPrefix（302模式下可留空）
-	PublicBaseURL    string                 // 公开可访问的 baseUrl（302 模式用户可配置）
+	CleanupSubmitter CleanupBatchSubmitter // STRM 清理延迟批次提交器（可为 nil）
+	Notifier         TaskNotifier          // 任务完成/失败通知（可为 nil）
+	BaseURL          string                // 用于拼接 strmPrefix（302模式下可留空）
+	PublicBaseURL    string                // 公开可访问的 baseUrl（302 模式用户可配置）
 }
 
 // ExecuteTask 执行一个任务（同步执行，调用方应开 goroutine 异步调用）
@@ -217,7 +218,13 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		histSuccess = false
 		histErrMsg = msg
 		sseServer.EmitLog(task.ID, "error", msg)
-		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli(); s.Stage = StageFailed; s.StageDetail = msg })
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Status = StatusFailed
+			s.Error = msg
+			s.EndedAt = time.Now().UnixMilli()
+			s.Stage = StageFailed
+			s.StageDetail = msg
+		})
 		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
 		if deps.Notifier != nil {
 			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
@@ -399,7 +406,13 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		histSuccess = false
 		histErrMsg = msg
 		sseServer.EmitLog(task.ID, "error", msg)
-		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli(); s.Stage = StageFailed; s.StageDetail = msg })
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Status = StatusFailed
+			s.Error = msg
+			s.EndedAt = time.Now().UnixMilli()
+			s.Stage = StageFailed
+			s.StageDetail = msg
+		})
 		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
 		if deps.Notifier != nil {
 			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
@@ -750,14 +763,14 @@ func recordStrmHistory(deps ExecutorDeps, taskID, account string, kind db.StrmHi
 type fileKind int
 
 const (
-	kindStrm fileKind = 1
+	kindStrm     fileKind = 1
 	kindDownload fileKind = 2
-	kindSkip fileKind = 3
+	kindSkip     fileKind = 3
 )
 
 type fileItem struct {
-	CloudPath string   // 绝对云端路径：originPath + "/" + rel
-	RelPath   string   // 相对路径（不含 originPath 前缀）
+	CloudPath string // 绝对云端路径：originPath + "/" + rel
+	RelPath   string // 相对路径（不含 originPath 前缀）
 	Name      string
 	PickCode  string
 	Size      int64

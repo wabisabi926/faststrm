@@ -65,14 +65,14 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	if len(out.DownloadExtensions) == 0 {
 		out.DownloadExtensions = def.DownloadExtensions
 	}
-// T9 迁移：开关打开后若 secret 未生成则自动生成并回写 settings.json
-        if out.Strm.EnableTokenSigning && out.Strm.TokenSecret == "" {
-                out.Strm.TokenSecret = strm.GenerateTokenSecret()
-                logger.S().Infof("[SettingsStore] EnableTokenSigning=true, 生成 Strm.TokenSecret (len=%d), 回写 settings.json", len(out.Strm.TokenSecret))
-                if err := s.SaveSettings(&out); err != nil {
-                        logger.S().Warnf("[SettingsStore] 回写 tokenSecret 失败: %v", err)
-                }
-        }
+	// T9 迁移：开关打开后若 secret 未生成则自动生成并回写 settings.json
+	if out.Strm.EnableTokenSigning && out.Strm.TokenSecret == "" {
+		out.Strm.TokenSecret = strm.GenerateTokenSecret()
+		logger.S().Infof("[SettingsStore] EnableTokenSigning=true, 生成 Strm.TokenSecret (len=%d), 回写 settings.json", len(out.Strm.TokenSecret))
+		if err := s.SaveSettings(&out); err != nil {
+			logger.S().Warnf("[SettingsStore] 回写 tokenSecret 失败: %v", err)
+		}
+	}
 	return &out, nil
 }
 

@@ -9,21 +9,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeromicro/go-zero/rest/httpx"
+
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 // TaskHandlerDeps 任务 handler 依赖
 type TaskHandlerDeps struct {
-	ExecutorDeps      task.ExecutorDeps
-	TasksStore        *store.TasksStore
-	Runtime           *task.Runtime
-	Scheduler         *task.Scheduler
-	TaskHistoryRepo   *db.TaskHistoryRepo
+	ExecutorDeps    task.ExecutorDeps
+	TasksStore      *store.TasksStore
+	Runtime         *task.Runtime
+	Scheduler       *task.Scheduler
+	TaskHistoryRepo *db.TaskHistoryRepo
 }
 
 // StartTaskRequest POST /api/startTask { "taskId": "xxx" }
@@ -277,12 +278,12 @@ type UpsertTaskRequest struct {
 	Enabled        string `json:"enabled" form:"enabled"`           // "on"/"true"/"1" 表示 true
 	ScheduleMode   string `json:"scheduleMode" form:"scheduleMode"` // interval/daily/weekly/manual
 	ScheduleValue  string `json:"scheduleValue" form:"scheduleValue"`
-	StrmType       string `json:"strmType" form:"strmType"`         // STRM 类型
+	StrmType       string `json:"strmType" form:"strmType"` // STRM 类型
 	StrmPrefix     string `json:"strmPrefix" form:"strmPrefix"`
 	RemoveExtra    string `json:"removeExtraFiles" form:"removeExtraFiles"`
 	EnableEnc      string `json:"enablePathEncoding" form:"enablePathEncoding"`
 	Enable302      string `json:"enable302" form:"enable302"`
-	AccountCookie  string `json:"cookie" form:"cookie"`   // 兼容旧前端
+	AccountCookie  string `json:"cookie" form:"cookie"` // 兼容旧前端
 	AccountAccount string `json:"account_" form:"account_"`
 }
 

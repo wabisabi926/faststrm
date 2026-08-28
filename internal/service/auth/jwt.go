@@ -20,7 +20,7 @@ type Claims struct {
 
 // TokenIssuer 负责签发 + 校验 JWT
 type TokenIssuer struct {
-	secret   []byte
+	secret []byte
 	// 默认有效期（可配置）
 	Validity time.Duration
 	Issuer   string

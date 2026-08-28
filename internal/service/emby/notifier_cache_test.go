@@ -15,10 +15,10 @@ import (
 
 // fakeDispatcher 用于捕获通知调用
 type fakeDispatcher struct {
-	notifyCount    int32
-	photoCount     int32
-	lastMessage    string
-	lastPhotoURL   string
+	notifyCount  int32
+	photoCount   int32
+	lastMessage  string
+	lastPhotoURL string
 }
 
 func (d *fakeDispatcher) Notify(ctx context.Context, msg string) error {

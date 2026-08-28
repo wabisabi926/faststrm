@@ -82,9 +82,9 @@ func (b *StrmNotifyBuilder) BuildCreateNotification(input STRMCreateInput) *Noti
 	}
 	content := FormatMessage("📺 STRM 已创建", "", displayMeta)
 	return &Notification{
-		Type:     TypeSTRMCreate,
-		Title:    "📺 STRM 已创建",
-		Content:  content,
+		Type:    TypeSTRMCreate,
+		Title:   "📺 STRM 已创建",
+		Content: content,
 		Metadata: map[string]string{
 			"account":    input.Account,
 			"kind":       input.Kind,
@@ -118,9 +118,9 @@ func (b *StrmNotifyBuilder) BuildDeleteNotification(input STRMDeleteInput) *Noti
 	}
 	content := FormatMessage("🗑️ STRM 已删除", "", displayMeta)
 	return &Notification{
-		Type:     TypeSTRMDelete,
-		Title:    "🗑️ STRM 已删除",
-		Content:  content,
+		Type:    TypeSTRMDelete,
+		Title:   "🗑️ STRM 已删除",
+		Content: content,
 		Metadata: map[string]string{
 			"account":    input.Account,
 			"kind":       input.Kind,
@@ -153,9 +153,9 @@ func (b *StrmNotifyBuilder) BuildMoveNotification(input STRMMoveInput) *Notifica
 	}
 	content := FormatMessage("📦 STRM 已移动", "", displayMeta)
 	return &Notification{
-		Type:     TypeSTRMMove,
-		Title:    "📦 STRM 已移动",
-		Content:  content,
+		Type:    TypeSTRMMove,
+		Title:   "📦 STRM 已移动",
+		Content: content,
 		Metadata: map[string]string{
 			"account":    input.Account,
 			"kind":       input.Kind,
@@ -188,9 +188,9 @@ func (b *StrmNotifyBuilder) BuildRenameNotification(input STRMRenameInput) *Noti
 	}
 	content := FormatMessage("✏️ STRM 已重命名", "", displayMeta)
 	return &Notification{
-		Type:     TypeSTRMRename,
-		Title:    "✏️ STRM 已重命名",
-		Content:  content,
+		Type:    TypeSTRMRename,
+		Title:   "✏️ STRM 已重命名",
+		Content: content,
 		Metadata: map[string]string{
 			"account":    input.Account,
 			"kind":       input.Kind,
@@ -208,6 +208,7 @@ func (b *StrmNotifyBuilder) BuildRenameNotification(input STRMRenameInput) *Noti
 type NotificationDispatcher interface {
 	Dispatch(ctx context.Context, n *Notification) error
 }
+
 // ==================== 辅助函数 ====================
 
 // formatTimestamp 格式化当前时间戳

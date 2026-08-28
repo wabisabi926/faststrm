@@ -14,12 +14,12 @@ import (
 type StrmHistoryKind string
 
 const (
-	StrmHistoryKindFull     StrmHistoryKind = "full"     // 全量同步
+	StrmHistoryKindFull      StrmHistoryKind = "full"      // 全量同步
 	StrmHistoryKindIncrement StrmHistoryKind = "increment" // 增量同步
-	StrmHistoryKindMonitor  StrmHistoryKind = "monitor"  // 生活事件 STRM 生成
-	StrmHistoryKindRename   StrmHistoryKind = "rename"   // 重命名 STRM
-	StrmHistoryKindMove     StrmHistoryKind = "move"     // 移动 STRM
-	StrmHistoryKindDelete   StrmHistoryKind = "delete"   // 删除 STRM
+	StrmHistoryKindMonitor   StrmHistoryKind = "monitor"   // 生活事件 STRM 生成
+	StrmHistoryKindRename    StrmHistoryKind = "rename"    // 重命名 STRM
+	StrmHistoryKindMove      StrmHistoryKind = "move"      // 移动 STRM
+	StrmHistoryKindDelete    StrmHistoryKind = "delete"    // 删除 STRM
 )
 
 // StrmHistoryEntry 单条 STRM 执行历史记录
@@ -80,6 +80,7 @@ func InsertStrmHistory(db *sql.DB, entry StrmHistoryEntry) (int64, error) {
 //   - kind 为空时查所有类型
 //   - taskID 为空时不按任务过滤
 //   - limit <= 0 时默认 100，上限 500
+//
 // 按 created_at DESC 排序
 func ListStrmHistory(db *sql.DB, kind, taskID string, limit int) ([]StrmHistoryEntry, error) {
 	if db == nil {
@@ -118,10 +119,10 @@ func ListStrmHistory(db *sql.DB, kind, taskID string, limit int) ([]StrmHistoryE
 	var out []StrmHistoryEntry
 	for rows.Next() {
 		var (
-			e            StrmHistoryEntry
-			successInt   int
-			kindStr      string
-			errMsg       sql.NullString
+			e          StrmHistoryEntry
+			successInt int
+			kindStr    string
+			errMsg     sql.NullString
 		)
 		if err := rows.Scan(
 			&e.ID, &e.TaskID, &kindStr, &e.Account, &successInt,
@@ -173,13 +174,13 @@ func GetStrmHistoryByID(db *sql.DB, id int64) (*StrmHistoryEntry, error) {
 
 // StrmHistoryStats 统计聚合
 type StrmHistoryStats struct {
-	TotalCount   int64 `json:"totalCount"`
-	SuccessCount int64 `json:"successCount"`
-	FailedCount  int64 `json:"failedCount"`
-	TotalFiles   int64 `json:"totalFiles"`
-	SuccessFiles int64 `json:"successFiles"`
-	FailedFiles  int64 `json:"failedFiles"`
-	TotalAPIReqs int64 `json:"totalApiRequests"`
+	TotalCount     int64 `json:"totalCount"`
+	SuccessCount   int64 `json:"successCount"`
+	FailedCount    int64 `json:"failedCount"`
+	TotalFiles     int64 `json:"totalFiles"`
+	SuccessFiles   int64 `json:"successFiles"`
+	FailedFiles    int64 `json:"failedFiles"`
+	TotalAPIReqs   int64 `json:"totalApiRequests"`
 	TotalElapsedMs int64 `json:"totalElapsedMs"`
 }
 

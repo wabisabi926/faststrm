@@ -116,9 +116,9 @@ func TestHandleStrm_InvalidPickcode(t *testing.T) {
 func TestHandleStrm_ValidPickcodeFormat(t *testing.T) {
 	opts := buildBaseStrmOptions(t)
 	validFormats := []string{
-		"AbCdEf12345678901",   // 17 chars mixed
-		"AB12CD34EF56GH78I",   // 17 chars uppercase+digit
-		"1234567890abcdefg",   // 17 chars lowercase+digit
+		"AbCdEf12345678901", // 17 chars mixed
+		"AB12CD34EF56GH78I", // 17 chars uppercase+digit
+		"1234567890abcdefg", // 17 chars lowercase+digit
 	}
 	for _, pc := range validFormats {
 		t.Run("fmt_"+pc[:6], func(t *testing.T) {

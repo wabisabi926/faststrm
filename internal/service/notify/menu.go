@@ -41,24 +41,24 @@ type MenuActions interface {
 
 const (
 	// 主菜单
-	callbackMenuMain     = "menu_main"
-	callbackMenuTasks    = "menu_tasks"
-	callbackMenuMonitor  = "menu_monitor"
-	callbackMenuEmby     = "menu_emby"
-	callbackMenuSTRM     = "menu_strm"
-	callbackMenuStatus   = "menu_status"
-	callbackMenuHelp     = "menu_help"
-	callbackMenuBack     = "menu_back"
+	callbackMenuMain    = "menu_main"
+	callbackMenuTasks   = "menu_tasks"
+	callbackMenuMonitor = "menu_monitor"
+	callbackMenuEmby    = "menu_emby"
+	callbackMenuSTRM    = "menu_strm"
+	callbackMenuStatus  = "menu_status"
+	callbackMenuHelp    = "menu_help"
+	callbackMenuBack    = "menu_back"
 
 	// 监控控制
-	callbackMonStart      = "mon_start:"
-	callbackMonStop       = "mon_stop:"
-	callbackMonStopAll    = "mon_stop_all"
-	callbackMonStatus     = "mon_status"
-	callbackMonCreate     = "mon_toggle_create:"
-	callbackMonDelete     = "mon_toggle_delete:"
-	callbackMonMove       = "mon_toggle_move:"
-	callbackMonRename     = "mon_toggle_rename:"
+	callbackMonStart   = "mon_start:"
+	callbackMonStop    = "mon_stop:"
+	callbackMonStopAll = "mon_stop_all"
+	callbackMonStatus  = "mon_status"
+	callbackMonCreate  = "mon_toggle_create:"
+	callbackMonDelete  = "mon_toggle_delete:"
+	callbackMonMove    = "mon_toggle_move:"
+	callbackMonRename  = "mon_toggle_rename:"
 
 	// 任务控制
 	callbackTaskExecute   = "task_exec:"
@@ -67,15 +67,15 @@ const (
 	callbackTaskScheduled = "task_scheduled"
 
 	// Emby 刷库
-	callbackEmbyRefresh   = "emby_refresh:"
-	callbackEmbyMovieLib  = "emby_lib:movie"
-	callbackEmbyTVLib     = "emby_lib:tv"
-	callbackEmbyAllLib    = "emby_lib:all"
-	callbackEmbyStatus    = "emby_status"
+	callbackEmbyRefresh  = "emby_refresh:"
+	callbackEmbyMovieLib = "emby_lib:movie"
+	callbackEmbyTVLib    = "emby_lib:tv"
+	callbackEmbyAllLib   = "emby_lib:all"
+	callbackEmbyStatus   = "emby_status"
 
 	// STRM 操作
-	callbackStrmSync      = "strm_sync"
-	callbackStrmCleanup   = "strm_cleanup"
+	callbackStrmSync    = "strm_sync"
+	callbackStrmCleanup = "strm_cleanup"
 
 	// STRM 通知内联按钮（由 dispatcher.buildInlineKeyboard 生成）
 	callbackStrmRefreshEmby = "refresh_emby:"
@@ -665,10 +665,10 @@ func (h *CommandHandler) handleToggleEvent(ctx context.Context, chatID string, m
 	}
 	enabled := state == "on"
 	eventLabels := map[string]string{
-		"create":   "创建",
-		"remove":   "删除",
-		"move":     "移动",
-		"rename":   "重命名",
+		"create": "创建",
+		"remove": "删除",
+		"move":   "移动",
+		"rename": "重命名",
 	}
 	label := eventLabels[eventType]
 	if label == "" {
@@ -808,7 +808,7 @@ func (h *CommandHandler) buildDefaultStatus() map[string]any {
 	var accountList []map[string]any
 	for _, acc := range accounts {
 		accountList = append(accountList, map[string]any{
-			"name":     acc.Name,
+			"name":      acc.Name,
 			"hasCookie": acc.Cookie != "",
 		})
 	}

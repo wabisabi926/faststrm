@@ -52,43 +52,43 @@ const (
 
 // TaskSchedule 定时调度配置（对齐 TS TaskSchedule）
 type TaskSchedule struct {
-	Enabled        bool     `json:"enabled"`
-	Mode           string   `json:"mode,omitempty"`            // "interval" | "daily" | "weekly"
-	IntervalMinutes int     `json:"intervalMinutes,omitempty"` // interval 模式：分钟
-	Time           string   `json:"time,omitempty"`            // daily/weekly 模式："HH:MM"
-	Weekdays       []int    `json:"weekdays,omitempty"`        // weekly：0-6 (周日=0)
-	LastRunAt      int64    `json:"lastRunAt,omitempty"`       // 上次运行 unix ms
+	Enabled         bool   `json:"enabled"`
+	Mode            string `json:"mode,omitempty"`            // "interval" | "daily" | "weekly"
+	IntervalMinutes int    `json:"intervalMinutes,omitempty"` // interval 模式：分钟
+	Time            string `json:"time,omitempty"`            // daily/weekly 模式："HH:MM"
+	Weekdays        []int  `json:"weekdays,omitempty"`        // weekly：0-6 (周日=0)
+	LastRunAt       int64  `json:"lastRunAt,omitempty"`       // 上次运行 unix ms
 }
 
 // Task 任务定义（持久化在 .settings.json tasks 中）
 type Task struct {
-	ID                  string        `json:"id"`
-	Name                string        `json:"name,omitempty"`
-	Account             string        `json:"account"`
-	AccountType         string        `json:"accountType,omitempty"`
-	OriginPath          string        `json:"originPath"`
-	TargetPath          string        `json:"targetPath"`
-	StrmType            string        `json:"strmType,omitempty"` // STRM 类型（如 "local"、"remote" 等）
-	StrmPrefix          string        `json:"strmPrefix,omitempty"`
-	EnablePathEncoding  bool          `json:"enablePathEncoding,omitempty"`
-	Enable302           bool          `json:"enable302,omitempty"`
-	RemoveExtraFiles    bool          `json:"removeExtraFiles,omitempty"`
-	Schedule            *TaskSchedule `json:"schedule,omitempty"`
-	CreatedAt           int64         `json:"createdAt,omitempty"`
-	UpdatedAt           int64         `json:"updatedAt,omitempty"`
+	ID                 string        `json:"id"`
+	Name               string        `json:"name,omitempty"`
+	Account            string        `json:"account"`
+	AccountType        string        `json:"accountType,omitempty"`
+	OriginPath         string        `json:"originPath"`
+	TargetPath         string        `json:"targetPath"`
+	StrmType           string        `json:"strmType,omitempty"` // STRM 类型（如 "local"、"remote" 等）
+	StrmPrefix         string        `json:"strmPrefix,omitempty"`
+	EnablePathEncoding bool          `json:"enablePathEncoding,omitempty"`
+	Enable302          bool          `json:"enable302,omitempty"`
+	RemoveExtraFiles   bool          `json:"removeExtraFiles,omitempty"`
+	Schedule           *TaskSchedule `json:"schedule,omitempty"`
+	CreatedAt          int64         `json:"createdAt,omitempty"`
+	UpdatedAt          int64         `json:"updatedAt,omitempty"`
 }
 
 // 任务阶段常量（供前端展示阶段徽章）
 const (
-	StageStarting      = "starting"       // 启动中
-	StageScanning      = "scanning"       // 扫描目录
-	StageIncremental   = "incremental"    // 增量同步
-	StageCleanup       = "cleanup"        // 清理文件
-	StageWritingDB     = "writing_db"     // 写回数据库
-	StageGenerating    = "generating"     // 生成STRM/下载
-	StageFinalizing    = "finalizing"     // 收尾处理
-	StageCompleted     = "completed"      // 已完成
-	StageFailed        = "failed"         // 失败
+	StageStarting    = "starting"    // 启动中
+	StageScanning    = "scanning"    // 扫描目录
+	StageIncremental = "incremental" // 增量同步
+	StageCleanup     = "cleanup"     // 清理文件
+	StageWritingDB   = "writing_db"  // 写回数据库
+	StageGenerating  = "generating"  // 生成STRM/下载
+	StageFinalizing  = "finalizing"  // 收尾处理
+	StageCompleted   = "completed"   // 已完成
+	StageFailed      = "failed"      // 失败
 )
 
 // RuntimeState 运行时状态（内存态，不持久化）

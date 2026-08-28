@@ -6,11 +6,12 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/zeromicro/go-zero/rest/httpx"
+
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/service/auth"
 	"github.com/wabisabi926/faststrm/internal/service/pwdcrypto"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 // ==================== Login ====================
@@ -32,8 +33,8 @@ type LoginResponse struct {
 
 // Login POST /api/auth/login 密码校验 + JWT 签发
 // 支持两种请求格式：
-//   1. application/json（前端 API 调用）
-//   2. application/x-www-form-urlencoded（HTMX 表单提交）
+//  1. application/json（前端 API 调用）
+//  2. application/x-www-form-urlencoded（HTMX 表单提交）
 func Login(issuer *auth.TokenIssuer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req LoginRequest
@@ -148,17 +149,17 @@ func ChangePassword() http.HandlerFunc {
 
 // ChangeCredentialsRequest 修改凭据请求（用户名+密码）
 type ChangeCredentialsRequest struct {
-	CurrentPassword  string `json:"currentPassword"`
-	NewUsername      string `json:"newUsername"`
-	NewPassword      string `json:"newPassword"`
-	ConfirmPassword  string `json:"confirmPassword"`
+	CurrentPassword string `json:"currentPassword"`
+	NewUsername     string `json:"newUsername"`
+	NewPassword     string `json:"newPassword"`
+	ConfirmPassword string `json:"confirmPassword"`
 }
 
 var (
-	usernameMinLen    = 3
-	usernameMaxLen    = 32
-	usernameRegex     = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
-	pureDigitsRegex   = regexp.MustCompile(`^\d+$`)
+	usernameMinLen  = 3
+	usernameMaxLen  = 32
+	usernameRegex   = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	pureDigitsRegex = regexp.MustCompile(`^\d+$`)
 )
 
 // ChangeCredentials POST /api/auth/change-credentials

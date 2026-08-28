@@ -11,9 +11,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/zeromicro/go-zero/rest/httpx"
+
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/store"
-	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 // DirectoryDeps 目录 API 依赖
@@ -24,14 +25,14 @@ type DirectoryDeps struct {
 
 // DirTreeNode 统一目录节点（remote 与 local 共用）
 type DirTreeNode struct {
-	Key        int           `json:"key"`
-	Name       string        `json:"name"`
-	Depth      int           `json:"depth"`
-	ParentKey  int           `json:"parent_key"`
-	IsDir      bool          `json:"is_dir,omitempty"`
-	Size       int64         `json:"size,omitempty"`
-	PickCode   string        `json:"pick_code,omitempty"`
-	Children   []DirTreeNode `json:"children,omitempty"`
+	Key       int           `json:"key"`
+	Name      string        `json:"name"`
+	Depth     int           `json:"depth"`
+	ParentKey int           `json:"parent_key"`
+	IsDir     bool          `json:"is_dir,omitempty"`
+	Size      int64         `json:"size,omitempty"`
+	PickCode  string        `json:"pick_code,omitempty"`
+	Children  []DirTreeNode `json:"children,omitempty"`
 }
 
 // HandleRemoteDirList GET /api/directory/remote/list
@@ -178,9 +179,10 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 // Body: { basePath: string } - basePath 为空时返回默认根路径列表
 // 也兼容 GET ?root=xxx 查询参数
 // 参考 qmediasync 实现：
-//   Windows: 使用 gopsutil/disk 枚举盘符
-//   fNOS环境: 使用 TRIM_DATA_ACCESSIBLE_PATHS + TRIM_DATA_SHARE_PATHS 白名单
-//   其他Linux: 返回 / 根目录及常见挂载点
+//
+//	Windows: 使用 gopsutil/disk 枚举盘符
+//	fNOS环境: 使用 TRIM_DATA_ACCESSIBLE_PATHS + TRIM_DATA_SHARE_PATHS 白名单
+//	其他Linux: 返回 / 根目录及常见挂载点
 func HandleLocalDirList(deps DirectoryDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var root string
@@ -454,10 +456,10 @@ func isPathAllowed(targetPath string, allowedPaths []string) bool {
 
 // defaultRoots 返回可用根路径列表
 // 优先级（从高到低）：
-//   1) FASTSTRM_LOCAL_DIR_ROOTS 环境变量（英文逗号分隔，用户/管理员可完全覆盖）
-//   2) fNOS  : 仅返回用户授权的 TRIM_DATA_* 白名单路径（对齐 qmediasync）
-//   3) Windows: 枚举逻辑盘符
-//   4) Linux  : 读 /proc/mounts 获取真实挂载点 + 硬编码常见目录兜底
+//  1. FASTSTRM_LOCAL_DIR_ROOTS 环境变量（英文逗号分隔，用户/管理员可完全覆盖）
+//  2. fNOS  : 仅返回用户授权的 TRIM_DATA_* 白名单路径（对齐 qmediasync）
+//  3. Windows: 枚举逻辑盘符
+//  4. Linux  : 读 /proc/mounts 获取真实挂载点 + 硬编码常见目录兜底
 func defaultRoots(isFnOS bool) []string {
 	// ---- 1) 最高优先级：用户显式覆盖 ----
 	if custom := os.Getenv("FASTSTRM_LOCAL_DIR_ROOTS"); custom != "" {
@@ -643,7 +645,7 @@ func appendUnique(roots []string, newPath string) []string {
 	return append(roots, newPath)
 }
 
-func itoa64(v int64) string  { return strconvInt64(v) }
+func itoa64(v int64) string { return strconvInt64(v) }
 func anyToString(v any) string {
 	switch x := v.(type) {
 	case int64:

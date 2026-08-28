@@ -24,12 +24,12 @@ import (
 // ==================== 常量 ====================
 
 const (
-	URLCacheTTL          = 5 * time.Minute
-	ReachableCacheTTL    = 4 * time.Minute
-	ReachableCacheMax    = 256
-	URLCacheMax          = 512
-	ConnectTimeout       = 30 * time.Second // proxy 模式建连超时
-	URLNegativeCacheTTL  = 10 * time.Second // P0-3 负面缓存 TTL：115 API 失败后短时间内不重试，避免雪崩
+	URLCacheTTL         = 5 * time.Minute
+	ReachableCacheTTL   = 4 * time.Minute
+	ReachableCacheMax   = 256
+	URLCacheMax         = 512
+	ConnectTimeout      = 30 * time.Second // proxy 模式建连超时
+	URLNegativeCacheTTL = 10 * time.Second // P0-3 负面缓存 TTL：115 API 失败后短时间内不重试，避免雪崩
 )
 
 // RouteDecision 路由决策
@@ -84,8 +84,8 @@ type simpleLRU[V any] struct {
 	mu      sync.Mutex
 	maxSize int
 	ttl     time.Duration
-	order   *list.List                 // 链表头=最老，链表尾=最新
-	items   map[string]*list.Element   // key -> *list.Element (value = *lruEntry)
+	order   *list.List               // 链表头=最老，链表尾=最新
+	items   map[string]*list.Element // key -> *list.Element (value = *lruEntry)
 }
 
 func newSimpleLRU[V any](maxSize int, ttl time.Duration) *simpleLRU[V] {
@@ -366,12 +366,12 @@ func DecideRoute(
 // reusable head client（禁用 KeepAlive 避免长连接占坑）
 var redirectCheckClient = &http.Client{
 	Transport: &http.Transport{
-		DisableKeepAlives:  true,
-		ForceAttemptHTTP2:  false,
-		MaxIdleConns:       64,
-		IdleConnTimeout:    30 * time.Second,
-		TLSClientConfig:    &tls.Config{InsecureSkipVerify: false},
-		Proxy:              http.ProxyFromEnvironment,
+		DisableKeepAlives: true,
+		ForceAttemptHTTP2: false,
+		MaxIdleConns:      64,
+		IdleConnTimeout:   30 * time.Second,
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
+		Proxy:             http.ProxyFromEnvironment,
 	},
 	Timeout: 10 * time.Second,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -445,6 +445,7 @@ func RedirectCheck(
 //   - 正面 LRU 缓存 5 分钟
 //   - P0-3 singleflight 合并并发相同 pickcode 的调用，避免重复请求 115 API
 //   - P0-3 负面缓存：115 API 失败后 10 秒内不重试，避免短时间内雪崩请求
+//
 // 对齐参考项目 r302 的下载链接缓存 + 并发锁
 func ResolveDownloadUrl(
 	ctx context.Context,
@@ -476,7 +477,6 @@ func ResolveDownloadUrl(
 	urlCache.Set(cacheKey, meta)
 	return meta, nil
 }
-
 
 // StrmRouteConfig 从 config 中取 STRM 路由策略（兜底默认）
 func StrmRouteConfig(cfg *config.AppConfig) struct {
@@ -514,5 +514,3 @@ func toJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
-
-

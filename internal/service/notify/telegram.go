@@ -13,9 +13,10 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"golang.org/x/net/proxy"
+
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"golang.org/x/net/proxy"
 )
 
 // ==================== 兼容旧类型（外部仍在使用） ====================
@@ -278,9 +279,7 @@ func (b *TelegramBot) GetUpdates(ctx context.Context, offset int64, limit int, t
 		return nil, err
 	}
 	out := make([]tgbotapi.Update, len(updates))
-	for i := range updates {
-		out[i] = updates[i]
-	}
+	copy(out, updates)
 	return out, nil
 }
 

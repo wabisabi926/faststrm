@@ -10,11 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeromicro/go-zero/rest/httpx"
+
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 type StrmCleanupDeps struct {
@@ -48,24 +49,24 @@ type MissingStrm struct {
 }
 
 type MappingScanResult struct {
-	Account          string      `json:"account"`
-	CloudPath        string      `json:"cloudPath"`
-	LocalPath        string      `json:"localPath"`
-	RemoteFileCount  int         `json:"remoteFileCount"`
-	LocalStrmCount   int         `json:"localStrmCount"`
-	StaleStrms       []StaleStrm `json:"staleStrms"`
-	MissingStrms     []MissingStrm `json:"missingStrms"`
-	Error            string      `json:"error,omitempty"`
+	Account         string        `json:"account"`
+	CloudPath       string        `json:"cloudPath"`
+	LocalPath       string        `json:"localPath"`
+	RemoteFileCount int           `json:"remoteFileCount"`
+	LocalStrmCount  int           `json:"localStrmCount"`
+	StaleStrms      []StaleStrm   `json:"staleStrms"`
+	MissingStrms    []MissingStrm `json:"missingStrms"`
+	Error           string        `json:"error,omitempty"`
 }
 
 type ScanResponse struct {
-	Mappings         []MappingScanResult `json:"mappings"`
-	MappingsScanned  []MappingScanRequest `json:"mappingsScanned,omitempty"`
-	DurationMs       int64               `json:"durationMs"`
+	Mappings        []MappingScanResult  `json:"mappings"`
+	MappingsScanned []MappingScanRequest `json:"mappingsScanned,omitempty"`
+	DurationMs      int64                `json:"durationMs"`
 }
 
 type ExecuteEntry struct {
-	LocalPath    string   `json:"localPath"`
+	LocalPath     string   `json:"localPath"`
 	StaleRelPaths []string `json:"staleRelPaths"`
 }
 
@@ -76,23 +77,23 @@ type ExecuteMissingItem struct {
 }
 
 type ExecuteRequest struct {
-	Entries         []ExecuteEntry       `json:"entries"`
-	DryRun          bool                 `json:"dryRun"`
-	Action          string               `json:"action"`
-	MissingItems    []ExecuteMissingItem `json:"missingItems"`
-	ScanSummary     *ScanResponse        `json:"scanSummary,omitempty"`
+	Entries      []ExecuteEntry       `json:"entries"`
+	DryRun       bool                 `json:"dryRun"`
+	Action       string               `json:"action"`
+	MissingItems []ExecuteMissingItem `json:"missingItems"`
+	ScanSummary  *ScanResponse        `json:"scanSummary,omitempty"`
 }
 
 type ExecuteResponse struct {
-	DeletedCount    int              `json:"deletedCount"`
-	FailedCount     int              `json:"failedCount"`
-	Errors          []map[string]string `json:"errors"`
-	RemovedEmptyDirs []string         `json:"removedEmptyDirs"`
+	DeletedCount     int                 `json:"deletedCount"`
+	FailedCount      int                 `json:"failedCount"`
+	Errors           []map[string]string `json:"errors"`
+	RemovedEmptyDirs []string            `json:"removedEmptyDirs"`
 	// RemovedRelatedFiles 删除 STRM 时一并清理的关联媒体信息文件（.nfo/.jpg/.srt 等）
 	RemovedRelatedFiles []string `json:"removedRelatedFiles,omitempty"`
-	DryRun          bool             `json:"dryRun"`
-	DurationMs      int64            `json:"durationMs"`
-	RegeneratedCount int             `json:"regeneratedCount,omitempty"`
+	DryRun              bool     `json:"dryRun"`
+	DurationMs          int64    `json:"durationMs"`
+	RegeneratedCount    int      `json:"regeneratedCount,omitempty"`
 
 	// ====== 阈值与二次确认（P0 防误删）======
 	// Pending 是否已入队待删队列等待用户二次确认
@@ -117,7 +118,7 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 
 		var body struct {
 			UseSettingsDefaults bool                 `json:"useSettingsDefaults"`
-			Mappings            []MappingScanRequest  `json:"mappings"`
+			Mappings            []MappingScanRequest `json:"mappings"`
 			Action              string               `json:"action"`
 		}
 		if r.Body != nil {
@@ -130,7 +131,7 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 			return
 		}
 
-	accounts := deps.AccountStore.List()
+		accounts := deps.AccountStore.List()
 
 		mappings := body.Mappings
 		if body.UseSettingsDefaults || len(mappings) == 0 {
@@ -186,7 +187,7 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 			return
 		}
 
-	accounts := deps.AccountStore.List()
+		accounts := deps.AccountStore.List()
 
 		accountMap := make(map[string]string)
 		for _, acc := range accounts {
@@ -415,9 +416,9 @@ func listLocalStrmFiles(localPath string) map[string]os.FileInfo {
 
 func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Settings, deps StrmCleanupDeps, accountMap map[string]string) ExecuteResponse {
 	resp := ExecuteResponse{
-		DryRun:           body.DryRun,
-		Errors:           []map[string]string{},
-		RemovedEmptyDirs: []string{},
+		DryRun:              body.DryRun,
+		Errors:              []map[string]string{},
+		RemovedEmptyDirs:    []string{},
 		RemovedRelatedFiles: []string{},
 	}
 
@@ -756,4 +757,3 @@ func HandleStrmCleanupPendingExecutePOST(deps StrmCleanupDeps) http.HandlerFunc 
 		httpx.WriteJson(w, http.StatusOK, resp)
 	}
 }
-

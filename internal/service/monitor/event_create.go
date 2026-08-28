@@ -285,35 +285,35 @@ func (m *Monitor) handleCreateFolderRecursive(
 			}
 			entryCloudPath := folderCloudPath + "/" + entry.Name
 			if entry.IsDir {
-			// P1-5: 子目录写入 folders 表（对齐参考项目 process_life_dir_item upsert_batch）
-			if m.sqliteDB != nil {
-				subCIDStr := fmt.Sprintf("%v", entry.CID)
-				if subCIDStr != "" && subCIDStr != "0" {
-					_ = db.UpsertFolderEntry(m.sqliteDB, account, db.FilePathEntry{
-						FileID:     subCIDStr,
-						Path:       entryCloudPath,
-						FileName:   entry.Name,
-						ParentID:   folderID,
-						UpdateTime: time.Now().Unix(),
-					})
+				// P1-5: 子目录写入 folders 表（对齐参考项目 process_life_dir_item upsert_batch）
+				if m.sqliteDB != nil {
+					subCIDStr := fmt.Sprintf("%v", entry.CID)
+					if subCIDStr != "" && subCIDStr != "0" {
+						_ = db.UpsertFolderEntry(m.sqliteDB, account, db.FilePathEntry{
+							FileID:     subCIDStr,
+							Path:       entryCloudPath,
+							FileName:   entry.Name,
+							ParentID:   folderID,
+							UpdateTime: time.Now().Unix(),
+						})
+					}
 				}
+				// 子目录：先 mkdir，然后递归
+				subRel := strings.TrimPrefix(
+					strings.TrimPrefix(entryCloudPath, rootMapping.cloudPath), "/")
+				subLocal := filepath.Join(rootLocalPath, sanitizePathParts(subRel))
+				_ = os.MkdirAll(subLocal, 0o755)
+				// 子目录的 cid 是 entry.CID（转为 string）
+				subCIDStr := fmt.Sprintf("%v", entry.CID)
+				n, subErr := m.handleCreateFolderRecursive(
+					ctx, account, rootMapping, lifeClient, subCIDStr, entryCloudPath, depth+1, matcher,
+				)
+				totalCreated += n
+				if subErr != nil {
+					logger.S().Warnf("[Monitor] 子目录递归失败 sub=%s: %v", entryCloudPath, subErr)
+				}
+				continue
 			}
-			// 子目录：先 mkdir，然后递归
-			subRel := strings.TrimPrefix(
-				strings.TrimPrefix(entryCloudPath, rootMapping.cloudPath), "/")
-			subLocal := filepath.Join(rootLocalPath, sanitizePathParts(subRel))
-			_ = os.MkdirAll(subLocal, 0o755)
-			// 子目录的 cid 是 entry.CID（转为 string）
-			subCIDStr := fmt.Sprintf("%v", entry.CID)
-			n, subErr := m.handleCreateFolderRecursive(
-				ctx, account, rootMapping, lifeClient, subCIDStr, entryCloudPath, depth+1, matcher,
-			)
-			totalCreated += n
-			if subErr != nil {
-				logger.S().Warnf("[Monitor] 子目录递归失败 sub=%s: %v", entryCloudPath, subErr)
-			}
-			continue
-		}
 			// 媒体文件：计算本地父目录并生成
 			relFromRoot := strings.TrimPrefix(
 				strings.TrimPrefix(entryCloudPath, rootMapping.cloudPath), "/")
@@ -343,4 +343,3 @@ func (m *Monitor) handleCreateFolderRecursive(
 	}
 	return totalCreated, nil
 }
-

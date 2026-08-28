@@ -21,7 +21,7 @@ func NewWebhookSender(url string) *WebhookSender {
 		return nil
 	}
 	return &WebhookSender{
-		url: url,
+		url:    url,
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
 }

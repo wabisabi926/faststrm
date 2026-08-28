@@ -229,4 +229,3 @@ func (m *Monitor) handleMoveRenameQuadrant(
 		return true, nil
 	}
 }
-

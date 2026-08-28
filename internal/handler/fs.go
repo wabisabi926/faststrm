@@ -4,15 +4,17 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/zeromicro/go-zero/rest/httpx"
+
 	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 // encodeRedirectURL 对 302 重定向 URL 进行编码：
 // 只编码非 ASCII 字符和空格，保留 URL 保留字符和已有的百分号转义。
 // 对齐参考项目 utils/url.py UrlUtils.encode_url_fully:
-//   Python: quote(url, safe=":/?#@!$&'()*+,;=%")
+//
+//	Python: quote(url, safe=":/?#@!$&'()*+,;=%")
 func encodeRedirectURL(rawURL string) string {
 	var sb []byte
 	for i := 0; i < len(rawURL); i++ {
@@ -121,4 +123,3 @@ func itoa(n int64) string {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	httpx.WriteJson(w, status, v)
 }
-

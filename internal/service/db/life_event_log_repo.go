@@ -255,7 +255,7 @@ func (l LifeEventLog) MarshalJSON() ([]byte, error) {
 		Alias
 		Success bool `json:"success"`
 	}{
-		Alias:  Alias(l),
+		Alias:   Alias(l),
 		Success: l.Success,
 	})
 }

@@ -428,6 +428,7 @@ func (r *FilePathRepo) DeleteByPathPrefix(account, pathPrefix string) (int64, er
 //
 // resolveLocal: (entry) -> (本地 STRM 绝对路径, 当该路径文件缺失时是否判定为幽灵)
 //   - 返回 shouldDeleteIfMissing=false 的条目会被跳过（例如条目不在当前 task targetPath 范围内）
+//
 // maxCheck<=0 表示不限制检查数量（分页扫描，内存安全）
 // 返回 (实际删除 DB 条数, error)
 func PurgeOrphanEntries(

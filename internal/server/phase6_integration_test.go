@@ -23,11 +23,11 @@ import (
 
 // 阶段 6 集成测试：验证 initPhase6Deps 正确装配 Telegram / Emby / LifeMonitor 依赖
 // 覆盖：
-//  1) 启动时无配置 → Dispatcher 仍可用（Notify 静默跳过）、Monitor 可查询状态
-//  2) 启动时已配置 Telegram → TelegramBot / PollingManager / CommandHandler 均非 nil
-//  3) 启动时已配置 Emby → EmbyClient / Notifier / SyncDelete 均非 nil
-//  4) settingsFn 热重载：修改 settings.json 后 settingsFn 回调返回最新值
-//  5) LifeEventLogRepo Append/Query 端到端
+//  1. 启动时无配置 → Dispatcher 仍可用（Notify 静默跳过）、Monitor 可查询状态
+//  2. 启动时已配置 Telegram → TelegramBot / PollingManager / CommandHandler 均非 nil
+//  3. 启动时已配置 Emby → EmbyClient / Notifier / SyncDelete 均非 nil
+//  4. settingsFn 热重载：修改 settings.json 后 settingsFn 回调返回最新值
+//  5. LifeEventLogRepo Append/Query 端到端
 func TestPhase6_InitDepsAndWiring(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, "config")
@@ -75,7 +75,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
 			taskRuntime, execDeps, nil, nil,
-	)
+		)
 
 		// Dispatcher 必须非 nil（即便 Telegram 未配置，Notify 静默跳过）
 		if notifyDeps.Dispatcher == nil {
@@ -139,7 +139,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
 			taskRuntime, execDeps, nil, nil,
-	)
+		)
 
 		if notifyDeps.TelegramBot == nil {
 			t.Fatal("TelegramBot should not be nil when botToken is configured")
@@ -183,7 +183,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
 			taskRuntime, execDeps, nil, nil,
-	)
+		)
 		// 启动时 emby 未配置 → EmbyClient 为 nil
 		if embyDeps.EmbyClient != nil {
 			t.Fatal("EmbyClient should be nil at startup")
@@ -407,7 +407,7 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 			BotToken:           "123456789:ABCdefGHIjklMNOpqrsTUVwxyz1234567890",
 			ChatID:             "-1001234567890",
 			WebhookSecretToken: "expected-secret-token",
-			Enabled:             true,
+			Enabled:            true,
 		}
 		if err := settingsStore.SaveSettings(settings); err != nil {
 			t.Fatalf("SaveSettings: %v", err)
@@ -526,4 +526,3 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 		}
 	})
 }
-

@@ -95,31 +95,31 @@ func parseMappingType(s string) MappingType {
 
 // EventDecision 单次事件的决策结果（统一日志口径，替代现在散落在各处的 Debug）
 type EventDecision struct {
-	EventKind           string      // create/delete/move/rename/new_folder/unknown
-	Account             string      // 账号名
-	EventTypeNumber     int         // 115 原始 type 数字
-	FileID              string      // 事件对象 file_id（反查 DB/API 用）
-	ParentID            string      // 事件对象 parent_id（路径解析关键，调试用）
-	FileName            string      // 事件文件名/目录名
-	CloudPath           string      // 解析后的云路径（已 normalize，空=解析失败）
-	CloudPathSource     string      // CACHE/DB/ATTR_API/ANCESTORS_API/UNKNOWN（便于日志判断三级降级落在哪一层）
-	OldCloudPath        string      // 仅 move/rename
-	NewCloudPath        string      // 仅 move/rename
-	MatchedCloudPrefix  string      // matchPathMapping 命中的前缀（未命中则空）
-	MatchedLocalBase    string      // 映射本地根（未命中则空）
-	MappingType         MappingType // 映射分类（NONE=无映射）
-	InMappingOld        bool
-	InMappingNew        bool
-	MediaCategory       int         // event.FileCategory：0=目录 1=文件 其它=图片之类
-	FileExtension       string      // 小写，无点
-	IsMediaFile         bool
-	PickCode            string
-	IsValidPickcode     bool
-	FileSize            int64
-	UnderMinFileSize    bool        // size<MinFileSize 命中黑名单等
-	UnderBlacklist      bool
-	EventTypeEnabled    bool        // EventTypesSettings 开关（create/remove/rename/move 是否启用）
-	SkipReason          string      // 非空则 ShouldAct=false，INFO 级会打这个
+	EventKind          string      // create/delete/move/rename/new_folder/unknown
+	Account            string      // 账号名
+	EventTypeNumber    int         // 115 原始 type 数字
+	FileID             string      // 事件对象 file_id（反查 DB/API 用）
+	ParentID           string      // 事件对象 parent_id（路径解析关键，调试用）
+	FileName           string      // 事件文件名/目录名
+	CloudPath          string      // 解析后的云路径（已 normalize，空=解析失败）
+	CloudPathSource    string      // CACHE/DB/ATTR_API/ANCESTORS_API/UNKNOWN（便于日志判断三级降级落在哪一层）
+	OldCloudPath       string      // 仅 move/rename
+	NewCloudPath       string      // 仅 move/rename
+	MatchedCloudPrefix string      // matchPathMapping 命中的前缀（未命中则空）
+	MatchedLocalBase   string      // 映射本地根（未命中则空）
+	MappingType        MappingType // 映射分类（NONE=无映射）
+	InMappingOld       bool
+	InMappingNew       bool
+	MediaCategory      int    // event.FileCategory：0=目录 1=文件 其它=图片之类
+	FileExtension      string // 小写，无点
+	IsMediaFile        bool
+	PickCode           string
+	IsValidPickcode    bool
+	FileSize           int64
+	UnderMinFileSize   bool // size<MinFileSize 命中黑名单等
+	UnderBlacklist     bool
+	EventTypeEnabled   bool   // EventTypesSettings 开关（create/remove/rename/move 是否启用）
+	SkipReason         string // 非空则 ShouldAct=false，INFO 级会打这个
 }
 
 // ShouldAct 决策之后是否真的调用副作用 handler
@@ -137,7 +137,7 @@ func (d EventDecision) ShouldAct() bool {
 	if d.CloudPath == "" {
 		return false
 	}
-	if d.IsValidPickcode == false && d.EventKind != "new_folder" && d.EventKind != "delete" {
+	if !d.IsValidPickcode && d.EventKind != "new_folder" && d.EventKind != "delete" {
 		// delete/new_folder 不要求 pickcode
 		return false
 	}
@@ -185,9 +185,9 @@ var multiSlashRe = regexp.MustCompile(`/+`)
 
 // normalizeCloudPath 统一云路径格式：
 //
-//	1) 去首尾斜杠
-//	2) 连续斜杠折叠
-//	3) 空串/纯斜杠全部归为 ""
+//  1. 去首尾斜杠
+//  2. 连续斜杠折叠
+//  3. 空串/纯斜杠全部归为 ""
 func normalizeCloudPath(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -241,7 +241,8 @@ func eventKindLabel(typ int) string {
 }
 
 // upgradedPathMapping 包装 MonitorPathMapping，增加 Phase 1.3 新增的 MappingType 字段
-//  （暂时不往 model/settings.go 加结构体字段以免 JSON 序列化老配置冲突，先在解析层兼容）
+//
+//	（暂时不往 model/settings.go 加结构体字段以免 JSON 序列化老配置冲突，先在解析层兼容）
 type upgradedPathMapping struct {
 	Account     string
 	CloudPath   string
@@ -250,8 +251,9 @@ type upgradedPathMapping struct {
 }
 
 // parseUpgradedMappings 从 legacy []MonitorPathMapping 解析，支持 JSON 中用户自定义的
-//   "mappingType": "transfer" / "unrecognized" / "media"
-//   未配置或缺省 → MEDIA
+//
+//	"mappingType": "transfer" / "unrecognized" / "media"
+//	未配置或缺省 → MEDIA
 func parseUpgradedMappings(raw []model.MonitorPathMapping) []upgradedPathMapping {
 	out := make([]upgradedPathMapping, 0, len(raw))
 	for _, m := range raw {
@@ -353,7 +355,6 @@ func decideMappingResult(account, cloudPath string, mappings []model.MonitorPath
 // _ 占位：保证 decideMappingResult 被引用（linter 友好）
 var _ = decideMappingResult
 
-
 // ======================================================================
 // Phase 1.1 —— 新增：processEvent 开头做决策并打 INFO 级 EVENT_DECIDE 日志
 //   （此处只放决策辅助函数；真正接入 processEvent 的 switch 代码在 monitor.go / event_handler.go 中改动）
@@ -374,7 +375,8 @@ func validatePickcode(s string) bool {
 }
 
 // mediaExtensionMatch 纯逻辑：扩展名集合（配置值，可能带点、可能大小写）判定；
-//   空集合 + includeAll=true → 全部视为媒体（用于用户未配置时兼容默认）
+//
+//	空集合 + includeAll=true → 全部视为媒体（用于用户未配置时兼容默认）
 func mediaExtensionMatch(fileName string, extensions []string) (extNoDot string, ok bool) {
 	extNoDot = strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
 	if len(extensions) == 0 {
@@ -426,7 +428,8 @@ func blacklistMatch(fileName string, patterns []string) bool {
 // ======================================================================
 
 // buildWriteAheadEntry 把事件 + cloudPath + 决策 → FilePathEntry
-//   注意：调用方要确保 cloudPath 已 normalize（空串则不写 DB 返回 nil, false）
+//
+//	注意：调用方要确保 cloudPath 已 normalize（空串则不写 DB 返回 nil, false）
 func buildWriteAheadEntry(event client115.LifeEventItem, cloudPath, pickCode string) (db.FilePathEntry, bool) {
 	if strings.TrimSpace(event.FileID) == "" || strings.TrimSpace(cloudPath) == "" {
 		return db.FilePathEntry{}, false
@@ -453,7 +456,8 @@ func (m *Monitor) writeAheadFilePath(ctx context.Context, account string, entry 
 }
 
 // tryEventTypeEnabled 检查某类事件是否启用（create/remove/rename/move 按 EventTypesSettings）
-//   type=17(new_folder) 视为"写入型记录"，只要 EventTypes.Create 开就视为启用（写 DB，无副作用）
+//
+//	type=17(new_folder) 视为"写入型记录"，只要 EventTypes.Create 开就视为启用（写 DB，无副作用）
 func tryEventTypeEnabled(types model.EventTypesSettings, eventTypeNumber int) bool {
 	switch {
 	case eventTypeBelongsTo(eventTypeNumber, "create"):
@@ -475,9 +479,10 @@ func tryEventTypeEnabled(types model.EventTypesSettings, eventTypeNumber int) bo
 var errCloudPathUnresolved = errors.New("cloud path unresolved")
 
 // wrapLegacyUnknownPath 把 ResolvePath 返回的 "/unknown/..." 这种伪路径转换为 ("", err)
-//   以便调用方显式跳过并记录 SkipReason
-//   注：真正的 client115.LifeClient.ResolvePath 改动放到 life.go 中直接修改 normalize；
-//       这里只提供调用端的后处理包装，保证不破坏现有调用签名。
+//
+//	以便调用方显式跳过并记录 SkipReason
+//	注：真正的 client115.LifeClient.ResolvePath 改动放到 life.go 中直接修改 normalize；
+//	    这里只提供调用端的后处理包装，保证不破坏现有调用签名。
 func wrapLegacyUnknownPath(path string, errIn error) (string, error) {
 	if errIn != nil {
 		return "", errIn
@@ -528,7 +533,8 @@ func pollCountsAddSkipped(ctx context.Context, reason string) {
 }
 
 // ensureDB 确保 sqliteDB 不为 nil；否则返回错误。
-//   仅删除/反查旧路径这种强依赖 DB 的操作需要；写入操作 writeAheadFilePath 自己做 nil 保护。
+//
+//	仅删除/反查旧路径这种强依赖 DB 的操作需要；写入操作 writeAheadFilePath 自己做 nil 保护。
 func (m *Monitor) ensureDB() (*sql.DB, error) {
 	if m.sqliteDB == nil {
 		return nil, errors.New("sqliteDB 未初始化（需要 302/Strm 模式开启 DB 写回）")
@@ -541,15 +547,21 @@ func (m *Monitor) ensureDB() (*sql.DB, error) {
 // ======================================================================
 
 // preProcessEvent 承担：
-//   1) 路径 normalize + ResolvePath 的 "/unknown/" 兜底（改成空串+error）
-//   2) 统一调用 decideMappingResult()
-//   3) 计算扩展名、黑名单、pickcode、最小文件大小、EventTypeEnabled 等
-//   4) 生成 EventDecision 对象并**立即打 INFO 级 EVENT_DECIDE 日志**
-//   5) Write-Ahead DB（调用 buildWriteAheadEntry + writeAheadFilePath）
-//   6) 如果 type=17(new_folder) 且 mapping 命中 → 直接 return（不生成 STRM），caller 视为 effective
 //
-//  返回 (decision, handled)：handled=true 表示 preProcessEvent 已经"消化"了这个事件
-//         （如 new_folder 只写 DB 不进 handler），caller 不再走原 switch handler。
+//  1. 路径 normalize + ResolvePath 的 "/unknown/" 兜底（改成空串+error）
+//
+//  2. 统一调用 decideMappingResult()
+//
+//  3. 计算扩展名、黑名单、pickcode、最小文件大小、EventTypeEnabled 等
+//
+//  4. 生成 EventDecision 对象并**立即打 INFO 级 EVENT_DECIDE 日志**
+//
+//  5. Write-Ahead DB（调用 buildWriteAheadEntry + writeAheadFilePath）
+//
+//  6. 如果 type=17(new_folder) 且 mapping 命中 → 直接 return（不生成 STRM），caller 视为 effective
+//
+//     返回 (decision, handled)：handled=true 表示 preProcessEvent 已经"消化"了这个事件
+//     （如 new_folder 只写 DB 不进 handler），caller 不再走原 switch handler。
 func (m *Monitor) preProcessEvent(
 	ctx context.Context,
 	account string,
@@ -629,14 +641,14 @@ func (m *Monitor) preProcessEventWithSource(
 	}
 
 	decision := EventDecision{
-		EventKind:        kind,
-		Account:          account,
-		EventTypeNumber:  event.Type,
-		FileID:           event.FileID,
-		ParentID:         event.ParentID,
-		FileName:         event.FileName,
-		CloudPath:        cloudPath,
-		CloudPathSource:  cloudPathSource,
+		EventKind:          kind,
+		Account:            account,
+		EventTypeNumber:    event.Type,
+		FileID:             event.FileID,
+		ParentID:           event.ParentID,
+		FileName:           event.FileName,
+		CloudPath:          cloudPath,
+		CloudPathSource:    cloudPathSource,
 		MatchedCloudPrefix: mr.CloudPrefix,
 		MatchedLocalBase:   mr.LocalPath,
 		MappingType:        mr.MappingType,
@@ -698,7 +710,8 @@ func (m *Monitor) preProcessEventWithSource(
 }
 
 // makeWriteAheadDecision_ForTest 仅用于 Phase 1.2 单元测试：等价于调用 preProcessEvent 并返回 (decision, handled)
-//  （Monitor 上挂这个 method 仅为了测试可访问，生产代码同样使用 preProcessEvent。）
+//
+//	（Monitor 上挂这个 method 仅为了测试可访问，生产代码同样使用 preProcessEvent。）
 func (m *Monitor) makeWriteAheadDecision_ForTest(
 	ctx context.Context,
 	account string,

@@ -2,8 +2,9 @@
 // 与 frontend/src/lib/115crypto.ts 严格逐字节对齐
 //
 // 算法流程:
-//   加密: plain → XOR[8d,a5,a5,8d] → reverse → XOR[78,06,ad,4c,33,86,5d,18,4c,01,3f,46] → PKCS1 v1.5 padding → RSA(m=RSA_e, e=RSA_n) → base64
-//   解密: base64 → RSA(m=RSA_e, e=RSA_n) → 去掉 PKCS1 padding → 前16字节→genKey→XOR 剩余部分 → reverse → XOR[8d,a5,a5,8d] → utf-8
+//
+//	加密: plain → XOR[8d,a5,a5,8d] → reverse → XOR[78,06,ad,4c,33,86,5d,18,4c,01,3f,46] → PKCS1 v1.5 padding → RSA(m=RSA_e, e=RSA_n) → base64
+//	解密: base64 → RSA(m=RSA_e, e=RSA_n) → 去掉 PKCS1 padding → 前16字节→genKey→XOR 剩余部分 → reverse → XOR[8d,a5,a5,8d] → utf-8
 package crypto115
 
 import (

@@ -120,8 +120,9 @@ func (nm *NotifyMerger) flush() {
 
 // notifyCreate 发送创建通知
 // 发送策略二选一（避免一条事件发两条）：
-//   · 实现了 NotificationDispatcher（新路径）：富文本卡片 + 按钮，单独发送
-//   · 回退到单纯 Notifier：进入合并器汇总成摘要消息后再推送
+//
+//	· 实现了 NotificationDispatcher（新路径）：富文本卡片 + 按钮，单独发送
+//	· 回退到单纯 Notifier：进入合并器汇总成摘要消息后再推送
 func (m *Monitor) notifyCreate(ctx context.Context, account, cloudPath, kindLabel, localPath string, size int64) {
 	if m.notifier == nil {
 		return

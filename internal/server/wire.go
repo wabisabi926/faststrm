@@ -67,13 +67,13 @@ func initPhase6Deps(
 	}
 
 	notifyDeps := handler.NotifyDeps{
-		SettingsStore:   settingsStore,
-		Dispatcher:      dispatcher,
-		TelegramBot:     tgBot,
-		PollingManager:  pollingMgr,
+		SettingsStore:  settingsStore,
+		Dispatcher:     dispatcher,
+		TelegramBot:    tgBot,
+		PollingManager: pollingMgr,
 		CommandHandler: cmdHandler,
-		TasksStore:      tasksStore,
-		AccountStore:    accountStore,
+		TasksStore:     tasksStore,
+		AccountStore:   accountStore,
 	}
 
 	// ---------- Emby ----------

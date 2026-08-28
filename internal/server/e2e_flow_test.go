@@ -79,15 +79,17 @@ func setupE2E(t *testing.T) *e2eFixture {
 	config.SetForTest(cfg)
 
 	f := &e2eFixture{
-		t:             t,
-		cfgDir:        cfgDir,
-		dataDir:       dataDir,
-		salt:          salt,
-		accountStore:  (func() *store.AccountStore {
-		as, err := store.NewAccountStore(salt, cfgDir)
-		if err != nil { t.Fatalf("NewAccountStore: %v", err) }
-		return as
-	})(),
+		t:       t,
+		cfgDir:  cfgDir,
+		dataDir: dataDir,
+		salt:    salt,
+		accountStore: (func() *store.AccountStore {
+			as, err := store.NewAccountStore(salt, cfgDir)
+			if err != nil {
+				t.Fatalf("NewAccountStore: %v", err)
+			}
+			return as
+		})(),
 		tasksStore:    store.NewTasksStore(cfgDir),
 		settingsStore: store.NewSettingsStore(salt, cfgDir),
 		stateMgr:      runtime.Init(cfgDir),
@@ -175,13 +177,13 @@ func TestE2E_FlowA_AccountTaskHistory(t *testing.T) {
 		// 保存任务配置到 tasks.json
 		tasks := []task.Task{
 			{
-				ID:         "e2e-task-001",
-				Name:       "E2E 测试任务",
-				Account:    "e2e-115",
+				ID:          "e2e-task-001",
+				Name:        "E2E 测试任务",
+				Account:     "e2e-115",
 				AccountType: "115",
-				OriginPath: "/movies",
-				TargetPath: "/data/strm/movies",
-				StrmPrefix: "http://127.0.0.1:8090/api/strm",
+				OriginPath:  "/movies",
+				TargetPath:  "/data/strm/movies",
+				StrmPrefix:  "http://127.0.0.1:8090/api/strm",
 				Schedule: &task.TaskSchedule{
 					Enabled: false,
 					Mode:    "manual",
@@ -696,7 +698,7 @@ func TestE2E_FlowE_DirectoryLocal(t *testing.T) {
 		if !names["tv"] {
 			t.Errorf("expected tv in data, got: %v", names)
 		}
-		})
+	})
 
 	t.Run("list_local_invalid_root", func(t *testing.T) {
 		// 不存在的路径 → code=500 + 空 content
@@ -711,5 +713,3 @@ func TestE2E_FlowE_DirectoryLocal(t *testing.T) {
 		}
 	})
 }
-
-

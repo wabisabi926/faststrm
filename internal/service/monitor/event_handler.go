@@ -36,9 +36,10 @@ type pathMapping struct {
 
 // processEvent 事件分发器：根据事件类型调用对应 handler
 // 对齐 TS processEvent + Phase 1：
-//   ① 先调用 preProcessEvent 做决策/日志/Write-Ahead DB/type=17 拦截；
-//   ② 再按 skipReason / ShouldAct 进入 legacy handler；
-//   ③ 返回值通过 ctx 中携带的 *PollCounts（若有）累计 effective/skipped。
+//
+//	① 先调用 preProcessEvent 做决策/日志/Write-Ahead DB/type=17 拦截；
+//	② 再按 skipReason / ShouldAct 进入 legacy handler；
+//	③ 返回值通过 ctx 中携带的 *PollCounts（若有）累计 effective/skipped。
 func (m *Monitor) processEvent(ctx context.Context, account string, event client115.LifeEventItem, lifeClient *client115.LifeClient) error {
 	config := m.settingsFn()
 	eventType := event.Type
@@ -58,13 +59,13 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 	//  2) lifeClient.ResolvePath：parentID 合法→ResolveDirPath(parentID)；否则用 file_id 自身查祖先链
 	//     - ResolvePath 内部仍有 祖先链→根目录列目录→二级目录列目录→ResolveDirPath 四级降级
 	const (
-		srcEventRaw  = "EVENT_RAW"
-		srcDB        = "DB"
+		srcEventRaw   = "EVENT_RAW"
+		srcDB         = "DB"
 		srcDBRejected = "DB_SINGLE_REJECTED" // DB 有记录但仅单段+未命中根映射，强制丢弃重查
-		srcAPIPID    = "API_PARENT_ID"
-		srcAPIFID    = "API_FILE_ID"
-		srcAPIRootLs = "API_ROOT_FSLIST"
-		srcFallback  = "BARE_FILENAME"
+		srcAPIPID     = "API_PARENT_ID"
+		srcAPIFID     = "API_FILE_ID"
+		srcAPIRootLs  = "API_ROOT_FSLIST"
+		srcFallback   = "BARE_FILENAME"
 	)
 	_ = srcAPIPID
 	_ = srcAPIFID
@@ -357,4 +358,3 @@ func (m *Monitor) recordMonitorHistory(account string, kind db.StrmHistoryKind, 
 			account, kind, herr)
 	}
 }
-

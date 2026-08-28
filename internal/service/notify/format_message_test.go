@@ -39,7 +39,7 @@ func TestFormatMessage_MetadataSortedByPriority(t *testing.T) {
 // TestFormatMessage_UnknownKeyFallback 验证未列入 metadataKeyOrder 的 key 按 UTF-8 序追加在末尾
 func TestFormatMessage_UnknownKeyFallback(t *testing.T) {
 	out := FormatMessage("T", "C", map[string]string{
-		"账号":   "acc", // 已列入，优先级 0
+		"账号":    "acc", // 已列入，优先级 0
 		"自定义字段": "val", // 未列入，走 fallback
 	})
 	idxAcc := strings.Index(out, "账号：")

@@ -91,9 +91,9 @@ type StrmSettings struct {
 	//   示例："[{account}] {stem}.strm"
 	StrmFilenameTemplate string `json:"strmFilenameTemplate"`
 	// T9: 启用 STRM URL HMAC-SHA256 签名（防代理被扫；默认 false 升级零破坏）
-	EnableTokenSigning bool   `json:"enableTokenSigning"`
+	EnableTokenSigning bool `json:"enableTokenSigning"`
 	// T9: HMAC 签名 secret（空=未生成；开关=true 时 store 自动生成）
-	TokenSecret        string `json:"tokenSecret,omitempty"`
+	TokenSecret string `json:"tokenSecret,omitempty"`
 }
 
 // EmbySettings emby 子项
@@ -175,7 +175,7 @@ type LifeMonitorSettings struct {
 	// P1-4 高级模板（空则继承全局 StrmSettings 模板，仍为空则走默认拼接）
 	StrmUrlTemplate      string `json:"strmUrlTemplate"`
 	StrmFilenameTemplate string `json:"strmFilenameTemplate"`
-	NotifyOnlyOnError bool `json:"notifyOnlyOnError"` // true=仅错误时发TG通知，正常操作不通知
+	NotifyOnlyOnError    bool   `json:"notifyOnlyOnError"` // true=仅错误时发TG通知，正常操作不通知
 	// 事件去重配置
 	EnableDedup      bool `json:"enableDedup"`      // 是否启用事件去重
 	DedupWindowHours int  `json:"dedupWindowHours"` // 去重窗口（小时），默认 24
@@ -297,7 +297,7 @@ func DefaultSettings() *Settings {
 			RateLimitMs:          1000,
 			MaxRetries:           3,
 			RetryDelayMs:         1000,
-			AutoDownloadMetadata: true,  // 默认与全局 Download.AutoDownloadMetadata 保持一致
+			AutoDownloadMetadata: true, // 默认与全局 Download.AutoDownloadMetadata 保持一致
 			DownloadExtensions:   nil,  // 空则继承全局 DefaultDownloadExtensions
 			EventTypes: EventTypesSettings{
 				Create: true,

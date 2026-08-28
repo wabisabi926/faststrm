@@ -176,7 +176,6 @@ func (m *Monitor) cleanupOldStrmAssets(
 		fmt.Sprintf("recreate 模式：旧 STRM 已清理 %s (关联 %d)", oldStrmPath, deletedRelated))
 }
 
-
 // recreateStrmInDirectory 在目标目录重新生成STRM（用于move/rename目标已存在时的recreate fallback）
 func (m *Monitor) recreateStrmInDirectory(
 	ctx context.Context,
@@ -758,4 +757,3 @@ func (m *Monitor) handleMoveEvent(
 		"跳过: 源与目标 STRM 均不存在")
 	return nil
 }
-

@@ -27,8 +27,9 @@ func GenerateTokenSecret() string {
 // SignStrmToken 为 STRM 请求生成签名 token。
 //
 // 签名格式：expire_hex|hmac_hex
-//   expire_hex = 过期时间 unix 秒（16 位 hex）
-//   hmac_hex   = HMAC-SHA256(secret, "account|pickcode|expire_hex")
+//
+//	expire_hex = 过期时间 unix 秒（16 位 hex）
+//	hmac_hex   = HMAC-SHA256(secret, "account|pickcode|expire_hex")
 //
 // secret 为空时返回空字符串（表示禁用签名）。
 func SignStrmToken(secret, account, pickcode string, ttl time.Duration) string {
@@ -54,8 +55,9 @@ func SignStrmToken(secret, account, pickcode string, ttl time.Duration) string {
 
 // VerifyStrmToken 校验签名 token。
 // 返回 (ok, reason)：
-//   ok=true  签名有效且未过期
-//   ok=false reason: missing_secret / bad_format / bad_signature / expired
+//
+//	ok=true  签名有效且未过期
+//	ok=false reason: missing_secret / bad_format / bad_signature / expired
 func VerifyStrmToken(secret, token, account, pickcode string) (bool, string) {
 	if secret == "" {
 		return true, ""

@@ -103,7 +103,7 @@ jobs:
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v7
       with:
-        version: latest
+        version: v1.64.8   # v1.x: 我的 .golangci.yml 是 v1 格式
         args: --timeout=5m --config .golangci.yml
         skip-save-cache: true
       env:

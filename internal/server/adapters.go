@@ -32,7 +32,7 @@ func (a *menuActionsAdapter) GetSystemStatus() (map[string]any, error) {
 	var accountList []map[string]any
 	for _, acc := range accounts {
 		accountList = append(accountList, map[string]any{
-			"name":     acc.Name,
+			"name":      acc.Name,
 			"hasCookie": acc.Cookie != "",
 		})
 	}
@@ -103,10 +103,10 @@ func (a *menuActionsAdapter) internalGetMonitorStatus() map[string]any {
 	if s, err := a.settingsStore.ReadSettings(); err == nil {
 		et := s.LifeMonitor.EventTypes
 		result["eventTypes"] = map[string]bool{
-			"create":  et.Create,
-			"remove":  et.Remove,
-			"rename":  et.Rename,
-			"move":    et.Move,
+			"create": et.Create,
+			"remove": et.Remove,
+			"rename": et.Rename,
+			"move":   et.Move,
 		}
 	}
 	return result

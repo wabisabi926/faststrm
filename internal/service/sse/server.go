@@ -35,8 +35,8 @@ type ProgressPayload struct {
 	OverallPercent string `json:"overallPercent,omitempty"` // 总体："0.00"–"100.00"，必须字符串
 	Done           bool   `json:"done,omitempty"`
 	Error          string `json:"error,omitempty"`
-	Stage          string `json:"stage,omitempty"`          // 当前阶段：scanning/incremental/cleanup/writing_db/generating/finalizing
-	StageDetail    string `json:"stageDetail,omitempty"`    // 阶段详情描述（如"已处理 5 个目录, 120 个文件"）
+	Stage          string `json:"stage,omitempty"`       // 当前阶段：scanning/incremental/cleanup/writing_db/generating/finalizing
+	StageDetail    string `json:"stageDetail,omitempty"` // 阶段详情描述（如"已处理 5 个目录, 120 个文件"）
 }
 
 // LogPayload 日志事件
@@ -97,9 +97,9 @@ type Server struct {
 	mu          sync.RWMutex
 	subscribers map[string]*Subscriber // key = Subscriber.ID
 	// 每个任务的环形日志缓冲（内存里保存最近 N 条，新客户端连接时重放）
-	logMu       sync.Mutex
-	taskLogs    map[string][]string // taskId -> frames（已编码）
-	maxLogPer   int
+	logMu     sync.Mutex
+	taskLogs  map[string][]string // taskId -> frames（已编码）
+	maxLogPer int
 }
 
 var (

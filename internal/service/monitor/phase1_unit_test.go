@@ -13,9 +13,10 @@ import (
 // ======================================================================
 
 // TestPollCounts_Add_Semantic 验证新的 PollCounts 累积语义
-//  进入 entered +1
-//  effective/skipped/error 只能一个 +1（互斥）
-//  dedup 不计入 entered
+//
+//	进入 entered +1
+//	effective/skipped/error 只能一个 +1（互斥）
+//	dedup 不计入 entered
 func TestPollCounts_Add_Semantic(t *testing.T) {
 	var c PollCounts
 	// 进入 1 件，最终副作用成功
@@ -117,14 +118,14 @@ func TestNormalizeCloudPath_Cases(t *testing.T) {
 		out string
 	}{
 		{"电影/爱丽丝梦游仙境/a.mkv", "电影/爱丽丝梦游仙境/a.mkv"},
-		{"/电影/爱丽丝梦游仙境/a.mkv", "电影/爱丽丝梦游仙境/a.mkv"},      // 前导 / 去掉
-		{"电影/爱丽丝梦游仙境/a.mkv/", "电影/爱丽丝梦游仙境/a.mkv"},      // 尾随 / 去掉
-		{"/电影/爱丽丝梦游仙境/a.mkv/", "电影/爱丽丝梦游仙境/a.mkv"},     // 两侧都去
-		{"//电影//a.mkv//", "电影/a.mkv"},                            // 重复斜杠也折叠（等价 normalize）
+		{"/电影/爱丽丝梦游仙境/a.mkv", "电影/爱丽丝梦游仙境/a.mkv"},  // 前导 / 去掉
+		{"电影/爱丽丝梦游仙境/a.mkv/", "电影/爱丽丝梦游仙境/a.mkv"},  // 尾随 / 去掉
+		{"/电影/爱丽丝梦游仙境/a.mkv/", "电影/爱丽丝梦游仙境/a.mkv"}, // 两侧都去
+		{"//电影//a.mkv//", "电影/a.mkv"},              // 重复斜杠也折叠（等价 normalize）
 		{"", ""},
 		{"/", ""},
 		{"///", ""},
-		{" / a / b / ", "a / b"},                                     // 保留中间空格但清首尾斜杠
+		{" / a / b / ", "a / b"}, // 保留中间空格但清首尾斜杠
 	}
 	for i, c := range cases {
 		got := normalizeCloudPath(c.in)
@@ -136,7 +137,8 @@ func TestNormalizeCloudPath_Cases(t *testing.T) {
 }
 
 // TestMatchPathMapping_NormalizesBothSides 验证 mapping/cloudPath 两侧都 normalize
-//  并且 MappingType 输出正确
+//
+//	并且 MappingType 输出正确
 func TestMatchPathMapping_NormalizesBothSides(t *testing.T) {
 	mappings := []model.MonitorPathMapping{
 		{CloudPath: "/电影/", LocalPath: `C:\Videos\电影`, Account: "acc1", MappingType: "media"},

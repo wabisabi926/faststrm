@@ -10,81 +10,80 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zeromicro/go-zero/rest/httpx"
+
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/notify"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/rest/httpx"
 )
-
 
 // ==================== 懒加载 PollingManager ====================
 // 解决启动时未配置 BotToken 导致 PollingManager 为 nil 的问题
 
 var (
-    sharedPollingMgr *notify.PollingManager
-    sharedCmdHandler *notify.CommandHandler
-    sharedDispatcher *notify.Dispatcher
-    sharedMu          sync.Mutex
-    // sharedCleanupHandler：保存注入的清理按钮回调（启动时创建 cleanupInteraction 后注入）
-    // 目的：getCmdHandler 懒加载创建 CommandHandler 时能自动接上 cleanup 回调，不会漏
-    sharedCleanupHandler notify.CleanupCallbackHandler
+	sharedPollingMgr *notify.PollingManager
+	sharedCmdHandler *notify.CommandHandler
+	sharedDispatcher *notify.Dispatcher
+	sharedMu         sync.Mutex
+	// sharedCleanupHandler：保存注入的清理按钮回调（启动时创建 cleanupInteraction 后注入）
+	// 目的：getCmdHandler 懒加载创建 CommandHandler 时能自动接上 cleanup 回调，不会漏
+	sharedCleanupHandler notify.CleanupCallbackHandler
 )
 
 // getPollingMgr 获取或创建共享 PollingManager
 func getPollingMgr(bot *notify.TelegramBot) *notify.PollingManager {
-    sharedMu.Lock()
-    defer sharedMu.Unlock()
-    if sharedPollingMgr == nil {
-        sharedPollingMgr = notify.NewPollingManager(bot)
-    }
-    return sharedPollingMgr
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	if sharedPollingMgr == nil {
+		sharedPollingMgr = notify.NewPollingManager(bot)
+	}
+	return sharedPollingMgr
 }
 
 // getCmdHandler 获取或创建共享 CommandHandler
 func getCmdHandler(bot *notify.TelegramBot, settingsStore *store.SettingsStore, tasksStore *store.TasksStore, accountStore *store.AccountStore) *notify.CommandHandler {
-    sharedMu.Lock()
-    defer sharedMu.Unlock()
-    if sharedCmdHandler == nil {
-        sharedCmdHandler = notify.NewCommandHandler(bot, settingsStore, tasksStore, accountStore)
-        // 懒加载创建后自动注入 cleanup 回调（如果已经通过 SetSharedCleanupHandler 注入过）
-        if sharedCleanupHandler != nil {
-            sharedCmdHandler.SetCleanupCallbackHandler(sharedCleanupHandler)
-        }
-    }
-    return sharedCmdHandler
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	if sharedCmdHandler == nil {
+		sharedCmdHandler = notify.NewCommandHandler(bot, settingsStore, tasksStore, accountStore)
+		// 懒加载创建后自动注入 cleanup 回调（如果已经通过 SetSharedCleanupHandler 注入过）
+		if sharedCleanupHandler != nil {
+			sharedCmdHandler.SetCleanupCallbackHandler(sharedCleanupHandler)
+		}
+	}
+	return sharedCmdHandler
 }
 
 // SetSharedCleanupHandler 暴露给 server.go 在创建 StrmCleanupInteraction 后调用
 // 确保懒加载的 CommandHandler 在任何时机创建时都能拿到 cleanup 回调，STRM 清理按钮不会失效。
 func SetSharedCleanupHandler(h notify.CleanupCallbackHandler) {
-    sharedMu.Lock()
-    defer sharedMu.Unlock()
-    sharedCleanupHandler = h
-    // 如果已经有懒加载或正式创建的 CommandHandler，同步补上
-    if sharedCmdHandler != nil {
-        sharedCmdHandler.SetCleanupCallbackHandler(h)
-    }
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	sharedCleanupHandler = h
+	// 如果已经有懒加载或正式创建的 CommandHandler，同步补上
+	if sharedCmdHandler != nil {
+		sharedCmdHandler.SetCleanupCallbackHandler(h)
+	}
 }
 
 // SharedCleanupHandler 让 server.go 拿到 cleanupHandler，用于 AutoPolling 中兜底 NewCommandHandler 后的注入。
 func SharedCleanupHandler() notify.CleanupCallbackHandler {
-    sharedMu.Lock()
-    defer sharedMu.Unlock()
-    return sharedCleanupHandler
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	return sharedCleanupHandler
 }
 
 // resetSharedPolling 重置共享实例（BotToken 变更时调用）
 func resetSharedPolling() {
-    sharedMu.Lock()
-    defer sharedMu.Unlock()
-    if sharedPollingMgr != nil {
-        sharedPollingMgr.Stop()
-        sharedPollingMgr = nil
-    }
-    sharedCmdHandler = nil
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	if sharedPollingMgr != nil {
+		sharedPollingMgr.Stop()
+		sharedPollingMgr = nil
+	}
+	sharedCmdHandler = nil
 }
-
 
 // NotifyDeps Telegram 通知相关 handler 依赖
 type NotifyDeps struct {

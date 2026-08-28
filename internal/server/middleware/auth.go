@@ -4,8 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wabisabi926/faststrm/internal/service/auth"
 	"github.com/zeromicro/go-zero/rest/httpx"
+
+	"github.com/wabisabi926/faststrm/internal/service/auth"
 )
 
 // JWTMiddleware JWT 鉴权中间件

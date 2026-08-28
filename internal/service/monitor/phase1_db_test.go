@@ -60,7 +60,8 @@ func TestBuildWriteAheadEntry(t *testing.T) {
 }
 
 // TestWriteAheadFilePath_WritesIntoDB 真实 SQLite 上，writeAheadFilePath 调用之后
-//  SELECT COUNT(*) FROM files 必须 > 0，哪怕后续 handler 跳过
+//
+//	SELECT COUNT(*) FROM files 必须 > 0，哪怕后续 handler 跳过
 func TestWriteAheadFilePath_WritesIntoDB(t *testing.T) {
 	sqldb := newTestSqliteDB(t)
 	m := &Monitor{sqliteDB: sqldb}
@@ -91,8 +92,9 @@ func TestWriteAheadFilePath_WritesIntoDB(t *testing.T) {
 }
 
 // TestProcessEvent_NewFolder_WritesDB_NoLocalStrm 模拟 type=17 new_folder：
-//   预期：1) files 表写入 1 条（反查前置）；2) 本地目标目录下**不**产生任何 .strm 文件（new_folder 本身不生成）
-//   3) life_event_logs 表也必须有 1 条 success=true 记录（观测性闭环）
+//
+//	预期：1) files 表写入 1 条（反查前置）；2) 本地目标目录下**不**产生任何 .strm 文件（new_folder 本身不生成）
+//	3) life_event_logs 表也必须有 1 条 success=true 记录（观测性闭环）
 func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 	dir := t.TempDir()
 	// 初始化 SQLite（包含 files + life_event_logs 两张表）

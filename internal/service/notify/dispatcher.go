@@ -29,11 +29,11 @@ type Dispatcher struct {
 
 // sendTask 串行队列中的单条发送任务
 type sendTask struct {
-	ctx      context.Context
-	n        *Notification
-	plain    string // 纯文本通知（非 Notification 时使用）
-	photo    string // 图片 URL/路径（纯文本通知时可为空）
-	caption  string // 图片 caption
+	ctx     context.Context
+	n       *Notification
+	plain   string // 纯文本通知（非 Notification 时使用）
+	photo   string // 图片 URL/路径（纯文本通知时可为空）
+	caption string // 图片 caption
 }
 
 func NewDispatcher(tg *TelegramBot) *Dispatcher {

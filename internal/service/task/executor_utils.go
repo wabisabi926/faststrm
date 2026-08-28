@@ -14,9 +14,9 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
-	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/concurrency"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 	"github.com/wabisabi926/faststrm/pkg/strmutil"
@@ -105,8 +105,9 @@ func isValidPickcode(pc string) bool {
 
 // shouldGenerateStrm 统一判断文件是否应该生成 STRM
 // 对齐 MoviePilot StrmGenerater.should_generate_strm：
-//   1. 黑名单关键词检查（不区分大小写子串匹配，若任一条目匹配则拒绝）
-//   2. 最小文件大小检查（minFileSize>0 且 fileSize>0 且 fileSize<minFileSize 则拒绝）
+//  1. 黑名单关键词检查（不区分大小写子串匹配，若任一条目匹配则拒绝）
+//  2. 最小文件大小检查（minFileSize>0 且 fileSize>0 且 fileSize<minFileSize 则拒绝）
+//
 // P2-2：matcher 非空时走 AC 自动机；否则阈值≥8 临时构建；<8 时 contains 线性扫常数项更低
 // 返回：(拒绝原因, 是否通过)；通过时拒绝原因为空
 func shouldGenerateStrm(fileName string, fileSize, minFileSize int64, blacklist []string, matcher ...*concurrency.StringMatcher) (string, bool) {
@@ -847,9 +848,9 @@ func cleanupOrphanStrms(
 
 	// auto_clean 直接硬删（不再生成 .deleted.bak 备份）
 	if mode == "auto_clean" {
-	deleted := 0
-	for _, p := range orphans {
-		if derr := strmutil.DeleteStrmFile(p); derr != nil {
+		deleted := 0
+		for _, p := range orphans {
+			if derr := strmutil.DeleteStrmFile(p); derr != nil {
 				logger.S().Warnf("[cleanupOrphanStrms] 硬删孤儿 STRM 失败 %s: %v", p, derr)
 				if sseServer != nil {
 					sseServer.EmitLog(taskID, "warn", fmt.Sprintf("硬删孤儿STRM失败 %s: %v", p, derr))

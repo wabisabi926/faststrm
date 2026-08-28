@@ -41,14 +41,14 @@ func TestLifeMonitorDefaultSettings(t *testing.T) {
 // TestLifeMonitorJSONRoundTrip 测试新字段的 JSON 序列化/反序列化往返
 func TestLifeMonitorJSONRoundTrip(t *testing.T) {
 	original := LifeMonitorSettings{
-		TransferStallTimeoutMinutes:  60,
-		TransferWaitMode:             "abort",
-		RenameAutoRelatedFiles:       false,
-		MoveLocalMoveRelatedFiles:    false,
-		MoveMediaKeepOldStrm:         true,
-		MoveMediaCreateNewStrm:       false,
-		MoveOutRemoveLocalStrm:       false,
-		MoveMediaMode:                "local_move",
+		TransferStallTimeoutMinutes: 60,
+		TransferWaitMode:            "abort",
+		RenameAutoRelatedFiles:      false,
+		MoveLocalMoveRelatedFiles:   false,
+		MoveMediaKeepOldStrm:        true,
+		MoveMediaCreateNewStrm:      false,
+		MoveOutRemoveLocalStrm:      false,
+		MoveMediaMode:               "local_move",
 	}
 
 	data, err := json.Marshal(original)

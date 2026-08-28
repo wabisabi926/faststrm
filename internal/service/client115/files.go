@@ -182,9 +182,9 @@ func (c *Client) GetDownloadUrlWebFull(
 		return nil, fmt.Errorf("decrypt 115 download API response: %w", decErr)
 	}
 	var dm struct {
-		URL      string `json:"url"`
-		FileSize any    `json:"file_size"`
-		FileName string `json:"fileName"`
+		URL       string `json:"url"`
+		FileSize  any    `json:"file_size"`
+		FileName  string `json:"fileName"`
 		FileName2 string `json:"file_name"`
 	}
 	if err := json.Unmarshal([]byte(decrypted), &dm); err != nil {
@@ -226,11 +226,11 @@ type FsFileEntry struct {
 
 // FsFilesResp fs_files 返回结构
 type FsFilesResp struct {
-	State bool          `json:"state"`
-	Data  []FsFileEntry `json:"data"`
-	Count int           `json:"count"`
-	ErrNo int           `json:"errno,omitempty"`
-	ErrMsg string       `json:"errmsg,omitempty"`
+	State  bool          `json:"state"`
+	Data   []FsFileEntry `json:"data"`
+	Count  int           `json:"count"`
+	ErrNo  int           `json:"errno,omitempty"`
+	ErrMsg string        `json:"errmsg,omitempty"`
 }
 
 // FsFiles 列目录
@@ -311,8 +311,10 @@ func (c *Client) FsFiles(
 // FsDirGetID 根据路径获取目录 ID
 // GET https://webapi.115.com/files/getid?path={path}
 // 115 实际响应存在两种格式：
-//   新版（实测）: {"state":true, "id":"3491751436709005103", "is_private":"0"}
-//   旧版（文档）: {"state":true, "data":{"id":"..."}}
+//
+//	新版（实测）: {"state":true, "id":"3491751436709005103", "is_private":"0"}
+//	旧版（文档）: {"state":true, "data":{"id":"..."}}
+//
 // 两种都要兼容
 func (c *Client) FsDirGetID(
 	ctx context.Context,
@@ -457,9 +459,9 @@ func (c *Client) ExportDirParse(
 			var statusResp struct {
 				State bool `json:"state"`
 				Data  struct {
-					Status    int    `json:"status"`
-					PickCode  string `json:"pick_code"`
-					FileName  string `json:"file_name"`
+					Status   int    `json:"status"`
+					PickCode string `json:"pick_code"`
+					FileName string `json:"file_name"`
 				} `json:"data"`
 				ErrMsg string `json:"errmsg,omitempty"`
 			}

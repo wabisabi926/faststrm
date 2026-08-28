@@ -668,9 +668,7 @@ func (c *Client) GetAllUsers(ctx context.Context) ([]UserDto, error) {
 
 	// 排除禁用的用户（Policy 中 Enabled=false）
 	var activeUsers []UserDto
-	for _, user := range users {
-		activeUsers = append(activeUsers, user) // 简单起见，包含所有用户
-	}
+	activeUsers = append(activeUsers, users...)
 	return activeUsers, nil
 }
 

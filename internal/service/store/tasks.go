@@ -17,19 +17,19 @@ import (
 
 // persistedTask 磁盘格式：保持字段兼容 TS
 type persistedTask struct {
-	ID                  string                 `json:"id"`
-	Name                string                 `json:"name,omitempty"`
-	Account             string                 `json:"account"`
-	AccountType         string                 `json:"accountType,omitempty"`
-	OriginPath          string                 `json:"originPath"`
-	TargetPath          string                 `json:"targetPath"`
-	StrmPrefix          string                 `json:"strmPrefix,omitempty"`
-	EnablePathEncoding  bool                   `json:"enablePathEncoding,omitempty"`
-	Enable302           bool                   `json:"enable302,omitempty"`
-	RemoveExtraFiles    bool                   `json:"removeExtraFiles,omitempty"`
-	Schedule            *task.TaskSchedule     `json:"schedule,omitempty"`
-	CreatedAt           int64                  `json:"createdAt,omitempty"`
-	UpdatedAt           int64                  `json:"updatedAt,omitempty"`
+	ID                 string             `json:"id"`
+	Name               string             `json:"name,omitempty"`
+	Account            string             `json:"account"`
+	AccountType        string             `json:"accountType,omitempty"`
+	OriginPath         string             `json:"originPath"`
+	TargetPath         string             `json:"targetPath"`
+	StrmPrefix         string             `json:"strmPrefix,omitempty"`
+	EnablePathEncoding bool               `json:"enablePathEncoding,omitempty"`
+	Enable302          bool               `json:"enable302,omitempty"`
+	RemoveExtraFiles   bool               `json:"removeExtraFiles,omitempty"`
+	Schedule           *task.TaskSchedule `json:"schedule,omitempty"`
+	CreatedAt          int64              `json:"createdAt,omitempty"`
+	UpdatedAt          int64              `json:"updatedAt,omitempty"`
 	// 历史遗留字段（兼容 TS JSON）：允许以 Raw 存在
 	Extra map[string]json.RawMessage `json:"-"`
 }

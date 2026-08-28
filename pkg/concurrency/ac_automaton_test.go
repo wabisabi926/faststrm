@@ -10,9 +10,9 @@ func TestACBasicMatch(t *testing.T) {
 	kw := []string{"sample", "trailer", "预览"}
 	m := concurrency.NewStringMatcher(kw)
 	cases := []struct {
-		text   string
-		hit    bool
-		hitKW  string
+		text  string
+		hit   bool
+		hitKW string
 	}{
 		{"My.Sample.Movie.mkv", true, "sample"},
 		{"Big.Trailer.2024.mp4", true, "trailer"},

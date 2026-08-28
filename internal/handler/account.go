@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeromicro/go-zero/rest/httpx"
+
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 // ==================== Account CRUD ====================
@@ -94,14 +95,14 @@ func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 		}
 
 		newAcc := &model.AccountInfo{
-			Name:           req.Name,
-			AccountType:    req.AccountType,
-			Cookie:         req.Cookie,
-			Account:        req.Account,
-			Password:       req.Password,
-			URL:            req.URL,
+			Name:            req.Name,
+			AccountType:     req.AccountType,
+			Cookie:          req.Cookie,
+			Account:         req.Account,
+			Password:        req.Password,
+			URL:             req.URL,
 			LastCookieCheck: now,
-			CookieValid:    &cookieValid,
+			CookieValid:     &cookieValid,
 		}
 
 		if err := accountStore.Upsert(newAcc); err != nil {
@@ -402,8 +403,8 @@ func GetQrcodeCookieHandler(c *client115.Client, accountStore *store.AccountStor
 		validateResult := client115.ValidateCookie(cookie)
 		if !validateResult.Valid {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]any{
-					"error":         "Cookie 格式无效",
-					"missingFields": validateResult.Missing,
+				"error":         "Cookie 格式无效",
+				"missingFields": validateResult.Missing,
 				"message":       "缺少必需字段: " + strings.Join(validateResult.Missing, ", "),
 			})
 			return
@@ -608,9 +609,9 @@ func VerifyAccountHandler(accountStore *store.AccountStore) http.HandlerFunc {
 		accountStore.Flush()
 
 		httpx.OkJson(w, map[string]any{
-			"account":  name,
-			"valid":    valid,
-			"missing":  missing,
+			"account":   name,
+			"valid":     valid,
+			"missing":   missing,
 			"checkedAt": time.Now().UnixMilli(),
 		})
 	}
@@ -648,9 +649,6 @@ func VerifyAllAccountsHandler(accountStore *store.AccountStore) http.HandlerFunc
 		})
 	}
 }
-
-
-
 
 // testOpenlistConnection 测试 openlist 连接
 func testOpenlistConnection(url, account, password string) (bool, string) {

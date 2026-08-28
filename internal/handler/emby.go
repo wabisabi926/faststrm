@@ -8,11 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeromicro/go-zero/rest/httpx"
+
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 // EmbyDeps Emby 相关 handler 依赖
@@ -329,39 +330,39 @@ func HandleSettingsGET(deps EmbyDeps) http.HandlerFunc {
 // LifeMonitorPatch 用于接收前端提交的 LifeMonitor 配置
 // 指针类型字段（*bool）可以区分"未提供"和"显式设置为 false"
 type LifeMonitorPatch struct {
-	Enabled                *bool    `json:"enabled"`
-	Accounts               []string `json:"accounts"`
-	PollInterval           int      `json:"pollInterval"`
-	PathMappings           any      `json:"pathMappings"`
-	RemoveEmptyDirs        *bool    `json:"removeEmptyDirs"`
-	EventTypes             any      `json:"eventTypes"`
-	MinFileSize            int64    `json:"minFileSize"`
-	FirstPullMode          string   `json:"firstPullMode"`
-	MoveMediaMode          string   `json:"moveMediaMode"`
-	StrmPrefix             string   `json:"strmPrefix"`
-	EnablePathEncoding     *bool    `json:"enablePathEncoding"`
-	Enable302              *bool    `json:"enable302"`
-	AutoDownloadMetadata   *bool    `json:"autoDownloadMetadata"`
-	DownloadExtensions     []string `json:"downloadExtensions"`
-	NotifyOnlyOnError      *bool    `json:"notifyOnlyOnError"`
+	Enabled              *bool    `json:"enabled"`
+	Accounts             []string `json:"accounts"`
+	PollInterval         int      `json:"pollInterval"`
+	PathMappings         any      `json:"pathMappings"`
+	RemoveEmptyDirs      *bool    `json:"removeEmptyDirs"`
+	EventTypes           any      `json:"eventTypes"`
+	MinFileSize          int64    `json:"minFileSize"`
+	FirstPullMode        string   `json:"firstPullMode"`
+	MoveMediaMode        string   `json:"moveMediaMode"`
+	StrmPrefix           string   `json:"strmPrefix"`
+	EnablePathEncoding   *bool    `json:"enablePathEncoding"`
+	Enable302            *bool    `json:"enable302"`
+	AutoDownloadMetadata *bool    `json:"autoDownloadMetadata"`
+	DownloadExtensions   []string `json:"downloadExtensions"`
+	NotifyOnlyOnError    *bool    `json:"notifyOnlyOnError"`
 }
 
 // settingsPostBody 前端 Settings 页提交的嵌套 JSON 结构
 // 与 model.Settings 的 JSON 标签对齐，兼容 React SPA 的保存格式
 type settingsPostBody struct {
-	UserAgent          string                   `json:"user-agent"`
-	StrmExtensions     []string                 `json:"strmExtensions"`
-	DownloadExtensions []string                 `json:"downloadExtensions"`
-	MediaMountPath     []string                 `json:"mediaMountPath"`
-	StrmPrefix         string                   `json:"strmPrefix"`
-	EnablePathEncoding bool                     `json:"enablePathEncoding"`
-	Enable302          bool                     `json:"enable302"`
-	RemoveExtraFiles   bool                     `json:"removeExtraFiles"`
-	Download           *model.DownloadSettings  `json:"download"`
-	Strm               *model.StrmSettings      `json:"strm"`
-	Emby               *model.EmbySettings      `json:"emby"`
-	Telegram           *model.TelegramSettings  `json:"telegram"`
-	LifeMonitor        *LifeMonitorPatch        `json:"lifeMonitor"`
+	UserAgent          string                  `json:"user-agent"`
+	StrmExtensions     []string                `json:"strmExtensions"`
+	DownloadExtensions []string                `json:"downloadExtensions"`
+	MediaMountPath     []string                `json:"mediaMountPath"`
+	StrmPrefix         string                  `json:"strmPrefix"`
+	EnablePathEncoding bool                    `json:"enablePathEncoding"`
+	Enable302          bool                    `json:"enable302"`
+	RemoveExtraFiles   bool                    `json:"removeExtraFiles"`
+	Download           *model.DownloadSettings `json:"download"`
+	Strm               *model.StrmSettings     `json:"strm"`
+	Emby               *model.EmbySettings     `json:"emby"`
+	Telegram           *model.TelegramSettings `json:"telegram"`
+	LifeMonitor        *LifeMonitorPatch       `json:"lifeMonitor"`
 }
 
 // containsAsterisk 判定是否是脱敏值（含 *）

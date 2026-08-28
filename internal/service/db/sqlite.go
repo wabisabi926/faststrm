@@ -25,9 +25,10 @@ const SQLITE_CHUNK_SIZE = 900
 // OpenNew 总是打开新的 SQLite 连接（不使用全局单例，供测试或多租户场景）。
 //
 // PRAGMA 设置（严格对齐 filePathDb.ts）：
-//   journal_mode = WAL          —— 并发读 + 单写
-//   synchronous  = NORMAL       —— WAL 下性能/安全平衡点
-//   busy_timeout = 5000         —— 锁等待超时 5s
+//
+//	journal_mode = WAL          —— 并发读 + 单写
+//	synchronous  = NORMAL       —— WAL 下性能/安全平衡点
+//	busy_timeout = 5000         —— 锁等待超时 5s
 func OpenNew(dbDir string) (*sql.DB, error) {
 	dbFile := filepath.Join(dbDir, "filePathDb.sqlite")
 	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)", dbFile))

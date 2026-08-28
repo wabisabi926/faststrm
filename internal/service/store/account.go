@@ -376,5 +376,3 @@ func (s *AccountStore) Has(name string) bool {
 	_, ok := s.accounts[name]
 	return ok
 }
-
-

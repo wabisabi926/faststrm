@@ -4,7 +4,7 @@ package client115
 
 import (
 	"context"
-		"fmt"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	)
+)
 
 type mockTrip struct {
 	Method     string
@@ -151,7 +150,10 @@ func TestIsValidClientType(t *testing.T) {
 }
 
 func TestTypeNumberToString(t *testing.T) {
-	cases := []struct{ in int; want string }{
+	cases := []struct {
+		in   int
+		want string
+	}{
 		{1, "create"}, {22, "delete"}, {5, "move"}, {20, "rename"}, {999, "folder-sync"},
 	}
 	for _, tc := range cases {

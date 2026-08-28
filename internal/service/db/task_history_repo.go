@@ -55,18 +55,18 @@ type TaskExecutionSummary struct {
 
 // TaskExecution 对应 task_executions
 type TaskExecution struct {
-	ID          int64                `json:"id"`
-	TaskID      string               `json:"taskId"`
-	Account     string               `json:"account,omitempty"`
-	OriginPath  string               `json:"originPath,omitempty"`
-	TargetPath  string               `json:"targetPath,omitempty"`
-	Status      string               `json:"status"`
-	StartedAt   int64                `json:"startedAt,omitempty"`
-	EndedAt     int64                `json:"endedAt,omitempty"`
-	DurationMs  int64                `json:"durationMs,omitempty"`
-	Summary     TaskExecutionSummary `json:"summary,omitempty"`
-	Error       string               `json:"error,omitempty"`
-	CreatedAt   int64                `json:"createdAt"`
+	ID         int64                `json:"id"`
+	TaskID     string               `json:"taskId"`
+	Account    string               `json:"account,omitempty"`
+	OriginPath string               `json:"originPath,omitempty"`
+	TargetPath string               `json:"targetPath,omitempty"`
+	Status     string               `json:"status"`
+	StartedAt  int64                `json:"startedAt,omitempty"`
+	EndedAt    int64                `json:"endedAt,omitempty"`
+	DurationMs int64                `json:"durationMs,omitempty"`
+	Summary    TaskExecutionSummary `json:"summary,omitempty"`
+	Error      string               `json:"error,omitempty"`
+	CreatedAt  int64                `json:"createdAt"`
 }
 
 // ==================== Repo ====================
@@ -164,11 +164,11 @@ func (r *TaskHistoryRepo) AddLog(ctx context.Context, executionID int64, seq int
 
 // List 按 taskId / account / status / time 分页查询
 type TaskHistoryQuery struct {
-	TaskID     string
-	Account    string
-	Status     string
-	BeforeMs   int64 // < BeforeMs
-	Limit      int
+	TaskID   string
+	Account  string
+	Status   string
+	BeforeMs int64 // < BeforeMs
+	Limit    int
 }
 
 // Query 查询执行历史

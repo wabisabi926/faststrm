@@ -20,8 +20,8 @@ type Registry struct {
 	limiters    map[string]*Limiter
 	bottlenecks map[string]*Bottleneck
 
-	api115QPM         int // 默认 115 API 每分钟令牌数
-	downloadQPM       int // 默认下载每分钟令牌数
+	api115QPM          int // 默认 115 API 每分钟令牌数
+	downloadQPM        int // 默认下载每分钟令牌数
 	downloadConcurrent int // 默认下载并发数
 }
 
@@ -43,10 +43,10 @@ const RegistryDefaultDownloadConcurrent = 8
 func GetRegistry() *Registry {
 	regOnce.Do(func() {
 		regInstance = &Registry{
-			limiters:          make(map[string]*Limiter),
-			bottlenecks:       make(map[string]*Bottleneck),
-			api115QPM:         RegistryDefaultAPI115QPM,
-			downloadQPM:       RegistryDefaultDownloadQPM,
+			limiters:           make(map[string]*Limiter),
+			bottlenecks:        make(map[string]*Bottleneck),
+			api115QPM:          RegistryDefaultAPI115QPM,
+			downloadQPM:        RegistryDefaultDownloadQPM,
 			downloadConcurrent: RegistryDefaultDownloadConcurrent,
 		}
 	})
