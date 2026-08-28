@@ -166,6 +166,26 @@ http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&fi
 - `pickcode`：115 文件唯一标识（17 位字母数字）
 - `file_name`：文件名（用于 Content-Disposition）
 
+### URL 签名（enableTokenSigning=true，v1.1.1 新增）
+
+开启后 STRM URL 自动追加 HMAC-SHA256 签名：
+
+```
+http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123&file_name=电影.mkv&sig=a1b2c3...&ts=1725700000
+```
+
+- `sig`：HMAC-SHA256(secret, canonical_url) 签名
+- `ts`：Unix 时间戳（有效期默认 24 小时）
+
+**安全特性：**
+- 默认关闭（老用户零感知）
+- 开启后首次启动自动生成 32-byte secret，保存在 `settings.json → strm.tokenSecret`
+- 非法签名或过期 URL 返回 **401 Unauthorized**
+- `/api/strm` 和 `/api/fs/get` 两个代理接口都校验
+- 签名 key 丢失时关闭开关即可恢复无签名模式
+
+> ⚠️ 签名开启后，已生成的 STRM 文件会在 secret 变更后失效。如需重置 secret，关闭签名开关 → 删除 `tokenSecret` 字段 → 重新开启即可。
+
 ### 非 302 模式（enable302=false）
 
 ```

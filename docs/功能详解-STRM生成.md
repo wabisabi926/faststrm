@@ -24,7 +24,42 @@ STRM 生成是 Fast Strm 的核心功能：扫描 115 网盘目录树，为每�
 
 [📸 此处需截图：新建任务对话框]
 
-### STRM 前缀两种模式
+### STRM 扩展名默认值（v1.1.1 清理）
+
+| 类型 | 格式 |
+|------|------|
+| 常规视频 | mp4, mkv, avi, mov, rmvb, webm, flv, m3u8, ts, m2ts |
+| 音频 | mp3, flac, wav, aac, ogg, m4a |
+| 原盘 | **iso**（v1.1.1 唯一保留的原盘格式） |
+
+> v1.1.1 移除了 bdmv / vob / ifo / rar / zip / 7z——现实中这些格式几乎没有主流片源。iso 作为蓝光原盘唯一保留。
+
+### ISO 原盘 STRM 格式
+
+对于 `.iso` 原盘文件，生成的 STRM 采用**双扩展名**：
+
+```
+源文件: /电影/2024/星际穿越.iso
+            ↓
+STRM:  /电影/2024/星际穿越.iso.strm
+内容:  http://服务器:8090/api/strm?account=xxx&pickcode=xxx&file_name=星际穿越.iso
+```
+
+为什么双扩展名？Emby/Jellyfin 看到 `.iso.strm` 就知道"这是一个 ISO 原盘的 STRM 代理"，播放时会按原盘模式（支持菜单、章节、音轨切换）而不是普通视频模式。
+
+### STRM 文件名模板
+
+默认模板：`{stem}.strm`（iso 自动变 `{stem}.iso.strm`）
+
+支持的变量：
+
+| 变量 | 含义 | 示例 |
+|------|------|------|
+| `{filename}` | 完整文件名（含扩展名） | `星际穿越.iso` |
+| `{stem}` | 去掉最后一个扩展名的文件名 | `星际穿越.iso`（iso 的 stem 保留 iso 后缀） |
+| `{ext}` | 扩展名（不含点） | `iso` |
+
+通过任务级「STRM 文件名模板」覆盖，或全局配置 `settings.json → strm.strmFilenameTemplate`。
 
 **302 模式**（推荐，`enable302: true`）：
 - `strmPrefix = http://服务器:8090/api/strm`

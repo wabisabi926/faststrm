@@ -20,17 +20,19 @@
 
 ## 📌 版本公告
 
-**🎉 v1.1.0 已发布 — 代码质量加固、前端类型规范、Windows 默认访问地址修复、监控状态按钮语义修正**
+**🎉 v1.1.1 已发布 — STRM URL 签名、SQLite Schema 迁移、Emby 通知刮削等待、前端三大页面拆分、默认值对齐**
 
-- 🏗️ 代码质量加固：新增 Handler 层 24 个单元测试（账户 CRUD + STRM 参数校验），修复改名时字段同步遗漏 Bug
+- 🔐 STRM URL 签名（T9）：HMAC-SHA256 签名防 STRM 被盗链滥用；默认关闭，开启后首次启动自动生成 32-byte secret
 
-- 🛡️ 前端类型规范：定义 `TaskApiResponse`、`DirectoryNodeApi` 接口；5 处 `any` 替换为强类型；错误处理统一类型守卫
+- 🗃️ SQLite Schema 迁移（T10）：自研轻量 migration 框架，schema_migrations 表记录版本，幂等不重复，事务保护
 
-- ⏱️ 时间配置标准化：超时/缓存 TTL 常量改用 `time.Duration`，消除魔法数字；JSON 协议保持毫秒不变，零兼容性影响
+- 📺 Emby 通知刮削等待：webhook 到达后轮询 3s 一次、最多 60s 等元数据落库，解决入库通知"空壳"（无简介/演员表）问题
 
-- 🪟 Windows 默认访问地址修复：托盘「打开 Web 界面」与启动日志显示 `0.0.0.0` / `[::]` 时统一替换为 `localhost`；实际监听地址不变，其他端不受影响
+- ✂️ 前端三大页面模块化拆分：emby-notify（906→176 行）、task（922→142 行）、StrmCleanupCard（913→201 行），拆成子组件 + hooks + types
 
-- 🔧 监控状态按钮语义修正：设置页「生活事件监控」按场景分化按钮（待保存/不存在移除/异常/运行中/停止）；新增从监控列表移除已删除账号功能
+- 🎯 默认值对齐：Emby 6 个通知/刷库开关默认勾选；STRM 3 个核心开关（302 重定向/路径编码/删除多余 STRM）默认开启；STRM 扩展名只保留 iso
+
+- 🧪 测试覆盖翻倍：前端 Vitest 新增 40 用例（MonitorSettingsTab/AddAccountDialog/MobileTaskCard）；Go 侧 client115 新增 21 单元测试 + mergeDetail 重构消除重复逻辑
 
 完整变更说明：[版本更新日志](版本更新日志)
 
@@ -101,4 +103,4 @@
 
 欢迎提交 [Issue](https://github.com/wabisabi926/faststrm/issues) 和 [Pull Request](https://github.com/wabisabi926/faststrm/pulls) 来改进这个项目。
 
-<!-- v1.1.0 sync trigger -->
+<!-- v1.1.1 sync trigger -->
