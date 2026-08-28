@@ -299,8 +299,16 @@ func (s *AccountStore) Flush() error {
 
 // flushLocked 内部刷盘（调用方必须持有写锁）
 func (s *AccountStore) flushLocked() error {
-	data := make([]map[string]any, 0, len(s.accounts))
-	for _, acc := range s.accounts {
+	// 按 Name 排序，保证 JSON 输出顺序稳定（避免 map 无序导致 findField 匹配错位）
+	names := make([]string, 0, len(s.accounts))
+	for name := range s.accounts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	data := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		acc := s.accounts[name]
 		m := map[string]any{}
 		if acc.Name != "" {
 			m["name"] = acc.Name
