@@ -30,7 +30,7 @@
 
 - ✂️ 前端三大页面模块化拆分：emby-notify（906→176 行）、task（922→142 行）、StrmCleanupCard（913→201 行），拆成子组件 + hooks + types
 
-- 🎯 默认值对齐：Emby 6 个通知/刷库开关默认勾选；STRM 3 个核心开关（302 重定向/路径编码/删除多余 STRM）默认开启；STRM 扩展名只保留 iso
+- 🎯 默认值对齐：Emby 6 个通知/刷库开关默认勾选；STRM 3 个核心开关（302 重定向/路径编码/删除多余 STRM）默认开启；STRM 扩展名新增 iso 原盘支持
 
 - 🧪 测试覆盖翻倍：前端 Vitest 新增 40 用例（MonitorSettingsTab/AddAccountDialog/MobileTaskCard）；Go 侧 client115 新增 21 单元测试 + mergeDetail 重构消除重复逻辑
 

@@ -46,10 +46,6 @@ STRM URL 签名、SQLite Schema 迁移、Emby 通知刮削等待、前端测试�
 - 抽取出 detail→webhookDetail 非零覆盖逻辑为单一函数 mergeDetail(base, override)
 - 消除 handleMovieAdded 和 handlePlaybackEvent 里两处 7 行 copy-paste
 
-### 🔥 删除
-
-- DefaultStrmExtensions 移除 bdmv / vob / ifo / rar / zip / 7z，只保留常规视频格式 + iso
-
 ### ⚡ 优化
 
 #### 前端三大页面拆分
@@ -82,7 +78,7 @@ STRM URL 签名、SQLite Schema 迁移、Emby 通知刮削等待、前端测试�
 ### 🐛 修复
 
 - 修复 Emby 入库通知经常"空壳"（webhook 到达时刮削还没完成，详情 API 返回空 Overview/Genres/People）
-- 修复 STRM .iso 扩展名不在 DefaultStrmExtensions 默认列表（现已添加并只保留 iso，bdmv/vob/ifo/rar/zip/7z 现实中不存在）
+- 修复 STRM .iso 扩展名不在 DefaultStrmExtensions 默认列表（现已添加）
 - 修复前端 jsdom 缺 Radix UI 必需 API 导致 Select / Dialog 组件测试崩溃（setup.ts polyfill hasPointerCapture 等）
 - 修复前后端 Emby settings 6 个字段默认值不一致（入库/删除/播放通知后端 false 前端 true；刷库后端 true 前端 false）
 
