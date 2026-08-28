@@ -226,4 +226,7 @@ func RegisterRoutes(
 	// ==================== 阶段8: Web UI（Vite + React SPA） ====================
 	// 所有非 API 路由由 NotFoundHandler (web.SPAHandler) 处理
 	// API 路由优先匹配，未匹配的 GET 请求自动 fallback 到 SPA
+
+	// ==================== API 文档（Swagger UI，公开） ====================
+	RegisterDocs(server)
 }

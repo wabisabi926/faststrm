@@ -1,0 +1,1500 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "faststrm API",
+    "version": "v1.1.1",
+    "description": "faststrm 后端 REST API 文档\n\n基于 go-zero rest 框架，JWT Bearer Token 认证。\nSwagger UI: /api/docs/ui"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8090",
+      "description": "默认端口"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Public",
+      "description": "公开接口（无需 JWT）"
+    },
+    {
+      "name": "Auth",
+      "description": "认证登录"
+    },
+    {
+      "name": "STRM",
+      "description": "STRM 代理 & 转发"
+    },
+    {
+      "name": "Account",
+      "description": "115 账号管理"
+    },
+    {
+      "name": "Task",
+      "description": "任务管理 & 执行"
+    },
+    {
+      "name": "Directory",
+      "description": "目录浏览 & 清理"
+    },
+    {
+      "name": "Notify",
+      "description": "Telegram / Emby 通知"
+    },
+    {
+      "name": "Settings",
+      "description": "全局设置"
+    },
+    {
+      "name": "History",
+      "description": "历史记录"
+    },
+    {
+      "name": "System",
+      "description": "系统功能"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "登录后返回的 JWT Token"
+      }
+    }
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "summary": "GET /api/health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "POST /api/auth/login",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "POST /api/auth/change-password",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/auth/change-credentials": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "POST /api/auth/change-credentials",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "POST /api/auth/logout",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/events/stream": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "summary": "GET /api/events/stream",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/emby/webhook": {
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "POST /api/emby/webhook",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/notify/webhook": {
+      "post": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "POST /api/notify/webhook",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/strm": {
+      "get": {
+        "tags": [
+          "STRM"
+        ],
+        "summary": "GET /api/strm",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "head": {
+        "tags": [
+          "STRM"
+        ],
+        "summary": "HEAD /api/strm",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/fs/get": {
+      "get": {
+        "tags": [
+          "STRM"
+        ],
+        "summary": "GET /api/fs/get",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/account": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "GET /api/account",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "POST /api/account",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "PUT /api/account",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "DELETE /api/account",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/account/qrcode/token": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "GET /api/account/qrcode/token",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/account/qrcode/status": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "GET /api/account/qrcode/status",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/account/qrcode/cookie": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "POST /api/account/qrcode/cookie",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/account/status": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "GET /api/account/status",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/tasks": {
+      "get": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "GET /api/tasks",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/task": {
+      "post": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "POST /api/task",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "PUT /api/task",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "DELETE /api/task",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/startTask": {
+      "post": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "POST /api/startTask",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/cancelTask": {
+      "post": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "POST /api/cancelTask",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/taskHistory": {
+      "get": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "GET /api/taskHistory",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/taskLog": {
+      "get": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "GET /api/taskLog",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/taskLog/:taskId": {
+      "get": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "GET /api/taskLog/:taskId",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/history/strm": {
+      "get": {
+        "tags": [
+          "History"
+        ],
+        "summary": "GET /api/history/strm",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/history/strm/stats": {
+      "get": {
+        "tags": [
+          "History"
+        ],
+        "summary": "GET /api/history/strm/stats",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/history/strm/:id": {
+      "get": {
+        "tags": [
+          "History"
+        ],
+        "summary": "GET /api/history/strm/:id",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/directory/remote/list": {
+      "get": {
+        "tags": [
+          "Directory"
+        ],
+        "summary": "GET /api/directory/remote/list",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/directory/local/list": {
+      "post": {
+        "tags": [
+          "Directory"
+        ],
+        "summary": "POST /api/directory/local/list",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/directory/local/listChildren": {
+      "post": {
+        "tags": [
+          "Directory"
+        ],
+        "summary": "POST /api/directory/local/listChildren",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/directory/clear": {
+      "post": {
+        "tags": [
+          "Directory"
+        ],
+        "summary": "POST /api/directory/clear",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/notify/bot": {
+      "get": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "GET /api/notify/bot",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "POST /api/notify/bot",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "DELETE /api/notify/bot",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/notify/polling": {
+      "get": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "GET /api/notify/polling",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "POST /api/notify/polling",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "DELETE /api/notify/polling",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/notify/send": {
+      "post": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "POST /api/notify/send",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/notify/users": {
+      "get": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "GET /api/notify/users",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "POST /api/notify/users",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "DELETE /api/notify/users",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/notify/alerts": {
+      "get": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "GET /api/notify/alerts",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Notify"
+        ],
+        "summary": "POST /api/notify/alerts",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/emby/settings": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "GET /api/emby/settings",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "POST /api/emby/settings",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/emby/test-connection": {
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "POST /api/emby/test-connection",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "GET /api/settings",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "POST /api/settings",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/mediaMountSync": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "GET /api/mediaMountSync",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "POST /api/mediaMountSync",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/strmCleanup/scan": {
+      "post": {
+        "tags": [
+          "STRM"
+        ],
+        "summary": "POST /api/strmCleanup/scan",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/strmCleanup/execute": {
+      "post": {
+        "tags": [
+          "STRM"
+        ],
+        "summary": "POST /api/strmCleanup/execute",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/strmCleanup/pending": {
+      "get": {
+        "tags": [
+          "STRM"
+        ],
+        "summary": "GET /api/strmCleanup/pending",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/strmCleanup/pending/cancel": {
+      "post": {
+        "tags": [
+          "STRM"
+        ],
+        "summary": "POST /api/strmCleanup/pending/cancel",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/strmCleanup/pending/execute": {
+      "post": {
+        "tags": [
+          "STRM"
+        ],
+        "summary": "POST /api/strmCleanup/pending/execute",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/lifeMonitor": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "GET /api/lifeMonitor",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "POST /api/lifeMonitor",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
+    "/api/lifeEvents": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "GET /api/lifeEvents",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "DELETE /api/lifeEvents",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    }
+  }
+}
