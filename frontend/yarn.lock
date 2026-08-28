@@ -307,6 +307,13 @@
     "@jridgewell/resolve-uri" "^3.1.0"
     "@jridgewell/sourcemap-codec" "^1.4.14"
 
+"@playwright/test@^1.62.1":
+  version "1.62.1"
+  resolved "https://registry.npmjs.org/@playwright/test/-/test-1.62.1.tgz"
+  integrity sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ==
+  dependencies:
+    playwright "1.62.1"
+
 "@polka/url@^1.0.0-next.24":
   version "1.0.0-next.29"
   resolved "https://registry.npmjs.org/@polka/url/-/url-1.0.0-next.29.tgz"
@@ -1775,6 +1782,20 @@ picocolors@^1.1.1, picocolors@1.1.1:
   version "4.0.3"
   resolved "https://registry.npmjs.org/picomatch/-/picomatch-4.0.3.tgz"
   integrity sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==
+
+playwright-core@1.62.1:
+  version "1.62.1"
+  resolved "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.1.tgz"
+  integrity sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==
+
+playwright@1.62.1:
+  version "1.62.1"
+  resolved "https://registry.npmjs.org/playwright/-/playwright-1.62.1.tgz"
+  integrity sha512-0M+L3LAD8/nm554LOla9Ayx0j0tmFZ0FBcoQ7F1VuVHpM/XpiC8RcDzBQB8W5+hA8L22THxELzeF+2WcUzvcLg==
+  dependencies:
+    playwright-core "1.62.1"
+  optionalDependencies:
+    fsevents "2.3.2"
 
 pngjs@^5.0.0:
   version "5.0.0"
