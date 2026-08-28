@@ -32,3 +32,7 @@ go.sum text eol=lf
 *.png  binary
 *.jpg  binary
 *.ico  binary
+
+# SPA 构建产物：由 Vite 编译、Go embed 内嵌，hash 文件名每次 build 都会变
+# 保留在仓库中（裸 clone 需能直接 go build），但 diff 时静默忽略
+internal/web/spa/** -diff -merge -text
