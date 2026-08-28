@@ -1,0 +1,3 @@
+# 占位文件：确保 scripts/ 目录在 git 中始终存在。
+# 本目录用于存放构建与同步辅助脚本（build-fnos.sh / gen_swagger.js / sync-wiki.mjs / sync_release_notes.py 等）。
+# 本地一次性调试 Go 脚本请放到 tools/ 目录（已被 .gitignore 忽略），不要提交到此目录。
