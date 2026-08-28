@@ -101,11 +101,10 @@ jobs:
         cache: true
 
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v7
+      uses: golangci/golangci-lint-action@v6
       with:
-        version: latest
-        # 不用 --config（没配置文件），直接 CLI 指定开启的 linter
-        args: --timeout=5m --disable-all --enable govet --enable misspell --enable goimports
+        version: v1.64.8
+        args: --timeout=5m --config .golangci.yml
         skip-save-cache: true
       env:
         GOPROXY: https://proxy.golang.org,direct
