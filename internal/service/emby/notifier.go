@@ -358,24 +358,7 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 		detail = webhookDetail
 	} else {
 		// merge：详情 API 的数据覆盖 webhook 的（刮削完成后详情更完整）
-		if len(detail.People) > 0 {
-			webhookDetail.People = detail.People
-		}
-		if detail.CommunityRating > 0 {
-			webhookDetail.CommunityRating = detail.CommunityRating
-		}
-		if len(detail.Overview) > 0 {
-			webhookDetail.Overview = detail.Overview
-		}
-		if len(detail.Genres) > 0 {
-			webhookDetail.Genres = detail.Genres
-		}
-		if detail.ProductionYear > 0 {
-			webhookDetail.ProductionYear = detail.ProductionYear
-		}
-		if len(detail.ImageTags) > 0 {
-			webhookDetail.ImageTags = detail.ImageTags
-		}
+		mergeDetail(webhookDetail, detail)
 		detail = webhookDetail
 	}
 
@@ -695,15 +678,7 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 	client := n.getClient()
 	if showOverview && client != nil && event.Item != nil && event.Item.ID != "" {
 		if detail, err := n.getDetailWithSemaphore(ctx, client, event.Item.ID); err == nil && detail != nil {
-			item.Overview = detail.Overview
-			item.ProductionYear = detail.ProductionYear
-			item.CommunityRating = detail.CommunityRating
-			item.Genres = detail.Genres
-			item.People = detail.People
-			// 详情中的 ImageTags 更完整，优先使用
-			if len(detail.ImageTags) > 0 {
-				item.ImageTags = detail.ImageTags
-			}
+			mergeDetail(item, detail)
 		}
 	}
 
@@ -788,6 +763,33 @@ const qmediasyncNotificationTemplate = `%s
 %s`
 
 // FormatMovieNotification 格式化电影入库通知（qmediasync 风格模板）
+
+// mergeDetail 用详情 API 返回的数据覆盖 base 中非零字段
+// base 通常是 webhook 自带字段构造的 ItemDetail，override 是 /Items/{id} 详情 API 返回
+// 语义：override 的非零值覆盖 base，零值不覆盖（保留 base 的值）
+func mergeDetail(base, override *ItemDetail) {
+	if override == nil {
+		return
+	}
+	if len(override.People) > 0 {
+		base.People = override.People
+	}
+	if override.CommunityRating > 0 {
+		base.CommunityRating = override.CommunityRating
+	}
+	if len(override.Overview) > 0 {
+		base.Overview = override.Overview
+	}
+	if len(override.Genres) > 0 {
+		base.Genres = override.Genres
+	}
+	if override.ProductionYear > 0 {
+		base.ProductionYear = override.ProductionYear
+	}
+	if len(override.ImageTags) > 0 {
+		base.ImageTags = override.ImageTags
+	}
+}
 
 // itemInfoToDetail 从 webhook ItemInfo 构造 ItemDetail
 // Emby library.new webhook 自带 Overview/Genres/ProductionYear/ImageTags，
