@@ -122,9 +122,9 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 			t.Errorf("default Strm.ForceProxyUaTokens empty")
 		}
 
-		// 修改并保存
+		// 修改并保存（故意不含 "iso"，验证后续迁移会自动补入）
 		def.StrmPrefix = "http://custom:8090/strm"
-		customExt := []string{"mp4", ".mkv", ".MOV"} // 故意含 . 前缀与大小写
+		customExt := []string{"mp4", ".mkv", ".MOV"} // 故意含 . 前缀与大小写，且不含 iso
 		def.StrmExtensions = customExt
 		def.Enable302 = true
 		def.EnablePathEncoding = true
@@ -146,9 +146,20 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 		if !back.EnablePathEncoding {
 			t.Errorf("EnablePathEncoding should be true")
 		}
-		// Extensions 保留原始内容（只在需要生成 strm 时 normalize）
-		if len(back.StrmExtensions) != 3 {
-			t.Errorf("StrmExtensions len want 3, got %d", len(back.StrmExtensions))
+		// 迁移行为：非空但缺 iso → 自动补入 iso（v1.1.1 新增默认）
+		// 用户原有 3 个自定义扩展名保留顺序 + iso 追加
+		if len(back.StrmExtensions) != 4 {
+			t.Errorf("StrmExtensions len want 3(user)+1(iso)=4, got %d", len(back.StrmExtensions))
+		}
+		found := false
+		for _, v := range back.StrmExtensions {
+			if v == "iso" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("StrmExtensions should contain 'iso' after migration, got: %v", back.StrmExtensions)
 		}
 
 		// 模拟重启：新实例读
