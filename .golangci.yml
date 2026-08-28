@@ -1,6 +1,7 @@
-# golangci-lint v1 配置（配合 golangci-lint-action@v6 + lint v1.64.x）
+# golangci-lint v1 配置（配合 CI go install 源码编译的 lint v1.64.x+）
 # 起步策略：只开零争议的 linter，确保 CI 不卡
 # 后续迭代逐个打开：ineffassign → unused → staticcheck → errcheck → gosec
+# 注意：typecheck 是 golangci-lint 内置机制（v1.57+），不是可单独 enable 的 linter
 
 run:
   timeout: 5m
@@ -8,7 +9,6 @@ run:
 linters:
   disable-all: true
   enable:
-    - typecheck
     - goimports
     - govet
     - misspell
@@ -18,12 +18,6 @@ linters-settings:
     local-prefixes: github.com/wabisabi926/faststrm
 
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-        - staticcheck
   exclude-dirs:
     - frontend/node_modules
     - internal/web/spa
