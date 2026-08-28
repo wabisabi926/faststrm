@@ -101,9 +101,9 @@ jobs:
         cache: true
 
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v6   # v6 支持 golangci-lint v1.x
+      uses: golangci/golangci-lint-action@v7
       with:
-        version: v1.64.8
+        version: latest   # v2.x (我们的 .golangci.yml 已是 v2 格式)
         args: --timeout=5m --config .golangci.yml
         skip-save-cache: true
       env:

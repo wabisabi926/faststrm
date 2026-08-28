@@ -1,36 +1,23 @@
-# golangci-lint 配置
-# 起步策略：只开编译器级别 + 格式检查，确保 CI 不会因现有代码风格问题失败。
-# 后续按优先级逐个打开：ineffassign → unused → staticcheck → errcheck → gosec。
+# golangci-lint v2 配置
+# 起步策略：只开格式 + 基础 vet，确保 CI 零失败启动。
+# 后续逐个打开：ineffassign → unused → staticcheck → errcheck → gosec。
+
+version: "2"
 
 run:
   timeout: 5m
-  go: '1.25'
-  skip-dirs:
-    - frontend/node_modules
-    - internal/web/spa
-    - dist
-    - vendor
+
+formatters:
+  enable:
+    - goimports
 
 linters:
   disable-all: true
   enable:
-    # ---- 必开：编译器级别 + 格式（零争议）----
-    - typecheck      # 编译错误
-    - goimports      # import 排序 + 分组
     - govet          # 官方 go vet
     - misspell       # 拼写错误
 
-  # ---- 暂时不开的 linter（后续迭代逐步打开）----
-  # ineffassign  - 无效赋值（6 处，低风险）
-  # unused       - 未使用的字段/函数（11 处，含测试辅助函数）
-  # staticcheck  - SA4004 等静态告警（1 处）
-  # gosec        - G301/G306 等权限告警（桌面应用 0755/0644 合理）
-  # errcheck     - error 未检查（handler 层普遍忽略）
-  # reassign     - := 误用 =
-  # unconvert    - 不必要类型转换
-  # gosimple     - 简化建议
-
-linters-settings:
+formatters-settings:
   goimports:
     local-prefixes: github.com/wabisabi926/faststrm
 
@@ -41,6 +28,12 @@ issues:
         - errcheck
         - gosec
         - staticcheck
+
+  exclude-dirs:
+    - frontend/node_modules
+    - internal/web/spa
+    - dist
+    - vendor
 
   max-issues-per-linter: 0
   max-same-issues: 0
