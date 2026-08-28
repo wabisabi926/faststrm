@@ -158,7 +158,7 @@ func TestT9_Store_Migration_LegacySettings_NoCrash(t *testing.T) {
     "redirectCheckTimeoutMs": 3000
   }
 }`
-	_ = os.WriteFile(filepath.Join(cfgDir, "settings.json"), []byte(legacyJSON), 0o644)
+	_ = os.WriteFile(filepath.Join(cfgDir, "settings.json"), []byte(legacyJSON), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 
 	salt := "upgrade_test_salt_32bytes__"
 	ss := store.NewSettingsStore(salt, cfgDir)
@@ -215,7 +215,7 @@ func TestT9_Store_Migration_EnableSwitch_AutoSecret(t *testing.T) {
     "tokenSecret": ""
   }
 }`
-	_ = os.WriteFile(filepath.Join(cfgDir, "settings.json"), []byte(userEnabledJSON), 0o644)
+	_ = os.WriteFile(filepath.Join(cfgDir, "settings.json"), []byte(userEnabledJSON), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 
 	salt := "auto_secret_salt_32bytes__"
 
@@ -301,7 +301,7 @@ func TestT9_Store_Migration_SecretAlreadyExists_NoRotation(t *testing.T) {
 
 	existingSecret := "existing_secret_abcdefghijklmnopqrstuvwxyz0123456789ABCD"
 	jsonStr := `{"strm": {"enableTokenSigning": true, "tokenSecret": "` + existingSecret + `"}}`
-	_ = os.WriteFile(filepath.Join(cfgDir, "settings.json"), []byte(jsonStr), 0o644)
+	_ = os.WriteFile(filepath.Join(cfgDir, "settings.json"), []byte(jsonStr), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 
 	ss := store.NewSettingsStore("some_salt_32bytes__", cfgDir)
 	cfg, err := ss.ReadSettings()

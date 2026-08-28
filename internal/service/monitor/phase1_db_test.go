@@ -147,7 +147,7 @@ func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 		PickCode:     "",
 	}
 	// 模拟 processEvent 内部的 Write-Ahead + type=17 分支：
-	cloudPath := lifeClient.ResolvePath(nil, event.ParentID, event.FileID, event.FileName)
+	cloudPath := lifeClient.ResolvePath(context.TODO(), event.ParentID, event.FileID, event.FileName)
 	decision, _ := mon.makeWriteAheadDecision_ForTest(ctx, "acc1", event, cloudPath, cfg)
 	_ = decision
 	// 必须是 new_folder 类型

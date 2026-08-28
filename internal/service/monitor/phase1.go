@@ -2,8 +2,6 @@ package monitor
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -473,31 +471,6 @@ func tryEventTypeEnabled(types model.EventTypesSettings, eventTypeNumber int) bo
 }
 
 // ======================================================================
-// Phase 1.3 —— ResolvePath 返回 ("", err) 的辅助错误
-// ======================================================================
-
-var errCloudPathUnresolved = errors.New("cloud path unresolved")
-
-// wrapLegacyUnknownPath 把 ResolvePath 返回的 "/unknown/..." 这种伪路径转换为 ("", err)
-//
-//	以便调用方显式跳过并记录 SkipReason
-//	注：真正的 client115.LifeClient.ResolvePath 改动放到 life.go 中直接修改 normalize；
-//	    这里只提供调用端的后处理包装，保证不破坏现有调用签名。
-func wrapLegacyUnknownPath(path string, errIn error) (string, error) {
-	if errIn != nil {
-		return "", errIn
-	}
-	if path == "" {
-		return "", errCloudPathUnresolved
-	}
-	np := normalizeCloudPath(path)
-	if strings.HasPrefix(strings.ToLower(np), "unknown/") || strings.ToLower(np) == "unknown" {
-		return "", fmt.Errorf("%w: resolved as unknown path %q", errCloudPathUnresolved, path)
-	}
-	return np, nil
-}
-
-// ======================================================================
 // Phase 1.1 —— PollCounts 通过 context 下沉到 processEvent
 // ======================================================================
 
@@ -532,16 +505,6 @@ func pollCountsAddSkipped(ctx context.Context, reason string) {
 	}
 }
 
-// ensureDB 确保 sqliteDB 不为 nil；否则返回错误。
-//
-//	仅删除/反查旧路径这种强依赖 DB 的操作需要；写入操作 writeAheadFilePath 自己做 nil 保护。
-func (m *Monitor) ensureDB() (*sql.DB, error) {
-	if m.sqliteDB == nil {
-		return nil, errors.New("sqliteDB 未初始化（需要 302/Strm 模式开启 DB 写回）")
-	}
-	return m.sqliteDB, nil
-}
-
 // ======================================================================
 // Phase 1.2 —— 事件决策 + Write-Ahead 接入点（processEvent 内部调用）
 // ======================================================================
@@ -572,7 +535,7 @@ func (m *Monitor) preProcessEvent(
 	return m.preProcessEventWithSource(ctx, account, event, rawCloudPath, "API_ANCESTORS", config)
 }
 
-func (m *Monitor) preProcessEventWithSource(
+func (m *Monitor) preProcessEventWithSource( //nolint:cyclop // complexity: 34
 	ctx context.Context,
 	account string,
 	event client115.LifeEventItem,

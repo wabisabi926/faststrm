@@ -127,6 +127,7 @@ func (r *TaskHistoryRepo) UpdateExecution(ctx context.Context, id int64, patch m
 		args = append(args, v)
 	}
 	args = append(args, id)
+	//nolint:gosec // G201 — 列名由代码内置集合构建，值通过 ExecContext 参数化
 	q := fmt.Sprintf(`UPDATE task_executions SET %s WHERE id = ?`, join(cols, ", "))
 	_, err := r.db.ExecContext(ctx, q, args...)
 	return err
@@ -198,6 +199,7 @@ func (r *TaskHistoryRepo) Query(ctx context.Context, q TaskHistoryQuery) ([]Task
 	if limit <= 0 {
 		limit = 100
 	}
+	//nolint:gosec // G201 — WHERE 子句由代码内置条件构建，值通过 QueryContext 参数化
 	sql := fmt.Sprintf(`SELECT id, task_id, account, origin_path, target_path, status, started_at, ended_at, duration_ms, summary_json, error, created_at
 FROM task_executions WHERE %s ORDER BY created_at DESC, id DESC LIMIT ?`, join(where, " AND "))
 	args = append(args, limit)

@@ -50,13 +50,13 @@ func TestPhase3_RepoIntegration(t *testing.T) {
 			t.Fatalf("Create exec1 err: %v", err)
 		}
 
-		id2, err := repo.CreateExecution(ctx, TaskExecution{
+		id2, _ := repo.CreateExecution(ctx, TaskExecution{
 			TaskID: "task_B", Account: "bob@115.com", OriginPath: "/TV", TargetPath: "/nas/bob",
 			Status: "pending", CreatedAt: 900,
 		})
 		_ = id2
 
-		id3, err := repo.CreateExecution(ctx, TaskExecution{
+		id3, _ := repo.CreateExecution(ctx, TaskExecution{
 			TaskID: "task_A", Account: "alice@115.com", OriginPath: "/电影2", TargetPath: "/nas/alice2",
 			Status: "failed", Error: "timeout reach", CreatedAt: 800,
 		})

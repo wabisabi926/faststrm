@@ -8,10 +8,6 @@ import (
 	"strings"
 )
 
-// appVersion 显示在前端 sidebar footer
-// 通过 ldflags 在构建时注入：-X 'github.com/wabisabi926/faststrm/internal/web.appVersion=${VERSION}'
-var appVersion = "1.1.0"
-
 //go:embed all:spa
 var spaFS embed.FS
 
@@ -39,7 +35,7 @@ func SPAHandler() http.HandlerFunc {
 			} else {
 				w.Header().Set("Cache-Control", "public, max-age=86400")
 			}
-			w.Write(data)
+			_, _ = w.Write(data)
 			return
 		}
 
@@ -47,7 +43,7 @@ func SPAHandler() http.HandlerFunc {
 		indexHTML, _ := fs.ReadFile(spaSub, "index.html")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		w.Write(indexHTML)
+		_, _ = w.Write(indexHTML)
 	}
 }
 

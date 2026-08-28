@@ -57,7 +57,9 @@ func HandleMediaMountSyncGET(deps MediaMountDeps) http.HandlerFunc {
 		resp := mediasync.NewDryRunResponse(settings, cr, added, removed, kept, changed)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			log.Printf("[mediaMount] encode response failed: %v", err)
+		}
 	}
 }
 

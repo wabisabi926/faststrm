@@ -89,10 +89,9 @@ func TestHandleStallError_AbortMode(t *testing.T) {
 	if got == nil {
 		t.Fatalf("abort mode should return error")
 	}
-	if !errors.Is(got, context.DeadlineExceeded) {
-		// abort 模式包装了错误消息，但底层应仍是 DeadlineExceeded 的包装
-		// 注意：fmt.Errorf("整理队列无进展超时: %s") 不用 %w，所以不 wrap
-		// 因此这里只验证非nil即可
+	if !errors.Is(got, context.DeadlineExceeded) { //nolint:staticcheck // SA9003: 空分支为有意设计
+		// abort 模式包装了错误消息，但底层 DeadlineExceeded 不 wrap
+		// 因此这里只验证非 nil 即可
 	}
 }
 

@@ -436,7 +436,7 @@ func BuildHelpMenu() (string, [][]InlineKeyboardButton) {
 // ==================== 回调路由 ====================
 
 // RouteMenuCallback 路由菜单回调到对应处理函数
-func (h *CommandHandler) RouteMenuCallback(ctx context.Context, cq CallbackQuery) error {
+func (h *CommandHandler) RouteMenuCallback(ctx context.Context, cq CallbackQuery) error { //nolint:cyclop // complexity: 33
 	if cq.Message == nil || cq.Message.Chat == nil {
 		return nil
 	}

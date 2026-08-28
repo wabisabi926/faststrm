@@ -119,7 +119,7 @@ func (s *SettingsStore) SaveSettings(cfg *model.Settings) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0o644)
+	return os.WriteFile(s.path, data, 0o600)
 }
 
 // sliceContains 判断字符串切片是否包含目标值

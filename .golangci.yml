@@ -1,6 +1,5 @@
 # golangci-lint v1 配置（配合 CI go install 源码编译的 lint v1.64.x+）
-# 起步策略：只开零争议的 linter，确保 CI 不卡
-# 后续迭代逐个打开：ineffassign → unused → staticcheck → errcheck → gosec
+# 当前已启用：goimports, govet, misspell, ineffassign, unused, staticcheck, errcheck, gosec, cyclop
 # 注意：typecheck 是 golangci-lint 内置机制（v1.57+），不是可单独 enable 的 linter
 
 run:
@@ -12,10 +11,20 @@ linters:
     - goimports
     - govet
     - misspell
+    - ineffassign
+    - unused
+    - staticcheck
+    - errcheck
+    - gosec
+    - cyclop
 
 linters-settings:
   goimports:
     local-prefixes: github.com/wabisabi926/faststrm
+  cyclop:
+    # 圈复杂度阈值：Go 社区推荐值 15-20，默认 10 对工程项目过严
+    max-complexity: 25
+    # 测试文件圈复杂度天然偏高（场景覆盖分支多），通过 exclude-rules 排除
 
 issues:
   exclude-dirs:
@@ -25,3 +34,9 @@ issues:
     - vendor
   max-issues-per-linter: 0
   max-same-issues: 0
+  exclude-rules:
+    # cyclop：集成测试/E2E 测试函数包含大量 if-else 场景分支，圈复杂度天然偏高
+    - path: _test\.go$
+      linters:
+        - cyclop
+

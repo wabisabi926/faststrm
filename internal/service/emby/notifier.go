@@ -195,6 +195,9 @@ func (n *Notifier) waitForMetadata(ctx context.Context, client *Client, itemID s
 			if lastDetail != nil {
 				return lastDetail, nil // 返回最后一次查到的（可能部分字段有了）
 			}
+			if lastErr != nil {
+				return nil, fmt.Errorf("轮询刮削超时: %w", lastErr)
+			}
 			return nil, waitCtx.Err()
 
 		case <-ticker.C:

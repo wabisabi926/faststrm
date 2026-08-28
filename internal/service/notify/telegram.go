@@ -519,15 +519,17 @@ func (b *TelegramBot) SendMessageWithButtons(ctx context.Context, chatID string,
 	if err != nil {
 		return err
 	}
-	for _, chunk := range splitTextByRunes(text, 4096) {
+	// 仅第一段带按钮（保持与旧实现一致）
+	chunks := splitTextByRunes(text, 4096)
+	for i, chunk := range chunks {
 		msg := tgbotapi.NewMessage(stringToInt64(chatID), chunk)
 		msg.ParseMode = "HTML"
-		// 仅第一段带按钮
-		msg.ReplyMarkup = toTGInlineMarkup(buttons)
+		if i == 0 {
+			msg.ReplyMarkup = toTGInlineMarkup(buttons)
+		}
 		if _, e := c.Send(msg); e != nil {
 			return fmt.Errorf("send message with buttons: %w", e)
 		}
-		break // 仅第一段带按钮（保持与旧实现一致）
 	}
 	return nil
 }

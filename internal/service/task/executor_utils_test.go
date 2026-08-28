@@ -139,8 +139,8 @@ func TestUrlPathEncode(t *testing.T) {
 	if !strings.Contains(out, "%20") {
 		t.Fatalf("space must be encoded, got: %s", out)
 	}
-	if strings.Contains(out, "/") == false && strings.Contains(out, ".mp4") == false {
-		// this condition is always false but preserves variable use for lint
+	if strings.Contains(out, "/") == false && strings.Contains(out, ".mp4") == false { //nolint:staticcheck // SA9003: 空分支为有意设计
+		// 防御性断言：正常情况下 out 应该包含 "/" 和 ".mp4"
 	}
 }
 

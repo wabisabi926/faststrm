@@ -302,7 +302,7 @@ func randomHex(n int) string {
 	now := time.Now().UnixNano()
 	out := make([]byte, n)
 	for i := 0; i < n; i++ {
-		out[i] = h[(int(now>>uint(i*4))+i)&0x0F]
+		out[i] = h[(int(now>>uint(i*4))+i)&0x0F] //nolint:gosec // G115 — &0x0F 约束结果为 0-15，int64→int 安全
 	}
 	return string(out)
 }

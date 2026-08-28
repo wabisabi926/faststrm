@@ -21,7 +21,7 @@ import (
 // 对齐 MoviePilot MonitorLife.rename：
 //   - 文件夹 rename：shutil_move（保留内部所有文件结构和元数据），若失败 fallback recreate 递归
 //   - 文件 rename：按 DB 反查旧路径 → old_strm → new_strm rename + 同名 nfo/jpg/srt rename；找不到 → fallback 重新生成
-func (m *Monitor) handleRenameEvent(
+func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 	ctx context.Context,
 	account string,
 	event client115.LifeEventItem,

@@ -26,7 +26,7 @@ import (
 )
 
 // Run 启动 go-zero HTTP 服务
-func Run(cfg *config.AppConfig) error {
+func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// 初始化日志
 	logDir := ""
 	if cfg.Server.Mode == "prod" {

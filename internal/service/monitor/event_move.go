@@ -367,7 +367,7 @@ func moveOrRenameRelatedAssets(dir, sourceStem, targetStem string) int {
 // 对齐 MoviePilot MonitorLife.move：
 //   - 文件夹：直接 shutil_move（原子移动，保留内部 STRM/nfo/jpg/刮削缓存），失败 fallback 到递归 recreate
 //   - 文件：通过 DB 反查旧路径 → 旧 strm/nfo 重命名；找不到旧路径 → fallback 到 recreate
-func (m *Monitor) handleMoveEvent(
+func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 	ctx context.Context,
 	account string,
 	event client115.LifeEventItem,
@@ -535,7 +535,7 @@ func (m *Monitor) handleMoveEvent(
 	// recreate 模式：前面已 cleanupOldStrmAssets 删旧，此处直接走建新（对应参考项目 recreate 流程 L1006-1012）
 	// recreate 模式强制创建新 STRM（删旧+生新是 recreate 的核心语义）
 	if isRecreateMode {
-		if !config.MoveMediaCreateNewStrm {
+		if !config.MoveMediaCreateNewStrm { //nolint:staticcheck // SA9003: 空分支为有意设计
 			// 配置虽然关闭了，但 recreate 模式必须创建 STRM
 			// 记录日志但不跳过，继续执行创建
 		}

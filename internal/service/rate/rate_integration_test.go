@@ -64,7 +64,7 @@ func TestPhase4_RateIntegration(t *testing.T) {
 				return
 			}
 			defer bn.Leave()
-			cur := int32(bn.Running())
+			cur := int32(bn.Running()) //nolint:gosec // G115 — 测试代码，Running() 返回 int ≤ 实际并发数，远小于 int32 上限
 			for {
 				old := atomic.LoadInt32(&maxRunning)
 				if cur <= old || atomic.CompareAndSwapInt32(&maxRunning, old, cur) {

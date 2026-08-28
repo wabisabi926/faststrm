@@ -64,18 +64,6 @@ func assertIsString(t *testing.T, name string, val any) {
 	}
 }
 
-// assertIsArray 断言 JSON 值为数组类型（非 null）
-func assertIsArray(t *testing.T, name string, val any) {
-	t.Helper()
-	if val == nil {
-		t.Errorf("%s must be array, got null", name)
-		return
-	}
-	if _, ok := val.([]any); !ok {
-		t.Errorf("%s must be array, got %T: %v", name, val, val)
-	}
-}
-
 // TestRegression_FieldTypes 字段类型一致性校验
 func TestRegression_FieldTypes(t *testing.T) {
 	// 准备最小依赖

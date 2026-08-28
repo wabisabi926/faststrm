@@ -205,7 +205,7 @@ func TestPhase4_SchedulerRuntimeIntegration(t *testing.T) {
 			t.Error("after exit, alice should NOT be in fullscan")
 		}
 		// 注意：因为之前挂起了监控，exit 后如果 MonitorSuspendedUntil>0，还会保留状态；但 Clear 可以清掉
-		if !sm.IsMonitorSuspended("alice@115.com") {
+		if !sm.IsMonitorSuspended("alice@115.com") { //nolint:staticcheck // SA9003: 空分支为有意设计
 			// 允许 exit 后保留挂起（设置了 resume grace），此处不强制要求
 		}
 		sm.ClearMonitorSuspend("alice@115.com")

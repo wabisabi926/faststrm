@@ -302,7 +302,7 @@ func (m *StateManager) saveToDisk() {
 	dir := filepath.Dir(m.filePath)
 	_ = os.MkdirAll(dir, 0755)
 
-	if err := os.WriteFile(m.filePath, data, 0644); err != nil {
+	if err := os.WriteFile(m.filePath, data, 0600); err != nil {
 		logger.S().Errorf("[AccountRuntime] write failed: %v", err)
 	}
 }

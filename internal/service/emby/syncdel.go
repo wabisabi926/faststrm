@@ -634,7 +634,7 @@ func (s *SyncDelete) cleanupDbRecords(cloudPath string, itemType string, account
 	// 账号过滤：若映射指定了 account 则仅清该账号
 	// 注意：faststrm Go 版本不在此处读取 accounts 列表（避免循环依赖）
 	// 调用方若需要全账号清理，可在 FilePathDb 实现中处理空 account
-	accounts := []string{}
+	var accounts []string
 	if account != "" {
 		accounts = []string{account}
 	} else {

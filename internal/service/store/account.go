@@ -353,7 +353,7 @@ func (s *AccountStore) flushLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.path, out, 0644); err != nil {
+	if err := os.WriteFile(s.path, out, 0600); err != nil {
 		return err
 	}
 	s.dirty = false

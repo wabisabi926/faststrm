@@ -24,7 +24,6 @@ import (
 var (
 	sharedPollingMgr *notify.PollingManager
 	sharedCmdHandler *notify.CommandHandler
-	sharedDispatcher *notify.Dispatcher
 	sharedMu         sync.Mutex
 	// sharedCleanupHandler：保存注入的清理按钮回调（启动时创建 cleanupInteraction 后注入）
 	// 目的：getCmdHandler 懒加载创建 CommandHandler 时能自动接上 cleanup 回调，不会漏

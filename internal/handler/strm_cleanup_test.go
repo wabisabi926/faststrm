@@ -28,13 +28,13 @@ func TestScanMappingFromCache_EmptyEntry(t *testing.T) {
 func TestScanMappingFromCache_WithMatch(t *testing.T) {
 	root := t.TempDir()
 	localPath := filepath.Join(root, "media")
-	os.MkdirAll(localPath, 0o755)
+	_ = os.MkdirAll(localPath, 0o755)
 
 	// Create some local .strm files
-	os.WriteFile(filepath.Join(localPath, "movie1.strm"), []byte("url1"), 0o644)
-	os.WriteFile(filepath.Join(localPath, "movie2.strm"), []byte("url2"), 0o644)
+	_ = os.WriteFile(filepath.Join(localPath, "movie1.strm"), []byte("url1"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
+	_ = os.WriteFile(filepath.Join(localPath, "movie2.strm"), []byte("url2"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 	// Create a stale file (exists locally but not in cache)
-	os.WriteFile(filepath.Join(localPath, "old_movie.strm"), []byte("url3"), 0o644)
+	_ = os.WriteFile(filepath.Join(localPath, "old_movie.strm"), []byte("url3"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 
 	// Cache has movie1 and movie2, but NOT old_movie
 	entry := &store.StrmCacheEntry{
@@ -81,10 +81,10 @@ func TestScanMappingFromCache_WithMatch(t *testing.T) {
 func TestScanMappingFromCache_MissingStrms(t *testing.T) {
 	root := t.TempDir()
 	localPath := filepath.Join(root, "media")
-	os.MkdirAll(localPath, 0o755)
+	_ = os.MkdirAll(localPath, 0o755)
 
 	// Only create movie1 locally
-	os.WriteFile(filepath.Join(localPath, "movie1.strm"), []byte("url1"), 0o644)
+	_ = os.WriteFile(filepath.Join(localPath, "movie1.strm"), []byte("url1"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 
 	// Cache has movie1 and movie2 (movie2 is missing locally)
 	entry := &store.StrmCacheEntry{
@@ -120,10 +120,10 @@ func TestScanMappingFromCache_MissingStrms(t *testing.T) {
 func TestScanMappingFromCache_Subdirs(t *testing.T) {
 	root := t.TempDir()
 	localPath := filepath.Join(root, "media")
-	os.MkdirAll(filepath.Join(localPath, "subdir1"), 0o755)
+	_ = os.MkdirAll(filepath.Join(localPath, "subdir1"), 0o755)
 
 	// Create nested STRM file
-	os.WriteFile(filepath.Join(localPath, "subdir1", "nested.strm"), []byte("url"), 0o644)
+	_ = os.WriteFile(filepath.Join(localPath, "subdir1", "nested.strm"), []byte("url"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 
 	entry := &store.StrmCacheEntry{
 		UUID: "test-uuid-3",
@@ -186,9 +186,9 @@ func TestListLocalStrmFiles_EmptyDir(t *testing.T) {
 
 func TestListLocalStrmFiles_IgnoresNonStrm(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "video.mp4"), []byte("test"), 0o644)
-	os.WriteFile(filepath.Join(root, "movie.strm"), []byte("test"), 0o644)
-	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("test"), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "video.mp4"), []byte("test"), 0o644)  //nolint:gosec // G306 — 测试夹具，权限不敏感
+	_ = os.WriteFile(filepath.Join(root, "movie.strm"), []byte("test"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
+	_ = os.WriteFile(filepath.Join(root, "notes.txt"), []byte("test"), 0o644)  //nolint:gosec // G306 — 测试夹具，权限不敏感
 
 	files := listLocalStrmFiles(root)
 	if len(files) != 1 {
@@ -202,11 +202,11 @@ func TestListLocalStrmFiles_IgnoresNonStrm(t *testing.T) {
 func TestScanMappingFromCache_AllMatch(t *testing.T) {
 	root := t.TempDir()
 	localPath := filepath.Join(root, "media")
-	os.MkdirAll(localPath, 0o755)
+	_ = os.MkdirAll(localPath, 0o755)
 
 	// All files match cache
-	os.WriteFile(filepath.Join(localPath, "a.strm"), []byte("a"), 0o644)
-	os.WriteFile(filepath.Join(localPath, "b.strm"), []byte("b"), 0o644)
+	_ = os.WriteFile(filepath.Join(localPath, "a.strm"), []byte("a"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
+	_ = os.WriteFile(filepath.Join(localPath, "b.strm"), []byte("b"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 
 	entry := &store.StrmCacheEntry{
 		UUID: "test-uuid-5",

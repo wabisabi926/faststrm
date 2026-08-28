@@ -57,18 +57,18 @@ func TestStrmCacheStore_SaveAndGet(t *testing.T) {
 func TestStrmCacheStore_Overwrite(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, "config")
-	os.MkdirAll(cfgDir, 0o755)
+	_ = os.MkdirAll(cfgDir, 0o755)
 
 	s := NewStrmCacheStore(cfgDir)
 
-	s.Save(&StrmCacheEntry{
+	_ = s.Save(&StrmCacheEntry{
 		UUID:       "uuid-ow",
 		TaskID:     "task-1",
 		RelPaths:   []string{"a.strm"},
 		LocalPaths: []string{"D:\\a.strm"},
 	})
 
-	s.Save(&StrmCacheEntry{
+	_ = s.Save(&StrmCacheEntry{
 		UUID:       "uuid-ow",
 		TaskID:     "task-2",
 		RelPaths:   []string{"b.strm", "c.strm"},
@@ -90,7 +90,7 @@ func TestStrmCacheStore_Overwrite(t *testing.T) {
 func TestStrmCacheStore_LatestByTaskID(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, "config")
-	os.MkdirAll(cfgDir, 0o755)
+	_ = os.MkdirAll(cfgDir, 0o755)
 
 	s := NewStrmCacheStore(cfgDir)
 
@@ -100,7 +100,7 @@ func TestStrmCacheStore_LatestByTaskID(t *testing.T) {
 		Account:    "acc1",
 		LocalPaths: []string{"D:\\old.strm"},
 	}
-	s.Save(entry1)
+	_ = s.Save(entry1)
 	time.Sleep(5 * time.Millisecond)
 
 	entry2 := &StrmCacheEntry{
@@ -109,7 +109,7 @@ func TestStrmCacheStore_LatestByTaskID(t *testing.T) {
 		Account:    "acc1",
 		LocalPaths: []string{"D:\\new.strm"},
 	}
-	s.Save(entry2)
+	_ = s.Save(entry2)
 
 	latest := s.LatestByTaskID("task-shared")
 	if latest == nil {
@@ -130,16 +130,16 @@ func TestStrmCacheStore_LatestByTaskID(t *testing.T) {
 func TestStrmCacheStore_Delete(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, "config")
-	os.MkdirAll(cfgDir, 0o755)
+	_ = os.MkdirAll(cfgDir, 0o755)
 
 	s := NewStrmCacheStore(cfgDir)
 
-	s.Save(&StrmCacheEntry{UUID: "uuid-del", TaskID: "t1"})
+	_ = s.Save(&StrmCacheEntry{UUID: "uuid-del", TaskID: "t1"})
 	if s.Get("uuid-del") == nil {
 		t.Fatal("pre-delete Get nil")
 	}
 
-	s.Delete("uuid-del")
+	_ = s.Delete("uuid-del")
 	if s.Get("uuid-del") != nil {
 		t.Error("post-delete Get should return nil")
 	}
@@ -153,19 +153,19 @@ func TestStrmCacheStore_Delete(t *testing.T) {
 func TestStrmCacheStore_ListTaskRecent(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, "config")
-	os.MkdirAll(cfgDir, 0o755)
+	_ = os.MkdirAll(cfgDir, 0o755)
 
 	s := NewStrmCacheStore(cfgDir)
 
 	for i := 0; i < 5; i++ {
-		s.Save(&StrmCacheEntry{
+		_ = s.Save(&StrmCacheEntry{
 			UUID:   "uuid-" + string(rune('a'+i)),
 			TaskID: "t1",
 		})
 		time.Sleep(2 * time.Millisecond)
 	}
 	for i := 0; i < 2; i++ {
-		s.Save(&StrmCacheEntry{
+		_ = s.Save(&StrmCacheEntry{
 			UUID:   "uuid-t2-" + string(rune('a'+i)),
 			TaskID: "t2",
 		})
@@ -195,7 +195,7 @@ func TestStrmCacheStore_ListTaskRecent(t *testing.T) {
 func TestStrmCacheStore_EdgeCases(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, "config")
-	os.MkdirAll(cfgDir, 0o755)
+	_ = os.MkdirAll(cfgDir, 0o755)
 
 	s := NewStrmCacheStore(cfgDir)
 
@@ -227,14 +227,14 @@ func TestStrmCacheStore_EdgeCases(t *testing.T) {
 func TestStrmCacheStore_ConcurrentAccess(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, "config")
-	os.MkdirAll(cfgDir, 0o755)
+	_ = os.MkdirAll(cfgDir, 0o755)
 
 	s := NewStrmCacheStore(cfgDir)
 
 	done := make(chan bool, 10)
 	for i := 0; i < 5; i++ {
 		go func(idx int) {
-			s.Save(&StrmCacheEntry{
+			_ = s.Save(&StrmCacheEntry{
 				UUID:       "uuid-c-" + string(rune('0'+idx)),
 				TaskID:     "task-concurrent",
 				LocalPaths: []string{"D:\\concurrent.strm"},
@@ -277,7 +277,7 @@ func TestFullPathSet(t *testing.T) {
 func TestStrmCacheStore_SavePathConsistency(t *testing.T) {
 	root := t.TempDir()
 	cfgDir := filepath.Join(root, "config")
-	os.MkdirAll(cfgDir, 0o755)
+	_ = os.MkdirAll(cfgDir, 0o755)
 
 	s := NewStrmCacheStore(cfgDir)
 
@@ -287,7 +287,7 @@ func TestStrmCacheStore_SavePathConsistency(t *testing.T) {
 		RelPaths:   []string{"z.strm", "a.strm", "m.strm"},
 		LocalPaths: []string{"D:\\z.strm", "D:\\a.strm", "D:\\m.strm"},
 	}
-	s.Save(entry)
+	_ = s.Save(entry)
 	got := s.Get("uuid-sort")
 	if got == nil {
 		t.Fatal("Get failed")

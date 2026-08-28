@@ -40,7 +40,7 @@ type pathMapping struct {
 //	① 先调用 preProcessEvent 做决策/日志/Write-Ahead DB/type=17 拦截；
 //	② 再按 skipReason / ShouldAct 进入 legacy handler；
 //	③ 返回值通过 ctx 中携带的 *PollCounts（若有）累计 effective/skipped。
-func (m *Monitor) processEvent(ctx context.Context, account string, event client115.LifeEventItem, lifeClient *client115.LifeClient) error {
+func (m *Monitor) processEvent(ctx context.Context, account string, event client115.LifeEventItem, lifeClient *client115.LifeClient) error { //nolint:cyclop // complexity: 58
 	config := m.settingsFn()
 	eventType := event.Type
 
@@ -276,8 +276,8 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 			pollCountsAddEffective(ctx)
 			m.markDedupProcessed(event)
 		}
-	} else {
-		// 保留错误给 pollOnce 累计 Errors
+	} else { //nolint:staticcheck // SA9003: 空分支为有意设计，保留错误给 pollOnce 内部累计 Errors
+		// pollOnce 返回错误时不做额外处理
 	}
 	return handlerErr
 }

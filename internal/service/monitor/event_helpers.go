@@ -364,13 +364,6 @@ func shouldGenerateStrm(fileName string, fileSize, minFileSize int64, blacklist 
 	return "", true
 }
 
-// getRelPathStemStrmSuffix 基于相对路径（含扩展名的完整文件路径）计算 strm 输出路径
-// 等价于：替换文件名为 getStrmFileName(name)
-func replaceRelPathExtToStrm(relPath string) string {
-	dir, name := filepath.Split(relPath)
-	return filepath.Join(dir, getStrmFileName(name))
-}
-
 // isMediaFile 检查文件名是否为媒体文件扩展名
 // extensions 可带或不带前导 "."
 func isMediaFile(fileName string, extensions []string) bool {
@@ -461,7 +454,7 @@ func writeStrmFile(strmPath, content string) error {
 		}
 	}
 	tmpPath := strmPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmpPath, strmPath)

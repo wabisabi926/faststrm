@@ -414,7 +414,7 @@ func listLocalStrmFiles(localPath string) map[string]os.FileInfo {
 	return result
 }
 
-func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Settings, deps StrmCleanupDeps, accountMap map[string]string) ExecuteResponse {
+func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Settings, deps StrmCleanupDeps, accountMap map[string]string) ExecuteResponse { //nolint:cyclop // complexity: 34
 	resp := ExecuteResponse{
 		DryRun:              body.DryRun,
 		Errors:              []map[string]string{},

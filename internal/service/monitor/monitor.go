@@ -368,8 +368,8 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 // pollLoop 单账号轮询循环
 // 使用 time.Timer 而非 time.Ticker，以支持动态调整轮询间隔
 func (m *Monitor) pollLoop(ctx context.Context, account string) {
-	config := m.settingsFn()
-	interval := pollIntervalDur(config)
+	var interval time.Duration
+	var config model.LifeMonitorSettings
 
 	// 首次立即触发
 	timer := time.NewTimer(0)
@@ -420,7 +420,7 @@ func (m *Monitor) pollLoop(ctx context.Context, account string) {
 // 3. 逐个处理事件（含去重）
 // 4. 更新账号状态
 // 5. 错误时记录日志
-func (m *Monitor) oncePoll(ctx context.Context, account string) error {
+func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint:cyclop // complexity: 27
 	// 1. 检查全量扫描挂起
 	if m.runtime != nil {
 		ok, suspendedUntil := m.runtime.TryPollMonitor(account)
@@ -742,15 +742,6 @@ func (m *Monitor) getCookie(account string) (string, error) {
 		return "", fmt.Errorf("账号 %s 无 cookie", account)
 	}
 	return acc.Cookie, nil
-}
-
-// markAccountError 标记账号最近错误
-func (m *Monitor) markAccountError(account, errMsg string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if accMon, ok := m.accounts[account]; ok {
-		accMon.lastErr = errMsg
-	}
 }
 
 // pollIntervalDur 计算轮询间隔（最小 5s，低于 5 兜底到 30s 防止配置打错打崩 115 API）

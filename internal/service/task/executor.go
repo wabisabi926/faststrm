@@ -59,7 +59,7 @@ type ExecutorDeps struct {
 
 // ExecuteTask 执行一个任务（同步执行，调用方应开 goroutine 异步调用）
 // 仅执行前的抢占检查同步返回 ExecuteResult，任务本身通过 SSE 广播进度
-func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteResult {
+func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteResult { //nolint:cyclop // complexity: 112
 	rt := GetRuntime()
 
 	// 1) 找到任务定义
@@ -149,7 +149,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 
 	// 5) 合并全局 settings + 任务覆盖得到最终 strm 配置
 	settings, err := deps.SettingsStore.ReadSettings()
-	if err != nil {
+	if err != nil { //nolint:staticcheck // SA9003: 空分支为有意设计
 		// best-effort: fall back to defaults if read fails
 	}
 	if settings == nil {

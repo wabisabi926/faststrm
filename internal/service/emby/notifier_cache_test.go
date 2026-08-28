@@ -79,12 +79,12 @@ func TestNotifierUserID_ReuseAcrossClients(t *testing.T) {
 		if r.URL.Path == "/emby/Users" {
 			atomic.AddInt32(&usersCallCount, 1)
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
 			return
 		}
 		// 详情请求
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
+		_, _ = w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
 	}))
 	defer server.Close()
 
@@ -120,11 +120,11 @@ func TestNotifierUserID_InvalidatesOnURLChange(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/emby/Users" {
 			atomic.AddInt32(&usersCallCount, 1)
-			w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
 			return
 		}
 		// 详情端点返回单对象
-		w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
+		_, _ = w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
 	}
 	server1 := httptest.NewServer(http.HandlerFunc(handler))
 	defer server1.Close()
@@ -138,7 +138,7 @@ func TestNotifierUserID_InvalidatesOnURLChange(t *testing.T) {
 
 	// 第一次：请求 server1
 	c1 := n.getClient()
-	c1.GetItemDetail(context.Background(), "item-1")
+	_, _ = c1.GetItemDetail(context.Background(), "item-1")
 	if got := atomic.LoadInt32(&usersCallCount); got != 1 {
 		t.Fatalf("第一次应请求1次 /emby/Users, 实际 %d", got)
 	}
@@ -146,7 +146,7 @@ func TestNotifierUserID_InvalidatesOnURLChange(t *testing.T) {
 	// 切换到 server2
 	currentURL = server2.URL
 	c2 := n.getClient()
-	c2.GetItemDetail(context.Background(), "item-1")
+	_, _ = c2.GetItemDetail(context.Background(), "item-1")
 	// 配置变更后应重新请求 /emby/Users
 	if got := atomic.LoadInt32(&usersCallCount); got != 2 {
 		t.Errorf("URL变更后应重新请求 /emby/Users, 期望 2 次, 实际 %d 次", got)
@@ -154,7 +154,7 @@ func TestNotifierUserID_InvalidatesOnURLChange(t *testing.T) {
 
 	// 再用 server2 配置创建Client, 应命中缓存
 	c3 := n.getClient()
-	c3.GetItemDetail(context.Background(), "item-1")
+	_, _ = c3.GetItemDetail(context.Background(), "item-1")
 	if got := atomic.LoadInt32(&usersCallCount); got != 2 {
 		t.Errorf("配置未变更应命中缓存, 期望仍为 2 次, 实际 %d 次", got)
 	}
@@ -168,10 +168,10 @@ func TestNotifierUserID_InvalidatesOnAPIKeyChange(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/emby/Users" {
 			atomic.AddInt32(&usersCallCount, 1)
-			w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
 			return
 		}
-		w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
+		_, _ = w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
 	}))
 	defer server.Close()
 
@@ -181,7 +181,7 @@ func TestNotifierUserID_InvalidatesOnAPIKeyChange(t *testing.T) {
 
 	// 第一次请求
 	c1 := n.getClient()
-	c1.GetItemDetail(context.Background(), "item-1")
+	_, _ = c1.GetItemDetail(context.Background(), "item-1")
 	if got := atomic.LoadInt32(&usersCallCount); got != 1 {
 		t.Fatalf("第一次应请求1次, 实际 %d", got)
 	}
@@ -189,14 +189,14 @@ func TestNotifierUserID_InvalidatesOnAPIKeyChange(t *testing.T) {
 	// 修改APIKey
 	currentAPIKey = "key-new"
 	c2 := n.getClient()
-	c2.GetItemDetail(context.Background(), "item-1")
+	_, _ = c2.GetItemDetail(context.Background(), "item-1")
 	if got := atomic.LoadInt32(&usersCallCount); got != 2 {
 		t.Errorf("APIKey变更后应重新请求, 期望 2 次, 实际 %d 次", got)
 	}
 
 	// APIKey不再变更, 应命中缓存
 	c3 := n.getClient()
-	c3.GetItemDetail(context.Background(), "item-1")
+	_, _ = c3.GetItemDetail(context.Background(), "item-1")
 	if got := atomic.LoadInt32(&usersCallCount); got != 2 {
 		t.Errorf("配置未变更应命中缓存, 期望仍为 2 次, 实际 %d 次", got)
 	}
@@ -209,10 +209,10 @@ func TestNotifierOnUserIDChange_Callback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/emby/Users" {
-			w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
 			return
 		}
-		w.Write([]byte(`{"Id":"item-1","Name":"电影","Type":"Movie"}`))
+		_, _ = w.Write([]byte(`{"Id":"item-1","Name":"电影","Type":"Movie"}`))
 	}))
 	defer server.Close()
 
@@ -229,7 +229,7 @@ func TestNotifierOnUserIDChange_Callback(t *testing.T) {
 
 	// 触发一次Client调用, 回调应写入Notifier缓存
 	c := n.getClient()
-	c.GetItemDetail(context.Background(), "item-1")
+	_, _ = c.GetItemDetail(context.Background(), "item-1")
 
 	n.userMu.Lock()
 	if n.embyUserID != "admin-id" {
@@ -250,12 +250,12 @@ func TestNotifierOnUserIDChange_InvalidateCallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/emby/Users" {
-			w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
 			return
 		}
 		// item-1 返回成功，item-2 返回404触发失效
 		if r.URL.Path == "/emby/Users/admin-id/Items/item-1" || r.URL.Path == "/emby/Items/item-1" {
-			w.Write([]byte(`{"Id":"item-1","Name":"成功电影","Type":"Movie"}`))
+			_, _ = w.Write([]byte(`{"Id":"item-1","Name":"成功电影","Type":"Movie"}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -268,7 +268,7 @@ func TestNotifierOnUserIDChange_InvalidateCallback(t *testing.T) {
 
 	// 第一次调用 item-1: 获取userID并缓存到Notifier
 	c := n.getClient()
-	c.GetItemDetail(context.Background(), "item-1")
+	_, _ = c.GetItemDetail(context.Background(), "item-1")
 
 	n.userMu.Lock()
 	if n.embyUserID != "admin-id" {
@@ -278,7 +278,7 @@ func TestNotifierOnUserIDChange_InvalidateCallback(t *testing.T) {
 
 	// 第二次调用 item-2: 详情404 → InvalidateUserCache → 回调清除Notifier缓存
 	c2 := n.getClient()
-	c2.GetItemDetail(context.Background(), "item-2")
+	_, _ = c2.GetItemDetail(context.Background(), "item-2")
 
 	n.userMu.Lock()
 	if n.embyUserID != "" {
@@ -293,7 +293,7 @@ func TestNotifierOnUserIDChange_InvalidateCallback(t *testing.T) {
 func TestNotifierInvalidateClientCache(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
+		_, _ = w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
 	}))
 	defer server.Close()
 
@@ -303,7 +303,7 @@ func TestNotifierInvalidateClientCache(t *testing.T) {
 
 	// 触发一次填充缓存
 	c := n.getClient()
-	c.getEmbyUserID(context.Background())
+	_, _ = c.getEmbyUserID(context.Background())
 
 	// 验证缓存已填充
 	n.userMu.Lock()
@@ -331,10 +331,10 @@ func TestNotifierUserID_ConcurrentAccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/emby/Users" {
-			w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
 			return
 		}
-		w.Write([]byte(`{"Id":"item-1","Name":"电影","Type":"Movie"}`))
+		_, _ = w.Write([]byte(`{"Id":"item-1","Name":"电影","Type":"Movie"}`))
 	}))
 	defer server.Close()
 
@@ -353,7 +353,7 @@ func TestNotifierUserID_ConcurrentAccess(t *testing.T) {
 				return
 			}
 			// 并发触发 getEmbyUserID
-			c.getEmbyUserID(context.Background())
+			_, _ = c.getEmbyUserID(context.Background())
 		}()
 	}
 

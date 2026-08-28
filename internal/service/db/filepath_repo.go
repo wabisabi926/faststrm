@@ -2,7 +2,9 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -97,7 +99,11 @@ func UpsertFilePathEntryBatch(db *sql.DB, account string, entries []FilePathEntr
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+			log.Printf("rollback error: %v", err)
+		}
+	}()
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO files (account, file_id, path, file_name, parent_id, pickcode, update_time)

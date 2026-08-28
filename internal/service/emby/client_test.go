@@ -25,7 +25,7 @@ func TestGetAllUsers(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[
+		_, _ = w.Write([]byte(`[
 			{"Name":"user1","Id":"user-1","Policy":{"EnableAllFolders":true}},
 			{"Name":"user2","Id":"user-2","Policy":{"EnableAllFolders":false}}
 		]`))
@@ -46,7 +46,7 @@ func TestGetAllUsers_EmptyList(t *testing.T) {
 	client, server := setupTestServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[]`))
+		_, _ = w.Write([]byte(`[]`))
 	})
 	defer server.Close()
 
@@ -81,7 +81,7 @@ func TestGetUsersWithAllLibrariesAccess(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[
+		_, _ = w.Write([]byte(`[
 			{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}},
 			{"Name":"regular","Id":"user-regular","Policy":{"EnableAllFolders":false}}
 		]`))
@@ -106,7 +106,7 @@ func TestGetUsersWithAllLibrariesAccess_NoAdmin(t *testing.T) {
 	client, server := setupTestServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[
+		_, _ = w.Write([]byte(`[
 			{"Name":"user1","Id":"user-1","Policy":{"EnableAllFolders":false}},
 			{"Name":"user2","Id":"user-2","Policy":{"EnableAllFolders":false}}
 		]`))
@@ -134,7 +134,7 @@ func TestTryGetDetailWithAnyUser_Success(t *testing.T) {
 		// 获取用户列表
 		if r.URL.Path == "/emby/Users" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`[
+			_, _ = w.Write([]byte(`[
 				{"Name":"user1","Id":"user-1","Policy":{"EnableAllFolders":false}},
 				{"Name":"user2","Id":"user-2","Policy":{"EnableAllFolders":false}}
 			]`))
@@ -144,7 +144,7 @@ func TestTryGetDetailWithAnyUser_Success(t *testing.T) {
 		// 尝试第一个用户获取详情
 		if r.URL.Path == "/emby/Users/user-1/Items/test-id" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{
+			_, _ = w.Write([]byte(`{
 				"Id":"test-id",
 				"Name":"测试电影",
 				"Type":"Movie",
@@ -180,7 +180,7 @@ func TestTryGetDetailWithAnyUser_AllUsersFail(t *testing.T) {
 
 		if r.URL.Path == "/emby/Users" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`[
+			_, _ = w.Write([]byte(`[
 				{"Name":"user1","Id":"user-1","Policy":{"EnableAllFolders":false}},
 				{"Name":"user2","Id":"user-2","Policy":{"EnableAllFolders":false}}
 			]`))
@@ -202,7 +202,7 @@ func TestTryGetDetailWithAnyUser_NoUsers(t *testing.T) {
 	client, server := setupTestServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[]`))
+		_, _ = w.Write([]byte(`[]`))
 	})
 	defer server.Close()
 
@@ -223,7 +223,7 @@ func TestGetItemDetailWithRetry_404Retry(t *testing.T) {
 		// 获取用户列表
 		if r.URL.Path == "/emby/Users" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`[{"Name":"admin","Id":"user-1","Policy":{"EnableAllFolders":true}}]`))
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"user-1","Policy":{"EnableAllFolders":true}}]`))
 			return
 		}
 
@@ -234,7 +234,7 @@ func TestGetItemDetailWithRetry_404Retry(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"Id":"test-id",
 			"Name":"测试电影",
 			"Type":"Movie",
@@ -267,7 +267,7 @@ func TestGetItemDetailWithRetry_MaxRetries(t *testing.T) {
 
 		if r.URL.Path == "/emby/Users" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`[{"Name":"admin","Id":"user-1","Policy":{"EnableAllFolders":true}}]`))
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"user-1","Policy":{"EnableAllFolders":true}}]`))
 			return
 		}
 

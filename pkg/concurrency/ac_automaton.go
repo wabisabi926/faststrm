@@ -109,8 +109,8 @@ func (m *StringMatcher) MatchAny(text string) (string, bool) {
 		}
 		if nxt, ok := node.next[r]; ok {
 			node = nxt
-		} else {
-			// node == root 且 root 无此转移：保持 root
+		} else { //nolint:staticcheck // SA9003: 空分支为有意设计，保持 root 不变
+			// node == root 且 root 无此转移：保持 root（已在上面的失败跳转循环中处理）
 		}
 		if len(node.outputs) > 0 {
 			return node.outputs[0], true

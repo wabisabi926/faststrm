@@ -132,7 +132,6 @@ type LifeClient struct {
 
 	// 路径解析缓存
 	pathCache    sync.Map // key: parentID, value: cachedPathEntry —— 存 parentDirPath（含自身名）→ 兼容旧缓存结构
-	pathCacheMu  sync.RWMutex
 	pathCacheTTL time.Duration
 
 	// API 域名轮换
@@ -286,7 +285,7 @@ func (c *LifeClient) LifeShow(ctx context.Context) error {
 // PullEvents 拉取生活事件（游标模式：from_time + from_id）
 // 对齐参考项目 iter_life_behavior_once：使用 offset 分页拉取，但用 from_time/from_id 过滤旧事件
 // 首次拉取（fromTime=0 && fromID=0）从当前时间开始，只拉新事件
-func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, fromID int64) ([]LifeEventItem, error) {
+func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, fromID int64) ([]LifeEventItem, error) { //nolint:cyclop // complexity: 29
 	if c.cookie == "" {
 		return nil, fmt.Errorf("cookie is empty")
 	}
@@ -610,7 +609,7 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 //  1. ancestors 里包含所有祖先目录（不含 file_id 自身）—— 最后一个节点即 file_id 的直接父目录
 //  2. 组装 ancestors(排除根目录) + "/" + fileName
 //  3. 失败返回空串，不再伪造虚拟路径
-func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName string) string {
+func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName string) string { //nolint:cyclop // complexity: 43
 	fileID = strings.TrimSpace(fileID)
 	fileName = strings.TrimSpace(fileName)
 	if fileName == "" {
@@ -664,7 +663,6 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 				for i := range resp.Data {
 					e := &resp.Data[i]
 					if strings.EqualFold(strings.TrimSpace(e.Name), fileName) && anyIDMatches(e.CID, fileID) {
-						foundAtRoot = true
 						logger.S().Infof("[LifeClient] ResolvePathByFileID fid=%s 根目录核对OK (name=%s) → 裸文件名",
 							fileID, fileName)
 						c.pathCache.Store("fid:"+fileID, cachedPathEntry{

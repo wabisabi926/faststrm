@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"os"
 
 	_ "modernc.org/sqlite"
 )
@@ -25,7 +26,10 @@ func main() {
 			var notnull int
 			var dflt sql.NullString
 			var pk int
-			rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
+			if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+				fmt.Fprintf(os.Stderr, "scan error: %v\n", err)
+				continue
+			}
 			fmt.Printf("  %s %s (notnull=%d pk=%d)\n", name, typ, notnull, pk)
 		}
 		rows.Close()
@@ -47,7 +51,10 @@ func main() {
 		for i := range vals {
 			ptrs[i] = &vals[i]
 		}
-		rows.Scan(ptrs...)
+		if err := rows.Scan(ptrs...); err != nil {
+			fmt.Fprintf(os.Stderr, "scan error: %v\n", err)
+			continue
+		}
 		for i, v := range vals {
 			if v.Valid {
 				fmt.Printf("  %s=%s", cols[i], v.String)

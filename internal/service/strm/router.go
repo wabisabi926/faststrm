@@ -6,7 +6,6 @@ import (
 	"container/list"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -370,7 +369,7 @@ var redirectCheckClient = &http.Client{
 		ForceAttemptHTTP2: false,
 		MaxIdleConns:      64,
 		IdleConnTimeout:   30 * time.Second,
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: false},
 		Proxy:             http.ProxyFromEnvironment,
 	},
 	Timeout: 10 * time.Second,
@@ -506,11 +505,4 @@ func StrmRouteConfig(cfg *config.AppConfig) struct {
 		AccountProxyConcurrencyLimit: proxyLimit,
 		RedirectCheckTimeout:         checkTimeout,
 	}
-}
-
-// ==================== 调试：转 JSON 字符串 ====================
-
-func toJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
 }

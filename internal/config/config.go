@@ -101,7 +101,7 @@ func SaveSettings() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfg.Paths.SettingsPath, data, 0644)
+	return os.WriteFile(cfg.Paths.SettingsPath, data, 0600)
 }
 
 // SaveAdmin 持久化 config.json（admin 用户名/密码）到磁盘
@@ -111,7 +111,7 @@ func SaveAdmin() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfg.Paths.ConfigPath, data, 0644)
+	return os.WriteFile(cfg.Paths.ConfigPath, data, 0600)
 }
 
 // GenerateInternalToken 如果 settings 没有 internalToken 则生成并持久化
@@ -243,14 +243,14 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 		src := filepath.Join(paths.DefaultDir, df.srcName)
 		if _, err := os.Stat(dst); os.IsNotExist(err) {
 			if srcData, rerr := os.ReadFile(src); rerr == nil {
-				if werr := os.WriteFile(dst, srcData, 0644); werr != nil {
+				if werr := os.WriteFile(dst, srcData, 0600); werr != nil {
 					logger.S().Warnf("copy default %s failed: %v", df.dstName, werr)
 				} else {
 					logger.S().Infof("Created %s from default", dst)
 				}
 			} else {
 				logger.S().Warnf("default file %s not found, creating empty JSON", src)
-				_ = os.WriteFile(dst, []byte("{}"), 0644)
+				_ = os.WriteFile(dst, []byte("{}"), 0600)
 			}
 		}
 	}
@@ -273,7 +273,7 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 			}
 			ac.Password = HashPassword(salt, "admin")
 			if out, oerr := json.MarshalIndent(ac, "", "  "); oerr == nil {
-				_ = os.WriteFile(cfgPath, out, 0644)
+				_ = os.WriteFile(cfgPath, out, 0600)
 				logger.S().Info("Default admin password hashed (admin/admin) in config.json")
 			}
 		}

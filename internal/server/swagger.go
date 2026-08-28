@@ -21,14 +21,14 @@ var swaggerUIHTML []byte
 func SwaggerUIHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(swaggerUIHTML)
+	_, _ = w.Write(swaggerUIHTML)
 }
 
 // SwaggerJSONHandler 返回 swagger.json
 func SwaggerJSONHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(swaggerJSON)
+	_, _ = w.Write(swaggerJSON)
 }
 
 // RegisterDocs 注册 API 文档路由（公开，无需 JWT）

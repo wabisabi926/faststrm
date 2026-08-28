@@ -170,7 +170,7 @@ func replaceRelPathExtToStrm(relPath string) string {
 // writeStrmFile 原子写入 STRM 文件（先写 tmp 再 rename）
 func writeStrmFile(strmPath, content string) error {
 	tmpPath := strmPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmpPath, strmPath)
@@ -244,7 +244,7 @@ func urlPathEncode(s string) string {
 // 对齐 MoviePilot StrmGenerater.should_generate_strm + not_blacklist_key。
 // pickcode 校验：STRM 文件必须是 17 位字母数字的有效 pickcode
 // 新增：taskID/rt/sseServer 用于扫描阶段的进度心跳广播（大库场景下避免 UI 显示 0% 卡死）
-func listAllFilesRecursive(
+func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 	ctx context.Context,
 	c115 *client115.Client,
 	cookie string,
@@ -709,7 +709,7 @@ func sanitizeCloudRelPath(rel string) string {
 // mode: "off"(跳过) / "mark_only"(仅日志) / "auto_clean"(软删 + 超阈值二次确认)
 // 返回：(孤儿数, 延迟批次ID, error)。延迟批次ID 非空表示已入队待二次确认。
 
-func cleanupOrphanStrms(
+func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 	ctx context.Context,
 	submitter CleanupBatchSubmitter,
 	sseServer *sse.Server,

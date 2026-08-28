@@ -143,6 +143,7 @@ func (r *LifeEventLogRepo) Query(ctx context.Context, q LifeEventLogQuery) ([]Li
 	if offset < 0 {
 		offset = 0
 	}
+	//nolint:gosec // G201 — WHERE 子句由代码内置条件构建，值通过 QueryContext 参数化
 	sql := fmt.Sprintf(`SELECT id, timestamp, account, event_type, success, file_path, local_path, message, file_id, pick_code, strm_content, old_local_full_path, new_local_full_path
 FROM life_event_logs WHERE %s ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`, join(where, " AND "))
 	args = append(args, limit, offset)

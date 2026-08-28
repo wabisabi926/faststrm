@@ -3,7 +3,6 @@
 package client115
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -378,27 +377,6 @@ func (c *Client) httpGet(urlStr string, headers map[string]string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", c.UserAgent)
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	return io.ReadAll(resp.Body)
-}
-
-// httpPostForm 发送 POST 表单请求，返回 body
-func (c *Client) httpPostForm(urlStr string, formData string, headers map[string]string) ([]byte, error) {
-	req, err := http.NewRequest("POST", urlStr, bytes.NewReader([]byte(formData)))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", c.UserAgent)
 	for k, v := range headers {
 		req.Header.Set(k, v)

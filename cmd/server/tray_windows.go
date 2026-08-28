@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os/exec"
 	"runtime"
 	"time"
@@ -136,5 +137,9 @@ func openBrowser(url string) {
 	if url == "" {
 		return
 	}
-	exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	go func() {
+		if err := exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start(); err != nil {
+			log.Printf("open url failed: %v", err)
+		}
+	}()
 }

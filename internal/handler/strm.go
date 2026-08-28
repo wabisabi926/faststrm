@@ -277,13 +277,11 @@ func handleProxy(
 		cancel(fmt.Errorf("proxy connect timeout"))
 	})
 
-	// 客户端断连
-	if wcn, ok := w.(http.CloseNotifier); ok {
-		go func() {
-			<-wcn.CloseNotify()
-			cancel(fmt.Errorf("client disconnected"))
-		}()
-	}
+	// 客户端断连（使用 Request.Context() 替代已弃用的 http.CloseNotifier）
+	go func() {
+		<-r.Context().Done()
+		cancel(fmt.Errorf("client disconnected: %w", r.Context().Err()))
+	}()
 
 	reqCtx, reqCancel := context.WithCancelCause(ctx)
 	defer reqCancel(nil)

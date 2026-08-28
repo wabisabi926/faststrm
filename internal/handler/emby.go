@@ -372,7 +372,7 @@ func containsAsterisk(s string) bool { return strings.Contains(s, "*") }
 // 前端通过 saveData 发送完整设置（含 strm/lifeMonitor/download/emby/telegram 嵌套对象）
 // 后端解码后与现有设置合并：字符串非空才覆盖、数组直接覆盖、敏感字段脱敏值跳过
 // mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
-func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc {
+func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // complexity: 51
 	return func(w http.ResponseWriter, r *http.Request) {
 		settings, err := deps.SettingsStore.ReadSettings()
 		if err != nil {

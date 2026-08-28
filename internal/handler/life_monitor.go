@@ -67,7 +67,7 @@ type lifeMonitorRequest struct {
 
 // HandleLifeMonitorPOST POST /api/lifeMonitor 按动作执行监控操作
 // action: start / stop / startAll / stopAll / saveConfig / verify / updateConfig
-func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc {
+func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyclop // complexity: 26
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req lifeMonitorRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
