@@ -127,3 +127,30 @@ func TestGenerateTokenSecret_NotDeterministic(t *testing.T) {
 		t.Fatal("rand.Read 行为异常（全零）")
 	}
 }
+
+// TestGenerateTokenSecret_StressAlwaysValid
+// 多次调用断言每次都返回合法 64 hex 字符（32 字节）。
+// 间接覆盖 rand.Read 失败兜底分支的输出契约：即使熵池异常，
+// 兜底用时间戳填充也应保证输出长度可解码为 32 字节。
+func TestGenerateTokenSecret_StressAlwaysValid(t *testing.T) {
+	const iterations = 200
+	seen := make(map[string]struct{}, iterations)
+	for i := 0; i < iterations; i++ {
+		s := GenerateTokenSecret()
+		if len(s) != 64 {
+			t.Fatalf("iter %d: secret 长度 = %d, want 64 hex chars", i, len(s))
+		}
+		b, err := hex.DecodeString(s)
+		if err != nil {
+			t.Fatalf("iter %d: secret 不是合法 hex: %v (s=%q)", i, err, s)
+		}
+		if len(b) != 32 {
+			t.Fatalf("iter %d: 解码后字节数 = %d, want 32", i, len(b))
+		}
+		// 至少应是唯一的（防止兜底逻辑返回常量）
+		seen[s] = struct{}{}
+	}
+	if len(seen) < iterations-1 {
+		t.Errorf("重复 secret 过多：迭代 %d 次只产生 %d 个唯一值", iterations, len(seen))
+	}
+}
