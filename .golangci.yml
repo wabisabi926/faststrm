@@ -1,41 +1,30 @@
-# golangci-lint v2 配置
-# 起步策略：只开格式 + 基础 vet，确保 CI 零失败启动。
-# 后续逐个打开：ineffassign → unused → staticcheck → errcheck → gosec。
+# golangci-lint v2 配置 — 极简起步
+# v2 schema 与 v1 完全不同：disable-all 移到 linters-settings，exclude-rules/exclude-dirs 移到 issues.exclude
+# 参考：https://golangci-lint.run/docs/configuration/
 
 version: "2"
 
 run:
   timeout: 5m
 
+linters:
+  enable:
+    - govet
+    - misspell
+
+linters-settings:
+  disable-all: true
+
 formatters:
   enable:
     - goimports
-
-linters:
-  disable-all: true
-  enable:
-    - govet          # 官方 go vet
-    - misspell       # 拼写错误
 
 formatters-settings:
   goimports:
     local-prefixes: github.com/wabisabi926/faststrm
 
 issues:
-  exclude-rules:
+  exclude:
     - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-        - staticcheck
-
-  exclude-dirs:
-    - frontend/node_modules
-    - internal/web/spa
-    - dist
-    - vendor
-
-  max-issues-per-linter: 0
-  max-same-issues: 0
-  new-from-rev: ''
-  exclude-use-default: false
+      linters: [errcheck, gosec, staticcheck]
+    - path: (frontend/node_modules|internal/web/spa|dist|vendor)/
