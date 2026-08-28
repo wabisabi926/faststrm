@@ -299,7 +299,7 @@ func TestT9_Store_Migration_SecretAlreadyExists_NoRotation(t *testing.T) {
 	cfgDir := filepath.Join(root, "config")
 	_ = os.MkdirAll(cfgDir, 0o755)
 
-	existingSecret := "existing_secret_abcdefghijklmnopqrstuvwxyz0123456789ABCD"
+	existingSecret := "deadbeefcafebabe1234567890abcdefdeadbeefcafebabe1234567890abcdef"
 	jsonStr := `{"strm": {"enableTokenSigning": true, "tokenSecret": "` + existingSecret + `"}}`
 	_ = os.WriteFile(filepath.Join(cfgDir, "settings.json"), []byte(jsonStr), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
 
