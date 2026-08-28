@@ -242,6 +242,7 @@ const DefaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)
 var DefaultStrmExtensions = []string{
 	"mp4", "mkv", "avi", "mov", "rmvb", "webm", "flv", "m3u8",
 	"mp3", "flac", "wav", "aac", "ogg", "m4a", "ts", "m2ts",
+	"iso", "bdmv", "vob", "ifo", "rar", "zip", "7z",
 }
 
 // DefaultDownloadExtensions 下载扩展名默认值
