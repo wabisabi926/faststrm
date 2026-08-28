@@ -81,104 +81,59 @@
 
 ## 🔥 核心亮点
 
-<table>
-<tr>
-<td width="50%" valign="top">
+### 🛰️ STRM 智能路由（规则引擎 + 预检降级）
 
-### 🛰️ STRM 智能路由
-
-不是「强制 302」或「强制代理」二选一，而是**规则引擎自动决策 + 预检降级**：
+不是「强制 302」或「强制代理」二选一，而是**自动决策**：
 
 - **Infuse / VidHub / SenPlayer** → seek 兼容性差，**强制代理**
-- **Emby / Kodi / 浏览器** → 默认 **302 直连** 115 CDN，部署设备零中转
-- 302 前 **HEAD 预检**，115 CDN 临时不可达时**静默降级代理**，用户无感
-- **115 单账号并发代理限流（阈值 8）**，避免触发 115 约 10 进程上限
-- 调用 115 API 解析**真实 `file_size`**，替代不可靠的文件名估算
+- **Emby / Kodi / 浏览器** → 默认 **302 直连** 115 CDN，零中转
+- 302 前 **HEAD 预检**，CDN 临时不可达时**静默降级代理**
+- **单账号并发限流（阈值 8）**，避开 115 约 10 进程上限
+- 调用 API 解析**真实 file_size**，替代不可靠的文件名估算
 
-[📖 阅读完整路由策略](STRM-路由策略)
+> 📖 [阅读完整路由策略](STRM-路由策略) · 🔐 [URL 签名](STRM-路由策略#url-签名)
 
-</td>
-<td width="50%" valign="top">
+### 📡 生活事件实时监控 + 🧹 STRM 清理对账
 
-### 📡 生活事件实时监控
+30 秒轮询 115 生活事件，4 类事件自动同步 STRM：创建 → 新增、删除 → 清理空目录、移动/重命名 → 重建路径。
 
-30 秒轮询 115 生活事件，4 类事件自动同步 STRM：
+- 3 层路径解析缓存 · **删除熔断**（单次 >100 条或占比 >50% 自动跳过）· iOS API 405 自动降级 Web API
+- **孤儿文件扫描**：STRM 指向的 pickcode 不存在时自动物理删除
+- **全量对账**：账号全盘树 vs 本地 STRM 双向比对
+- 扫描前自动暂停监控，避免 API 与 DB 竞争
 
-| 事件类型 | 处理动作 |
-|---------|---------|
-| 📁 创建 / 上传 | 新增 STRM 文件 |
-| 🗑️ 删除 | 删除对应 STRM + 清理空目录 |
-| 🔄 移动 / 重命名 | 递归搜索旧路径并重建 |
+> 📖 [生活监控](生活事件监控) · [清理对账](STRM-清理对账)
 
-- 3 层路径解析缓存，性能稳定无爆 API
-- **删除熔断**：单次 >100 条或占比 >50% 自动跳过，防误删
-- iOS API 405 时**自动降级 Web API**
+### 📺 Emby 集成（刮削等待 + 删除同步）
 
-[📖 生活监控使用说明](生活事件监控)
+- **入库通知等刮削完成**：webhook 收到 → 3 秒轮询等待 → 拿到完整元数据（标题/海报/评分）才发通知
+- **删除同步三道防误删保护**：STRM 物理存在检查 → Movie/Episode 标题匹配 → 整季目录文件数 ≤ 100 才执行
+- 60 秒去重窗口 · **试运行模式**（首次配置只记日志不删除）
+- 自动刷库 + 删除通知 + STRM 路径映射
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
+> 📖 [Emby 集成全攻略](Emby集成)
 
-### 🧹 STRM 清理与全量对账
+### 🔐 STRM URL 签名（v1.1.1 新增）
 
-- **孤儿文件扫描**：STRM 指向的 pickcode 在 115 不存在时，自动物理删除
-- **全量对账**：账号全盘树 vs 本地 STRM 双向比对，查漏补缺
-- **监控自动暂停 / 恢复**：扫描前挂起生活监控，避免 API 与 DB 竞争
-- **空目录安全清理**：保护映射根目录，防止误删顶层
+STRM 代理 URL 自动追加 HMAC-SHA256 签名 token，防盗链滥用：
 
-[📖 清理与对账操作指南](STRM-清理对账)
+- 开关可选（默认关闭）· 首次开启自动生成 32-byte secret · 老用户零感知
+- 后端 `/api/strm` 与 `/api/fs/get` 校验签名，非法返回 401
 
-</td>
-<td width="50%" valign="top">
+### 💬 Telegram 通知
 
-### 🗑️ Emby 删除同步
+- 🎬 任务：开始/完成/失败 + 进度条 · 📺 Emby：入库/删除/播放/停止
+- 🔄 **账户状态闭环**：115 账号异常/恢复自动推送，扫码刷新后自动发恢复通知
+- 🧩 剧集缓冲合并（10 秒窗口），避免刷屏 · 支持轮询模式，无需公网 Webhook
 
-监听 Emby `library.deleted` Webhook，自动清理本地侧资源：
+> 📖 [TG Bot 配置教程](Telegram-通知)
 
-> ✅ **三道防误删保护**
-> 1. STRM 文件**物理存在检查**，不存在直接跳过
-> 2. Movie / Episode **标题匹配**校验，不匹配拒绝删除
-> 3. 整季 / 整剧目录**文件数 ≤ 100** 才执行
+### 🔒 安全 & 部署
 
-- 60 秒去重窗口，避免与生活监控重复处理
-- **试运行模式**：首次配置只记日志不实际删除
-- STRM + 字幕 / nfo / 图片 + 空目录 + DB 记录，**直接物理删除**（不经过回收站，误删可在 115 网盘恢复源文件后重新全量扫描生成）
-
-[📖 Emby 集成全攻略](Emby集成)
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 📱 Telegram 通知
-
-随时掌握任务与播放状态：
-
-- 🎬 任务：开始 / 完成 / 失败 + 进度条
-- 📺 Emby：入库 / 删除 / 播放 / 停止
-- 🔄 **账户状态闭环**：115 账号异常 / 恢复自动推送，扫码刷新后自动发恢复通知
-- 🧩 剧集缓冲合并（10 秒窗口），避免刷屏
-- 支持轮询模式，无需公网 Webhook
-
-[📖 TG Bot 配置教程](Telegram-通知)
-
-</td>
-<td width="50%" valign="top">
-
-### 🔒 凭据安全 & 扫码登录
-
-- **📱 115 扫码登录**（v0.8.2）：手机 App 扫码自动获取 Cookie，支持 7 种客户端类型，无需 F12 抓包；Cookie 失效可一键扫码刷新
-- 115 cookie / Emby API Key / TG Bot Token：**AES-256-GCM** 加密存储
-- 登录密码：**SHA-256** 哈希 + 唯一 salt
-- 会话管理：**JWT** Token，支持主动登出
-- 关键写操作前强制鉴权校验
-
-</td>
-</tr>
-</table>
+- **扫码登录**：手机 App 扫码获取 Cookie，7 种客户端类型，过期可一键刷新
+- 115 Cookie / Emby API Key / TG Token：**AES-256-GCM** 加密 · 密码：**SHA-256 + 唯一 salt** · 会话：**JWT**
+- **单二进制 SPA 部署**：Go embed 内嵌前端产物，一个文件搞定
+- **Docker** 多架构（linux/amd64 + arm64）· fNOS 原生包
 
 ---
 
@@ -226,14 +181,14 @@
 
 | 层级 | 技术选型 |
 |------|---------|
-| 前端 / 后端一体化 | **Next.js 15** (App Router + TypeScript + Turbopack) |
-| UI 组件 | **shadcn/ui** + **Tailwind CSS** + **Radix UI** |
-| 数据库 | **SQLite** (better-sqlite3，file_path / sync_del 持久化) |
-| 115 协议 | **p115client** 理念自研 SDK（Web + iOS API 双通道） |
-| 任务调度 | 原生 async 调度器 + cron 表达式 |
-| 速率控制 | 账号级令牌桶 + 指数退避重试 |
-| 部署 | **Docker**（linux/amd64 + linux/arm64，多架构构建） |
-| 反向代理 | **纯 Go 反向代理**（原生 302/Range 兼容，无额外 Nginx 依赖） |
+| 后端 | **Go 1.25** · go-zero REST 框架 · 原生并发（goroutine + semaphore） |
+| 前端 SPA | **Vite + React + TypeScript** + shadcn/ui + Tailwind CSS + Radix UI |
+| 部署形态 | **单二进制**：Go embed 内嵌前端产物，`go build` 一个文件搞定 |
+| 数据库 | **SQLite** (mattn/go-sqlite3，file_path / sync_del 持久化 + schema migrations) |
+| 115 协议 | p115client 理念自研 SDK（Web + iOS API 双通道） |
+| 速率控制 | 账号级令牌桶 + 并发信号量 + 指数退避重试 |
+| 部署 | **Docker**（linux/amd64 + linux/arm64，多架构构建）· fNOS 原生包 |
+| STRM 代理 | **纯 Go 反代**（原生 302/Range 兼容 + HMAC-SHA256 URL 签名，无额外 Nginx） |
 
 ```
   ┌─────────────┐   ┌─────────────┐   ┌──────────────┐
@@ -280,6 +235,7 @@ docker-compose up -d
 
 - [p115client](https://github.com/ChenyangGao/p115client) — 115 网盘 Python 客户端（协议参考）
 - [embyExternalUrl](https://github.com/bpking1/embyExternalUrl) — Emby 302 反代思路
+- [qmediasync](https://github.com/qicfan/qmediasync) — 同类 STRM 生成器（Emby 通知 / fNOS 打包参考）
 - [Alist](https://github.com/alist-org/alist) — 多网盘挂载方案
 - [Openlist](https://github.com/OpenListTeam/OpenList) — 115 目录列表工具
 - [MoviePilot-Plugins](https://github.com/DDSRem/MoviePilot-Plugins) — Emby 删除同步（samediasyncdel）移植参考
