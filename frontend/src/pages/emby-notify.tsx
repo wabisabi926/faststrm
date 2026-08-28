@@ -1,172 +1,56 @@
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+// Emby 通知主组件：组合入口，编排子模块。
+// 拆分自原 emby-notify.tsx（912 行 → 此文件仅负责 layout 与状态装配）。
+// 详见 v1.1.1 改进任务清单 T4。
+
+import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Server, Bell, Play, Eye, Copy, Check, RefreshCw, XCircle, FolderOpen, HardDrive, Database } from "lucide-react";
-import axiosInstance from "@/lib/axios";
+import { Check, Server, XCircle } from "lucide-react";
 import { LocalDirectoryTreeDialog } from "@/pages/task/components/LocalDirectoryTreeDialog";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-
-interface EmbySettings {
-  url?: string;
-  apiKey?: string;
-  notifyMediaAdded?: boolean;
-  notifyMediaRemoved?: boolean;
-  notifyPlayback?: boolean;
-  playbackShowProgress?: boolean;
-  playbackShowOverview?: boolean;
-  webhookAuth?: string;
-  libraryId?: string;
-  syncDeleteEnabled?: boolean;
-  syncDeletePathMappings?: Array<{ embyPath: string; cloudPath: string; account?: string }>;
-  syncDeleteNotify?: boolean;
-  syncDeleteDryRun?: boolean;
-  // 媒体库刷库配置
-  refreshOnCreate?: boolean;  // 创建 STRM 后是否刷库
-  refreshOnDelete?: boolean;  // 删除 STRM 后是否刷库
-  debounceSeconds?: number;   // 刷库防抖秒数
-}
-
-interface TestResult {
-  success: boolean;
-  message: string;
-}
-
-const DEFAULT_NOTIFY_SETTINGS: EmbySettings = {
-  notifyMediaAdded: true,
-  notifyMediaRemoved: true,
-  notifyPlayback: true,
-  playbackShowProgress: true,
-  syncDeleteEnabled: false,
-  syncDeleteDryRun: true,
-  syncDeleteNotify: true,
-  refreshOnCreate: false,
-  refreshOnDelete: false,
-  debounceSeconds: 10,
-};
+import { useEmbySettings } from "./emby-notify/useEmbySettings";
+import { ConnectionSection } from "./emby-notify/ConnectionSection";
+import { NotifySettingsSection } from "./emby-notify/NotifySettingsSection";
+import { RefreshSettingsSection } from "./emby-notify/RefreshSettingsSection";
+import { WebhookInfoCard } from "./emby-notify/WebhookInfoCard";
+import { SyncDeleteSection } from "./emby-notify/SyncDeleteSection";
 
 export default function EmbyNotifyPage() {
-  const [settings, setSettings] = useState<EmbySettings>({ ...DEFAULT_NOTIFY_SETTINGS });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [webhookCopied, setWebhookCopied] = useState(false);
 
-  // 115 账号列表（用于路径映射的账号下拉选择）
-  const [accounts, setAccounts] = useState<string[]>([]);
-
-  // 加载当前设置
-  useEffect(() => {
-    loadSettings();
-    void loadAccounts();
-    // 依赖为 setState + axios 单例，引用稳定；故意不写依赖避免重复加载
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadAccounts = async () => {
-    try {
-      const response = await axiosInstance.get("/api/account");
-      const list: Array<{ accountType?: string; name: string }> = response.data || [];
-      setAccounts(list.filter((a) => a.accountType === "115").map((a) => a.name));
-    } catch (err) {
-      console.error("加载账号列表失败:", err);
-    }
-  };
-
-  const loadSettings = async () => {
-    try {
-      const response = await axiosInstance.get("/api/settings");
-      if (response.data?.emby) {
-        setSettings({ ...DEFAULT_NOTIFY_SETTINGS, ...response.data.emby });
-      }
-    } catch (err) {
-      console.error("加载设置失败:", err);
-    }
-  };
-
-  const handleSave = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      setSuccess(null);
-
-      const response = await axiosInstance.post("/api/emby/settings", settings);
-
-      if (response.data?.success) {
-        setSuccess("Emby 通知设置已保存！");
-      }
-    } catch (raw) {
-      const err = raw as {
-        response?: { data?: { error?: string; details?: string; message?: string } };
-        message?: string;
-      };
-      const apiMsg = err.response?.data?.error || err.response?.data?.message;
-      const detail = err.response?.data?.details;
-      setError(apiMsg ? (detail ? `${apiMsg}：${detail}` : apiMsg) : "保存设置失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const testConnection = async () => {
-    if (!settings.url || !settings.apiKey) {
-      setTestResult({
-        success: false,
-        message: "请先填写 Emby URL 和 API Key",
-      });
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setTestResult(null);
-
-      const response = await axiosInstance.post("/api/emby/test-connection", {
-        url: settings.url,
-        apiKey: settings.apiKey,
-      });
-
-      const ok = !!response.data?.success;
-      const msg =
-        (typeof response.data?.message === "string" && response.data.message) ||
-        (ok ? "连接成功" : "连接失败");
-
-      setTestResult({
-        success: ok,
-        message: ok ? `连接成功：${msg.replace(/^连接成功[：:] */, "")}` : msg,
-      });
-    } catch (raw) {
-      const err = raw as {
-        response?: { data?: { message?: string; debug?: unknown } };
-        message?: string;
-      };
-      const apiMsg =
-        (typeof err.response?.data?.message === "string" && err.response.data.message) ||
-        null;
-      setTestResult({
-        success: false,
-        message: apiMsg || "测试连接失败，请检查网络和配置",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const {
+    settings,
+    loading,
+    error,
+    success,
+    testResult,
+    accounts,
+    updateSetting,
+    handleSave,
+    testConnection,
+    setError,
+    newMappingEmbyPath,
+    newMappingCloudPath,
+    newMappingAccount,
+    setNewMappingEmbyPath,
+    setNewMappingCloudPath,
+    setNewMappingAccount,
+    updatePathMapping,
+    addPathMapping,
+    removePathMapping,
+    folderPickerOpen,
+    folderPickerTarget,
+    setFolderPickerOpen,
+    handleFolderSelected,
+    openFolderPickerForNew,
+    openFolderPickerForMapping,
+    cloudPickerOpen,
+    cloudPickerTarget,
+    cloudPickerAccount,
+    setCloudPickerOpen,
+    handleCloudPathSelected,
+    openCloudPickerForNew,
+    openCloudPickerForMapping,
+  } = useEmbySettings();
 
   const copyWebhookUrl = async () => {
     const webhookUrl = `${window.location.origin}/api/emby/webhook`;
@@ -189,99 +73,6 @@ export default function EmbyNotifyPage() {
     } catch {
       setError("复制失败，请手动复制");
     }
-  };
-
-  const updateSetting = <K extends keyof EmbySettings>(key: K, value: EmbySettings[K]) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
-  };
-
-  // 删除同步路径映射
-  const [newMappingEmbyPath, setNewMappingEmbyPath] = useState("");
-  const [newMappingCloudPath, setNewMappingCloudPath] = useState("");
-  const [newMappingAccount, setNewMappingAccount] = useState("");
-
-  // 本地文件夹选择器（Emby 路径前缀）
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-  const [folderPickerTarget, setFolderPickerTarget] = useState<number | "new" | null>(null);
-
-  // 云盘目录选择器（网盘路径前缀）
-  const [cloudPickerOpen, setCloudPickerOpen] = useState(false);
-  const [cloudPickerTarget, setCloudPickerTarget] = useState<number | "new" | null>(null);
-  const [cloudPickerAccount, setCloudPickerAccount] = useState<string>("");
-
-  const handleFolderSelected = (path: string) => {
-    if (folderPickerTarget === null) return;
-    if (folderPickerTarget === "new") {
-      setNewMappingEmbyPath(path);
-    } else {
-      updatePathMapping(folderPickerTarget, "embyPath", path);
-    }
-    setFolderPickerOpen(false);
-    setFolderPickerTarget(null);
-  };
-
-  const openFolderPickerForNew = () => {
-    setFolderPickerTarget("new");
-    setFolderPickerOpen(true);
-  };
-
-  const openFolderPickerForMapping = (index: number) => {
-    setFolderPickerTarget(index);
-    setFolderPickerOpen(true);
-  };
-
-  // 云盘目录选择器
-  const handleCloudPathSelected = (path: string) => {
-    if (cloudPickerTarget === null) return;
-    if (cloudPickerTarget === "new") {
-      setNewMappingCloudPath(path);
-    } else {
-      updatePathMapping(cloudPickerTarget, "cloudPath", path);
-    }
-    setCloudPickerOpen(false);
-    setCloudPickerTarget(null);
-    setCloudPickerAccount("");
-  };
-
-  const openCloudPickerForNew = () => {
-    if (!newMappingAccount) return;
-    setCloudPickerTarget("new");
-    setCloudPickerAccount(newMappingAccount);
-    setCloudPickerOpen(true);
-  };
-
-  const openCloudPickerForMapping = (index: number) => {
-    const mapping = (settings.syncDeletePathMappings || [])[index];
-    if (!mapping?.account) return;
-    setCloudPickerTarget(index);
-    setCloudPickerAccount(mapping.account);
-    setCloudPickerOpen(true);
-  };
-
-  const updatePathMapping = (index: number, field: "embyPath" | "cloudPath" | "account", value: string) => {
-    const mappings = [...(settings.syncDeletePathMappings || [])];
-    mappings[index] = { ...mappings[index], [field]: value };
-    updateSetting("syncDeletePathMappings", mappings);
-  };
-
-  const addPathMapping = () => {
-    if (!newMappingEmbyPath || !newMappingCloudPath) return;
-    const mappings = [...(settings.syncDeletePathMappings || [])];
-    mappings.push({
-      embyPath: newMappingEmbyPath,
-      cloudPath: newMappingCloudPath,
-      account: newMappingAccount || undefined,
-    });
-    updateSetting("syncDeletePathMappings", mappings);
-    setNewMappingEmbyPath("");
-    setNewMappingCloudPath("");
-    setNewMappingAccount("");
-  };
-
-  const removePathMapping = (index: number) => {
-    const mappings = [...(settings.syncDeletePathMappings || [])];
-    mappings.splice(index, 1);
-    updateSetting("syncDeletePathMappings", mappings);
   };
 
   // FastStrm 是纯浏览器 SPA，无 SSR：组件渲染时 window 永远存在，
@@ -320,574 +111,67 @@ export default function EmbyNotifyPage() {
       )}
 
       {/* Emby 连接配置 */}
-      <section className="border rounded-md p-3 sm:p-5 space-y-5">
-        <div className="flex items-center gap-2">
-          <Server className="h-5 w-5" />
-          <h2 className="text-base font-medium">Emby 连接配置</h2>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">配置 Emby 服务器连接信息</p>
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="embyUrl">Emby URL</Label>
-              <Input
-                id="embyUrl"
-                placeholder="http://192.168.1.100:8096"
-                value={settings.url || ""}
-                onChange={(e) => updateSetting("url", e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Emby 服务器地址，包括端口号
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="embyApiKey">Emby API Key</Label>
-              <Input
-                id="embyApiKey"
-                type="password"
-                placeholder="xxxxxxxxxxxxxxxxxxxxxxxx"
-                value={settings.apiKey || ""}
-                onChange={(e) => updateSetting("apiKey", e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                在 Emby 后台「设置 → 高级设置 → API Key」获取
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleSave} disabled={loading}>
-              {loading ? "保存中..." : "保存配置"}
-            </Button>
-            <Button variant="outline" onClick={testConnection} disabled={loading}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              测试连接
-            </Button>
-          </div>
-        </div>
-      </section>
+      <ConnectionSection
+        settings={settings}
+        loading={loading}
+        updateSetting={updateSetting}
+        onSave={handleSave}
+        onTest={testConnection}
+      />
 
       {/* 通知设置 */}
-      <section className="border rounded-md p-3 sm:p-5 space-y-5">
-        <div className="flex items-center gap-2">
-          <Bell className="h-5 w-5" />
-          <h2 className="text-base font-medium">通知设置</h2>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">选择需要启用的通知类型</p>
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="notifyMediaAdded"
-                checked={!!settings.notifyMediaAdded}
-                onCheckedChange={(checked) =>
-                  updateSetting("notifyMediaAdded", checked === true)
-                }
-              />
-              <div className="flex-1">
-                <Label htmlFor="notifyMediaAdded" className="cursor-pointer">
-                  入库通知
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  电影/剧集入库时发送通知
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="notifyMediaRemoved"
-                checked={!!settings.notifyMediaRemoved}
-                onCheckedChange={(checked) =>
-                  updateSetting("notifyMediaRemoved", checked === true)
-                }
-              />
-              <div className="flex-1">
-                <Label htmlFor="notifyMediaRemoved" className="cursor-pointer">
-                  删除通知
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  媒体删除时发送通知
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="notifyPlayback"
-                checked={!!settings.notifyPlayback}
-                onCheckedChange={(checked) =>
-                  updateSetting("notifyPlayback", checked === true)
-                }
-              />
-              <div className="flex-1">
-                <Label htmlFor="notifyPlayback" className="cursor-pointer">
-                  播放通知
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  播放开始/暂停/结束时发送通知
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="playbackShowProgress"
-                checked={!!settings.playbackShowProgress}
-                onCheckedChange={(checked) =>
-                  updateSetting("playbackShowProgress", checked === true)
-                }
-                disabled={!settings.notifyPlayback}
-              />
-              <div className="flex-1">
-                <Label
-                  htmlFor="playbackShowProgress"
-                  className={`cursor-pointer ${!settings.notifyPlayback ? "text-muted-foreground" : ""}`}
-                >
-                  显示播放进度
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  在播放通知中显示进度百分比
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleSave} disabled={loading}>
-              {loading ? "保存中..." : "保存设置"}
-            </Button>
-          </div>
-        </div>
-      </section>
+      <NotifySettingsSection
+        settings={settings}
+        loading={loading}
+        updateSetting={updateSetting}
+        onSave={handleSave}
+      />
 
       {/* 媒体库刷库配置 */}
-      <section className="border rounded-md p-3 sm:p-5 space-y-5">
-        <div className="flex items-center gap-2">
-          <Database className="h-5 w-5" />
-          <h2 className="text-base font-medium">媒体库刷库配置</h2>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          STRM 文件变动后自动刷新 Emby 媒体库
-        </p>
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="refreshOnCreate"
-                checked={!!settings.refreshOnCreate}
-                onCheckedChange={(checked) =>
-                  updateSetting("refreshOnCreate", checked === true)
-                }
-              />
-              <div className="flex-1">
-                <Label htmlFor="refreshOnCreate" className="cursor-pointer">
-                  创建后刷库
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  STRM 创建后自动刷新
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="refreshOnDelete"
-                checked={!!settings.refreshOnDelete}
-                onCheckedChange={(checked) =>
-                  updateSetting("refreshOnDelete", checked === true)
-                }
-              />
-              <div className="flex-1">
-                <Label htmlFor="refreshOnDelete" className="cursor-pointer">
-                  删除后刷库
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  STRM 删除后自动刷新
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2 p-3 rounded-lg border">
-              <Label htmlFor="debounceSeconds">刷库防抖（秒）</Label>
-              <Input
-                id="debounceSeconds"
-                type="number"
-                min="0"
-                max="300"
-                placeholder="10"
-                value={settings.debounceSeconds ?? 10}
-                onChange={(e) =>
-                  updateSetting("debounceSeconds", parseInt(e.target.value) || 10)
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                多次事件合并为一次刷库
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleSave} disabled={loading}>
-              {loading ? "保存中..." : "保存设置"}
-            </Button>
-          </div>
-        </div>
-      </section>
+      <RefreshSettingsSection
+        settings={settings}
+        loading={loading}
+        updateSetting={updateSetting}
+        onSave={handleSave}
+      />
 
       {/* Webhook 配置指引 */}
-      <section className="border rounded-md p-3 sm:p-5 space-y-5">
-        <div className="flex items-center gap-2">
-          <Play className="h-5 w-5" />
-          <h2 className="text-base font-medium">Webhook 配置指引</h2>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          在 Emby 后台配置 Webhook 以接收通知
-        </p>
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <h4 className="font-medium">步骤 1：打开 Emby Webhook 设置</h4>
-            <p className="text-sm text-muted-foreground">
-              在 Emby 后台：<code className="bg-muted px-1 rounded">设置 → 通知 → Webhook</code>
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <h4 className="font-medium">步骤 2：添加 Webhook URL</h4>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-              <code className="flex-1 bg-muted px-3 py-2 rounded text-sm font-mono truncate break-all">
-                {webhookUrl}
-              </code>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={copyWebhookUrl}
-                className="shrink-0"
-              >
-                {webhookCopied ? (
-                  <>
-                    <Check className="h-4 w-4 mr-1" />
-                    已复制
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-4 w-4 mr-1" />
-                    复制
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <h4 className="font-medium">步骤 3：勾选事件类型</h4>
-            <p className="text-sm text-muted-foreground">
-              在 Emby Webhook 设置中勾选以下事件：
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-                媒体入库 (library.new)
-              </code>
-              <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-                媒体删除 (library.deleted)
-              </code>
-              <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-                播放开始 (playback.start)
-              </code>
-              <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-                播放暂停 (playback.pause)
-              </code>
-              <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-                播放结束 (playback.stop)
-              </code>
-            </div>
-          </div>
-
-          <div className="rounded-lg bg-muted/50 p-3">
-            <p className="text-sm text-muted-foreground">
-              <strong>提示：</strong>配置完成后，Emby 的媒体变动（入库/删除）和播放状态将实时推送到你的 Telegram。
-            </p>
-          </div>
-        </div>
-      </section>
+      <WebhookInfoCard
+        webhookUrl={webhookUrl}
+        copied={webhookCopied}
+        onCopy={copyWebhookUrl}
+      />
 
       {/* 删除同步设置 */}
-      <section className="border rounded-md p-3 sm:p-5 space-y-5">
-        <div className="flex items-center gap-2">
-          <XCircle className="h-5 w-5" />
-          <h2 className="text-base font-medium">删除同步</h2>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          监听 Emby 删除事件，自动删除本地 STRM 文件 + 关联字幕/图片 + 清理 DB 记录
-        </p>
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="syncDeleteEnabled"
-                checked={!!settings.syncDeleteEnabled}
-                onCheckedChange={(checked) =>
-                  updateSetting("syncDeleteEnabled", checked === true)
-                }
-              />
-              <div className="flex-1">
-                <Label htmlFor="syncDeleteEnabled" className="cursor-pointer">
-                  启用删除同步
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Emby 删除媒体时自动清理 STRM
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="syncDeleteDryRun"
-                checked={!!settings.syncDeleteDryRun}
-                onCheckedChange={(checked) =>
-                  updateSetting("syncDeleteDryRun", checked === true)
-                }
-                disabled={!settings.syncDeleteEnabled}
-              />
-              <div className="flex-1">
-                <Label
-                  htmlFor="syncDeleteDryRun"
-                  className={`cursor-pointer ${!settings.syncDeleteEnabled ? "text-muted-foreground" : ""}`}
-                >
-                  试运行模式
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  只记日志不实际删除（首次验证用）
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2 p-3 rounded-lg border">
-              <Checkbox
-                id="syncDeleteNotify"
-                checked={!!settings.syncDeleteNotify}
-                onCheckedChange={(checked) =>
-                  updateSetting("syncDeleteNotify", checked === true)
-                }
-                disabled={!settings.syncDeleteEnabled}
-              />
-              <div className="flex-1">
-                <Label
-                  htmlFor="syncDeleteNotify"
-                  className={`cursor-pointer ${!settings.syncDeleteEnabled ? "text-muted-foreground" : ""}`}
-                >
-                  删除通知
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  删除时发送 TG 通知（替代上方删除通知）
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* 路径映射表 */}
-          <div className="space-y-2">
-            <Label>路径映射（Emby 路径 → 115 网盘路径）</Label>
-            {(settings.syncDeletePathMappings || []).map((mapping, index) => (
-              <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
-                  <div className="flex gap-1 items-center">
-                    <Input
-                      className="flex-1 min-w-0"
-                      placeholder="Emby 路径前缀，如 /app/data/strm/电影"
-                      value={mapping.embyPath}
-                      onChange={(e) => updatePathMapping(index, "embyPath", e.target.value)}
-                    />
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="shrink-0 inline-flex">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon"
-                              className="shrink-0"
-                              onClick={() => openFolderPickerForMapping(index)}
-                            >
-                              <FolderOpen className="h-4 w-4" />
-                            </Button>
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          选择包含 STRM 文件的本地目录
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                  <span className="text-muted-foreground hidden sm:inline self-center">→</span>
-                  <span className="text-muted-foreground sm:hidden w-full text-center">↓</span>
-                  <div className="flex gap-1 items-center">
-                    <Input
-                      className="flex-1 min-w-0"
-                      placeholder="网盘路径前缀，如 /电影"
-                      value={mapping.cloudPath}
-                      onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
-                    />
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="shrink-0 inline-flex">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon"
-                              className="shrink-0"
-                              disabled={!mapping.account}
-                              onClick={() => openCloudPickerForMapping(index)}
-                            >
-                              <HardDrive className="h-4 w-4" />
-                            </Button>
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {mapping.account ? "选择网盘目录" : "请先选择具体账号"}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Select
-                    value={mapping.account || "__all__"}
-                    onValueChange={(v) => updatePathMapping(index, "account", v === "__all__" ? "" : v)}
-                  >
-                    <SelectTrigger className="w-full sm:w-[120px] h-9">
-                      <SelectValue placeholder="账号（可选）" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">遍历全部账号</SelectItem>
-                      {accounts.map((acc) => (
-                        <SelectItem key={acc} value={acc}>
-                          {acc}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => removePathMapping(index)}
-                    className="w-full sm:w-auto"
-                  >
-                    删除
-                  </Button>
-                </div>
-              </div>
-            ))}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
-                <div className="flex gap-1 items-center">
-                  <Input
-                    className="flex-1 min-w-0"
-                    placeholder="Emby 路径前缀"
-                    value={newMappingEmbyPath}
-                    onChange={(e) => setNewMappingEmbyPath(e.target.value)}
-                  />
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="shrink-0 inline-flex">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="shrink-0"
-                            onClick={openFolderPickerForNew}
-                          >
-                            <FolderOpen className="h-4 w-4" />
-                          </Button>
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        选择包含 STRM 文件的本地目录
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-                <span className="text-muted-foreground hidden sm:inline">→</span>
-                <span className="text-muted-foreground sm:hidden">↓</span>
-                <div className="flex gap-1 items-center">
-                  <Input
-                    className="flex-1 min-w-0"
-                    placeholder="网盘路径前缀"
-                    value={newMappingCloudPath}
-                    onChange={(e) => setNewMappingCloudPath(e.target.value)}
-                  />
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="shrink-0 inline-flex">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="shrink-0"
-                            disabled={!newMappingAccount}
-                            onClick={openCloudPickerForNew}
-                          >
-                            <HardDrive className="h-4 w-4" />
-                          </Button>
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {newMappingAccount ? "选择网盘目录" : "请先选择具体账号"}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Select
-                  value={newMappingAccount || "__all__"}
-                  onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
-                >
-                  <SelectTrigger className="w-full sm:w-[120px] h-9">
-                    <SelectValue placeholder="账号（可选）" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">遍历全部账号</SelectItem>
-                    {accounts.map((acc) => (
-                      <SelectItem key={acc} value={acc}>
-                        {acc}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button size="sm" onClick={addPathMapping} className="w-full sm:w-auto">
-                  添加
-                </Button>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              只有匹配到 Emby 路径前缀的删除事件才会被处理。账号留空时遍历所有 115 账号删除 DB 记录。
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleSave} disabled={loading}>
-              {loading ? "保存中..." : "保存设置"}
-            </Button>
-          </div>
-
-          <div className="p-3 bg-muted/50 rounded-lg text-sm">
-            <p className="font-semibold mb-1">工作流程</p>
-            <p className="text-xs text-muted-foreground">
-              Emby 删除媒体 → 匹配路径映射 → 去重检查（60s） → 防误删（STRM 存在 + 标题匹配 + 目录文件数 ≤100） → 删 STRM + 字幕 + nfo → 清空目录 → 更新 DB → TG 通知
-            </p>
-          </div>
-        </div>
-      </section>
+      <SyncDeleteSection
+        settings={settings}
+        loading={loading}
+        accounts={accounts}
+        updateSetting={updateSetting}
+        onSave={handleSave}
+        newMappingEmbyPath={newMappingEmbyPath}
+        newMappingCloudPath={newMappingCloudPath}
+        newMappingAccount={newMappingAccount}
+        setNewMappingEmbyPath={setNewMappingEmbyPath}
+        setNewMappingCloudPath={setNewMappingCloudPath}
+        setNewMappingAccount={setNewMappingAccount}
+        updatePathMapping={updatePathMapping}
+        addPathMapping={addPathMapping}
+        removePathMapping={removePathMapping}
+        openFolderPickerForNew={openFolderPickerForNew}
+        openFolderPickerForMapping={openFolderPickerForMapping}
+        openCloudPickerForNew={openCloudPickerForNew}
+        openCloudPickerForMapping={openCloudPickerForMapping}
+      />
 
       {/* 本地文件夹选择器：用于 Emby 路径前缀的快速选择 */}
       <LocalDirectoryTreeDialog
         open={folderPickerOpen}
         onOpenChange={(open: boolean) => {
           setFolderPickerOpen(open);
-          if (!open) setFolderPickerTarget(null);
+          if (!open && folderPickerTarget === null) {
+            // 已被 handleFolderSelected 处理
+          }
         }}
         onSelect={handleFolderSelected}
       />
@@ -898,10 +182,6 @@ export default function EmbyNotifyPage() {
           open={cloudPickerOpen}
           onOpenChange={(open: boolean) => {
             setCloudPickerOpen(open);
-            if (!open) {
-              setCloudPickerTarget(null);
-              setCloudPickerAccount("");
-            }
           }}
           account={cloudPickerAccount}
           onSelect={handleCloudPathSelected}

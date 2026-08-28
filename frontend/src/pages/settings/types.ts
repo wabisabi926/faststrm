@@ -40,6 +40,9 @@ export type Settings = {
     forceProxyUaTokens?: string[];
     accountProxyConcurrencyLimit?: number;
     redirectCheckTimeoutMs?: number;
+    // T9: STRM URL HMAC-SHA256 签名
+    enableTokenSigning?: boolean;
+    tokenSecret?: string;
   };
   emby?: {
     url?: string;

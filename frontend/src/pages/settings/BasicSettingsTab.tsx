@@ -218,6 +218,35 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 </p>
               </div>
             </div>
+
+            {/* T9: STRM URL 签名开关 */}
+            <div className="pt-4 border-t space-y-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enable-token-signing"
+                  checked={!!data.strm?.enableTokenSigning}
+                  onCheckedChange={(checked) =>
+                    setData({
+                      ...data,
+                      strm: { ...data.strm, enableTokenSigning: checked === true },
+                    })
+                  }
+                />
+                <label htmlFor="enable-token-signing" className="text-sm cursor-pointer">
+                  启用 STRM URL 签名（HMAC-SHA256）
+                </label>
+              </div>
+              <p className="text-xs text-muted-foreground ml-6">
+                开启后，STRM 代理 URL 会带 HMAC 签名 token，防止被扫。
+                首次开启时后端自动生成 secret。保持关闭 = 老 STRM 不受影响。
+                {data.strm?.tokenSecret && (
+                  <>
+                    {" "}
+                    <span className="text-emerald-600">✓ secret 已生成 ({data.strm.tokenSecret.length}字符)</span>
+                  </>
+                )}
+              </p>
+            </div>
           </div>
         )}
       </section>
