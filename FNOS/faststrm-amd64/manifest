@@ -1,7 +1,7 @@
 appname               = faststrm
 version = 1.1.1
 display_name          = FastStrm
-desc                  = 115 网盘 STRM 自动生成器。监控网盘变动实时生成 STRM（支持 ISO 原盘双扩展名），内置 STRM URL HMAC-SHA256 签名、SQLite Schema 迁移、Emby 刮削等待通知，前端 SPA 单二进制部署。
+desc                  = 115 网盘 STRM 自动生成器。监控网盘变动实时生成 STRM 文件，配合 Emby/Jellyfin 实现云盘资源本地化播放。核心特性：STRM 302 直连/代理路由、ISO 原盘双扩展名支持、STRM URL HMAC 签名、Emby 入库/删除/播放通知、自动刷库与删除同步、SQLite Schema 迁移。单二进制 SPA 部署，开箱即用。
 platform              = x86
 source       = thirdparty
 maintainer    = wabisabi926
