@@ -90,6 +90,10 @@ type StrmSettings struct {
 	//   支持变量：{filename} {stem} {ext}
 	//   示例："[{account}] {stem}.strm"
 	StrmFilenameTemplate string `json:"strmFilenameTemplate"`
+	// T9: 启用 STRM URL HMAC-SHA256 签名（防代理被扫；默认 false 升级零破坏）
+	EnableTokenSigning bool   `json:"enableTokenSigning"`
+	// T9: HMAC 签名 secret（空=未生成；开关=true 时 store 自动生成）
+	TokenSecret        string `json:"tokenSecret,omitempty"`
 }
 
 // EmbySettings emby 子项

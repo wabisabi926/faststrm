@@ -14,6 +14,7 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
 	"github.com/wabisabi926/faststrm/pkg/concurrency"
@@ -28,6 +29,8 @@ type resolvedStrm struct {
 	Enable302          bool
 	StrmExtensions     map[string]struct{}
 	DownloadExtensions map[string]struct{}
+	EnableTokenSigning bool   // T9: 是否启用 URL 签名
+	TokenSecret        string // T9: HMAC-SHA256 签名 secret
 }
 
 // resolveStrmSettings 合并全局 settings + 任务级自定义
@@ -77,6 +80,9 @@ func resolveStrmSettings(task *Task, s *model.Settings, baseURL, publicBaseURL s
 	r.Enable302 = s.Enable302
 	if task.Enable302 {
 		r.Enable302 = true
+		// T9: STRM token 签名开关 + secret（从 settings.Strm 继承）
+		r.EnableTokenSigning = s.Strm.EnableTokenSigning
+		r.TokenSecret = s.Strm.TokenSecret
 	}
 
 	return r
@@ -178,6 +184,14 @@ func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...st
 	if !isValidPickcode(f.PickCode) {
 		return "", fmt.Errorf("pickcode 无效(需17位字母数字): %q file=%q", f.PickCode, f.Name)
 	}
+	// T9: 给 URL 追加签名 token（无论走模板还是默认拼接逻辑）
+	signIt := func(url string) string {
+		if r.EnableTokenSigning && r.TokenSecret != "" {
+			url = strm.AppendSignedToken(url, r.TokenSecret, task.Account, f.PickCode, strm.TokenDefaultTTL)
+		}
+		return url
+	}
+
 	// —— P1-4 高级 URL 模板优先 ——
 	if len(urlTemplate) > 0 && urlTemplate[0] != "" {
 		ext := strings.ToLower(filepath.Ext(f.Name))
@@ -186,7 +200,7 @@ func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...st
 			stem = stem + ".iso"
 		}
 		if rendered := model.RenderStrmUrlTemplate(urlTemplate[0], r.StrmPrefix, task.Account, f.PickCode, f.Name, ext, stem); rendered != "" {
-			return rendered, nil
+			return signIt(rendered), nil
 		}
 	}
 	var u string
@@ -202,7 +216,7 @@ func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...st
 			u += "&file_name=" + urlPathEncode(f.Name)
 		}
 	}
-	return u + "\n", nil
+	return signIt(u) + "\n", nil
 }
 
 // urlPathEncode 对文件名做 URL 编码（保留扩展名点号、兼容中文）

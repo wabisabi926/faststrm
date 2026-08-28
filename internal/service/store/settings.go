@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 
 	"github.com/wabisabi926/faststrm/internal/model"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // SettingsStore settings.json 读写（不加密，因为是通用配置，不含用户密钥字段）
-// SettingsStore 内部字段已加密（internalToken, webhookAuth, botToken 等若需要，统一由上层决定是否加密）
 type SettingsStore struct {
 	salt string
 	path string
@@ -41,22 +41,20 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 			return model.DefaultSettings(), nil
 		}
 		// 迁移：旧配置文件没有 notifyOnlyOnError 字段
-		// 检查原始 JSON 是否有该字段，没有则设为默认值
 		var rawCheck map[string]json.RawMessage
 		if json.Unmarshal(data, &rawCheck) == nil {
 			if lmRaw, ok := rawCheck["lifeMonitor"]; ok {
 				var lmCheck map[string]json.RawMessage
 				if json.Unmarshal(lmRaw, &lmCheck) == nil {
-					// 迁移 notifyOnlyOnError：默认 false（正常通知）
 					if _, hasField := lmCheck["notifyOnlyOnError"]; !hasField {
 						out.LifeMonitor.NotifyOnlyOnError = false
-						logger.S().Infof("[SettingsStore] 迁移: 旧配置无 notifyOnlyOnError 字段，设为默认 false（正常通知）")
+						logger.S().Infof("[SettingsStore] 迁移: 旧配置无 notifyOnlyOnError 字段，设为默认 false")
 					}
 				}
 			}
 		}
 	}
-	// 填充默认值（确保空字段有默认）
+	// 填充默认值
 	def := model.DefaultSettings()
 	if len(out.StrmExtensions) == 0 {
 		out.StrmExtensions = def.StrmExtensions
@@ -67,6 +65,14 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	if len(out.DownloadExtensions) == 0 {
 		out.DownloadExtensions = def.DownloadExtensions
 	}
+// T9 迁移：开关打开后若 secret 未生成则自动生成并回写 settings.json
+        if out.Strm.EnableTokenSigning && out.Strm.TokenSecret == "" {
+                out.Strm.TokenSecret = strm.GenerateTokenSecret()
+                logger.S().Infof("[SettingsStore] EnableTokenSigning=true, 生成 Strm.TokenSecret (len=%d), 回写 settings.json", len(out.Strm.TokenSecret))
+                if err := s.SaveSettings(&out); err != nil {
+                        logger.S().Warnf("[SettingsStore] 回写 tokenSecret 失败: %v", err)
+                }
+        }
 	return &out, nil
 }
 

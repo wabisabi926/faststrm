@@ -112,7 +112,19 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			return
 		}
 
-		account := opts.AccountStore.Get(accountName)
+		// T9: token 签名校验（EnableTokenSigning=true 且 secret 非空才生效，向后兼容）
+                if opts.Cfg.Settings.Strm.EnableTokenSigning && opts.Cfg.Settings.Strm.TokenSecret != "" {
+                        token := q.Get("token")
+                        ok, reason := strm.VerifyStrmToken(
+                                opts.Cfg.Settings.Strm.TokenSecret, token, accountName, pickcode)
+                        if !ok {
+                                logger.S().Warnf("[STRM] token verify failed: account=%s reason=%s", accountName, reason)
+                                writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized: " + reason})
+                                return
+                        }
+                }
+
+account := opts.AccountStore.Get(accountName)
 		if account == nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Account not found: " + accountName})
 			return
