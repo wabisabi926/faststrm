@@ -1,0 +1,76 @@
+name: Wiki Sync
+
+on:
+  push:
+    branches: [go, master, main]
+    paths:
+      - 'wiki_drafts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    - name: Configure git identity
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Clone wiki repository
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        WIKI_URL="https://${GITHUB_ACTOR}:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
+        echo "Cloning wiki from ${GITHUB_REPOSITORY}.wiki.git ..."
+        git clone "${WIKI_URL}" wiki_repo || {
+          echo "Wiki repo is empty or does not exist yet (首次推送前需在 GitHub Web UI 创建任意一个 Wiki 页面以初始化 wiki 仓库)."
+          mkdir -p wiki_repo
+          cd wiki_repo
+          git init -b master
+          cd ..
+        }
+
+    - name: Sync wiki_drafts → wiki
+      run: |
+        set -euo pipefail
+        cd wiki_repo
+
+        # 清空 wiki 仓库中所有已跟踪文件（保留 .git）
+        find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+
+        # 复制 wiki_drafts 下所有内容到 wiki 仓库根
+        cp -r ../wiki_drafts/. .
+
+        # 移除可能的空目录
+        find . -mindepth 1 -maxdepth 1 -name '.git' -prune -o -type d -empty -exec rmdir {} +
+
+        # 查看变更
+        echo "=== Wiki diff stat ==="
+        git status --short
+
+    - name: Commit & push wiki
+      run: |
+        set -euo pipefail
+        cd wiki_repo
+
+        if [ -z "$(git status --porcelain)" ]; then
+          echo "No wiki changes to push."
+          exit 0
+        fi
+
+        git add -A
+        git commit -m "chore(wiki): sync from wiki_drafts@${GITHUB_SHA::7}
+
+        Source commit: ${GITHUB_SHA}
+        Triggered by: ${GITHUB_ACTOR}
+        "
+        git push origin HEAD:master
+        echo "Wiki pushed successfully."
