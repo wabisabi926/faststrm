@@ -39,14 +39,12 @@
 ---
 
 ## 📌 版本公告
-
-> **🎉 v1.1.6 已发布 — Emby 入库通知修复 + rename 事件重构**
+> **🎉 v1.1.6 已发布 — 日常回归：通知完整、rename 干净、账号不卡**
 >
-> - 🎬 Emby 入库通知完整元数据：修复父 ctx 超时掐断 60s 轮询 + API Fields 参数补全
-> - 🔧 rename/move 事件旧目录清理：根文件夹写入 folders 表 + 级联删除修复
+> - 🎬 Emby 入库通知补全评分/主演/海报
+> - 🔧 rename/move 旧目录不再残留、不再信任过期缓存
+> - 🛡️ STRM 路由缓存带 UA、.iso 重命名关联资源不再丢
 > - 📖 [Emby 集成全攻略](Emby集成) · [版本更新日志](版本更新日志)
-> - 🧪 CI 工程化：Go test + golangci-lint + Vitest + Playwright E2E
-> - 📖 Swagger API 文档 · 前端三大页面模块化拆分
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---
