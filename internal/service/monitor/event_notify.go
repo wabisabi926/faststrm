@@ -3,6 +3,8 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -210,4 +212,218 @@ func (m *Monitor) notifyRename(ctx context.Context, account, cloudPath, kindLabe
 	}
 	// 回退模式：只走合并器
 	m.notifyMerger.Add(notifyEntry{kind: "rename", account: account, cloudPath: cloudPath, localPath: localPath, kindLabel: kindLabel})
+}
+
+// ==================== 文件删除批量聚合通知（避免整季删除每集一条刷屏） ====================
+
+// deleteNotifyCollector 单次轮询批次内的文件删除收集器
+// oncePoll 串行执行，每轮 begin；批次结束时按父目录聚合 flush，避免每集一条
+type deleteNotifyCollector struct {
+	mu      sync.Mutex
+	entries []notifyEntry
+	active  bool // 是否处于 oncePoll 批次中（非批次时 collectFileDelete 退化为立即单条通知）
+}
+
+// begin 开始一个新批次：清空并置 active（oncePoll 每轮开始调用）
+func (c *deleteNotifyCollector) begin() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.entries = nil
+	c.active = true
+	c.mu.Unlock()
+}
+
+// add 加入一条文件删除记录
+func (c *deleteNotifyCollector) add(e notifyEntry) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.entries = append(c.entries, e)
+	c.mu.Unlock()
+}
+
+// isActive 是否处于批次中
+func (c *deleteNotifyCollector) isActive() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.active
+}
+
+// finish 结束批次并取出累积条目（调用方负责发送）
+func (c *deleteNotifyCollector) finish() []notifyEntry {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entries := c.entries
+	c.entries = nil
+	c.active = false
+	return entries
+}
+
+// collectFileDelete 收集文件删除通知（按父目录聚合，由 oncePoll 批次结束时 flush）
+// 文件夹删除不收集（本就是一条）；非批次上下文（直接调用/测试）退化为立即单条通知
+func (m *Monitor) collectFileDelete(ctx context.Context, account, cloudPath, localPath string) {
+	m.mu.Lock()
+	accMon, ok := m.accounts[account]
+	m.mu.Unlock()
+	if !ok || !accMon.delCollector.isActive() {
+		m.notifyDelete(ctx, account, cloudPath, "文件", localPath)
+		return
+	}
+	accMon.delCollector.add(notifyEntry{
+		kind:      "delete",
+		account:   account,
+		cloudPath: cloudPath,
+		localPath: localPath,
+		kindLabel: "文件",
+	})
+}
+
+// flushDeleteNotifications 按目录层级聚合发送收集到的文件删除通知（统一 "删除 <路径>"，无计数无标签）
+//   - 整剧删光（seriesDir 不存在）→ "删除 叶问 (2026)"
+//   - 整季删光（seriesDir 在、seasonDir 不存在）→ "删除 .../Season 1"
+//   - 单集（seasonDir 在、1 文件）→ "删除 .../ep03.strm"
+//   - 多集没删完（seasonDir 在、多文件）→ 聚合一条，列出文件名
+//   - 非季节目录同此理（parent 不存在→目录；存在→列名）
+//
+// 判定依据文件系统最终态：handleDeleteEvent 每删一文件即调 removeEmptyParents 清空目录，
+// flush 时目录不存在 ⟺ 该级被删光（含单季剧整删），无需 Emby 元数据。
+func (m *Monitor) flushDeleteNotifications(ctx context.Context, account string, c *deleteNotifyCollector) {
+	if c == nil {
+		return
+	}
+	if m.notifier == nil || m.settingsFn().NotifyOnlyOnError {
+		c.finish() // 仍需复位 active
+		return
+	}
+	entries := c.finish()
+	if len(entries) == 0 {
+		return
+	}
+
+	// 季节目录文件按 series 级聚合；非季节目录按 immediate parent 聚合
+	seriesFiles := map[string][]notifyEntry{}
+	seriesOrder := []string{}
+	plainGroups := map[string][]notifyEntry{}
+	plainOrder := []string{}
+
+	for _, e := range entries {
+		dir := filepath.Dir(e.localPath)
+		if e.localPath == "" {
+			dir = filepath.Dir(e.cloudPath)
+		}
+		if strings.HasPrefix(strings.ToLower(filepath.Base(dir)), "season") {
+			// 季节目录：归到 series 级（seriesDir = dir 的父目录）
+			seriesDir := filepath.Dir(dir)
+			if _, ok := seriesFiles[seriesDir]; !ok {
+				seriesOrder = append(seriesOrder, seriesDir)
+			}
+			seriesFiles[seriesDir] = append(seriesFiles[seriesDir], e)
+		} else {
+			// 非季节目录：按 immediate parent 分组
+			if _, ok := plainGroups[dir]; !ok {
+				plainOrder = append(plainOrder, dir)
+			}
+			plainGroups[dir] = append(plainGroups[dir], e)
+		}
+	}
+
+	// series 级发送
+	for _, seriesDir := range seriesOrder {
+		files := seriesFiles[seriesDir]
+		// 整剧删光：seriesDir 不存在 → "删除 seriesDir"
+		if _, err := os.Stat(seriesDir); err != nil && os.IsNotExist(err) {
+			m.sendDeletePathMsg(ctx, account, seriesDir)
+			continue
+		}
+		// seriesDir 仍存在 → 按季拆分
+		seasonFiles := map[string][]notifyEntry{}
+		seasonOrder := []string{}
+		for _, e := range files {
+			sd := filepath.Dir(e.localPath)
+			if e.localPath == "" {
+				sd = filepath.Dir(e.cloudPath)
+			}
+			if _, ok := seasonFiles[sd]; !ok {
+				seasonOrder = append(seasonOrder, sd)
+			}
+			seasonFiles[sd] = append(seasonFiles[sd], e)
+		}
+		for _, sd := range seasonOrder {
+			items := seasonFiles[sd]
+			// 整季删光：seasonDir 不存在 → "删除 seasonDir"
+			if _, err := os.Stat(sd); err != nil && os.IsNotExist(err) {
+				m.sendDeletePathMsg(ctx, account, sd)
+				continue
+			}
+			if len(items) == 1 {
+				// 单集：删除 <文件路径>
+				m.sendDeletePathMsg(ctx, account, entryPath(items[0]))
+				continue
+			}
+			// 多集没删完：聚合列名
+			m.sendDeleteFilesMsg(ctx, account, sd, entryBasenames(items))
+		}
+	}
+
+	// plain 级发送（非季节目录）
+	for _, dir := range plainOrder {
+		items := plainGroups[dir]
+		// 整目录删光：parent 不存在 → "删除 dir"
+		if _, err := os.Stat(dir); err != nil && os.IsNotExist(err) {
+			m.sendDeletePathMsg(ctx, account, dir)
+			continue
+		}
+		if len(items) == 1 {
+			m.sendDeletePathMsg(ctx, account, entryPath(items[0]))
+			continue
+		}
+		m.sendDeleteFilesMsg(ctx, account, dir, entryBasenames(items))
+	}
+}
+
+// entryPath 取条目的展示路径（优先 localPath，回退 cloudPath）
+func entryPath(e notifyEntry) string {
+	if e.localPath != "" {
+		return e.localPath
+	}
+	return e.cloudPath
+}
+
+// entryBasenames 取条目集合的文件名列表
+func entryBasenames(items []notifyEntry) []string {
+	names := make([]string, 0, len(items))
+	for _, e := range items {
+		p := e.localPath
+		if p == "" {
+			p = e.cloudPath
+		}
+		names = append(names, filepath.Base(p))
+	}
+	return names
+}
+
+// sendDeletePathMsg 发送 "删除 <路径>" 通知（整剧/整季/单集/整目录删光）
+func (m *Monitor) sendDeletePathMsg(ctx context.Context, account, path string) {
+	msg := fmt.Sprintf("🗑️ <b>删除</b> <code>%s</code>\n账号: <code>%s</code>", path, account)
+	if err := m.notifier.Notify(ctx, msg); err != nil {
+		logger.S().Warnf("[Monitor] 删除通知发送失败 account=%s path=%s: %v", account, path, err)
+	}
+}
+
+// sendDeleteFilesMsg 发送聚合通知：目录仍在、部分文件被删（列出文件名，无计数）
+func (m *Monitor) sendDeleteFilesMsg(ctx context.Context, account, parentDir string, names []string) {
+	msg := fmt.Sprintf("🗑️ <b>删除</b> <code>%s</code>\n文件: %s\n账号: <code>%s</code>",
+		parentDir, strings.Join(names, ", "), account)
+	if err := m.notifier.Notify(ctx, msg); err != nil {
+		logger.S().Warnf("[Monitor] 聚合删除通知发送失败 account=%s dir=%s: %v", account, parentDir, err)
+	}
 }

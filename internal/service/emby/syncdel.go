@@ -145,13 +145,8 @@ func (s *SyncDelete) HandleSyncDelete(ctx context.Context, item ItemInfo) error 
 	// 记录去重
 	s.markRecentlyDeleted(item.ID)
 
-	// 8. 发送通知
-	if settings.SyncDeleteNotify {
-		msg := formatDeleteNotification(itemName, itemType, deletedFiles, deletedDirs, false)
-		if s.dispatcher != nil {
-			_ = s.dispatcher.Notify(ctx, msg)
-		}
-	}
+	// 通知：不再由 syncdel 逐条发送，统一由 notifier.HandleWebhookEvent 走聚合器
+	// （按 seriesID 防抖合并，避免每集一条刷屏；dry-run 通知已在上方单独发送）
 
 	logger.S().Infof("[%s] 完成: type=%s name=%s files=%d dirs=%d",
 		SyncDeleteTag, itemType, itemName, deletedFiles, deletedDirs)

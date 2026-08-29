@@ -302,10 +302,10 @@ func (n *Notifier) HandleWebhookEvent(ctx context.Context, event WebhookEvent) e
 				logger.S().Errorf("[Emby] sync delete failed: %v", err)
 			}
 		}
-		// 通知逻辑：若 syncDelete 已开启并启用了通知，则跳过原始删除通知
+		// 通知：统一走聚合器 handleMediaDeleted（按 seriesID 防抖合并，避免每集一条刷屏）
+		// dry-run 时由 syncdel 发单条测试通知，不走聚合（避免对未删除项误发"已删除"）
 		settings := n.settingsFn()
-		skipNotify := settings.SyncDeleteEnabled && settings.SyncDeleteNotify
-		if skipNotify {
+		if settings.SyncDeleteEnabled && settings.SyncDeleteDryRun {
 			return nil
 		}
 		return n.handleMediaDeleted(ctx, *event.Item)
@@ -388,27 +388,9 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 	n.addedMu.Lock()
 	defer n.addedMu.Unlock()
 
-	// 从当前配置动态创建 Client（对齐 qmediasync 行为）
-	client := n.getClient()
-	// 轮询等待刮削完成（解决国内刮削慢时序问题）
-	var detail *ItemDetail
-	if client != nil {
-		var err error
-		detail, err = n.waitForMetadata(ctx, client, item.ID)
-		if err != nil {
-			logger.S().Warnf("[Emby] 获取剧集详情失败 id=%s: %v", item.ID, err)
-		}
-	}
-	if detail == nil {
-		detail = &ItemDetail{
-			ID:                item.ID,
-			Name:              item.Name,
-			Type:              item.Type,
-			SeriesName:        item.SeriesName,
-			ParentIndexNumber: item.ParentIndexNumber,
-			IndexNumber:       item.IndexNumber,
-		}
-	}
+	// webhook 字段构造（Overview/Genres/IndexNumber 等都在），快速入缓冲不持锁等待
+	// 刮削等待统一移到 flush 时对 seriesID 做（查 series 而非 episode，更准且不阻塞其它剧集 webhook）
+	detail := itemInfoToDetail(item)
 
 	buf, ok := n.addedBuffer[seriesID]
 	if !ok {
@@ -427,7 +409,8 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 		old.Stop()
 	}
 	timer := time.AfterFunc(EpisodeDebounceWindow, func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+		// flush 内 waitForMetadata 最长 metadataPollTimeout，需为其留足时间
+		flushCtx, cancel := context.WithTimeout(context.Background(), metadataPollTimeout+5*time.Second)
 		defer cancel()
 		n.flushAddedEpisodeBuffer(flushCtx, seriesID)
 	})
@@ -460,34 +443,24 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 		return
 	}
 
-	// 尝试获取剧集详情（用于海报、简介、评分、导演、主演等完整元数据）
+	// 轮询等待 series 刮削完成（复用 60s 轮询；超时返回最后一次部分详情，兜底走全模板+占位符，不再降级简版）
 	var seriesDetail *ItemDetail
 	client := n.getClient()
 	if client != nil {
-		if d, err := n.getDetailWithSemaphore(ctx, client, seriesID); err == nil && d != nil {
+		if d, _ := n.waitForMetadata(ctx, client, seriesID); d != nil {
 			seriesDetail = d
 		}
 	}
-
-	var msg string
-	if seriesDetail != nil {
-		// 用剧集级完整元数据构造通知（QMS 风格：评分/主演/入库时间都从 seriesDetail 取）
-		msg = FormatSeriesNotification(seriesDetail, buf.episodes, "library.new")
-	} else {
-		// 降级为简版通知（统一走 FormatMessage）
-		content := buf.seriesName
-		seasonEps := formatSeasonEpisodes(buf.episodes)
-		if seasonEps != "" {
-			content += "\n入库季集：" + seasonEps
-		}
-		metadata := map[string]string{
-			"入库时间": formatNow(),
-		}
-		msg = notify.FormatMessage("📚 Emby 剧集入库通知", content, metadata)
+	// 全部查询失败：用缓冲中的 seriesName 构造最小 seriesDetail，仍走全模板（占位符兜底）
+	if seriesDetail == nil {
+		seriesDetail = &ItemDetail{ID: seriesID, Name: buf.seriesName, Type: "Series"}
 	}
 
-	// 优先带海报发送（优先 Backdrop 背景图）
-	if seriesDetail != nil {
+	// 始终用全模板（缺字段 FormatSeriesNotification 内部以"暂无简介/暂无数据"占位，对齐 qmediasync）
+	msg := FormatSeriesNotification(seriesDetail, buf.episodes, "library.new")
+
+	// 优先带海报发送（优先 Backdrop 背景图；client 为 nil 或无 ImageTags 时退纯文本）
+	if client != nil && seriesDetail != nil {
 		photoURL := client.BuildImageURLIfAvailable(seriesID, seriesDetail.ImageTags, ImageMaxWidth)
 		if photoURL != "" {
 			if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
@@ -505,7 +478,8 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 // handleMediaDeleted 处理删除通知
 func (n *Notifier) handleMediaDeleted(ctx context.Context, item ItemInfo) error {
 	settings := n.settingsFn()
-	if !settings.NotifyMediaRemoved {
+	// 统一通知开关：Emby 删除通知 或 同步删除通知 任一开启即通知
+	if !settings.NotifyMediaRemoved && !(settings.SyncDeleteEnabled && settings.SyncDeleteNotify) {
 		return nil
 	}
 	switch item.Type {

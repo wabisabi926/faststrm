@@ -51,9 +51,16 @@ type AccountMonitor struct {
 	fromID              int64                     // 游标：上次处理的最大 event id
 	cancel              context.CancelFunc        // 停止 pollLoop
 	lastErr             string                    // 最近一次错误
-	consecutiveFailures int                       // 连续失败次数
+	consecutiveFailures int                       // 连续认证失败次数（仅 isAuthError 累加，成功清零）
 	cookieMarkedInvalid bool                      // 是否已标记 cookie 失效
 	rateLimiter         *client115.APIRateLimiter // API 冷却限流器
+	// 异常自恢复：退避 + 通知节流
+	consecutiveErrors  int   // 连续轮询失败次数（任意错误累加，成功清零；用于退避阶梯）
+	backoffUntil       int64 // 退避冷却期（毫秒时间戳），该时间前跳过轮询，不调 115 API
+	lastPollErrNotify  int64 // 上次轮询错误通知时间（毫秒），用于节流去重
+	lastBatchErrNotify int64 // 上次批量事件错误通知时间（毫秒），用于节流去重
+	// 文件删除批量聚合（oncePoll 串行，每轮 reset，批次结束按父目录合并发送）
+	delCollector *deleteNotifyCollector
 }
 
 // AccountMonitorStatus 账号监控状态（对外暴露）
@@ -174,6 +181,7 @@ func (m *Monitor) Start(ctx context.Context, account string) error {
 		cancel:              cancel,
 		consecutiveFailures: 0,
 		rateLimiter:         rateLimiter,
+		delCollector:        &deleteNotifyCollector{},
 	}
 
 	// P2-9: 从 DB 恢复事件游标（对齐参考项目重启后恢复 fromID/fromTime）
@@ -409,6 +417,15 @@ func (m *Monitor) pollLoop(ctx context.Context, account string) {
 			// 重置 timer（读取最新间隔，支持热重载）
 			config = m.settingsFn()
 			interval = pollIntervalDur(config)
+			// 退避期内拉长等待：异常时停止硬轮 115 API，冷却结束自动恢复
+			m.mu.RLock()
+			if accMon, ok := m.accounts[account]; ok && accMon.backoffUntil > 0 {
+				now := time.Now().UnixMilli()
+				if remaining := time.Duration(accMon.backoffUntil-now) * time.Millisecond; remaining > interval {
+					interval = remaining
+				}
+			}
+			m.mu.RUnlock()
 			timer.Reset(interval)
 		}
 	}
@@ -454,6 +471,14 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 	// 5. 逐个处理事件（游标过滤，不需要 in-memory dedup）
 	var counts PollCounts
 	ctx2 := WithPollCounts(ctx, &counts)
+	// 开启删除批次收集器：本批次内文件删除按父目录聚合，避免整季每集一条
+	m.mu.Lock()
+	var delCol *deleteNotifyCollector
+	if accMon, ok := m.accounts[account]; ok {
+		delCol = accMon.delCollector
+		delCol.begin()
+	}
+	m.mu.Unlock()
 	maxEventID := int64(0)
 	maxEventTime := int64(0)
 	// P1-4: 逆序处理（对齐参考项目 reversed(events_batch)）
@@ -486,6 +511,9 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 		}
 	}
 
+	// 批次结束：按父目录聚合发送收集到的文件删除通知
+	m.flushDeleteNotifications(ctx2, account, delCol)
+
 	// 6. 更新账号状态和游标
 	m.mu.Lock()
 	if accMon, ok := m.accounts[account]; ok {
@@ -502,6 +530,9 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 		accMon.EventCount += counts.Effective
 		accMon.consecutiveFailures = 0
 		accMon.cookieMarkedInvalid = false
+		// 轮询成功：清零退避状态，恢复正常轮询节奏
+		accMon.consecutiveErrors = 0
+		accMon.backoffUntil = 0
 		if counts.LastError != nil {
 			accMon.lastErr = counts.LastError.Error()
 		} else if counts.Errors > 0 {
@@ -608,6 +639,16 @@ func (m *Monitor) pullEventsWithRetry(
 
 // ==================== Cookie 有效性自动检测 ====================
 
+// 异常自恢复策略：退避阶梯 + 通知节流
+// 目标：账号异常时停止硬轮 115 API、避免 TG 刷屏；恢复后自动清零。
+// 注：退避只是跳过轮询，115 服务端保留事件，恢复后从游标续拉，不丢数据。
+const (
+	cookieInvalidStage = "cookie 可能已失效" // 标识 cookie 失效通知（绕过节流，因已由 cookieMarkedInvalid 去重）
+
+	notifyCooldown        = 10 * time.Minute // 同一账号同类错误通知节流窗口
+	cookieInvalidCooldown = 30 * time.Minute // cookie 失效后的长冷却，等用户更新 cookie
+)
+
 // pollErrorPatterns 可能表示 cookie 失效的错误关键词
 var pollErrorPatterns = []string{
 	"未登录",
@@ -648,13 +689,18 @@ func (m *Monitor) handlePollError(account string, err error) {
 	accMon, ok := m.accounts[account]
 	if ok {
 		accMon.lastErr = err.Error()
+		// 通用失败计数累加 + 退避阶梯（任意错误，成功才清零）
+		accMon.consecutiveErrors++
+		m.applyBackoffLocked(accMon)
 		if isAuth {
 			accMon.consecutiveFailures++
 			if accMon.consecutiveFailures >= 3 && !accMon.cookieMarkedInvalid {
 				accMon.cookieMarkedInvalid = true
+				// cookie 失效：长冷却，停止硬轮，等用户更新 cookie
+				accMon.backoffUntil = time.Now().Add(cookieInvalidCooldown).UnixMilli()
 				m.mu.Unlock()
 				m.markCookiePotentiallyInvalid(account, err)
-				m.notifyPollError(account, "cookie 可能已失效", err)
+				m.notifyPollError(account, cookieInvalidStage, err)
 				return
 			}
 		} else {
@@ -663,10 +709,34 @@ func (m *Monitor) handlePollError(account string, err error) {
 	}
 	m.mu.Unlock()
 
-	// 非认证错误但需要通知的场景：拉取事件失败等
+	// 非认证错误但需要通知的场景：拉取事件失败等（notifyPollError 内部带节流）
 	if !isAuth {
 		m.notifyPollError(account, "轮询异常", err)
 	}
+}
+
+// applyBackoffLocked 按连续失败次数设置退避冷却（调用方持锁）
+//
+//	 1-2 次：偶发抖动，不退避，维持原间隔
+//	 3-5 次：2 分钟
+//	 6-9 次：10 分钟
+//	>=10 次：30 分钟，等用户介入
+func (m *Monitor) applyBackoffLocked(accMon *AccountMonitor) {
+	n := accMon.consecutiveErrors
+	var cooldown time.Duration
+	switch {
+	case n >= 10:
+		cooldown = 30 * time.Minute
+	case n >= 6:
+		cooldown = 10 * time.Minute
+	case n >= 3:
+		cooldown = 2 * time.Minute
+	default:
+		return
+	}
+	accMon.backoffUntil = time.Now().Add(cooldown).UnixMilli()
+	logger.S().Infof("[Monitor] account=%s 连续失败 %d 次，进入退避 %v",
+		accMon.Account, n, cooldown)
 }
 
 // markCookiePotentiallyInvalid 标记账号 cookie 可能失效
@@ -681,9 +751,24 @@ func (m *Monitor) markCookiePotentiallyInvalid(account string, err error) {
 }
 
 // notifyPollError 主动推送轮询错误到 TG（参考项目 post_message 通知策略）
+// 节流：同一账号 10 分钟内最多 1 条；cookie 失效通知绕过节流（已由 cookieMarkedInvalid 去重）
 func (m *Monitor) notifyPollError(account, stage string, err error) {
 	if m.notifier == nil {
 		return
+	}
+	// cookie 失效通知绕过节流（关键告警，且已去重）
+	if stage != cookieInvalidStage {
+		m.mu.Lock()
+		if accMon, ok := m.accounts[account]; ok {
+			now := time.Now().UnixMilli()
+			if accMon.lastPollErrNotify > 0 && now-accMon.lastPollErrNotify < int64(notifyCooldown) {
+				m.mu.Unlock()
+				logger.S().Infof("[Monitor] 账号 %s 轮询错误通知节流中，跳过 (stage=%s)", account, stage)
+				return
+			}
+			accMon.lastPollErrNotify = now
+		}
+		m.mu.Unlock()
 	}
 	msg := fmt.Sprintf("⚠️ <b>115 生活监控异常</b>\n\n账号: <code>%s</code>\n阶段: %s\n错误: %s\n\n请检查 Cookie 状态或网络连接",
 		account, stage, err.Error())
@@ -693,10 +778,23 @@ func (m *Monitor) notifyPollError(account, stage string, err error) {
 }
 
 // notifyEventBatchError 推送事件批量处理错误摘要到 TG
+// 节流：同一账号 10 分钟内最多 1 条批量错误通知
 func (m *Monitor) notifyEventBatchError(account string, events []client115.LifeEventItem, counts *PollCounts) {
 	if m.notifier == nil || counts.Errors == 0 {
 		return
 	}
+	// 节流去重：避免事件持续失败时刷屏
+	m.mu.Lock()
+	if accMon, ok := m.accounts[account]; ok {
+		now := time.Now().UnixMilli()
+		if accMon.lastBatchErrNotify > 0 && now-accMon.lastBatchErrNotify < int64(notifyCooldown) {
+			m.mu.Unlock()
+			logger.S().Infof("[Monitor] 账号 %s 批量错误通知节流中，跳过", account)
+			return
+		}
+		accMon.lastBatchErrNotify = now
+	}
+	m.mu.Unlock()
 	// 收集失败的事件（最多 5 条，避免消息过长）
 	var failedItems []string
 	for i, e := range events {
@@ -724,6 +822,9 @@ func (m *Monitor) resetConsecutiveFailures(account string) {
 	if accMon, ok := m.accounts[account]; ok {
 		accMon.consecutiveFailures = 0
 		accMon.cookieMarkedInvalid = false
+		// 同时清零退避状态（Start 验证成功调用）
+		accMon.consecutiveErrors = 0
+		accMon.backoffUntil = 0
 	}
 }
 

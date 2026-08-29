@@ -78,7 +78,8 @@ func (m *Monitor) handleDeleteEvent(
 
 	m.appendLog(ctx, account, "delete", true, cloudPath, strmPath,
 		fmt.Sprintf("STRM 已删除: %s (关联文件 %d 个)", strmPath, deletedRelated))
-	m.notifyDelete(ctx, account, cloudPath, "文件", strmPath)
+	// 收集到批次收集器，oncePoll 结束时按父目录聚合发送（避免整季每集一条）
+	m.collectFileDelete(ctx, account, cloudPath, strmPath)
 	logger.S().Infof("[Monitor] STRM 已删除: %s (关联 %d)", strmPath, deletedRelated)
 
 	// 通知 Emby 刷库
