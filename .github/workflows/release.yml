@@ -55,8 +55,10 @@ jobs:
         fi
 
     - name: Save release notes to file
+      env:
+        NOTES_BODY: ${{ steps.notes.outputs.body }}
       run: |
-        echo "${{ steps.notes.outputs.body }}" > release_notes.md
+        printf '%s\n' "$NOTES_BODY" > release_notes.md
         cat release_notes.md
 
     - name: Upload release notes artifact
