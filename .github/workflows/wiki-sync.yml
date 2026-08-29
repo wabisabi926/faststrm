@@ -6,6 +6,9 @@ on:
     paths:
       - 'wiki_drafts/**'
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
 
 permissions:
   contents: write
