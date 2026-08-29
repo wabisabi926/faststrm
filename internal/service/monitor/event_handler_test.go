@@ -255,7 +255,7 @@ func TestFlushDeleteNotifications_WholeSeason(t *testing.T) {
 	if err := os.MkdirAll(remainDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(remainDir, "keep.strm"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(remainDir, "keep.strm"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -295,7 +295,7 @@ func TestFlushDeleteNotifications_PartialSeason(t *testing.T) {
 	if err := os.MkdirAll(seasonDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(seasonDir, "keep.strm"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(seasonDir, "keep.strm"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -335,7 +335,7 @@ func TestFlushDeleteNotifications_SingleEpisode(t *testing.T) {
 	if err := os.MkdirAll(seasonDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(seasonDir, "keep.strm"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(seasonDir, "keep.strm"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -395,7 +395,7 @@ func TestFlushDeleteNotifications_PlainPartial(t *testing.T) {
 	if err := os.MkdirAll(moviesDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(moviesDir, "keep.strm"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(moviesDir, "keep.strm"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
