@@ -695,12 +695,12 @@ func (m *Monitor) handlePollError(account string, err error) {
 			accMon.consecutiveFailures++
 			if accMon.consecutiveFailures >= 3 && !accMon.cookieMarkedInvalid {
 				accMon.cookieMarkedInvalid = true
-			// 退避已禁用：不设 backoffUntil，保持配置轮询间隔；
-			// cookie 失效通知只发一次（由 cookieMarkedInvalid 去重），避免 TG 刷屏
-			m.mu.Unlock()
-			m.markCookiePotentiallyInvalid(account, err)
-			m.notifyPollError(account, cookieInvalidStage, err)
-			return
+				// 退避已禁用：不设 backoffUntil，保持配置轮询间隔；
+				// cookie 失效通知只发一次（由 cookieMarkedInvalid 去重），避免 TG 刷屏
+				m.mu.Unlock()
+				m.markCookiePotentiallyInvalid(account, err)
+				m.notifyPollError(account, cookieInvalidStage, err)
+				return
 			}
 		} else {
 			accMon.consecutiveFailures = 0

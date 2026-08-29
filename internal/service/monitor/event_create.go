@@ -1,4 +1,4 @@
-﻿package monitor
+package monitor
 
 import (
 	"context"
@@ -245,6 +245,7 @@ func (m *Monitor) handleCreateEvent(
 // handleCreateFolderRecursive DFS 遍历文件夹，对每个媒体文件创建 STRM
 // 对齐 MoviePilot _create 中 iter_files_with_path batched 的处理逻辑
 // P2-2：blacklistMatcher 在 depth==0 时构建一次，递归传递复用，避免内层反复构造
+// nolint:cyclop // 递归 DFS 函数，多分支不可避免，拆分会破坏递归结构
 func (m *Monitor) handleCreateFolderRecursive(
 	ctx context.Context,
 	account string,

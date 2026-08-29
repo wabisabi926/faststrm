@@ -1180,6 +1180,3 @@ func orDefault(vals ...string) string {
 	}
 	return ""
 }
-
-
-
