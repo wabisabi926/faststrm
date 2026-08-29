@@ -75,7 +75,13 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 	rawCloudPath := event.FilePath
 	source := srcEventRaw
 
-	if strings.TrimSpace(rawCloudPath) == "" && m.sqliteDB != nil && strings.TrimSpace(event.FileID) != "" {
+	// rename/move 事件：跳过 DB 缓存，强制走 API 刷新新路径（对齐参考项目 rename() refresh=True）
+	// 原因：rename/move 事件到达时 DB 存的还是旧路径（上一个 create/move 写入的），
+	// 若信任 DB 会算错 mapping.localPath → recreate 到旧目录名（看似没变）
+	// 注意：oldCloudPath（旧路径）由 handler 内部 resolveOldCloudPathByFileID 单独查 DB，不受此处影响
+	isRenameOrMove := client115.RenameEventTypes[eventType] || client115.MoveEventTypes[eventType]
+
+	if !isRenameOrMove && strings.TrimSpace(rawCloudPath) == "" && m.sqliteDB != nil && strings.TrimSpace(event.FileID) != "" {
 		// P0-2: 同时查 files 和 folders 表（对齐参考项目 get_by_id 统一查询）
 		if entry, err := db.GetFileOrFolderEntry(m.sqliteDB, account, event.FileID); err == nil && entry != nil && entry.Path != "" {
 			// 判断 DB 路径可信度：

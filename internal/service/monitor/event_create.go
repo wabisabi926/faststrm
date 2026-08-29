@@ -1,4 +1,4 @@
-package monitor
+﻿package monitor
 
 import (
 	"context"
@@ -71,7 +71,34 @@ func (m *Monitor) createStrmForSingleFile(
 	}
 	strmPath := filepath.Join(localParentDir, strmFileName)
 
-	// 4.5 对齐 MoviePilot overwrite_mode："never" 时已存在 STRM 则跳过
+	// 4.5 先写 DB 记录（对齐参考项目 _create 先 upsert 再生成 STRM）
+	// —— DB 写入必须在 overwrite=never 检查之前，确保已存在的老 STRM 也补录 DB，
+	//       否则 move/rename 反查不到旧路径，旧 STRM 删不掉
+	if m.sqliteDB != nil {
+		fileID := in.FileID
+		if fileID == "" {
+			fileID = "0"
+		}
+		parentID := in.ParentID
+		if parentID == "" {
+			parentID = "0"
+		}
+		entry := db.FilePathEntry{
+			FileID:     fileID,
+			Path:       in.CloudPath,
+			FileName:   in.FileName,
+			ParentID:   parentID,
+			PickCode:   in.PickCode,
+			UpdateTime: time.Now().Unix(),
+		}
+		if err := db.UpsertFilePathEntry(m.sqliteDB, account, entry); err != nil {
+			logger.S().Warnf("[Monitor] 写回 filePathDb 失败 path=%s pickcode=%s: %v",
+				in.CloudPath, in.PickCode, err)
+		}
+	}
+
+	// 4.6 对齐 MoviePilot overwrite_mode："never" 时已存在 STRM 则跳过
+	// —— DB 已在 4.5 写入，此处跳过 STRM 生成不影响后续 move/rename 反查
 	if strings.EqualFold(config.OverwriteMode, "never") {
 		if _, statErr := os.Stat(strmPath); statErr == nil {
 			logger.S().Debugf("[Monitor] createStrmForSingleFile overwrite=never，跳过已存在: %s", strmPath)
@@ -97,38 +124,14 @@ func (m *Monitor) createStrmForSingleFile(
 		return strmPath, fmt.Errorf("写入 STRM 失败: %w", err)
 	}
 
-	// 7. 写回 filePathDb（302 模式 STRM 路由反查 pickcode）
-	// —— 关键：先清理同 file_id 的旧 STRM，再写新 DB（对齐参考项目 create() L1590-1626）
+	// 7. 清理同 file_id 的旧 STRM（仅在确定生成新 STRM 时执行，对齐参考项目 create() L1590-1626）
 	// 参考项目行为：检查 DB 中是否已有同 file_id 的旧记录，若旧路径 ≠ 新路径则删除旧 STRM
 	if m.sqliteDB != nil {
-		// 7a. 查找是否有旧 STRM（同 file_id 但不同路径）
 		oldEntry, _ := db.GetFileOrFolderEntry(m.sqliteDB, account, in.FileID)
 		if oldEntry != nil && oldEntry.Path != in.CloudPath {
 			logger.S().Infof("[Monitor] createStrm: 检测到旧STRM fileID=%s oldPath=%s newPath=%s → 清理旧STRM",
 				in.FileID, oldEntry.Path, in.CloudPath)
 			m.cleanupOldStrmByFileID(account, in.FileID, oldEntry.Path, oldEntry.FileName, in.FileName, config)
-		}
-
-		// 7b. 写回新 DB 记录
-		fileID := in.FileID
-		if fileID == "" {
-			fileID = "0"
-		}
-		parentID := in.ParentID
-		if parentID == "" {
-			parentID = "0"
-		}
-		entry := db.FilePathEntry{
-			FileID:     fileID,
-			Path:       in.CloudPath,
-			FileName:   in.FileName,
-			ParentID:   parentID,
-			PickCode:   in.PickCode,
-			UpdateTime: time.Now().Unix(),
-		}
-		if err := db.UpsertFilePathEntry(m.sqliteDB, account, entry); err != nil {
-			logger.S().Warnf("[Monitor] 写回 filePathDb 失败 path=%s pickcode=%s: %v",
-				in.CloudPath, in.PickCode, err)
 		}
 	}
 
@@ -167,12 +170,26 @@ func (m *Monitor) handleCreateEvent(
 	lifeClient *client115.LifeClient,
 	notify bool,
 ) error {
-	// 文件夹事件：先 mkdir，然后递归遍历内部媒体文件生成 STRM
+	// 文件夹事件：先 mkdir，写根文件夹到 DB，然后递归遍历内部媒体文件生成 STRM
 	if event.FileCategory == 0 {
 		if err := os.MkdirAll(mapping.localPath, 0o755); err != nil {
 			m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath,
 				fmt.Sprintf("mkdir 失败: %v", err))
 			return fmt.Errorf("mkdir 失败: %w", err)
+		}
+		// 先写根文件夹到 folders 表（对齐参考项目 _create 第一步 upsert_batch 包含根目录）
+		if m.sqliteDB != nil && event.FileID != "" && event.FileID != "0" {
+			parentID := event.ParentID
+			if parentID == "" {
+				parentID = "0"
+			}
+			_ = db.UpsertFolderEntry(m.sqliteDB, account, db.FilePathEntry{
+				FileID:     event.FileID,
+				Path:       cloudPath,
+				FileName:   event.FileName,
+				ParentID:   parentID,
+				UpdateTime: time.Now().Unix(),
+			})
 		}
 		strmCreated := 0
 		var createErr error
@@ -240,6 +257,17 @@ func (m *Monitor) handleCreateFolderRecursive(
 ) (int, error) {
 	if depth > MaxRecursionDepth {
 		return 0, fmt.Errorf("超过递归最大深度 %d folder=%s", MaxRecursionDepth, folderCloudPath)
+	}
+	// depth==0 根文件夹：也写 folders 表（对齐 handleCreateEvent L186）
+	// 确保 recreate 模式（rename/move）调 handleCreateFolderRecursive 时根文件夹路径被更新
+	if depth == 0 && m.sqliteDB != nil && folderID != "" && folderID != "0" {
+		_ = db.UpsertFolderEntry(m.sqliteDB, account, db.FilePathEntry{
+			FileID:     folderID,
+			Path:       folderCloudPath,
+			FileName:   filepath.Base(folderCloudPath),
+			ParentID:   "0",
+			UpdateTime: time.Now().Unix(),
+		})
 	}
 	// 修正：rootMapping.localPath 可能已包含 relativePath（如 movie name），
 	// 回退为映射根，否则文件 localParentDir 会多一层同名目录

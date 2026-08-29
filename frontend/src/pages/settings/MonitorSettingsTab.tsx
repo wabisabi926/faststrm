@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import {
   Select,
   SelectContent,
@@ -10,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Info } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -142,6 +143,21 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
         <p className="text-sm text-muted-foreground">
           监控 115 网盘的文件操作事件（上传、删除、移动、重命名），自动生成或删除本地 STRM 文件
         </p>
+
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertTitle>首次使用或升级后建议先跑一次全量同步</AlertTitle>
+          <AlertDescription>
+            <p>
+              全量同步会扫描任务指定的 115 网盘文件夹（不是整个网盘），将其中文件和文件夹写入数据库。
+              数据库记录是 move/rename/delete 事件正常工作的前提——
+              如果数据库缺少文件/文件夹记录，删除、移动、重命名时旧 STRM 无法被正确清理。
+            </p>
+            <p className="mt-1">
+              操作：左侧菜单「任务」→ 新建全量同步任务 → 保存后点击任务行右侧 ▶ 执行按钮。
+            </p>
+          </AlertDescription>
+        </Alert>
 
         <div className={`space-y-4 ${!monitorEnabled ? "opacity-50 pointer-events-none" : ""}`}>
           {/* Account Selection */}

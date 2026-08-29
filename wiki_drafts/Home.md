@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
   <img src="https://raw.githubusercontent.com/wabisabi926/faststrm/refs/heads/main/frontend/public/logo.png" alt="Fast Strm Logo" width="160" style="margin-bottom: 8px;">
 
@@ -40,12 +40,11 @@
 
 ## 📌 版本公告
 
-> **🎉 v1.1.5 已发布 — 删除通知聚合 + 115 账号退避 + Emby 刮削等待**
+> **🎉 v1.1.6 已发布 — Emby 入库通知修复 + rename 事件重构**
 >
-> - 🗑️ 删除通知聚合：整剧/整季删光合并为一条通知，不再每集刷屏
-> - 🛡️ 115 账号异常自动降频：cookie 失效冷却 30 分钟，阶梯退避避免风控
-> - 📺 Emby 剧集入库等待刮削完成（≤60s），不再降级为简版通知
-> - 🔐 STRM URL HMAC-SHA256 签名 · SQLite Schema 迁移框架
+> - 🎬 Emby 入库通知完整元数据：修复父 ctx 超时掐断 60s 轮询 + API Fields 参数补全
+> - 🔧 rename/move 事件旧目录清理：根文件夹写入 folders 表 + 级联删除修复
+> - 📖 [Emby 集成全攻略](Emby集成) · [版本更新日志](版本更新日志)
 > - 🧪 CI 工程化：Go test + golangci-lint + Vitest + Playwright E2E
 > - 📖 Swagger API 文档 · 前端三大页面模块化拆分
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)

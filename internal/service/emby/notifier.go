@@ -129,31 +129,19 @@ func (n *Notifier) getDetailWithSemaphore(ctx context.Context, client *Client, i
 
 // isMetadataReady 判断 ItemDetail 的刮削元数据是否已就绪
 // Emby library.new webhook 在 Item 创建时就发了，但此时刮削可能还没完成
-// 我们用 Overview/Genres/ImageTags/Primary 任一非空作为"刮削完成"的标志
+// Overview/Genres/ImageTags 在 webhook 里就有，我们要等的是 People(主演) 和 CommunityRating(评分)
+// 判断标准：CommunityRating > 0 或 len(People) > 0 — 至少一个就绪才算刮削完成
+// 超时兜底时直接返回最后一次查到的数据（即使不全）
 func isMetadataReady(detail *ItemDetail) bool {
 	if detail == nil {
 		return false
 	}
-	// 有简介 → 刮削完成
-	if detail.Overview != "" {
-		return true
-	}
-	// 有流派 → 刮削完成
-	if len(detail.Genres) > 0 {
-		return true
-	}
-	// 有 Primary 海报 → 刮削完成
-	if detail.ImageTags != nil {
-		if _, ok := detail.ImageTags["Primary"]; ok {
-			return true
-		}
-	}
-	// 有评分 → 刮削完成
+	// 有评分 → 刮削核心完成
 	if detail.CommunityRating > 0 {
 		return true
 	}
-	// 有年份（部分源不返回但 Overview 也没的话可能是未刮削）
-	if detail.ProductionYear > 0 && detail.People != nil {
+	// 有主演/导演等人员信息 → 刮削核心完成
+	if len(detail.People) > 0 {
 		return true
 	}
 	return false
@@ -168,8 +156,9 @@ func isMetadataReady(detail *ItemDetail) bool {
 //  3. 超过 metadataPollTimeout → 放弃等待，返回最后一次查到的（兜底）
 //  4. ctx 取消 → 立即返回
 func (n *Notifier) waitForMetadata(ctx context.Context, client *Client, itemID string) (*ItemDetail, error) {
-	// 给等待一个总超时（防止永远等）
-	waitCtx, waitCancel := context.WithTimeout(ctx, metadataPollTimeout)
+	// 用独立 ctx（context.Background()），不受 handler 层 ctx 超时影响
+	// handler 层 webhook goroutine 只有 30s timeout，会过早掐断 60s 轮询
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), metadataPollTimeout)
 	defer waitCancel()
 
 	var lastDetail *ItemDetail
@@ -366,6 +355,8 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 	}
 
 	msg := FormatMovieNotification(detail, "library.new")
+	// 图片优先用 webhook 自带的 ImageTags（Primary/Backdrop tag 通常先于 People/Rating 落库）
+	// detail.ImageTags 来自刮削后详情 API，但刮削没完成时可能为空
 	photoURL := client.BuildImageURLIfAvailable(item.ID, detail.ImageTags, ImageMaxWidth)
 	if photoURL != "" {
 		if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
@@ -1189,3 +1180,6 @@ func orDefault(vals ...string) string {
 	}
 	return ""
 }
+
+
+

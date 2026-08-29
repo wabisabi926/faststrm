@@ -204,12 +204,6 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 				oldFileName := filepath.Base(oldLocalPath)
 				oldStem := strings.TrimSuffix(oldFileName, filepath.Ext(oldFileName))
 				newStem := strings.TrimSuffix(event.FileName, filepath.Ext(event.FileName))
-				if strings.EqualFold(filepath.Ext(oldFileName), ".iso") {
-					oldStem = oldStem + ".iso"
-				}
-				if strings.EqualFold(filepath.Ext(event.FileName), ".iso") {
-					newStem = newStem + ".iso"
-				}
 				_ = os.MkdirAll(newLocalDir, 0o755)
 				moveOrRenameRelatedAssets(oldDir, oldStem, newStem)
 				moveOrRenameRelatedAssets(newLocalDir, oldStem, newStem)
@@ -275,15 +269,9 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 		}
 	}
 
-	// 公共：stem 计算（带 .iso 修正）
+	// 公共：stem 计算（原始文件名 stem，对齐参考项目 Path.stem + glob）
 	oldStem := strings.TrimSuffix(oldFileName, filepath.Ext(oldFileName))
 	newStem := strings.TrimSuffix(event.FileName, filepath.Ext(event.FileName))
-	if strings.EqualFold(filepath.Ext(oldFileName), ".iso") {
-		oldStem = oldStem + ".iso"
-	}
-	if strings.EqualFold(filepath.Ext(event.FileName), ".iso") {
-		newStem = newStem + ".iso"
-	}
 
 	// ⑥ 合并场景：新 STRM 已存在且非同文件（对齐 L1285-1337）
 	if newStrmExists && !sameStrmPath {

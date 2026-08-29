@@ -174,7 +174,8 @@ func DeleteByPath(db *sql.DB, account, filePath string) (int64, error) {
 	return res.RowsAffected()
 }
 
-// DeleteByPathPrefix 按路径前缀批量删除（整季整剧删除同步，根目录保护）
+// DeleteByPathPrefix 按路径前缀批量删除 files + folders 两表（根目录保护）
+// 修复 Bug：cleanupOldStrmAssets 只删 files 表，folders 残留导致下次 rename 拿旧路径
 func DeleteByPathPrefix(db *sql.DB, account, pathPrefix string) (int64, error) {
 	p := strings.TrimSuffix(normalizeDbPath(pathPrefix), "/")
 	if p == "" || p == "/" {
@@ -184,6 +185,11 @@ func DeleteByPathPrefix(db *sql.DB, account, pathPrefix string) (int64, error) {
 		account, p, p+"/%")
 	if err != nil {
 		return 0, err
+	}
+	_, ferr := db.Exec(`DELETE FROM folders WHERE account = ? AND (path = ? OR path LIKE ?)`,
+		account, p, p+"/%")
+	if ferr != nil {
+		return res.RowsAffected()
 	}
 	return res.RowsAffected()
 }

@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"context"
@@ -85,7 +85,7 @@ func HandleEmbyWebhook(deps EmbyDeps) http.HandlerFunc {
 
 		// 异步处理，不阻塞 webhook 响应
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			if err := deps.EmbyNotifier.HandleWebhookEvent(ctx, event); err != nil {
 				logger.S().Errorf("[emby/webhook] handle event failed: %v", err)

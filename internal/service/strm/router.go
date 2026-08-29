@@ -403,7 +403,13 @@ func RedirectCheck(
 	accountName, cookie, userAgent string,
 	timeout time.Duration,
 ) ReachableResult {
-	cacheKey := accountName + "|" + cdnURL
+	// reachableCache key 也需要 UA 维度：
+	// 不同 UA 可能拿到不同的 CDN URL（UA 绑定），且同一 CDN URL 对不同 UA 响应不同
+	ua := userAgent
+	if ua == "" {
+		ua = "NoUA"
+	}
+	cacheKey := accountName + "|" + cdnURL + "|" + ua
 	if cached, ok := reachableCache.Get(cacheKey); ok {
 		return cached
 	}
@@ -454,7 +460,13 @@ func ResolveDownloadUrl(
 	// 对齐参考项目 api.py#L829: 115 API 要求 pickcode 小写
 	// 统一小写化保证缓存 key 一致，避免大小写不同导致缓存未命中
 	pickcode = strings.ToLower(pickcode)
-	cacheKey := accountName + ":" + pickcode
+	ua := userAgent
+	if ua == "" {
+		ua = "NoUA"
+	}
+	// cacheKey 必须包含 UA：115 CDN URL 与请求时的 UA 严格绑定
+	// 对齐参考项目 r302/__init__.py L67: key = (pickcode, cache_ua)
+	cacheKey := accountName + ":" + pickcode + "|" + ua
 	// 1) 正面缓存命中
 	if cached, ok := urlCache.Get(cacheKey); ok {
 		return cached, nil

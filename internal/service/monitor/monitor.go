@@ -54,9 +54,9 @@ type AccountMonitor struct {
 	consecutiveFailures int                       // 连续认证失败次数（仅 isAuthError 累加，成功清零）
 	cookieMarkedInvalid bool                      // 是否已标记 cookie 失效
 	rateLimiter         *client115.APIRateLimiter // API 冷却限流器
-	// 异常自恢复：退避 + 通知节流
-	consecutiveErrors  int   // 连续轮询失败次数（任意错误累加，成功清零；用于退避阶梯）
-	backoffUntil       int64 // 退避冷却期（毫秒时间戳），该时间前跳过轮询，不调 115 API
+	// 异常处理：通知去重 + 通知节流（退避已禁用，保持配置轮询间隔）
+	consecutiveErrors  int   // 连续轮询失败次数（任意错误累加，成功清零；用于诊断，不再触发退避）
+	backoffUntil       int64 // 退避已禁用：保留字段用于诊断/兼容 Status，实际始终为 0
 	lastPollErrNotify  int64 // 上次轮询错误通知时间（毫秒），用于节流去重
 	lastBatchErrNotify int64 // 上次批量事件错误通知时间（毫秒），用于节流去重
 	// 文件删除批量聚合（oncePoll 串行，每轮 reset，批次结束按父目录合并发送）
@@ -65,11 +65,17 @@ type AccountMonitor struct {
 
 // AccountMonitorStatus 账号监控状态（对外暴露）
 type AccountMonitorStatus struct {
-	Account      string `json:"account"`
-	Running      bool   `json:"running"`
-	LastPollTime int64  `json:"lastPollTime"`
-	EventCount   int    `json:"eventCount"`
-	Error        string `json:"error,omitempty"`
+	Account             string `json:"account"`
+	Running             bool   `json:"running"`
+	LastPollTime        int64  `json:"lastPollTime"`
+	EventCount          int    `json:"eventCount"`
+	Error               string `json:"error,omitempty"`
+	FromID              int64  `json:"fromId"`
+	FromTime            int64  `json:"fromTime"`
+	BackoffUntil        int64  `json:"backoffUntil,omitempty"`
+	ConsecutiveErrors   int    `json:"consecutiveErrors,omitempty"`
+	ConsecutiveFailures int    `json:"consecutiveFailures,omitempty"`
+	CookieMarkedInvalid bool   `json:"cookieMarkedInvalid,omitempty"`
 }
 
 // Monitor 生活事件监控编排器
@@ -417,15 +423,7 @@ func (m *Monitor) pollLoop(ctx context.Context, account string) {
 			// 重置 timer（读取最新间隔，支持热重载）
 			config = m.settingsFn()
 			interval = pollIntervalDur(config)
-			// 退避期内拉长等待：异常时停止硬轮 115 API，冷却结束自动恢复
-			m.mu.RLock()
-			if accMon, ok := m.accounts[account]; ok && accMon.backoffUntil > 0 {
-				now := time.Now().UnixMilli()
-				if remaining := time.Duration(accMon.backoffUntil-now) * time.Millisecond; remaining > interval {
-					interval = remaining
-				}
-			}
-			m.mu.RUnlock()
+			// 退避已禁用：保持配置间隔轮询，不因失败拉长 interval；backoffUntil 字段保留作诊断（Status 暴露）
 			timer.Reset(interval)
 		}
 	}
@@ -529,7 +527,8 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 		accMon.LastPollTime = time.Now().UnixMilli()
 		accMon.EventCount += counts.Effective
 		accMon.consecutiveFailures = 0
-		accMon.cookieMarkedInvalid = false
+		// cookieMarkedInvalid 不在此清零：cookie 失效通知只发一次，
+		// 直到 VerifyAccount 成功（resetConsecutiveFailures）才允许重发，避免间歇性恢复导致循环刷屏
 		// 轮询成功：清零退避状态，恢复正常轮询节奏
 		accMon.consecutiveErrors = 0
 		accMon.backoffUntil = 0
@@ -639,14 +638,14 @@ func (m *Monitor) pullEventsWithRetry(
 
 // ==================== Cookie 有效性自动检测 ====================
 
-// 异常自恢复策略：退避阶梯 + 通知节流
-// 目标：账号异常时停止硬轮 115 API、避免 TG 刷屏；恢复后自动清零。
-// 注：退避只是跳过轮询，115 服务端保留事件，恢复后从游标续拉，不丢数据。
+// 异常处理策略：通知去重 + 通知节流（退避已禁用，保持配置轮询间隔）
+// 目标：账号异常时避免 TG 刷屏；cookie 失效通知每个账号只发一次，直到 VerifyAccount 成功才允许重发。
+// 退避禁用理由：原 v1.1.5 阶梯退避会拉长轮询间隔，导致 STRM 生成延迟；现保持配置间隔持续轮询，
+// cookie 失效请求会被 115 直接拒绝（返回未登录，不消耗正常配额），不影响 STRM 生成时效。
 const (
 	cookieInvalidStage = "cookie 可能已失效" // 标识 cookie 失效通知（绕过节流，因已由 cookieMarkedInvalid 去重）
 
-	notifyCooldown        = 10 * time.Minute // 同一账号同类错误通知节流窗口
-	cookieInvalidCooldown = 30 * time.Minute // cookie 失效后的长冷却，等用户更新 cookie
+	notifyCooldown = 10 * time.Minute // 同一账号同类错误通知节流窗口
 )
 
 // pollErrorPatterns 可能表示 cookie 失效的错误关键词
@@ -689,19 +688,19 @@ func (m *Monitor) handlePollError(account string, err error) {
 	accMon, ok := m.accounts[account]
 	if ok {
 		accMon.lastErr = err.Error()
-		// 通用失败计数累加 + 退避阶梯（任意错误，成功才清零）
+		// 通用失败计数累加（诊断用，applyBackoffLocked 已禁用退避，保持配置间隔）
 		accMon.consecutiveErrors++
 		m.applyBackoffLocked(accMon)
 		if isAuth {
 			accMon.consecutiveFailures++
 			if accMon.consecutiveFailures >= 3 && !accMon.cookieMarkedInvalid {
 				accMon.cookieMarkedInvalid = true
-				// cookie 失效：长冷却，停止硬轮，等用户更新 cookie
-				accMon.backoffUntil = time.Now().Add(cookieInvalidCooldown).UnixMilli()
-				m.mu.Unlock()
-				m.markCookiePotentiallyInvalid(account, err)
-				m.notifyPollError(account, cookieInvalidStage, err)
-				return
+			// 退避已禁用：不设 backoffUntil，保持配置轮询间隔；
+			// cookie 失效通知只发一次（由 cookieMarkedInvalid 去重），避免 TG 刷屏
+			m.mu.Unlock()
+			m.markCookiePotentiallyInvalid(account, err)
+			m.notifyPollError(account, cookieInvalidStage, err)
+			return
 			}
 		} else {
 			accMon.consecutiveFailures = 0
@@ -715,28 +714,14 @@ func (m *Monitor) handlePollError(account string, err error) {
 	}
 }
 
-// applyBackoffLocked 按连续失败次数设置退避冷却（调用方持锁）
+// applyBackoffLocked 退避已禁用：保持配置的 PollInterval 轮询，避免 STRM 生成被延迟
 //
-//	 1-2 次：偶发抖动，不退避，维持原间隔
-//	 3-5 次：2 分钟
-//	 6-9 次：10 分钟
-//	>=10 次：30 分钟，等用户介入
+//	设计变更：原 v1.1.5 阶梯退避（2/10/30min）会拉长轮询间隔，导致 STRM 生成延迟。
+//	现改为保持配置间隔持续轮询；cookie 失效等异常通过通知去重（cookieMarkedInvalid）
+//	与 10min 通知节流处理，不再拉长轮询。
+//	consecutiveErrors 仍累计用于诊断（Status 暴露），但不触发退避。
 func (m *Monitor) applyBackoffLocked(accMon *AccountMonitor) {
-	n := accMon.consecutiveErrors
-	var cooldown time.Duration
-	switch {
-	case n >= 10:
-		cooldown = 30 * time.Minute
-	case n >= 6:
-		cooldown = 10 * time.Minute
-	case n >= 3:
-		cooldown = 2 * time.Minute
-	default:
-		return
-	}
-	accMon.backoffUntil = time.Now().Add(cooldown).UnixMilli()
-	logger.S().Infof("[Monitor] account=%s 连续失败 %d 次，进入退避 %v",
-		accMon.Account, n, cooldown)
+	// 退避已禁用：不设 backoffUntil，pollLoop 维持配置的 PollInterval
 }
 
 // markCookiePotentiallyInvalid 标记账号 cookie 可能失效
