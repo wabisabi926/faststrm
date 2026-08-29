@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
   <img src="https://raw.githubusercontent.com/wabisabi926/faststrm/refs/heads/main/frontend/public/logo.png" alt="Fast Strm Logo" width="160" style="margin-bottom: 8px;">
 
@@ -40,14 +40,14 @@
 
 ## 📌 版本公告
 
-> **🎉 v1.1.1 已发布 — STRM URL 签名、SQLite 迁移、Emby 刮削等待**
+> **🎉 v1.1.5 已发布 — 删除通知聚合 + 115 账号退避 + Emby 刮削等待**
 >
-> - 🔐 STRM 代理 URL HMAC-SHA256 签名（开关可选，防被盗链）
-> - 🗃️ SQLite Schema 版本化迁移框架（升级安全）
-> - 📺 Emby 通知等待刮削完成（不再发空壳通知）
-> - 🧹 前端三大页面模块化拆分（2741 → 519 行）
-> - ✅ 全量 Vitest + client115 单元测试（测试比 27.8%）
-> - 🎯 Emby 6 项通知开关 / STRM 3 项核心开关默认勾选
+> - 🗑️ 删除通知聚合：整剧/整季删光合并为一条通知，不再每集刷屏
+> - 🛡️ 115 账号异常自动降频：cookie 失效冷却 30 分钟，阶梯退避避免风控
+> - 📺 Emby 剧集入库等待刮削完成（≤60s），不再降级为简版通知
+> - 🔐 STRM URL HMAC-SHA256 签名 · SQLite Schema 迁移框架
+> - 🧪 CI 工程化：Go test + golangci-lint + Vitest + Playwright E2E
+> - 📖 Swagger API 文档 · 前端三大页面模块化拆分
 > - 完整变更说明：[GitHub Releases](https://github.com/wabisabi926/faststrm/releases)
 
 ---
