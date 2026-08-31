@@ -1,20 +1,21 @@
 package handler
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 
+	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // encodeRedirectURL 对 302 重定向 URL 进行编码：
 // 只编码非 ASCII 字符和空格，保留 URL 保留字符和已有的百分号转义。
-// 对齐参考项目 utils/url.py UrlUtils.encode_url_fully:
-//
-//	Python: quote(url, safe=":/?#@!$&'()*+,;=%")
 func encodeRedirectURL(rawURL string) string {
 	var sb []byte
 	for i := 0; i < len(rawURL); i++ {
@@ -23,10 +24,8 @@ func encodeRedirectURL(rawURL string) string {
 		case b == ' ':
 			sb = append(sb, '%', '2', '0')
 		case b < 0x80:
-			// ASCII 字符（含 % : / ? # @ ! $ & ' ( ) * + , ; =）全部保留
 			sb = append(sb, b)
 		default:
-			// 非 ASCII 字节：百分号编码（UTF-8 多字节逐字节编码）
 			sb = append(sb, '%')
 			sb = append(sb, hexUpper(b>>4))
 			sb = append(sb, hexUpper(b&0x0f))
@@ -43,18 +42,13 @@ func hexUpper(n byte) byte {
 	return 'A' + n - 10
 }
 
-// ==================== /api/fs/get 小文件下载 ====================
+// ==================== /api/fs/get 文件下载（含智能路由） ====================
 
-// FsGetRequest GET /api/fs/get?account=&pickcode=
-type FsGetRequest struct {
-	Account  string `json:"account"`
-	Pickcode string `json:"pickcode"`
-}
-
-// HandleFsGet 处理小文件下载请求（非 STRM，如字幕、nfo、图片）
-// 行为：取直链后 302 重定向（不走 proxy，节省带宽）
+// HandleFsGet 处理文件下载请求
+// 行为：小文件 302 重定向；ISO/BDMV 需 seek 的大文件走 proxy 支持 Range
 func HandleFsGet(opts StrmOptions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		t0 := time.Now()
 		q := r.URL.Query()
 		accountName := q.Get("account")
 		pickcode := q.Get("pickcode")
@@ -85,8 +79,8 @@ func HandleFsGet(opts StrmOptions) http.HandlerFunc {
 		if userAgent == "" {
 			userAgent = opts.Cfg.Settings.UserAgent
 		}
-		logger.S().Infof("[FS/GET] account=%s pickcode=%s UA=%s", accountName, pickcode, userAgent)
 
+		// 解析直链
 		meta, err := strm.ResolveDownloadUrl(r.Context(), opts.Client115, pickcode, accountName, account.Cookie, userAgent)
 		if err != nil {
 			logger.S().Errorf("[FS/GET] account=%s pickcode=%s resolve url: %v", accountName, pickcode, err)
@@ -102,17 +96,65 @@ func HandleFsGet(opts StrmOptions) http.HandlerFunc {
 		}
 		finalName = strm.ResolveFileName(finalName)
 
-		// 直接 302 跳转（fs 文件较小，播放器兼容性好）
-		if finalName != "" {
-			w.Header().Set("Content-Disposition", strm.BuildContentDisposition(finalName))
+		// 智能路由决策
+		routeCfg := strm.StrmRouteConfig(opts.Cfg)
+		dr := strm.DecideRoute(r, "", routeCfg.ForceProxyUaTokens, finalName)
+		finalDecision := dr.Decision
+		finalReason := dr.Reason
+
+		// redirect check（仅 redirect 决策时）
+		if finalDecision == strm.DecisionRedirect {
+			check := strm.RedirectCheck(r.Context(), meta.URL, accountName, account.Cookie, userAgent, routeCfg.RedirectCheckTimeout)
+			if !check.OK {
+				finalDecision = strm.DecisionProxy
+				finalReason = fmt.Sprintf("%s -> redirect_check_failed(%d) fallback_proxy", dr.Reason, check.Status)
+			}
 		}
-		if meta.FileSize > 0 {
-			w.Header().Set("X-File-Size", itoa(meta.FileSize))
+
+		// Proxy 并发数限制
+		if finalDecision == strm.DecisionProxy {
+			current := proxyCountNow(accountName)
+			if current >= routeCfg.AccountProxyConcurrencyLimit {
+				finalDecision = strm.DecisionRedirect
+				finalReason = fmt.Sprintf("%s -> proxy_concurrency_limit(%d/%d) fallback_redirect",
+					finalReason, current, routeCfg.AccountProxyConcurrencyLimit)
+			}
 		}
-		encodedURL := encodeRedirectURL(meta.URL)
-		logger.S().Infof("[FS/GET] redirect: account=%s pickcode=%s origURL[:200]=%q encodedURL[:200]=%q",
-			accountName, pickcode, meta.URL, encodedURL)
-		http.Redirect(w, r, encodedURL, http.StatusFound)
+
+		// 限流 Bottleneck
+		if finalDecision == strm.DecisionProxy {
+			bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, routeCfg.AccountProxyConcurrencyLimit)
+			enterCtx, cancel := context.WithTimeout(r.Context(), bottleneckEnterTimeout)
+			enterErr := bn.Enter(enterCtx)
+			cancel()
+			if enterErr != nil {
+				finalDecision = strm.DecisionRedirect
+				finalReason = fmt.Sprintf("%s -> proxy_bottleneck_timeout fallback_redirect", finalReason)
+			} else {
+				defer bn.Leave()
+			}
+		}
+
+		elapsed := time.Since(t0).Milliseconds()
+		logger.S().Infof("[FS/GET] account=%s pickcode=%s decision=%s reason=%s UA=%s elapsed=%dms",
+			accountName, pickcode, finalDecision, finalReason, userAgent, elapsed)
+
+		// 执行决策
+		switch finalDecision {
+		case strm.DecisionProxy:
+			proxyCountInc(accountName)
+			defer proxyCountDec(accountName)
+			handleProxy(w, r, meta.URL, account.Cookie, userAgent, finalName)
+		default:
+			// 302 redirect
+			if finalName != "" {
+				w.Header().Set("Content-Disposition", strm.BuildContentDisposition(finalName))
+			}
+			if meta.FileSize > 0 {
+				w.Header().Set("X-File-Size", strconv.FormatInt(meta.FileSize, 10))
+			}
+			http.Redirect(w, r, encodeRedirectURL(meta.URL), http.StatusFound)
+		}
 	}
 }
 
