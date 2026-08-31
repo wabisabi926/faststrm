@@ -173,30 +173,16 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			}
 		}
 
-		// Proxy 并发数限制（按账号）
+		// Proxy 并发数限制 + Bottleneck 拿槽位（集中在子函数里处理，降低 HandleStrm 圈复杂度）
 		if finalDecision == strm.DecisionProxy {
-			current := proxyCountNow(accountName)
-			if current >= routeCfg.AccountProxyConcurrencyLimit {
-				// 尝试用 Bottleneck 兜底（仍拿不到槽位才降级）
-				finalDecision = strm.DecisionRedirect
-				finalReason = fmt.Sprintf("%s -> proxy_concurrency_limit(%d/%d) fallback_redirect",
-					finalReason, current, routeCfg.AccountProxyConcurrencyLimit)
-				logger.S().Warnf("[STRM] account=%s proxy concurrency hit limit (%d/%d), fallback to redirect",
-					accountName, current, routeCfg.AccountProxyConcurrencyLimit)
-			}
-		}
-
-		// 限流：proxy 单独的 Bottleneck，确保不会超并发
-		if finalDecision == strm.DecisionProxy {
-			bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, routeCfg.AccountProxyConcurrencyLimit)
-			enterCtx, cancel := context.WithTimeout(r.Context(), bottleneckEnterTimeout)
-			enterErr := bn.Enter(enterCtx)
-			cancel()
-			if enterErr != nil {
-				finalDecision = strm.DecisionRedirect
-				finalReason = fmt.Sprintf("%s -> proxy_bottleneck_timeout fallback_redirect", finalReason)
-			} else {
-				defer bn.Leave()
+			applyProxyConcurrency, leaveBn, reason, decision := applyProxyConcurrencyLimit(
+				r.Context(), accountName, finalDecision, finalReason,
+				routeCfg.AccountProxyConcurrencyLimit)
+			if !applyProxyConcurrency {
+				finalDecision = decision
+				finalReason = reason
+			} else if leaveBn != nil {
+				defer leaveBn()
 			}
 		}
 
@@ -221,36 +207,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		// 115 signed URL HEAD 经常 403 / Content-Length 缺失，download API 的 meta.FileSize 100% 正确。
 		// 这条给 Lavf probe 判定 seek 能力，后续 GET Range 206 链路独立工作。
 		if r.Method == http.MethodHead {
-			h := w.Header()
-			h.Set("Accept-Ranges", "bytes")
-			size := meta.FileSize
-			sizeFrom := "meta"
-			if size <= 0 {
-				// meta.FileSize 为空（部分账号/API 场景会 0），fallback 发最轻量的 Range bytes=0-0，
-				// 从 115 CDN 返回的 Content-Range: bytes 0-0/<totalSize> 的 "/<totalSize>" 段解析真正大小。
-				// 只传 1 字节 + 响应头，纯内存操作，不写 body 到客户端，延迟<30ms。
-				fbT0 := time.Now()
-				size = totalSizeFromCdn(cdnURL, account.Cookie, userAgent)
-				fbMs := time.Since(fbT0).Milliseconds()
-				sizeFrom = "cdn-range0-0"
-				logger.S().Infof("[STRM/HEAD][fallback] pc=%s meta.FileSize=%d -> fallback CDN Range 0-0 size=%d cost=%dms",
-					shortPc, meta.FileSize, size, fbMs)
-			}
-			if size > 0 {
-				h.Set("Content-Length", strconv.FormatInt(size, 10))
-			}
-			if finalName != "" {
-				h.Set("Content-Disposition", strm.BuildContentDisposition(finalName))
-			}
-			origin := r.Header.Get("origin")
-			if origin == "" {
-				origin = "*"
-			}
-			h.Set("Access-Control-Allow-Origin", origin)
-			h.Set("Access-Control-Expose-Headers",
-				"Content-Disposition, Content-Length, Content-Type, Accept-Ranges, Content-Range")
-			logger.S().Infof("[STRM/HEAD] pc=%s cl_source=%s size=%d ua=%s", shortPc, sizeFrom, size, userAgent)
-			w.WriteHeader(http.StatusOK)
+			writeStrmHeadResponse(w, r, meta.FileSize, cdnURL, account.Cookie, userAgent, finalName, shortPc)
 			return
 		}
 
@@ -264,6 +221,77 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			doRedirect(w, finalName, cdnURL)
 		}
 	}
+}
+
+// applyProxyConcurrencyLimit 把 HandleStrm 中 proxy 并发数检查 + Bottleneck 拿槽位两个分支合在一起，
+// 降低 HandleStrm 的圈复杂度（cyclop 指标 ≥ 1 的 if/else 会被循环+嵌套快速叠加）。
+// 返回：
+//   - applyProxyConcurrency: true=继续 proxy；false=已降级 redirect，上层按 decision/reason 覆盖
+//   - leaveBn: 非空时上层需 defer leaveBn() 释放 Bottleneck 槽位
+func applyProxyConcurrencyLimit(
+	rCtx context.Context,
+	accountName string,
+	decision strm.RouteDecision,
+	reason string,
+	concurrencyLimit int,
+) (applyProxyConcurrency bool, leaveBn func(), outReason string, outDecision strm.RouteDecision) {
+	current := proxyCountNow(accountName)
+	if current >= concurrencyLimit {
+		reason = fmt.Sprintf("%s -> proxy_concurrency_limit(%d/%d) fallback_redirect",
+			reason, current, concurrencyLimit)
+		logger.S().Warnf("[STRM] account=%s proxy concurrency hit limit (%d/%d), fallback to redirect",
+			accountName, current, concurrencyLimit)
+		return false, nil, reason, strm.DecisionRedirect
+	}
+	bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, concurrencyLimit)
+	enterCtx, cancel := context.WithTimeout(rCtx, bottleneckEnterTimeout)
+	enterErr := bn.Enter(enterCtx)
+	cancel()
+	if enterErr != nil {
+		return false, nil, fmt.Sprintf("%s -> proxy_bottleneck_timeout fallback_redirect", reason), strm.DecisionRedirect
+	}
+	return true, bn.Leave, "", ""
+}
+
+// writeStrmHeadResponse 是 HandleStrm 的 HEAD 短路径实现（独立函数以降低 HandleStrm 圈复杂度）。
+// meta.FileSize 优先（100% 正确且零延迟），否则 fallback 走 CDN Range bytes=0-0 解析总大小。
+// 对客户端只写 200 + Accept-Ranges/Content-Length/CORS/C-Disposition 头，不写 body。
+func writeStrmHeadResponse(
+	w http.ResponseWriter,
+	r *http.Request,
+	metaFileSize int64,
+	cdnURL, cookie, userAgent, finalName, shortPc string,
+) {
+	h := w.Header()
+	h.Set("Accept-Ranges", "bytes")
+	size := metaFileSize
+	sizeFrom := "meta"
+	if size <= 0 {
+		// meta.FileSize 为空（部分账号/API 场景会 0），fallback 发最轻量的 Range bytes=0-0，
+		// 从 115 CDN 返回的 Content-Range: bytes 0-0/<totalSize> 的 "/<totalSize>" 段解析真正大小。
+		// 只传 1 字节 + 响应头，纯内存操作，不写 body 到客户端，延迟<30ms。
+		fbT0 := time.Now()
+		size = totalSizeFromCdn(cdnURL, cookie, userAgent)
+		fbMs := time.Since(fbT0).Milliseconds()
+		sizeFrom = "cdn-range0-0"
+		logger.S().Infof("[STRM/HEAD][fallback] pc=%s meta.FileSize=%d -> fallback CDN Range 0-0 size=%d cost=%dms",
+			shortPc, metaFileSize, size, fbMs)
+	}
+	if size > 0 {
+		h.Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	if finalName != "" {
+		h.Set("Content-Disposition", strm.BuildContentDisposition(finalName))
+	}
+	origin := r.Header.Get("origin")
+	if origin == "" {
+		origin = "*"
+	}
+	h.Set("Access-Control-Allow-Origin", origin)
+	h.Set("Access-Control-Expose-Headers",
+		"Content-Disposition, Content-Length, Content-Type, Accept-Ranges, Content-Range")
+	logger.S().Infof("[STRM/HEAD] pc=%s cl_source=%s size=%d ua=%s", shortPc, sizeFrom, size, userAgent)
+	w.WriteHeader(http.StatusOK)
 }
 
 // pickOneFileName 选择文件名，三档优先级：

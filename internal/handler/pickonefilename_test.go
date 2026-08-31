@@ -13,11 +13,11 @@ import (
 // - 修复后：CDN path 兜底 → 扩展名识别 → .iso 走 proxy，其他 redirect（保持零带宽）
 func TestPickOneFileName_ThreeTiers(t *testing.T) {
 	tests := []struct {
-		name    string
-		a       string // URL file_name
-		b       string // 115 API meta.FileName
-		cdnURL  string // CDN URL
-		want    string
+		name   string
+		a      string // URL file_name
+		b      string // 115 API meta.FileName
+		cdnURL string // CDN URL
+		want   string
 	}{
 		{
 			name:   "Tier1 优先 URL file_name（中文 .iso）",
