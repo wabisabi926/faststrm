@@ -48,6 +48,7 @@ type ExecutorDeps struct {
 	AccountStore     AccountReader
 	SettingsStore    SettingsStore
 	SQLiteDB         *sql.DB
+	TaskHistory      *db.TaskHistoryRepo // 任务执行历史（可为 nil）
 	TasksStore       TasksReaderWriter
 	StrmCache        StrmCacheWriter
 	EmbyRefresh      StrmRefresher         // Emby 刷库服务（可为 nil）
@@ -117,6 +118,21 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	histErrMsg := ""
 	totalFiles := 0
 	downloaded := new(int64)
+
+	// TaskHistory 执行记录（与 strm_exec_history 并行，前端「任务历史」页面用）
+	var execID int64
+	if deps.TaskHistory != nil {
+		var err error
+		execID, err = deps.TaskHistory.CreateExecution(ctx, db.TaskExecution{
+			TaskID: task.ID, Account: task.Account,
+			OriginPath: task.OriginPath, TargetPath: task.TargetPath,
+			Status: "running", StartedAt: taskStart.UnixMilli(),
+		})
+		if err != nil {
+			logger.S().Warnf("[Task] CreateExecution failed: %v", err)
+		}
+	}
+
 	defer func() {
 		elapsedMs := time.Since(taskStart).Milliseconds()
 		dl := int64(0)
@@ -129,6 +145,22 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		}
 		recordStrmHistory(deps, task.ID, task.Account, histKind, histSuccess,
 			totalFiles, int(dl), failed, elapsedMs, histErrMsg)
+
+		// 完成 TaskHistory 执行记录
+		if deps.TaskHistory != nil && execID > 0 {
+			status := "completed"
+			errMsg := ""
+			if !histSuccess {
+				status = "failed"
+				errMsg = histErrMsg
+			}
+			_ = deps.TaskHistory.CompleteExecution(ctx, execID, status,
+				db.TaskExecutionSummary{
+					TotalFiles:      totalFiles,
+					DownloadedFiles: int(dl),
+					DeletedFiles:    0, // cleanup 阶段暂未统计
+				}, errMsg, elapsedMs)
+		}
 	}()
 
 	// 4) 找 115 账号 cookie

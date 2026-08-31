@@ -144,6 +144,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 		AccountStore:     accountStore,
 		SettingsStore:    store.NewSettingsAdapter(settingsStore),
 		SQLiteDB:         sqliteDB,
+		TaskHistory:      taskHistoryRepo,
 		TasksStore:       tasksStore,
 		StrmCache:        &strmCacheWriterAdapter{inner: strmCacheStore},
 		EmbyRefresh:      embyRefresh,
