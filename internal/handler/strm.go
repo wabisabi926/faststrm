@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -154,8 +156,9 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			explicitMode = rawMode
 		}
 
-		// 规则引擎
-		dr := strm.DecideRoute(r, explicitMode, routeCfg.ForceProxyUaTokens, fileName)
+		// 规则引擎：三档 finalName — URL file_name(前端最权威) > 115 API 返回的 fileName > CDN URL path
+		finalName := pickOneFileName(fileName, meta.FileName, cdnURL)
+		dr := strm.DecideRoute(r, explicitMode, routeCfg.ForceProxyUaTokens, finalName)
 		finalDecision := dr.Decision
 		finalReason := dr.Reason
 		var redirectCheckStatus *int
@@ -211,27 +214,91 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			rcs = strconv.Itoa(*redirectCheckStatus)
 		}
 		elapsed := time.Since(t0).Milliseconds()
-		logger.S().Infof("[STRM] account=%s pickcode=%s decision=%s reason=%s redirect_check=%s%s elapsed=%dms",
-			accountName, shortPc, finalDecision, finalReason, rcs, sizeLog, elapsed)
+		logger.S().Infof("[STRM] account=%s pickcode=%s decision=%s reason=%s redirect_check=%s%s method=%s elapsed=%dms",
+			accountName, shortPc, finalDecision, finalReason, rcs, sizeLog, r.Method, elapsed)
 
-		// 执行决策
+		// ===== HEAD 短路径：用 meta.FileSize 直接吐 Accept-Ranges + Content-Length 头，不打 CDN =====
+		// 115 signed URL HEAD 经常 403 / Content-Length 缺失，download API 的 meta.FileSize 100% 正确。
+		// 这条给 Lavf probe 判定 seek 能力，后续 GET Range 206 链路独立工作。
+		if r.Method == http.MethodHead {
+			h := w.Header()
+			h.Set("Accept-Ranges", "bytes")
+			size := meta.FileSize
+			sizeFrom := "meta"
+			if size <= 0 {
+				// meta.FileSize 为空（部分账号/API 场景会 0），fallback 发最轻量的 Range bytes=0-0，
+				// 从 115 CDN 返回的 Content-Range: bytes 0-0/<totalSize> 的 "/<totalSize>" 段解析真正大小。
+				// 只传 1 字节 + 响应头，纯内存操作，不写 body 到客户端，延迟<30ms。
+				fbT0 := time.Now()
+				size = totalSizeFromCdn(cdnURL, account.Cookie, userAgent)
+				fbMs := time.Since(fbT0).Milliseconds()
+				sizeFrom = "cdn-range0-0"
+				logger.S().Infof("[STRM/HEAD][fallback] pc=%s meta.FileSize=%d -> fallback CDN Range 0-0 size=%d cost=%dms",
+					shortPc, meta.FileSize, size, fbMs)
+			}
+			if size > 0 {
+				h.Set("Content-Length", strconv.FormatInt(size, 10))
+			}
+			if finalName != "" {
+				h.Set("Content-Disposition", strm.BuildContentDisposition(finalName))
+			}
+			origin := r.Header.Get("origin")
+			if origin == "" {
+				origin = "*"
+			}
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Access-Control-Expose-Headers",
+				"Content-Disposition, Content-Length, Content-Type, Accept-Ranges, Content-Range")
+			logger.S().Infof("[STRM/HEAD] pc=%s cl_source=%s size=%d ua=%s", shortPc, sizeFrom, size, userAgent)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// 执行决策（GET 路径）
 		switch finalDecision {
 		case strm.DecisionProxy:
 			proxyCountInc(accountName)
 			defer proxyCountDec(accountName)
-			handleProxy(w, r, cdnURL, account.Cookie, userAgent, pickOneFileName(fileName, meta.FileName))
+			handleProxy(w, r, cdnURL, account.Cookie, userAgent, finalName)
 		default:
-			doRedirect(w, pickOneFileName(fileName, meta.FileName), cdnURL)
+			doRedirect(w, finalName, cdnURL)
 		}
 	}
 }
 
-// pickOneFileName 优先用 URL 参数中的 file_name（来自前端），再用 115 解析的文件名
-func pickOneFileName(a, b string) string {
+// pickOneFileName 选择文件名，三档优先级：
+//  1. a: URL 参数中的 file_name（来自前端/STRM URL 最权威）
+//  2. b: 115 download API 返回的 fileName 字段（部分情况下为空）
+//  3. cdnURL: 115 CDN URL path 的最后一段（通常包含正确扩展名，如 /.../杜比视界...iso）
+//     - 会自动做 URL 解码 + 丢弃 query/fragment
+//     - 仅当解析出的文件名带扩展名（存在 "."）时才兜底，避免 "0ea5f97860..." 这种 hash 式无意义字符串误判
+func pickOneFileName(a, b, cdnURL string) string {
 	if a != "" {
 		return strm.ResolveFileName(a)
 	}
-	return strm.ResolveFileName(b)
+	if b != "" {
+		return strm.ResolveFileName(b)
+	}
+	if cdnURL == "" {
+		return ""
+	}
+	u, err := neturl.Parse(cdnURL)
+	if err != nil || u.Path == "" {
+		return ""
+	}
+	name := path.Base(u.Path)
+	if name == "." || name == "/" || name == "" {
+		return ""
+	}
+	decoded, derr := neturl.PathUnescape(name)
+	if derr == nil && decoded != "" {
+		name = decoded
+	}
+	// 仅当扩展名存在时返回（"xxx.iso" 而非 "xxhash" 式纯名称）
+	if idx := strings.LastIndexByte(name, '.'); idx > 0 && idx < len(name)-1 {
+		return strm.ResolveFileName(name)
+	}
+	return ""
 }
 
 // ==================== doRedirect 302 重定向 ====================
@@ -305,6 +372,16 @@ func handleProxy(
 	}
 	defer upstream.Body.Close()
 
+	// Range 206 / 200 关键头诊断：Lavf ISO probe 对 Content-Range/Content-Length 零容忍，
+	// 用 Info 级别一条日志把四个关键字段全部打出来，排错时直接 grep 这一行即可。
+	crange := upstream.Header.Get("Content-Range")
+	clen := upstream.Header.Get("Content-Length")
+	rreq := r.Header.Get("Range")
+	if rreq != "" || clen != "" || crange != "" {
+		logger.S().Infof("[STRM][proxy-range] status=%d reqRange=%q respCL=%q respCR=%q",
+			upstream.StatusCode, rreq, clen, crange)
+	}
+
 	// 写回响应头：过滤 hop-by-hop + 安全头部
 	respHeader := w.Header()
 	for k, vv := range upstream.Header {
@@ -349,4 +426,55 @@ func handleProxy(
 			}
 		}
 	}
+}
+
+// totalSizeFromCdn 是 HEAD 响应 Content-Length 的兜底 helper：
+// 当 115 download API 的 meta.FileSize == 0（部分账号/场景会发生），
+// 向 CDN 发极轻量 `Range: bytes=0-0` 请求，解析其 Content-Range: bytes 0-0/<totalSize>
+// 中的 "/<totalSize>" 段拿到真实文件总大小。只传输 1 字节响应体 + 头部，<30ms。
+// 失败或解析不到时返回 0（上层会跳过 Content-Length 设置，Accept-Ranges 仍然保留）。
+func totalSizeFromCdn(cdnURL, cookie, userAgent string) int64 {
+	if cdnURL == "" {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cdnURL, nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Range", "bytes=0-0")
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Referer", "https://115.com/")
+	req.Header.Set("Origin", "https://115.com")
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	req.Header.Set("Accept-Encoding", "identity")
+	resp, err := getProxyHTTPClient().Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	// 立即丢弃 1 字节 body，避免 keep-alive 连接复用失败
+	_, _ = io.CopyN(io.Discard, resp.Body, 2)
+	// 解析 Content-Range: bytes 0-0/178323456 → 提取 '/' 之后的 totalSize
+	cr := resp.Header.Get("Content-Range")
+	if cr == "" {
+		return 0
+	}
+	idx := strings.LastIndexByte(cr, '/')
+	if idx < 0 || idx >= len(cr)-1 {
+		return 0
+	}
+	numPart := cr[idx+1:]
+	if numPart == "*" {
+		return 0
+	}
+	numPart = strings.TrimSpace(numPart)
+	n, perr := strconv.ParseInt(numPart, 10, 64)
+	if perr != nil || n <= 0 {
+		return 0
+	}
+	return n
 }

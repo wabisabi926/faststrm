@@ -90,11 +90,10 @@ func HandleFsGet(opts StrmOptions) http.HandlerFunc {
 			return
 		}
 
-		finalName := fileName
-		if finalName == "" {
-			finalName = meta.FileName
-		}
-		finalName = strm.ResolveFileName(finalName)
+		// 三档优先级解析文件名（方案 B）：URL file_name > 115 API meta.FileName > CDN URL path 最后一段
+		// 115 download API 的 fileName 字段在部分账号/文件类型下为空；CDN URL path 通常包含正确扩展名
+		// （例如 /.../杜比视界测试：双层 FEL.iso），因此用它兜底解决 DecideRoute 扩展名识别漏判的致命问题
+		finalName := pickOneFileName(fileName, meta.FileName, meta.URL)
 
 		// 智能路由决策
 		routeCfg := strm.StrmRouteConfig(opts.Cfg)
@@ -136,10 +135,48 @@ func HandleFsGet(opts StrmOptions) http.HandlerFunc {
 		}
 
 		elapsed := time.Since(t0).Milliseconds()
-		logger.S().Infof("[FS/GET] account=%s pickcode=%s decision=%s reason=%s UA=%s elapsed=%dms",
-			accountName, pickcode, finalDecision, finalReason, userAgent, elapsed)
+		logger.S().Infof("[FS/GET] account=%s pickcode=%s decision=%s reason=%s UA=%s method=%s elapsed=%dms",
+			accountName, pickcode, finalDecision, finalReason, userAgent, r.Method, elapsed)
 
-		// 执行决策
+		// ===== HEAD 短路径：Lavf ISO probe 第 1 步发 HEAD 探测是否支持 seek =====
+		// 为什么不把 HEAD 真实转发给 115 CDN：
+		//   115 signed download URL 的 HEAD 请求经常返回 403（签名对 GET 生成、对 HEAD 校验失败）
+		//   或 Content-Length 缺失。优先用 download API 返回的 meta.FileSize；当 meta.FileSize == 0
+		//   （部分账号/文件类型场景会发生，你现在这台 case 就是 meta.FileSize=0）时，fallback 发
+		//   最轻量 Range: bytes=0-0 给 CDN，解析 Content-Range: bytes 0-0/<totalSize> 中的 totalSize
+		//   做 Content-Length，全程只传 1 字节 + 响应头，延迟<30ms。
+		if r.Method == http.MethodHead {
+			h := w.Header()
+			h.Set("Accept-Ranges", "bytes")
+			size := meta.FileSize
+			sizeFrom := "meta"
+			if size <= 0 {
+				fbT0 := time.Now()
+				size = totalSizeFromCdn(meta.URL, account.Cookie, userAgent)
+				fbMs := time.Since(fbT0).Milliseconds()
+				sizeFrom = "cdn-range0-0"
+				logger.S().Infof("[FS/HEAD][fallback] pickcode=%s meta.FileSize=%d -> fallback CDN Range 0-0 size=%d cost=%dms",
+					pickcode, meta.FileSize, size, fbMs)
+			}
+			if size > 0 {
+				h.Set("Content-Length", strconv.FormatInt(size, 10))
+			}
+			if finalName != "" {
+				h.Set("Content-Disposition", strm.BuildContentDisposition(finalName))
+			}
+			origin := r.Header.Get("origin")
+			if origin == "" {
+				origin = "*"
+			}
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Access-Control-Expose-Headers",
+				"Content-Disposition, Content-Length, Content-Type, Accept-Ranges, Content-Range")
+			logger.S().Infof("[FS/HEAD] pickcode=%s cl_source=%s size=%d ua=%s", pickcode, sizeFrom, size, userAgent)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// 执行决策（GET 路径）
 		switch finalDecision {
 		case strm.DecisionProxy:
 			proxyCountInc(accountName)
