@@ -380,14 +380,14 @@ func hexDigit(b byte) (int, bool) {
 // 这些格式通过 302 redirect 后，客户端 Range 请求可能因 CDN UA 绑定/签名过期而失败
 // 必须走 proxy 模式保证 Range 透传
 var SeekRequiredExtensions = map[string]bool{
-	".iso":    true, // DVD/BD 原盘，Libdvd 大量 seek
-	".bdmv":   true, // 蓝光原盘目录（STRM 指向 BDMV 入口）
-	".bdav":   true, // 蓝光原盘（alternative）
-	".ts":     true, // MPEG-TS 直播流，Range 不稳定
-	".m2ts":   true, // Blu-ray M2TS，需要 seek
-	".vob":    true, // DVD VOB
-	".ifo":    true, // DVD IFO 导航
-	".bup":    true, // DVD BUP 备份
+	".iso":  true, // DVD/BD 原盘，Libdvd 大量 seek
+	".bdmv": true, // 蓝光原盘目录（STRM 指向 BDMV 入口）
+	".bdav": true, // 蓝光原盘（alternative）
+	".ts":   true, // MPEG-TS 直播流，Range 不稳定
+	".m2ts": true, // Blu-ray M2TS，需要 seek
+	".vob":  true, // DVD VOB
+	".ifo":  true, // DVD IFO 导航
+	".bup":  true, // DVD BUP 备份
 }
 
 // DecideRoute 根据请求上下文决策 proxy vs redirect

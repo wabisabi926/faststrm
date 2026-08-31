@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -258,7 +257,7 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // cacheStrmSources 缓存 STRM MediaSourceId → HTTP URL 映射
@@ -323,9 +322,5 @@ func mustParseURL(s string) *url.URL {
 	return u
 }
 
-// contextKey 用于 context 传值的类型
-type contextKey string
-
 // 确保 context 包已导入
 var _ = context.TODO
-var _ = strconv.Itoa

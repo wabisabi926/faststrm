@@ -288,7 +288,14 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 			logger.S().Infof("[EmbyProxy] 启动中: %s → %s", proxyAddr, embyURL)
 			logger.S().Infof("[EmbyProxy] 请将 Emby 客户端连接到 %s", proxyDisplayAddr)
 			logger.S().Infof("[EmbyProxy] STRM ISO/MKV 自动强制 DirectPlay，绕过 Emby 转码限制")
-			if err := http.ListenAndServe(proxyAddr, proxyHandler); err != nil {
+			proxySrv := &http.Server{
+				Addr:         proxyAddr,
+				Handler:      proxyHandler,
+				ReadTimeout:  120 * time.Second,
+				WriteTimeout: 120 * time.Second,
+				IdleTimeout:  60 * time.Second,
+			}
+			if err := proxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				logger.S().Warnf("[EmbyProxy] 启动失败 %s: %v", proxyAddr, err)
 			}
 		}()
