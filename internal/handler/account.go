@@ -506,13 +506,33 @@ func GetAccountStatus(accountStore *store.AccountStore) http.HandlerFunc {
 			deepResults = make([]map[string]any, 0, len(targets))
 			for _, acc := range targets {
 				if acc.AccountType == "115" && acc.Cookie != "" {
-					valid, missing, err := accountStore.ValidateCookie(acc.Name)
+					pingOk, pingMsg := client115.PingCookie(acc.Cookie)
+					// 根据真实结果更新 store 中的 CookieValid
+					validBool := pingOk
+					_ = accountStore.MarkCookieStatus(acc.Name, validBool)
 					deepResults = append(deepResults, map[string]any{
 						"account":   acc.Name,
 						"type":      "115",
-						"valid":     valid,
-						"missing":   missing,
-						"error":     fmt.Sprintf("%v", err),
+						"valid":     pingOk,
+						"missing":   []string{},
+						"error":     pingMsg,
+						"checkedAt": now,
+					})
+				} else if acc.AccountType == "115" && acc.Cookie == "" {
+					deepResults = append(deepResults, map[string]any{
+						"account":   acc.Name,
+						"type":      "115",
+						"valid":     false,
+						"missing":   []string{"UID", "CID", "SEID", "KID"},
+						"error":     "Cookie 为空",
+						"checkedAt": now,
+					})
+				} else {
+					// openlist 等非 115 账号，配置有效即视为 ok
+					deepResults = append(deepResults, map[string]any{
+						"account":   acc.Name,
+						"type":      acc.AccountType,
+						"valid":     acc.URL != "",
 						"checkedAt": now,
 					})
 				}

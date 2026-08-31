@@ -1,6 +1,10 @@
 package client115
 
-import "strings"
+import (
+	"context"
+	"strings"
+	"time"
+)
 
 // ValidateCookieResult cookie 校验结果
 type ValidateCookieResult struct {
@@ -47,4 +51,33 @@ func ValidateCookie(cookie string) ValidateCookieResult {
 		Missing: missing,
 		Keys:    keys,
 	}
+}
+
+// PingCookie 真实请求 115 API 验证 cookie 是否存活
+// 比 ValidateCookie 只验格式多了一步网络验证，能检测 cookie 过期/被踢
+func PingCookie(cookie string) (ok bool, message string) {
+	if cookie == "" {
+		return false, "Cookie 为空"
+	}
+	formatResult := ValidateCookie(cookie)
+	if !formatResult.Valid {
+		return false, "Cookie 缺少字段: " + strings.Join(formatResult.Missing, ", ")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c := NewClient(DefaultUA)
+	_, err := c.FsFiles(ctx, "0", 1, 0, cookie)
+	if err != nil {
+		errMsg := err.Error()
+		// 识别常见过期关键词
+		if strings.Contains(errMsg, "未登录") || strings.Contains(errMsg, "cookie") ||
+			strings.Contains(errMsg, "登录过期") || strings.Contains(errMsg, "401") ||
+			strings.Contains(errMsg, "403") {
+			return false, "Cookie 可能已失效: " + errMsg
+		}
+		return false, "115 API 请求失败: " + errMsg
+	}
+	return true, "Cookie 有效"
 }

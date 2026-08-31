@@ -73,7 +73,9 @@ export default function AccountPage() {
   const checkStatus = useCallback(async (accountNames?: string[]) => {
     try {
       setIsCheckingStatus(true);
-      const params = accountNames ? `?names=${accountNames.join(",")}` : "";
+      const params = accountNames
+        ? `?deep=true&names=${accountNames.join(",")}`
+        : `?deep=true`;
       const res = await axiosInstance.get(`/api/account/status${params}`);
       const map: Record<string, AccountStatus> = {};
       for (const s of res.data.results) {
