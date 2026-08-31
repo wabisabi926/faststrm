@@ -48,7 +48,7 @@ func TestPlaybackInfo_StrmSource(t *testing.T) {
 
 	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 	defer emby.Close()
 
@@ -125,7 +125,7 @@ func TestPlaybackInfo_NonStrmSource(t *testing.T) {
 
 	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 	defer emby.Close()
 
@@ -176,7 +176,7 @@ func TestPlaybackInfo_CacheThenStream(t *testing.T) {
 
 	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 	defer emby.Close()
 
@@ -233,3 +233,5 @@ func TestNew_ValidURL(t *testing.T) {
 	}
 	t.Logf("✅ New() works: embyHost=%s", p.embyHost)
 }
+
+
