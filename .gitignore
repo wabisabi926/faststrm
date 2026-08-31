@@ -89,3 +89,5 @@ frontend/__smoke_*.mjs
 
 # ==== Wiki 生成的 HTML 导出（不进仓库，仅 Markdown 草稿入库）====
 wiki_drafts/*.html
+
+.golangci-cache/
