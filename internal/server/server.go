@@ -275,30 +275,34 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	if initSettings != nil && initSettings.Emby.ProxyPort > 0 && initSettings.Emby.URL != "" {
 		embyURL := initSettings.Emby.URL
 		proxyPort := initSettings.Emby.ProxyPort
-		proxy := embyproxy.New(embyURL)
-		proxyHandler := proxy.Handler()
+		proxy, err := embyproxy.New(embyURL)
+		if err != nil {
+			logger.S().Warnf("[EmbyProxy] 配置无效，跳过启动: %v", err)
+		} else {
+			proxyHandler := proxy.Handler()
 
-		proxyAddr := fmt.Sprintf("%s:%d", cfg.Server.Host, proxyPort)
-		proxyDisplayAddr := fmt.Sprintf("http://localhost:%d", proxyPort)
-		if cfg.Server.Host != "" && cfg.Server.Host != "0.0.0.0" && cfg.Server.Host != "::" {
-			proxyDisplayAddr = fmt.Sprintf("http://%s:%d", cfg.Server.Host, proxyPort)
+			proxyAddr := fmt.Sprintf("%s:%d", cfg.Server.Host, proxyPort)
+			proxyDisplayAddr := fmt.Sprintf("http://localhost:%d", proxyPort)
+			if cfg.Server.Host != "" && cfg.Server.Host != "0.0.0.0" && cfg.Server.Host != "::" {
+				proxyDisplayAddr = fmt.Sprintf("http://%s:%d", cfg.Server.Host, proxyPort)
+			}
+
+			go func() {
+				logger.S().Infof("[EmbyProxy] 启动中: %s → %s", proxyAddr, embyURL)
+				logger.S().Infof("[EmbyProxy] 请将 Emby 客户端连接到 %s", proxyDisplayAddr)
+				logger.S().Infof("[EmbyProxy] STRM ISO/MKV 自动强制 DirectPlay，绕过 Emby 转码限制")
+				proxySrv := &http.Server{
+					Addr:         proxyAddr,
+					Handler:      proxyHandler,
+					ReadTimeout:  120 * time.Second,
+					WriteTimeout: 120 * time.Second,
+					IdleTimeout:  60 * time.Second,
+				}
+				if err := proxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					logger.S().Warnf("[EmbyProxy] 启动失败 %s: %v", proxyAddr, err)
+				}
+			}()
 		}
-
-		go func() {
-			logger.S().Infof("[EmbyProxy] 启动中: %s → %s", proxyAddr, embyURL)
-			logger.S().Infof("[EmbyProxy] 请将 Emby 客户端连接到 %s", proxyDisplayAddr)
-			logger.S().Infof("[EmbyProxy] STRM ISO/MKV 自动强制 DirectPlay，绕过 Emby 转码限制")
-			proxySrv := &http.Server{
-				Addr:         proxyAddr,
-				Handler:      proxyHandler,
-				ReadTimeout:  120 * time.Second,
-				WriteTimeout: 120 * time.Second,
-				IdleTimeout:  60 * time.Second,
-			}
-			if err := proxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.S().Warnf("[EmbyProxy] 启动失败 %s: %v", proxyAddr, err)
-			}
-		}()
 	}
 
 	server.Start()

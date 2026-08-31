@@ -41,8 +41,11 @@ type Proxy struct {
 }
 
 // New 创建 Emby 反向代理
-func New(embyHost string) *Proxy {
+func New(embyHost string) (*Proxy, error) {
 	embyHost = strings.TrimRight(embyHost, "/")
+	if _, err := url.Parse(embyHost); err != nil {
+		return nil, fmt.Errorf("invalid emby host %q: %w", embyHost, err)
+	}
 	return &Proxy{
 		embyHost: embyHost,
 		httpClient: &http.Client{
@@ -52,12 +55,19 @@ func New(embyHost string) *Proxy {
 			},
 		},
 		strmSources: make(map[string]map[string]string),
-	}
+	}, nil
 }
 
 // Handler 返回反代 HTTP handler
 func (p *Proxy) Handler() http.Handler {
-	proxy := httputil.NewSingleHostReverseProxy(mustParseURL(p.embyHost))
+	u, err := url.Parse(p.embyHost)
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			logger.S().Errorf("[EmbyProxy] invalid emby host %q: %v", p.embyHost, err)
+			http.Error(w, fmt.Sprintf("Emby Proxy misconfigured: %v", err), http.StatusInternalServerError)
+		})
+	}
+	proxy := httputil.NewSingleHostReverseProxy(u)
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
@@ -312,14 +322,6 @@ func extractItemID(path string) string {
 		return rest
 	}
 	return ""
-}
-
-func mustParseURL(s string) *url.URL {
-	u, err := url.Parse(s)
-	if err != nil {
-		panic(fmt.Sprintf("invalid emby host %q: %v", s, err))
-	}
-	return u
 }
 
 // 确保 context 包已导入
