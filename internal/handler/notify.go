@@ -897,12 +897,8 @@ func HandleTelegramWebhook(deps NotifyDeps) http.HandlerFunc {
 			return
 		}
 		tg := settings.Telegram
-		if tg.BotToken == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "Telegram not configured"})
-			return
-		}
 
-		// 校验 secret_token（若配置了）
+		// 校验 secret_token（若配置了）—— 提前到 token 检查之前，避免未授权请求浪费后续流程
 		if tg.WebhookSecretToken != "" {
 			provided := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
 			if provided != tg.WebhookSecretToken {
@@ -910,6 +906,11 @@ func HandleTelegramWebhook(deps NotifyDeps) http.HandlerFunc {
 				httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 				return
 			}
+		}
+
+		if tg.BotToken == "" {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "Telegram not configured"})
+			return
 		}
 
 		var update notify.Update

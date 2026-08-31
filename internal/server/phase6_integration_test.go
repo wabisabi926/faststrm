@@ -401,10 +401,12 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 	})
 
 	t.Run("telegram_webhook_secret_mismatch", func(t *testing.T) {
-		// 配置 botToken + secretToken，请求带错误 secret → 401
+		// 配置 secretToken，请求带错误 secret → 401
+		// BotToken 留空：handler 从 settingsStore 读 token 即可做 secret 校验，
+		// 空 BotToken 避免 initPhase6Deps 同步调用 Telegram getMe API（CI 网络偶发 3-4s 超时）
 		settings := model.DefaultSettings()
 		settings.Telegram = model.TelegramSettings{
-			BotToken:           "123456789:ABCdefGHIjklMNOpqrsTUVwxyz1234567890",
+			BotToken:           "",
 			ChatID:             "-1001234567890",
 			WebhookSecretToken: "expected-secret-token",
 			Enabled:            true,
@@ -412,7 +414,7 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 		if err := settingsStore.SaveSettings(settings); err != nil {
 			t.Fatalf("SaveSettings: %v", err)
 		}
-		// 重新构造 notifyDeps 以拿到 CommandHandler
+		// 重新构造 notifyDeps（BotToken 为空时 initPhase6Deps 不会触发 Telegram HTTP 请求）
 		nd, _, _, _ := initPhase6Deps(settingsStore, tasksStore, accountStore, lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr, taskRuntime2, execDeps2, nil, nil)
 
 		raw, _ := json.Marshal(map[string]any{"update_id": 1})
