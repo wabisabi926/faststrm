@@ -233,5 +233,3 @@ func TestNew_ValidURL(t *testing.T) {
 	}
 	t.Logf("✅ New() works: embyHost=%s", p.embyHost)
 }
-
-
