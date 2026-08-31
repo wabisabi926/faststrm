@@ -21,24 +21,22 @@ import {
 import { logger } from "@/lib/logger";
 
 interface TaskExecutionHistory {
-  id: string;
+  id: number;
   taskId: string;
-  startTime: number;
-  endTime?: number;
+  account?: string;
+  originPath?: string;
+  targetPath?: string;
   status: "running" | "completed" | "failed" | "cancelled";
-  logs: string[];
+  startedAt: number;
+  endedAt?: number;
+  durationMs?: number;
   summary: {
-    totalFiles: number;
-    downloadedFiles: number;
-    deletedFiles: number;
-    errorMessage?: string;
+    totalFiles?: number;
+    downloadedFiles?: number;
+    deletedFiles?: number;
   };
-  taskInfo: {
-    account: string;
-    originPath: string;
-    targetPath: string;
-    removeExtraFiles: boolean;
-  };
+  error?: string;
+  logs?: string[];
 }
 
 // 状态图标和颜色映射
@@ -105,7 +103,7 @@ export default function TaskHistoryPage() {
     }
   };
 
-  const deleteHistory = async (executionId: string) => {
+  const deleteHistory = async (executionId: number) => {
     try {
       await axiosInstance.delete(`/api/taskHistory?executionId=${executionId}`);
       setHistory(history.filter(h => h.id !== executionId));
@@ -130,7 +128,7 @@ export default function TaskHistoryPage() {
 
   const viewLogs = (execution: TaskExecutionHistory) => {
     // 跳转到日志查看页面
-    window.open(`/log/${execution.taskId}?executionId=${execution.id}`, "_blank");
+    window.open(`/log/${execution.taskId}?executionId=${String(execution.id)}`, "_blank");
   };
 
   if (loading) {
@@ -191,11 +189,11 @@ export default function TaskHistoryPage() {
                         <CardDescription className="flex flex-col sm:flex-row sm:items-center gap-2 sm:space-x-4 mt-1">
                           <span className="flex items-center space-x-1">
                             <User className="h-4 w-4" />
-                            <span>{execution.taskInfo.account}</span>
+                            <span>{execution.account || '-'}</span>
                           </span>
                           <span className="flex items-center space-x-1 min-w-0">
                             <Folder className="h-4 w-4 shrink-0" />
-                            <span className="truncate">{execution.taskInfo.originPath}</span>
+                            <span className="truncate">{execution.originPath || '-'}</span>
                           </span>
                         </CardDescription>
                       </div>
@@ -229,13 +227,13 @@ export default function TaskHistoryPage() {
                       <div className="flex items-center space-x-2 text-sm">
                         <Calendar className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">开始时间:</span>
-                        <span>{formatTime(execution.startTime)}</span>
+                        <span>{formatTime(execution.startedAt)}</span>
                       </div>
-                      {execution.endTime && (
+                      {execution.endedAt && (
                         <div className="flex items-center space-x-2 text-sm">
                           <Clock className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">执行时长:</span>
-                          <span>{getDuration(execution.startTime, execution.endTime)}</span>
+                          <span>{getDuration(execution.startedAt, execution.endedAt)}</span>
                         </div>
                       )}
                     </div>
@@ -244,9 +242,9 @@ export default function TaskHistoryPage() {
                       <div className="flex items-center space-x-2 text-sm">
                         <Download className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">下载文件:</span>
-                        <span>{execution.summary.downloadedFiles}/{execution.summary.totalFiles}</span>
+                        <span>{execution.summary.downloadedFiles ?? 0}/{execution.summary.totalFiles ?? 0}</span>
                       </div>
-                      {execution.taskInfo.removeExtraFiles && (
+                      {(execution.summary.deletedFiles ?? 0) > 0 && (
                         <div className="flex items-center space-x-2 text-sm">
                           <Trash className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">删除文件:</span>
@@ -258,12 +256,12 @@ export default function TaskHistoryPage() {
                     <div className="space-y-2">
                       <div className="text-sm">
                         <span className="font-medium">目标路径:</span>
-                        <span className="ml-2 text-muted-foreground">{execution.taskInfo.targetPath}</span>
+                        <span className="ml-2 text-muted-foreground">{execution.targetPath || '-'}</span>
                       </div>
-                      {execution.summary.errorMessage && (
-                        <div className="text-sm text-red-500">
+                      {execution.error && (
+                        <div className="text-sm text-red-500 break-words">
                           <span className="font-medium">错误信息:</span>
-                          <span className="ml-2">{execution.summary.errorMessage}</span>
+                          <span className="ml-2">{execution.error}</span>
                         </div>
                       )}
                     </div>
