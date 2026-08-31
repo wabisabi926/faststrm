@@ -35,7 +35,7 @@ func TestDeleteStrmFile_NotExist(t *testing.T) {
 func TestDeleteStrmFile_Exist(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "test.strm")
-	if err := os.WriteFile(p, []byte("http://test"), 0644); err != nil {
+	if err := os.WriteFile(p, []byte("http://test"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := DeleteStrmFile(p); err != nil {
@@ -70,7 +70,7 @@ func TestExtractPickcode_Found(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "test.strm")
 	content := "http://127.0.0.1:8090/api/fs/get?account=test&pickcode=SW8R7KcJ3qert5Zm9&file_name=movie.mp4"
-	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ExtractPickcode(p)
@@ -85,7 +85,7 @@ func TestExtractPickcode_Found(t *testing.T) {
 func TestExtractPickcode_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "test.strm")
-	if err := os.WriteFile(p, []byte("http://example.com/movie.mp4"), 0644); err != nil {
+	if err := os.WriteFile(p, []byte("http://example.com/movie.mp4"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ExtractPickcode(p)
