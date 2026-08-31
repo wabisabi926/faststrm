@@ -155,7 +155,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		}
 
 		// 规则引擎
-		dr := strm.DecideRoute(r, explicitMode, routeCfg.ForceProxyUaTokens)
+		dr := strm.DecideRoute(r, explicitMode, routeCfg.ForceProxyUaTokens, fileName)
 		finalDecision := dr.Decision
 		finalReason := dr.Reason
 		var redirectCheckStatus *int
