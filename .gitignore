@@ -66,6 +66,11 @@ tools/
 # scripts/probe_db.go 为临时 SQLite 探查脚本，依赖本地路径
 # 后续新增的 Go 调试脚本请统一放到 tools/ 目录（已被忽略）
 scripts/probe_db.go
+# 飞牛本地打包产物（含交叉编译二进制 + fnpack 工具，不进仓库）
+scripts/fnpack.exe
+FNOS/faststrm-amd64/app/faststrm
+FNOS/faststrm-arm64/app/faststrm
+*.fpk
 
 # ==== Vite / React ====
 frontend/node_modules/
