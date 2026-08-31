@@ -134,6 +134,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		if userAgent == "" {
 			userAgent = opts.Cfg.Settings.UserAgent
 		}
+		logger.S().Infof("[STRM] account=%s pickcode=%s UA=%s mode=%s", accountName, pickcode, userAgent, rawMode)
 
 		routeCfg := strm.StrmRouteConfig(opts.Cfg)
 

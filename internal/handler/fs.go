@@ -85,6 +85,7 @@ func HandleFsGet(opts StrmOptions) http.HandlerFunc {
 		if userAgent == "" {
 			userAgent = opts.Cfg.Settings.UserAgent
 		}
+		logger.S().Infof("[FS/GET] account=%s pickcode=%s UA=%s", accountName, pickcode, userAgent)
 
 		meta, err := strm.ResolveDownloadUrl(r.Context(), opts.Client115, pickcode, accountName, account.Cookie, userAgent)
 		if err != nil {

@@ -89,6 +89,9 @@ func RegisterRoutes(
 
 		// 账号状态
 		{Method: http.MethodGet, Path: "/api/account/status", Handler: corsJWT(handler.GetAccountStatus(accountStore))},
+
+		// STRM 缓存管理
+		{Method: http.MethodPost, Path: "/api/strm/cache/clear", Handler: corsJWT(handler.HandleStrmCacheClear())},
 	}
 	server.AddRoutes(protectedRoutes)
 

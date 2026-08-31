@@ -116,6 +116,31 @@ func (c *simpleLRU[V]) Get(key string) (V, bool) {
 	return entry.value, true
 }
 
+// DeleteBySuffix 删除所有 key 以指定后缀结尾的缓存条目，返回删除数量
+func (c *simpleLRU[V]) DeleteBySuffix(suffix string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	count := 0
+	for key, el := range c.items {
+		if strings.HasSuffix(key, suffix) {
+			c.order.Remove(el)
+			delete(c.items, key)
+			count++
+		}
+	}
+	return count
+}
+
+// Clear 清空全部缓存，返回清除数量
+func (c *simpleLRU[V]) Clear() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.order.Len()
+	c.items = make(map[string]*list.Element)
+	c.order = list.New()
+	return n
+}
+
 func (c *simpleLRU[V]) Set(key string, value V) {
 	exp := time.Now().Add(c.ttl).UnixMilli()
 	c.mu.Lock()
@@ -145,6 +170,24 @@ var (
 	// P0-3 负面缓存：115 API 返回错误时短时间缓存，避免短时间内重复请求导致雪崩
 	urlNegativeCache = newSimpleLRU[error](URLCacheMax, URLNegativeCacheTTL)
 )
+
+// InvalidateUACache 清理指定 UA 对应的所有 CDN 直链缓存（含负面缓存）
+// 缓存 key 格式为 "account:pickcode|ua"，故按 "|ua" 后缀匹配
+func InvalidateUACache(ua string) int {
+	if ua == "" {
+		return 0
+	}
+	suffix := "|" + ua
+	urlCache.DeleteBySuffix(suffix)
+	return urlNegativeCache.DeleteBySuffix(suffix)
+}
+
+// InvalidateAllCache 清空全部 CDN 直链缓存（含负面缓存），返回清除的正缓存数量
+func InvalidateAllCache() int {
+	n := urlCache.Clear()
+	urlNegativeCache.Clear()
+	return n
+}
 
 // P0-3 singleflight：合并并发相同 pickcode 的下载链接查询，
 // 避免多个 goroutine 同时调用 115 download API 造成配额浪费与触发限流。

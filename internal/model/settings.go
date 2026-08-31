@@ -268,7 +268,7 @@ func DefaultSettings() *Settings {
 			OverwriteMode:         "always",   // 默认始终覆盖（与 MoviePilot 默认行为一致）
 		},
 		Strm: StrmSettings{
-			ForceProxyUaTokens:           []string{"Infuse", "VidHub", "SenPlayer", "SenPlayerHD"},
+			ForceProxyUaTokens:           []string{"Infuse", "VidHub", "SenPlayer", "SenPlayerHD", "EmbyServer"},
 			AccountProxyConcurrencyLimit: 8,
 			RedirectCheckTimeoutMs:       5000,
 		},
