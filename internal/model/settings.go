@@ -125,6 +125,9 @@ type EmbySettings struct {
 	RefreshOnCreate bool `json:"refreshOnCreate"` // 创建 STRM 后是否刷库
 	RefreshOnDelete bool `json:"refreshOnDelete"` // 删除 STRM 后是否刷库
 	DebounceSeconds int  `json:"debounceSeconds"` // 刷库防抖秒数，默认 10
+	// Emby 反向代理（PlaybackInfo STRM 强制 DirectPlay）
+	// 设为 0 或负数则不启动
+	ProxyPort int `json:"proxyPort"` // 反代监听端口，默认 0（不启用）
 }
 
 // SyncDeletePathMapping 删除同步路径映射

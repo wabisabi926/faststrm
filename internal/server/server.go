@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -17,6 +18,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
+	"github.com/wabisabi926/faststrm/internal/service/embyproxy"
 	"github.com/wabisabi926/faststrm/internal/service/notify"
 	"github.com/wabisabi926/faststrm/internal/service/runtime"
 	"github.com/wabisabi926/faststrm/internal/service/store"
@@ -266,6 +268,30 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	logger.S().Infof("         data_dir: %s", cfg.Paths.DataDir)
 	logger.S().Infof("       config_dir: %s", cfg.Paths.ConfigDir)
 	logger.S().Infof("   internal_token: %s", maskToken(cfg.Settings.InternalToken))
+
+	// ==================== Emby 反向代理（可选） ====================
+	// 如果用户配置了 Emby.ProxyPort，启动反代 server 拦截 PlaybackInfo 强制 STRM DirectPlay
+	if initSettings != nil && initSettings.Emby.ProxyPort > 0 && initSettings.Emby.URL != "" {
+		embyURL := initSettings.Emby.URL
+		proxyPort := initSettings.Emby.ProxyPort
+		proxy := embyproxy.New(embyURL)
+		proxyHandler := proxy.Handler()
+
+		proxyAddr := fmt.Sprintf("%s:%d", cfg.Server.Host, proxyPort)
+		proxyDisplayAddr := fmt.Sprintf("http://localhost:%d", proxyPort)
+		if cfg.Server.Host != "" && cfg.Server.Host != "0.0.0.0" && cfg.Server.Host != "::" {
+			proxyDisplayAddr = fmt.Sprintf("http://%s:%d", cfg.Server.Host, proxyPort)
+		}
+
+		go func() {
+			logger.S().Infof("[EmbyProxy] 启动中: %s → %s", proxyAddr, embyURL)
+			logger.S().Infof("[EmbyProxy] 请将 Emby 客户端连接到 %s", proxyDisplayAddr)
+			logger.S().Infof("[EmbyProxy] STRM ISO/MKV 自动强制 DirectPlay，绕过 Emby 转码限制")
+			if err := http.ListenAndServe(proxyAddr, proxyHandler); err != nil {
+				logger.S().Warnf("[EmbyProxy] 启动失败 %s: %v", proxyAddr, err)
+			}
+		}()
+	}
 
 	server.Start()
 	return nil

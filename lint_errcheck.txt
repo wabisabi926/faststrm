@@ -1,0 +1,228 @@
+internal\web\spa.go:38:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write(data)
+			       ^
+internal\web\spa.go:46:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write(indexHTML)
+		       ^
+internal\service\client115\client_test.go:562:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`{"data":{"uid":"test123","time":"1000","sign":"sign1","qrcode":""}}`))
+		       ^
+tools\check_db\main.go:28:13: Error return value of `rows.Scan` is not checked (errcheck)
+			rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
+			         ^
+tools\check_db\main.go:50:12: Error return value of `rows.Scan` is not checked (errcheck)
+		rows.Scan(ptrs...)
+		         ^
+internal\service\db\filepath_repo.go:100:19: Error return value of `tx.Rollback` is not checked (errcheck)
+	defer tx.Rollback()
+	                 ^
+internal\service\store\strm_cache_test.go:60:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(cfgDir, 0o755)
+	           ^
+internal\service\store\strm_cache_test.go:64:8: Error return value of `s.Save` is not checked (errcheck)
+	s.Save(&StrmCacheEntry{
+	      ^
+internal\service\store\strm_cache_test.go:71:8: Error return value of `s.Save` is not checked (errcheck)
+	s.Save(&StrmCacheEntry{
+	      ^
+internal\service\store\strm_cache_test.go:93:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(cfgDir, 0o755)
+	           ^
+internal\service\store\strm_cache_test.go:103:8: Error return value of `s.Save` is not checked (errcheck)
+	s.Save(entry1)
+	      ^
+internal\service\store\strm_cache_test.go:112:8: Error return value of `s.Save` is not checked (errcheck)
+	s.Save(entry2)
+	      ^
+internal\service\store\strm_cache_test.go:133:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(cfgDir, 0o755)
+	           ^
+internal\service\store\strm_cache_test.go:137:8: Error return value of `s.Save` is not checked (errcheck)
+	s.Save(&StrmCacheEntry{UUID: "uuid-del", TaskID: "t1"})
+	      ^
+internal\service\store\strm_cache_test.go:142:10: Error return value of `s.Delete` is not checked (errcheck)
+	s.Delete("uuid-del")
+	        ^
+internal\service\store\strm_cache_test.go:156:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(cfgDir, 0o755)
+	           ^
+internal\service\store\strm_cache_test.go:161:9: Error return value of `s.Save` is not checked (errcheck)
+		s.Save(&StrmCacheEntry{
+		      ^
+internal\service\store\strm_cache_test.go:168:9: Error return value of `s.Save` is not checked (errcheck)
+		s.Save(&StrmCacheEntry{
+		      ^
+internal\service\store\strm_cache_test.go:198:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(cfgDir, 0o755)
+	           ^
+internal\service\store\strm_cache_test.go:230:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(cfgDir, 0o755)
+	           ^
+internal\service\store\strm_cache_test.go:237:10: Error return value of `s.Save` is not checked (errcheck)
+			s.Save(&StrmCacheEntry{
+			      ^
+internal\service\store\strm_cache_test.go:280:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(cfgDir, 0o755)
+	           ^
+internal\service\store\strm_cache_test.go:290:8: Error return value of `s.Save` is not checked (errcheck)
+	s.Save(entry)
+	      ^
+internal\service\emby\client_test.go:28:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`[
+		       ^
+internal\service\emby\client_test.go:49:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`[]`))
+		       ^
+internal\service\emby\client_test.go:84:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`[
+		       ^
+internal\service\emby\client_test.go:109:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`[
+		       ^
+internal\service\emby\client_test.go:137:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[
+			       ^
+internal\service\emby\client_test.go:147:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`{
+			       ^
+internal\service\emby\client_test.go:183:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[
+			       ^
+internal\service\emby\client_test.go:205:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`[]`))
+		       ^
+internal\service\emby\client_test.go:226:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[{"Name":"admin","Id":"user-1","Policy":{"EnableAllFolders":true}}]`))
+			       ^
+internal\service\emby\client_test.go:237:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`{
+		       ^
+internal\service\emby\client_test.go:270:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[{"Name":"admin","Id":"user-1","Policy":{"EnableAllFolders":true}}]`))
+			       ^
+internal\service\emby\notifier_cache_test.go:82:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
+			       ^
+internal\service\emby\notifier_cache_test.go:87:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
+		       ^
+internal\service\emby\notifier_cache_test.go:123:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
+			       ^
+internal\service\emby\notifier_cache_test.go:127:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
+		       ^
+internal\service\emby\notifier_cache_test.go:141:18: Error return value of `c1.GetItemDetail` is not checked (errcheck)
+	c1.GetItemDetail(context.Background(), "item-1")
+	                ^
+internal\service\emby\notifier_cache_test.go:149:18: Error return value of `c2.GetItemDetail` is not checked (errcheck)
+	c2.GetItemDetail(context.Background(), "item-1")
+	                ^
+internal\service\emby\notifier_cache_test.go:157:18: Error return value of `c3.GetItemDetail` is not checked (errcheck)
+	c3.GetItemDetail(context.Background(), "item-1")
+	                ^
+internal\service\emby\notifier_cache_test.go:171:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[{"Name":"admin","Id":"user-admin","Policy":{"EnableAllFolders":true}}]`))
+			       ^
+internal\service\emby\notifier_cache_test.go:174:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`{"Id":"item-1","Name":"测试电影","Type":"Movie"}`))
+		       ^
+internal\service\emby\notifier_cache_test.go:184:18: Error return value of `c1.GetItemDetail` is not checked (errcheck)
+	c1.GetItemDetail(context.Background(), "item-1")
+	                ^
+internal\service\emby\notifier_cache_test.go:192:18: Error return value of `c2.GetItemDetail` is not checked (errcheck)
+	c2.GetItemDetail(context.Background(), "item-1")
+	                ^
+internal\service\emby\notifier_cache_test.go:199:18: Error return value of `c3.GetItemDetail` is not checked (errcheck)
+	c3.GetItemDetail(context.Background(), "item-1")
+	                ^
+internal\service\emby\notifier_cache_test.go:212:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
+			       ^
+internal\service\emby\notifier_cache_test.go:215:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`{"Id":"item-1","Name":"电影","Type":"Movie"}`))
+		       ^
+internal\service\emby\notifier_cache_test.go:232:17: Error return value of `c.GetItemDetail` is not checked (errcheck)
+	c.GetItemDetail(context.Background(), "item-1")
+	               ^
+internal\service\emby\notifier_cache_test.go:253:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
+			       ^
+internal\service\emby\notifier_cache_test.go:258:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`{"Id":"item-1","Name":"成功电影","Type":"Movie"}`))
+			       ^
+internal\service\emby\notifier_cache_test.go:271:17: Error return value of `c.GetItemDetail` is not checked (errcheck)
+	c.GetItemDetail(context.Background(), "item-1")
+	               ^
+internal\service\emby\notifier_cache_test.go:281:18: Error return value of `c2.GetItemDetail` is not checked (errcheck)
+	c2.GetItemDetail(context.Background(), "item-2")
+	                ^
+internal\service\emby\notifier_cache_test.go:296:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
+		       ^
+internal\service\emby\notifier_cache_test.go:306:17: Error return value of `c.getEmbyUserID` is not checked (errcheck)
+	c.getEmbyUserID(context.Background())
+	               ^
+internal\service\emby\notifier_cache_test.go:334:11: Error return value of `w.Write` is not checked (errcheck)
+			w.Write([]byte(`[{"Name":"admin","Id":"admin-id","Policy":{"EnableAllFolders":true}}]`))
+			       ^
+internal\service\emby\notifier_cache_test.go:337:10: Error return value of `w.Write` is not checked (errcheck)
+		w.Write([]byte(`{"Id":"item-1","Name":"电影","Type":"Movie"}`))
+		       ^
+internal\service\emby\notifier_cache_test.go:356:19: Error return value of `c.getEmbyUserID` is not checked (errcheck)
+			c.getEmbyUserID(context.Background())
+			               ^
+internal\handler\media_mount.go:60:28: Error return value of `(*encoding/json.Encoder).Encode` is not checked (errcheck)
+		json.NewEncoder(w).Encode(resp)
+		                         ^
+internal\handler\strm_cleanup_test.go:31:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(localPath, 0o755)
+	           ^
+internal\handler\strm_cleanup_test.go:34:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(localPath, "movie1.strm"), []byte("url1"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:35:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(localPath, "movie2.strm"), []byte("url2"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:37:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(localPath, "old_movie.strm"), []byte("url3"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:84:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(localPath, 0o755)
+	           ^
+internal\handler\strm_cleanup_test.go:87:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(localPath, "movie1.strm"), []byte("url1"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:123:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(filepath.Join(localPath, "subdir1"), 0o755)
+	           ^
+internal\handler\strm_cleanup_test.go:126:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(localPath, "subdir1", "nested.strm"), []byte("url"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:189:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(root, "video.mp4"), []byte("test"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:190:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(root, "movie.strm"), []byte("test"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:191:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("test"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:205:13: Error return value of `os.MkdirAll` is not checked (errcheck)
+	os.MkdirAll(localPath, 0o755)
+	           ^
+internal\handler\strm_cleanup_test.go:208:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(localPath, "a.strm"), []byte("a"), 0o644)
+	            ^
+internal\handler\strm_cleanup_test.go:209:14: Error return value of `os.WriteFile` is not checked (errcheck)
+	os.WriteFile(filepath.Join(localPath, "b.strm"), []byte("b"), 0o644)
+	            ^
+cmd\server\tray_windows.go:139:68: Error return value of `(*os/exec.Cmd).Start` is not checked (errcheck)
+	exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	                                                                  ^
+internal\server\swagger.go:24:9: Error return value of `w.Write` is not checked (errcheck)
+	w.Write(swaggerUIHTML)
+	       ^
+internal\server\swagger.go:31:9: Error return value of `w.Write` is not checked (errcheck)
+	w.Write(swaggerJSON)
+	       ^
