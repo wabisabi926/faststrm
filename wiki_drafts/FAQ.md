@@ -15,6 +15,24 @@ docker-compose up -d
 ```
 配置文件向后兼容，无需手动迁移。
 
+### Q: 从 v1.2.2 升级到 v1.2.3 需要注意什么？
+
+A: v1.2.3 有一个**架构变更**：统一 STRM 端点、废弃 `enable302` 开关。但升级**无需手动操作**，完全向后兼容：
+
+- ✅ 旧 STRM 文件（引用 `/api/fs/get`）自动转发兼容，播放不受影响
+- ✅ `settings.json` 里残留的 `enable302` 字段会被忽略，不会报错
+- ✅ 任务配置里的 `enable302` 同样忽略
+
+**可选清理**（不影响运行）：
+```bash
+# Linux / Mac
+bash scripts/rebuild_strm.sh -w /path/to/your/strm/
+
+# Windows PowerShell
+.\scripts\rebuild_strm.ps1 -w -DirPath "D:\Media\strm"
+```
+跑一遍后，所有 STRM 的 `/api/fs/get` 会被批量替换成 `/api/strm`，清理冗余。默认干跑预览，加 `-w` 才真写。
+
 ### Q: 如何修改/重置登录密码？
 
 A: 登录后进入「设置」→ 修改密码。或直接编辑 `config/config.json`：
@@ -43,9 +61,9 @@ docker-compose up -d
 
 A: 排查步骤：
 1. 检查 `strmPrefix` 是否正确（能从播放器访问 faststrm）
-2. 检查 115 账号 Cookie 是否过期（账号管理页面有状态提示）
+2. 检查 115 账号 Cookie 是否过期（账号管理页面有状态提示，v1.2.3+ 新增 **Deep Check 真实 API 验证**，不再只看格式）
 3. 查看 faststrm 日志是否有 `[STRM]` 相关错误
-4. 如果是 302 模式，确认播放器支持 302 重定向
+4. v1.2.3 起所有 STRM 统一走 `/api/strm`，智能路由自动决策 redirect 或 proxy
 
 ### Q: Cookie 经常过期怎么办？
 
@@ -138,13 +156,27 @@ A: faststrm 已对 Infuse 强制走 proxy 模式。如果仍卡死：
 2. 检查部署设备上行带宽是否足够
 3. 尝试在私网用 `?mode=proxy` 强制指定
 
-### Q: 想让所有请求都走 302（不中转）？
+### Q: 想让某些文件不走代理、直连 115 CDN？
 
-A: 当前默认就是 302。force-proxy UA 列表会强制 proxy，如需自定义可在「设置」页面 → STRM 路由策略 → `forceProxyUaTokens` 中调整（对应 `settings.json → strm.forceProxyUaTokens`），修改实时生效无需重启。
+A: 默认就是直连 302 重定向。只有以下情况才走代理（v1.2.3 智能路由自动决策）：
+- 文件扩展名是 ISO / BDMV / M2TS / VOB / TS（需要 Range seek）
+- 播放器 UA 在 `forceProxyUaTokens` 列表中（Infuse / VidHub / SenPlayer 等 seek 兼容性差的客户端）
+
+如需调整，在「设置」页面 → STRM 路由策略 → 修改 `forceProxyUaTokens`。修改实时生效无需重启。
 
 ---
 
 ## Emby 集成
+
+### Q: Emby for Kodi 播放 ISO 原盘报「没有兼容的流」或 Libdvd 无法 seek？
+
+A: 这是 Emby for Kodi 的 PlaybackInfo 强制转码导致的。解决方案：
+
+1. 进入「Emby 通知」页面 → 「Emby 反向代理」卡片
+2. **勾选启用**，代理端口默认 `8097`
+3. 在 Emby for Kodi 中，服务器地址改为 `http://你的faststrm地址:8097`（原生 Emby 端口 8096 保持不变）
+
+embyproxy 会拦截 PlaybackInfo API，识别 STRM 源文件并强制 DirectPlay，ISO 原盘就能正常用 Libdvd 菜单播放了。详见 [Emby 集成 - 反向代理](Emby集成#emby-反向代理v118-推荐开启)。
 
 ### Q: Emby 媒体库不自动刷新？
 
