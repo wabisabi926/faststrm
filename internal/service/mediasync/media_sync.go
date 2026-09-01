@@ -12,7 +12,7 @@ import (
 type MediaMountSourceTag string
 
 const (
-	SourceGlobal302   MediaMountSourceTag = "global_302"
+	SourceGlobal      MediaMountSourceTag = "global"
 	SourceTask        MediaMountSourceTag = "task"
 	SourceLifeMonitor MediaMountSourceTag = "life_monitor"
 )
@@ -96,8 +96,8 @@ func IsValidHTTPPrefix(p string) bool {
 
 func SourceTagLabel(s MediaMountSourceTag) string {
 	switch s {
-	case SourceGlobal302:
-		return "全局 302"
+	case SourceGlobal:
+		return "全局默认"
 	case SourceTask:
 		return "任务"
 	case SourceLifeMonitor:
@@ -176,7 +176,7 @@ func ComputeMediaMountEntries(input ComputeInput) ComputeResult {
 				continue
 			}
 			resolved := resolveStrmSettings(acc.Name, nil, settings)
-			collect(&entries, &resultSet, resolved.StrmPrefix, SourceGlobal302, acc.Name, "")
+			collect(&entries, &resultSet, resolved.StrmPrefix, SourceGlobal, acc.Name, "")
 		}
 	}
 

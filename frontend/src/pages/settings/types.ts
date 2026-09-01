@@ -33,7 +33,7 @@ export type Settings = {
   strmPrefix?: string;
   enablePathEncoding?: boolean;
   removeExtraFiles?: boolean;
-  // STRM 路由策略配置（302 模式生效）
+  // STRM 智能路由策略配置（v1.2.3+ 始终生效，后端自动决策）
   strm?: {
     forceProxyUaTokens?: string[];
     accountProxyConcurrencyLimit?: number;
