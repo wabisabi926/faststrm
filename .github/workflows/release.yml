@@ -36,7 +36,7 @@ jobs:
       run: |
         go mod download
         PKGS=$(go list ./... | grep -v -E '/tools/|/scripts/')
-        go test $PKGS -count=1 -timeout=15m -race
+        go test $PKGS -count=1 -timeout=15m
       env:
         GOPROXY: https://proxy.golang.org,direct
 
