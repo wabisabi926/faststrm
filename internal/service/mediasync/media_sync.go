@@ -43,7 +43,6 @@ type TaskLike struct {
 	ID                 string
 	Account            string
 	StrmPrefix         string
-	Enable302          bool
 	EnablePathEncoding bool
 }
 
@@ -111,7 +110,6 @@ func SourceTagLabel(s MediaMountSourceTag) string {
 type ResolvedStrmSettings struct {
 	StrmPrefix         string
 	EnablePathEncoding bool
-	Enable302          bool
 }
 
 func resolveStrmSettings(account string, task *TaskLike, settings *model.Settings) ResolvedStrmSettings {
@@ -119,7 +117,6 @@ func resolveStrmSettings(account string, task *TaskLike, settings *model.Setting
 
 	strmPrefix := g.StrmPrefix
 	enablePathEncoding := g.EnablePathEncoding
-	enable302 := g.Enable302
 
 	if task != nil {
 		if task.StrmPrefix != "" {
@@ -130,22 +127,15 @@ func resolveStrmSettings(account string, task *TaskLike, settings *model.Setting
 		}
 	}
 
-	if enable302 {
-		trimmed := NormalizePrefix(strmPrefix)
-		if !strings.HasSuffix(trimmed, "/api/strm") {
-			strmPrefix = trimmed + "/api/strm"
-		}
-	} else if account != "" {
-		trimmed := NormalizePrefix(strmPrefix)
-		if !strings.HasSuffix(trimmed, "/"+account) {
-			strmPrefix = trimmed + "/" + account
-		}
+	// 统一走 /api/strm（enable302 已废弃）
+	trimmed := NormalizePrefix(strmPrefix)
+	if !strings.HasSuffix(trimmed, "/api/strm") {
+		strmPrefix = trimmed + "/api/strm"
 	}
 
 	return ResolvedStrmSettings{
 		StrmPrefix:         strmPrefix,
 		EnablePathEncoding: enablePathEncoding,
-		Enable302:          enable302,
 	}
 }
 
@@ -180,7 +170,7 @@ func ComputeMediaMountEntries(input ComputeInput) ComputeResult {
 	entries := []MediaMountEntry{}
 	resultSet := map[string]bool{}
 
-	if settings.Enable302 && settings.StrmPrefix != "" {
+	if settings.StrmPrefix != "" {
 		for _, acc := range input.Accounts {
 			if acc.Name == "" {
 				continue
@@ -202,7 +192,6 @@ func ComputeMediaMountEntries(input ComputeInput) ComputeResult {
 		lifeOverride := &model.Settings{
 			StrmPrefix:         settings.StrmPrefix,
 			EnablePathEncoding: settings.LifeMonitor.EnablePathEncoding,
-			Enable302:          settings.Enable302,
 		}
 		for _, accName := range settings.LifeMonitor.Accounts {
 			if accName == "" {

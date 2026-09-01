@@ -4,6 +4,7 @@
 // 详见 v1.1.1 改进任务清单 T5。
 
 import type { ColumnDef } from "@tanstack/react-table";
+import type { MutableRefObject } from "react";
 import { Badge } from "@/components/ui/badge";
 import { type Task, ACCOUNT_STYLES } from "./types";
 import type { AccountBrief, TaskDisplayStatus } from "./useTasks";
@@ -14,7 +15,7 @@ import { ActionsCell } from "./ActionsCell";
 
 export interface TaskColumnsCallbacks {
   startingTasks: Set<string>;
-  nowTs: number;
+  nowTsRef: MutableRefObject<number>;
   accounts: AccountBrief[];
   accountsLoading: boolean;
   isAccountBusy: (accountName: string) => boolean;
@@ -31,7 +32,7 @@ export interface TaskColumnsCallbacks {
 export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Task>[] {
   const {
     startingTasks,
-    nowTs,
+    nowTsRef,
     accounts,
     accountsLoading,
     isAccountBusy,
@@ -117,7 +118,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
         return (
           <StatusCell
             task={task}
-            nowTs={nowTs}
+            nowTs={nowTsRef.current}
             getTaskDisplayStatus={getTaskDisplayStatus}
           />
         );

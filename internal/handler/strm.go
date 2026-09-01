@@ -19,6 +19,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 // ==================== STRM Proxy 连接池 ====================
@@ -505,4 +506,43 @@ func totalSizeFromCdn(cdnURL, cookie, userAgent string) int64 {
 		return 0
 	}
 	return n
+}
+
+// ===== 原 fs.go 的辅助函数（两个端点合并后统一放 strm.go） =====
+
+// encodeRedirectURL 对 302 重定向 URL 进行编码：
+// 只编码非 ASCII 字符和空格，保留 URL 保留字符和已有的百分号转义。
+func encodeRedirectURL(rawURL string) string {
+	var sb []byte
+	for i := 0; i < len(rawURL); i++ {
+		b := rawURL[i]
+		switch {
+		case b == ' ':
+			sb = append(sb, '%', '2', '0')
+		case b < 0x80:
+			sb = append(sb, b)
+		default:
+			sb = append(sb, '%')
+			sb = append(sb, hexUpper(b>>4))
+			sb = append(sb, hexUpper(b&0x0f))
+		}
+	}
+	return string(sb)
+}
+
+// hexUpper 将 0-15 转为大写十六进制字符
+func hexUpper(n byte) byte {
+	if n < 10 {
+		return '0' + n
+	}
+	return 'A' + n - 10
+}
+
+func itoa(n int64) string {
+	return strconv.FormatInt(n, 10)
+}
+
+// writeJSON 辅助：统一写 JSON（导出给其他 handler 用）
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	httpx.WriteJson(w, status, v)
 }

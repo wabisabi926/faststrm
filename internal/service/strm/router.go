@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -143,7 +145,12 @@ func (c *simpleLRU[V]) Clear() int {
 }
 
 func (c *simpleLRU[V]) Set(key string, value V) {
-	exp := time.Now().Add(c.ttl).UnixMilli()
+	c.SetWithExpires(key, value, time.Now().Add(c.ttl))
+}
+
+// SetWithExpires 支持调用方传入精确的过期时间（对齐 MoviePilot 解析 CDN URL t 参数）
+func (c *simpleLRU[V]) SetWithExpires(key string, value V, expires time.Time) {
+	exp := expires.UnixMilli()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if el, ok := c.items[key]; ok {
@@ -555,8 +562,38 @@ func ResolveDownloadUrl(
 		urlNegativeCache.Set(cacheKey, err)
 		return nil, err
 	}
-	urlCache.Set(cacheKey, meta)
+	// 对齐 MoviePilot r302cacher：解析 CDN URL 的 t 参数计算精确过期时间
+	// t = 115 CDN 返回的 unix 秒级时间戳（URL 真正过期时间）
+	// 提前 5min 过期（t - 300s），避免客户端拿到已过期的 URL
+	cacheExpires := computeCdnURLCacheExpires(meta.URL, URLCacheTTL)
+	urlCache.SetWithExpires(cacheKey, meta, cacheExpires)
 	return meta, nil
+}
+
+// computeCdnURLCacheExpires 从 CDN URL 解析 t 参数，计算缓存过期时间
+// 115 CDN URL 格式: http://cdn-xxx.115.com/...?t=1757769600&...
+// t 是 unix 秒级时间戳（URL 真实过期时间），提前 5min 返回
+// 解析失败或 t 已过期时 fallback defaultTTL
+func computeCdnURLCacheExpires(cdnURL string, defaultTTL time.Duration) time.Time {
+	parsed, err := url.Parse(cdnURL)
+	if err != nil {
+		return time.Now().Add(defaultTTL)
+	}
+	tStr := parsed.Query().Get("t")
+	if tStr == "" {
+		return time.Now().Add(defaultTTL)
+	}
+	t, err := strconv.ParseInt(tStr, 10, 64)
+	if err != nil {
+		return time.Now().Add(defaultTTL)
+	}
+	// 提前 5min 过期，避免 URL 在缓存内到期
+	expires := time.Unix(t, 0).Add(-5 * time.Minute)
+	// 如果算出来已经过期了（t 本身太小），fallback 默认 TTL
+	if time.Now().After(expires) {
+		return time.Now().Add(defaultTTL)
+	}
+	return expires
 }
 
 // StrmRouteConfig 从 config 中取 STRM 路由策略（兜底默认）

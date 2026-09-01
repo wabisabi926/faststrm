@@ -126,7 +126,6 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 		def.StrmPrefix = "http://custom:8090/strm"
 		customExt := []string{"mp4", ".mkv", ".MOV"} // 故意含 . 前缀与大小写，且不含 iso
 		def.StrmExtensions = customExt
-		def.Enable302 = true
 		def.EnablePathEncoding = true
 		if err := ss.SaveSettings(def); err != nil {
 			t.Fatalf("SaveSettings err: %v", err)
@@ -139,9 +138,6 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 		}
 		if back.StrmPrefix != "http://custom:8090/strm" {
 			t.Errorf("StrmPrefix mismatch: %q", back.StrmPrefix)
-		}
-		if !back.Enable302 {
-			t.Errorf("Enable302 should be true")
 		}
 		if !back.EnablePathEncoding {
 			t.Errorf("EnablePathEncoding should be true")
@@ -168,9 +164,9 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("restart ReadSettings err: %v", err)
 		}
-		if back2.StrmPrefix != "http://custom:8090/strm" || !back2.Enable302 || !back2.EnablePathEncoding {
-			t.Errorf("restart settings not persisted: StrmPrefix=%q Enable302=%v EnablePathEncoding=%v",
-				back2.StrmPrefix, back2.Enable302, back2.EnablePathEncoding)
+		if back2.StrmPrefix != "http://custom:8090/strm" || !back2.EnablePathEncoding {
+			t.Errorf("restart settings not persisted: StrmPrefix=%q EnablePathEncoding=%v",
+				back2.StrmPrefix, back2.EnablePathEncoding)
 		}
 	})
 

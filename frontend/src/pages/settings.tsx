@@ -283,7 +283,7 @@ export default function SettingsPage() {
 
       const saveResp = await axiosInstance.post("/api/settings", saveData);
       setData(saveData);
-      // 保存后自动刷新试运行视图（因为全局 strmPrefix/enable302/任务/生活事件 都可能影响）
+      // 保存后自动刷新试运行视图（因为全局 strmPrefix/任务/生活事件 都可能影响）
       await fetchMountDryRun();
       const syncInfo = (saveResp.data as { mediaMountSync?: { changed?: boolean; nginx?: { attempted?: boolean; ok?: boolean; message?: string } } } | undefined)?.mediaMountSync;
       const syncSummaries: string[] = [];

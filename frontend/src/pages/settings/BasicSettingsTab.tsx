@@ -121,23 +121,11 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             placeholder="http://服务器IP:端口 (如 http://192.168.1.100:8090)"
           />
           <p className="text-xs text-muted-foreground">
-            STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。系统会自动追加对应路径（302 模式 <code>/api/fs/get</code>，其他模式 <code>/api/strm</code>），无需手动添加。
+            STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。系统会自动追加 <code>/api/strm</code>，无需手动添加。
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="global-enable-302"
-              checked={!!data.enable302}
-              onCheckedChange={(checked) =>
-                setData({ ...data, enable302: checked === true })
-              }
-            />
-            <label htmlFor="global-enable-302" className="text-sm cursor-pointer leading-tight">
-              302 重定向<span className="text-xs text-muted-foreground">（直链下载，不走本机代理）</span>
-            </label>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
           <div className="flex items-center gap-2">
             <Checkbox
               id="global-enable-path-encoding"
@@ -164,19 +152,18 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </div>
         </div>
 
-        {/* STRM 路由策略配置（302 模式生效） */}
-        {data.enable302 && (
-          <div className="space-y-4 pt-4 border-t">
-            <div className="flex items-center gap-2">
-              <Settings className="w-4 h-4 text-muted-foreground" />
-              <h3 className="text-sm font-medium">STRM 路由策略</h3>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              302 模式下生效。默认 redirect（不走本机带宽），但以下两种情况自动强制走 proxy：
-              <span className="ml-1">
-                ① UA 匹配下方标识 &nbsp; ② <b>.iso / .bdmv / .m2ts / .ts / .vob</b> 等需要精确 seek 的原盘格式
-              </span>
-            </p>
+        {/* STRM 路由策略配置（始终生效，后端智能路由自动决定 proxy/redirect） */}
+        <div className="space-y-4 pt-4 border-t">
+          <div className="flex items-center gap-2">
+            <Settings className="w-4 h-4 text-muted-foreground" />
+            <h3 className="text-sm font-medium">STRM 路由策略</h3>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            后端智能路由自动决策：默认 redirect（不走本机带宽），但以下两种情况自动强制走 proxy：
+            <span className="ml-1">
+              ① UA 匹配下方标识 &nbsp; ② <b>.iso / .bdmv / .m2ts / .ts / .vob</b> 等需要精确 seek 的原盘格式
+            </span>
+          </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="space-y-3">
                 <Label>强制代理 UA 标识</Label>
@@ -251,7 +238,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               </p>
             </div>
           </div>
-        )}
       </section>
 
       {/* 下载限流配置 */}

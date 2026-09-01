@@ -192,7 +192,7 @@ func TestLastSeg(t *testing.T) {
 
 func TestFillUpsertFromBody(t *testing.T) {
 	t.Run("form values", func(t *testing.T) {
-		body := "name=test&account=myacc&sourcePath=/src&targetPath=/dst&strmPrefix=/prefix&removeExtraFiles=on&enablePathEncoding=true&enable302=yes&scheduleMode=daily&scheduleValue=09:00&enabled=on"
+		body := "name=test&account=myacc&sourcePath=/src&targetPath=/dst&strmPrefix=/prefix&removeExtraFiles=on&enablePathEncoding=true&scheduleMode=daily&scheduleValue=09:00&enabled=on"
 		req, _ := http.NewRequest("POST", "/", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -220,9 +220,6 @@ func TestFillUpsertFromBody(t *testing.T) {
 		}
 		if u.EnableEnc != "true" {
 			t.Fatalf("EnableEnc: got %q, want %q", u.EnableEnc, "true")
-		}
-		if u.Enable302 != "yes" {
-			t.Fatalf("Enable302: got %q, want %q", u.Enable302, "yes")
 		}
 		if u.ScheduleMode != "daily" {
 			t.Fatalf("ScheduleMode: got %q, want %q", u.ScheduleMode, "daily")

@@ -2,7 +2,7 @@
 // 拆分自原 task/index.tsx（910 行 → 此文件仅负责 layout 与状态装配）。
 // 详见 v1.1.1 改进任务清单 T5。
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { DataTable } from "@/components/data-table";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -36,12 +36,17 @@ export default function Home() {
     clearDirectory,
   } = useTasks();
 
+  // nowTs 每秒变化，用 ref 包装避免触发 columns 重建导致表格重渲染、Dialog 状态丢失
+  const nowTsRef = useRef(nowTs);
+  nowTsRef.current = nowTs;
+
   // 桌面端 DataTable 列定义（useMemo 避免每次渲染重建）
+  // nowTs 变化不触发 columns 重建（通过 ref 传递），避免表格重挂载 → Dialog 闪退
   const columns = useMemo(
     () =>
       buildTaskColumns({
         startingTasks,
-        nowTs,
+        nowTsRef,
         accounts,
         accountsLoading,
         isAccountBusy,
@@ -54,9 +59,8 @@ export default function Home() {
         clearDirectory,
         onDeleteTask: (task: Task) => setDeleteDialogOpen(task.id),
       }),
-    // 依赖项中的函数引用由 useTasks 返回，稳定；nowTs 每秒变化，会让 columns 重建一次（可接受）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [nowTs, startingTasks, accounts, accountsLoading]
+    [startingTasks, accounts, accountsLoading]
   );
 
   // 加载中骨架

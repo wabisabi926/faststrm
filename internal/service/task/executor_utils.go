@@ -26,7 +26,6 @@ import (
 type resolvedStrm struct {
 	StrmPrefix         string
 	EnablePathEncoding bool
-	Enable302          bool
 	StrmExtensions     map[string]struct{}
 	DownloadExtensions map[string]struct{}
 	EnableTokenSigning bool   // T9: 是否启用 URL 签名
@@ -76,14 +75,9 @@ func resolveStrmSettings(task *Task, s *model.Settings, baseURL, publicBaseURL s
 		r.EnablePathEncoding = true
 	}
 
-	// enable302
-	r.Enable302 = s.Enable302
-	if task.Enable302 {
-		r.Enable302 = true
-		// T9: STRM token 签名开关 + secret（从 settings.Strm 继承）
-		r.EnableTokenSigning = s.Strm.EnableTokenSigning
-		r.TokenSecret = s.Strm.TokenSecret
-	}
+	// STRM token 签名开关 + secret（从 settings.Strm 继承）
+	r.EnableTokenSigning = s.Strm.EnableTokenSigning
+	r.TokenSecret = s.Strm.TokenSecret
 
 	return r
 }
@@ -206,16 +200,10 @@ func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...st
 	}
 	var u string
 	prefix := strings.TrimRight(r.StrmPrefix, "/")
-	if r.Enable302 {
-		u = fmt.Sprintf("%s/api/fs/get?account=%s&pickcode=%s", prefix, urlPathEncode(task.Account), f.PickCode)
-		if f.Name != "" {
-			u += "&file_name=" + urlPathEncode(f.Name)
-		}
-	} else {
-		u = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, urlPathEncode(task.Account), f.PickCode)
-		if f.Name != "" {
-			u += "&file_name=" + urlPathEncode(f.Name)
-		}
+	// 统一硬编码 /api/strm（带 token 校验 + 智能路由 + proxy 模式）
+	u = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, urlPathEncode(task.Account), f.PickCode)
+	if f.Name != "" {
+		u += "&file_name=" + urlPathEncode(f.Name)
 	}
 	return signIt(u) + "\n", nil
 }

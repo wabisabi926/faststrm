@@ -48,7 +48,6 @@ func TestResolveStrmSettings_TaskOverride(t *testing.T) {
 		Account:            "acc2",
 		StrmPrefix:         "https://public.example.com",
 		EnablePathEncoding: true,
-		Enable302:          true,
 	}
 	s := &model.Settings{}
 	r := resolveStrmSettings(task, s, "", "")
@@ -56,14 +55,11 @@ func TestResolveStrmSettings_TaskOverride(t *testing.T) {
 	if !strings.HasPrefix(r.StrmPrefix, "https://public.example.com") {
 		t.Fatalf("expect public prefix, got: %s", r.StrmPrefix)
 	}
-	if !r.Enable302 {
-		t.Fatal("Enable302 should be overridden to true")
-	}
 	if !r.EnablePathEncoding {
 		t.Fatal("EnablePathEncoding should be overridden to true")
 	}
 
-	// Verify buildStrmContent (302 mode) produces correct URL with account + /api/fs/get
+	// Verify buildStrmContent produces correct URL with account + /api/strm
 	f := &fileItem{Name: "test.mkv", PickCode: "ABCDEFGHIJ7654321"} // valid 17-char alphanumeric
 	out, err := buildStrmContent(task, f, r)
 	if err != nil {
@@ -72,8 +68,8 @@ func TestResolveStrmSettings_TaskOverride(t *testing.T) {
 	if !strings.Contains(out, "account=acc2") {
 		t.Fatalf("buildStrmContent should contain account param, got: %s", out)
 	}
-	if !strings.Contains(out, "/api/fs/get") {
-		t.Fatalf("302 mode should use /api/fs/get, got: %s", out)
+	if !strings.Contains(out, "/api/strm") {
+		t.Fatalf("unified mode should use /api/strm, got: %s", out)
 	}
 	if !strings.Contains(out, "pickcode=ABCDEFGHIJ7654321") {
 		t.Fatalf("buildStrmContent should contain pickcode param, got: %s", out)
@@ -144,19 +140,18 @@ func TestUrlPathEncode(t *testing.T) {
 	}
 }
 
-func TestBuildStrmContent_302Mode(t *testing.T) {
+func TestBuildStrmContent_UnifiedStrm(t *testing.T) {
 	task := &Task{Account: "acc1"}
 	f := &fileItem{Name: "movie.mkv", PickCode: "1q2w3e4r5t6y7u8i9"} // valid 17-char alphanumeric
 	r := resolvedStrm{
 		StrmPrefix: "http://x:8090?a=1",
-		Enable302:  true,
 	}
 	out, err := buildStrmContent(task, f, r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "/api/fs/get") {
-		t.Fatalf("302 mode expects /api/fs/get, got: %s", out)
+	if !strings.Contains(out, "/api/strm") {
+		t.Fatalf("unified mode expects /api/strm, got: %s", out)
 	}
 	if !strings.Contains(out, "pickcode=1q2w3e4r5t6y7u8i9") {
 		t.Fatalf("expect pickcode: %s", out)
@@ -174,7 +169,6 @@ func TestBuildStrmContent_DefaultMode(t *testing.T) {
 	f := &fileItem{Name: "movie.mkv", PickCode: "aS9dF8gH7jK6lLk3x"} // valid 17-char alphanumeric
 	r := resolvedStrm{
 		StrmPrefix: "http://x:8090",
-		Enable302:  false,
 	}
 	out, err := buildStrmContent(task, f, r)
 	if err != nil {

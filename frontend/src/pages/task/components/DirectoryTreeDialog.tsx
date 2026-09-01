@@ -14,10 +14,10 @@ import type { DirectoryNodeApi } from "@/types/api";
 
 interface TreeNode {
   name: string;
-  id: number;
+  id: string;
   isDir: boolean;
-  cid?: number;
-  fid?: number;
+  cid?: string;
+  fid?: string;
   path?: string;
   hasChildren?: boolean;
   children?: TreeNode[];
@@ -38,10 +38,10 @@ export function DirectoryTreeDialog({
 }: DirectoryTreeDialogProps) {
   const [tree, setTree] = React.useState<TreeNode[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const [expandedNodes, setExpandedNodes] = React.useState<Set<number>>(
+  const [expandedNodes, setExpandedNodes] = React.useState<Set<string>>(
     new Set()
   );
-  const [loadingNodes, setLoadingNodes] = React.useState<Set<number>>(
+  const [loadingNodes, setLoadingNodes] = React.useState<Set<string>>(
     new Set()
   );
   const [selectedPath, setSelectedPath] = React.useState<string>("");
@@ -95,10 +95,16 @@ export function DirectoryTreeDialog({
       if (node.children === undefined) {
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
-          const nodeCid = node.cid !== undefined ? String(node.cid) : "0";
-          const response = await axiosInstance.get("/api/directory/remote/list", {
-            params: { account, cid: nodeCid },
-          });
+          // 优先用 cid 直接导航；如果没有有效 cid，用 path 让后端转 FsDirGetID
+          const params: Record<string, string | number> = { account };
+          if (node.cid && node.cid !== "" && node.cid !== "0") {
+            params.cid = node.cid;
+          } else {
+            // path 需要以 / 开头，后端才会调 FsDirGetID
+            const dirPath = currentPath.startsWith("/") ? currentPath : "/" + currentPath;
+            params.path = dirPath;
+          }
+          const response = await axiosInstance.get("/api/directory/remote/list", { params });
 
           if (response.data.code === 200) {
             const children: TreeNode[] = (response.data.data || []).map((child: DirectoryNodeApi) => ({
@@ -136,7 +142,7 @@ export function DirectoryTreeDialog({
 
   const updateTreeNode = (
     nodes: TreeNode[],
-    targetId: number,
+    targetId: string,
     updatedNode: TreeNode
   ): TreeNode[] => {
     return nodes.map((node) => {

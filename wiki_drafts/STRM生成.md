@@ -1,4 +1,4 @@
-﻿# 功能详解 - STRM 生成
+# 功能详解 - STRM 生成
 
 ## 概述
 
@@ -59,20 +59,13 @@ STRM:  /电影/2024/星际穿越.iso.strm
 
 通过任务级「STRM 文件名模板」覆盖，或全局配置 `settings.json → strm.strmFilenameTemplate`。
 
-**302 模式**（推荐，`enable302: true`）：
-- `strmPrefix = http://服务器:8090/api/strm`
+**v1.2.3+ 统一 STRM 模式**：
+- `strmPrefix = http://服务器:8090`（不含 `/api/strm`，前端自动追加）
 - STRM 内容：`http://服务器:8090/api/strm?account=xxx&pickcode=xxx&file_name=xxx`
-- 播放时 faststrm 接收请求 → 走[路由策略](STRM-路由策略)决策
-- 优点：可在路由层做 force-proxy、并发限流、可达性预检
-- **依赖 pickcode**：302 模式必须有 `pickcode` 才能生成有效 STRM
+- 播放时 faststrm 接收请求 → 走[智能路由策略](STRM-路由策略)决策（ISO 自动 proxy，mkv/mp4 默认 redirect）
+- **依赖 pickcode**：必须有 `pickcode` 才能生成有效 STRM
 
-**直链模式**（`enable302: false`）：
-- `strmPrefix = http://OpenList地址`
-- STRM 内容：`http://OpenList/d/115/电影/xxx.mkv`
-- 播放时播放器直连 OpenList，faststrm 不参与
-- 优点：不依赖 faststrm 在线
-- 缺点：无路由策略、无 force-proxy
-- **不依赖 pickcode**：直接拼接路径生成
+> **v1.2.3 架构变更**：旧版 `enable302=false` 的 OpenList 直链模式已废弃（不再生成非 query URL）。所有 STRM 统一经过 faststrm 路由层，获得 force-proxy、并发限流、可达性预检等能力。
 
 ### 路径映射
 
@@ -151,12 +144,12 @@ TG 通知
 
 ### 兜底保护
 
-当 `enable302=true` 但 `pickcode` 缺失时：
+当 `pickcode` 缺失时：
 
 1. `generateStrmContent` 返回空字符串 + `console.warn` 警告
 2. 调用方（`enqueueForAccount` / `strmCleanup`）跳过写入
 3. `syncStrmText` 防御性检查，拒绝写入空内容
-4. 日志中可看到：`[STRM] enable302=true 但 pickcode 缺失，跳过生成`
+4. 日志中可看到：`[STRM] pickcode 缺失，跳过生成`
 
 ## STRM 文件格式
 

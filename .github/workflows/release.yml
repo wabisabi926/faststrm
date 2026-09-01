@@ -11,8 +11,62 @@ env:
   FNPACK_URL: https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64
 
 jobs:
+  # ---- Job -1: CI 前置校验（tag release 必须先过测试/lint/build）----
+  ci-verify:
+    name: CI Verify (Go Test + Lint + Build)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25'
+        cache: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: 20
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Go tests
+      run: |
+        go mod download
+        PKGS=$(go list ./... | grep -v -E '/tools/|/scripts/')
+        go test $PKGS -count=1 -timeout=15m -race
+      env:
+        GOPROXY: https://proxy.golang.org,direct
+
+    - name: golangci-lint
+      run: |
+        go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+        golangci-lint run --timeout=5m --config .golangci.yml ./...
+      env:
+        GOPROXY: https://proxy.golang.org,direct
+
+    - name: Frontend build
+      run: |
+        cd frontend
+        npm ci
+        npm run build
+      env:
+        NODE_OPTIONS: --max-old-space-size=4096
+
+    - name: Go build (cross-platform)
+      run: |
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o faststrm-linux ./cmd/server/
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o faststrm-linux-arm64 ./cmd/server/
+        CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o faststrm-windows.exe ./cmd/server/
+        echo "All platforms build OK"
+      env:
+        GOPROXY: https://proxy.golang.org,direct
+
   # ---- Job 0: 提取更新日志作为 Release Notes ----
   release-notes:
+    needs: ci-verify
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
@@ -69,6 +123,7 @@ jobs:
 
   # ---- Job 1: Docker 镜像构建 + 推送到 Docker Hub ----
   docker-release:
+    needs: ci-verify
     runs-on: ubuntu-latest
     permissions:
       contents: write

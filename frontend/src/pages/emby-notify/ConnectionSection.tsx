@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RefreshCw, Server } from "lucide-react";
+import { useState } from "react";
 import type { EmbySettings } from "./types";
 
 export interface ConnectionSectionProps {
@@ -23,6 +24,9 @@ export function ConnectionSection({
   onSave,
   onTest,
 }: ConnectionSectionProps) {
+  const [proxyEnabled, setProxyEnabled] = useState(
+    (settings.proxyPort ?? 0) > 0
+  );
   return (
     <section className="border rounded-md p-3 sm:p-5 space-y-5">
       <div className="flex items-center gap-2">
@@ -58,6 +62,58 @@ export function ConnectionSection({
             </p>
           </div>
         </div>
+
+        {/* Emby 反向代理（PlaybackInfo 拦截） */}
+        <div className="border-t pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="proxyToggle" className="text-sm font-medium">
+                Emby 反向代理
+              </Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                拦截 PlaybackInfo，强制 STRM 直接播放（ISO 原盘必须启用）
+              </p>
+            </div>
+            <input
+              id="proxyToggle"
+              type="checkbox"
+              className="h-4 w-4"
+              checked={proxyEnabled}
+              onChange={(e) => {
+                setProxyEnabled(e.target.checked);
+                if (!e.target.checked) {
+                  updateSetting("proxyPort", 0);
+                } else if (!settings.proxyPort) {
+                  updateSetting("proxyPort", 8097);
+                }
+              }}
+            />
+          </div>
+          {proxyEnabled && (
+            <div className="space-y-2">
+              <Label htmlFor="embyProxyPort">反代监听端口</Label>
+              <Input
+                id="embyProxyPort"
+                type="number"
+                placeholder="8097"
+                value={settings.proxyPort || ""}
+                onChange={(e) =>
+                  updateSetting("proxyPort", parseInt(e.target.value) || 0)
+                }
+              />
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                与 Emby 本体端口（如 8096）不同，填一个空闲端口即可（默认 8097）。
+                启用后，将 Emby for Kodi 的服务器地址改为：
+                <code className="bg-muted px-1 rounded ml-1">
+                  http://{settings.url
+                    ?.replace(/^https?:\/\//, "")
+                    ?.replace(/:\d+$/, "")}:{settings.proxyPort || 8097}
+                </code>
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="flex flex-wrap gap-2">
           <Button onClick={onSave} disabled={loading}>
             {loading ? "保存中..." : "保存配置"}

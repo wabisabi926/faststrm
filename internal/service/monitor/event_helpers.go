@@ -402,10 +402,10 @@ func sanitizePathParts(relativePath string) string {
 
 // generateStrmContent 生成 .strm 文件内容（URL 到 115 文件）
 // 302 模式：{prefix}/api/fs/get?account=xxx&pickcode=xxx&file_name=xxx
-// 非 302：{prefix}/api/strm?account=xxx&pickcode=xxx&file_name=xxx
+// 统一输出：{prefix}/api/strm?account=xxx&pickcode=xxx&file_name=xxx
 // P1-4：customTemplate 非空时优先用 model.RenderStrmUrlTemplate。
 // 对齐 TS generateStrmContent
-func generateStrmContent(cloudPath, strmPrefix string, enablePathEncoding, enable302 bool, account, pickcode, fileName string, customTemplate ...string) string {
+func generateStrmContent(cloudPath, strmPrefix string, enablePathEncoding bool, account, pickcode, fileName string, customTemplate ...string) string {
 	// —— P1-4 高级模板优先 ——
 	if len(customTemplate) > 0 && customTemplate[0] != "" {
 		ext := strings.ToLower(filepath.Ext(fileName))
@@ -429,17 +429,10 @@ func generateStrmContent(cloudPath, strmPrefix string, enablePathEncoding, enabl
 	}
 	// 对参数进行 URL 编码
 	encodedAccount := url.QueryEscape(account)
-	var u string
-	if enable302 {
-		u = fmt.Sprintf("%s/api/fs/get?account=%s&pickcode=%s", prefix, encodedAccount, pickcode)
-		if fileName != "" {
-			u += "&file_name=" + url.QueryEscape(fileName)
-		}
-	} else {
-		u = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, encodedAccount, pickcode)
-		if fileName != "" {
-			u += "&file_name=" + url.QueryEscape(fileName)
-		}
+	// 统一硬编码 /api/strm（enable302 已废弃）
+	u := fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, encodedAccount, pickcode)
+	if fileName != "" {
+		u += "&file_name=" + url.QueryEscape(fileName)
 	}
 	return u + "\n"
 }

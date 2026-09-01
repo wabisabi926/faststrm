@@ -25,7 +25,6 @@ type persistedTask struct {
 	TargetPath         string             `json:"targetPath"`
 	StrmPrefix         string             `json:"strmPrefix,omitempty"`
 	EnablePathEncoding bool               `json:"enablePathEncoding,omitempty"`
-	Enable302          bool               `json:"enable302,omitempty"`
 	RemoveExtraFiles   bool               `json:"removeExtraFiles,omitempty"`
 	Schedule           *task.TaskSchedule `json:"schedule,omitempty"`
 	CreatedAt          int64              `json:"createdAt,omitempty"`
@@ -98,7 +97,6 @@ func (s *TasksStore) ReadTasks() ([]task.Task, error) {
 			TargetPath:         p.TargetPath,
 			StrmPrefix:         p.StrmPrefix,
 			EnablePathEncoding: p.EnablePathEncoding,
-			Enable302:          p.Enable302,
 			RemoveExtraFiles:   p.RemoveExtraFiles,
 			Schedule:           p.Schedule,
 			CreatedAt:          p.CreatedAt,
@@ -127,7 +125,6 @@ func (s *TasksStore) SaveTasks(tasks []task.Task) error {
 			TargetPath:         t.TargetPath,
 			StrmPrefix:         t.StrmPrefix,
 			EnablePathEncoding: t.EnablePathEncoding,
-			Enable302:          t.Enable302,
 			RemoveExtraFiles:   t.RemoveExtraFiles,
 			Schedule:           t.Schedule,
 			CreatedAt:          t.CreatedAt,

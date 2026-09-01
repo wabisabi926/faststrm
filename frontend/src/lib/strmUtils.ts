@@ -1,15 +1,20 @@
+// STRM 相关工具函数
+// 方案 A（v1.2.2+）：统一使用 /api/strm 端点，enable302 已废弃
+
 export interface ResolvedStrmSettings {
   strmPrefix: string;
   enablePathEncoding: boolean;
-  enable302: boolean;
 }
 
 interface StrmSettingsLike {
   strmPrefix?: string;
   enablePathEncoding?: boolean;
-  enable302?: boolean;
 }
 
+/**
+ * 解析 STRM 设置（全局 + 任务级覆盖）。
+ * v1.2.2 起 enable302 已删除，始终统一走 /api/strm 端点。
+ */
 export function resolveStrmSettings(
   account?: string,
   task?: { strmPrefix?: string; enablePathEncoding?: boolean } | null,
@@ -19,12 +24,8 @@ export function resolveStrmSettings(
 
   let strmPrefix = g.strmPrefix || "";
   let enablePathEncoding = !!g.enablePathEncoding;
-  // 302 策略统一由全局控制，任务级不再覆盖
-  const enable302 = !!g.enable302;
 
   if (task) {
-    // 任务级覆盖：strmPrefix 仅在非空时覆盖（空串视为"未设置"，
-    // 与 enablePathEncoding 的 undefined 判断保持一致语义）
     if (task.strmPrefix !== undefined && task.strmPrefix !== "") {
       strmPrefix = task.strmPrefix;
     }
@@ -33,21 +34,13 @@ export function resolveStrmSettings(
     }
   }
 
-  if (enable302) {
-    const trimmed = strmPrefix.replace(/\/+$/, "");
-    // 302 模式：strmPrefix 指向 /api/strm handler
-    if (!trimmed.endsWith("/api/strm")) {
-      strmPrefix = trimmed + "/api/strm";
-    }
-  } else if (account) {
-    // 非 302 模式：旧版行为，追加账号名
-    const trimmed = strmPrefix.replace(/\/+$/, "");
-    if (!trimmed.endsWith("/" + account)) {
-      strmPrefix = trimmed + "/" + account;
-    }
+  // 统一硬编码 /api/strm（后端 enable302 已废弃，所有 STRM 都走智能路由）
+  const trimmed = strmPrefix.replace(/\/+$/, "");
+  if (!trimmed.endsWith("/api/strm")) {
+    strmPrefix = trimmed + "/api/strm";
   }
 
-  return { strmPrefix, enablePathEncoding, enable302 };
+  return { strmPrefix, enablePathEncoding };
 }
 
 export function getStrmFileName(fileName: string): string {
@@ -56,12 +49,15 @@ export function getStrmFileName(fileName: string): string {
   return fileName.substring(0, lastDot) + ".strm";
 }
 
+/**
+ * 生成 STRM 文件内容。
+ * v1.2.2 起统一生成 /api/strm query URL（后端智能路由决定 proxy/redirect）。
+ */
 export function generateStrmContent(
   cloudPath: string,
   strmPrefix: string,
   enablePathEncoding: boolean,
   opts?: {
-    enable302?: boolean;
     account?: string;
     pickcode?: string;
     fileName?: string;
@@ -69,8 +65,8 @@ export function generateStrmContent(
 ): string {
   const prefix = (strmPrefix || "").replace(/\/+$/, "");
 
-  if (opts?.enable302 && opts.pickcode) {
-    // 302 模式：生成带 pickcode 的 query URL
+  // 统一 query URL 模式
+  if (opts?.pickcode) {
     const params = new URLSearchParams();
     if (opts.account) params.set("account", opts.account);
     params.set("pickcode", opts.pickcode);
@@ -78,22 +74,9 @@ export function generateStrmContent(
     return `${prefix}?${params.toString()}`;
   }
 
-  if (opts?.enable302 && !opts.pickcode) {
-    // P2-13: enable302=true 但 pickcode 缺失时，记录警告并返回空字符串
-    // 调用方应检查返回值，空字符串表示该文件无法生成有效的 302 STRM
-    console.warn(
-      `[STRM] enable302=true 但 pickcode 缺失，跳过生成: cloudPath=${cloudPath}, account=${opts?.account || "-"}`
-    );
-    return "";
-  }
-
-  // 非 302 模式：旧版路径拼接（直接访问 OpenList/直链）
-  const normalized = cloudPath.startsWith("/") ? cloudPath : "/" + cloudPath;
-  const content = `${prefix}${normalized}`;
-  if (!enablePathEncoding) return content;
-
-  // encodeURI 不处理 # 和 ?，这两个字符在 URL 中是分隔符（fragment / query-string）
-  // 文件名里只要出现它们，播放器请求就会被截断或变成查询参数
-  // 这里改用 encodeURIComponent 对整段路径做完整转义
-  return encodeURIComponent(content);
+  // 兜底：pickcode 缺失时返回空（无法生成有效 STRM）
+  console.warn(
+    `[STRM] pickcode 缺失，跳过生成: cloudPath=${cloudPath}, account=${opts?.account || "-"}`
+  );
+  return "";
 }

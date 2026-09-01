@@ -17,7 +17,6 @@ type Settings struct {
 	MediaMountPath     []string            `json:"mediaMountPath"`
 	StrmPrefix         string              `json:"strmPrefix"`
 	EnablePathEncoding bool                `json:"enablePathEncoding"`
-	Enable302          bool                `json:"enable302"`
 	RemoveExtraFiles   bool                `json:"removeExtraFiles"`
 	Download           DownloadSettings    `json:"download"`
 	Strm               StrmSettings        `json:"strm"`
@@ -167,7 +166,6 @@ type LifeMonitorSettings struct {
 	EventTypes            EventTypesSettings   `json:"eventTypes"`
 	StrmPrefix            string               `json:"strmPrefix"`
 	EnablePathEncoding    bool                 `json:"enablePathEncoding"`
-	Enable302             bool                 `json:"enable302"`
 	MinFileSize           int64                `json:"minFileSize"`           // 生活监控 最小文件大小阈值（字节），默认0不限制
 	StrmGenerateBlacklist []string             `json:"strmGenerateBlacklist"` // 生活监控 独立黑名单关键词列表；空则继承全局 Download.StrmGenerateBlacklist
 	OverwriteMode         string               `json:"overwriteMode"`         // 生活监控 STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空则继承全局
@@ -260,7 +258,6 @@ func DefaultSettings() *Settings {
 		StrmExtensions:     append([]string{}, DefaultStrmExtensions...),
 		DownloadExtensions: append([]string{}, DefaultDownloadExtensions...),
 		MediaMountPath:     []string{},
-		Enable302:          true, // 302 重定向 —— STRM 核心路由能力
 		EnablePathEncoding: true, // URL 路径编码 —— 含特殊字符的路径不编码会挂
 		RemoveExtraFiles:   true, // 删除多余 STRM —— 清理体验默认开启
 		Download: DownloadSettings{

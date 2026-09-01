@@ -555,8 +555,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if _, nerr := os.Stat(newStrmPath); nerr == nil {
 			if event.PickCode != "" {
 				if newContent := generateStrmContent(
-					cloudPath, config.StrmPrefix, config.EnablePathEncoding,
-					config.Enable302, account, event.PickCode, event.FileName,
+					cloudPath, config.StrmPrefix, config.EnablePathEncoding, account, event.PickCode, event.FileName,
 				); newContent != "" {
 					_ = writeStrmFile(newStrmPath, newContent)
 				}
@@ -612,7 +611,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
 				cloudPath, config.StrmPrefix, config.EnablePathEncoding,
-				config.Enable302, account, event.PickCode, event.FileName,
+				account, event.PickCode, event.FileName,
 			); newContent != "" {
 				if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
 					logger.S().Warnf("[Monitor] move 后 STRM 内容重同步失败 %s: %v", newStrmPath, werr)
@@ -678,8 +677,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 			// 同文件 → 仅同步内容（对齐 L1828-1835）
 			if event.PickCode != "" {
 				if newContent := generateStrmContent(
-					cloudPath, config.StrmPrefix, config.EnablePathEncoding,
-					config.Enable302, account, event.PickCode, event.FileName,
+					cloudPath, config.StrmPrefix, config.EnablePathEncoding, account, event.PickCode, event.FileName,
 				); newContent != "" {
 					_ = writeStrmFile(newStrmPath, newContent)
 				}
@@ -692,7 +690,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
 				cloudPath, config.StrmPrefix, config.EnablePathEncoding,
-				config.Enable302, account, event.PickCode, event.FileName,
+				account, event.PickCode, event.FileName,
 			); newContent != "" {
 				if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
 					m.appendLog(ctx, account, "move", false, cloudPath, newStrmPath,
@@ -736,7 +734,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
 				cloudPath, config.StrmPrefix, config.EnablePathEncoding,
-				config.Enable302, account, event.PickCode, event.FileName,
+				account, event.PickCode, event.FileName,
 			); newContent != "" {
 				_ = writeStrmFile(newStrmPath, newContent)
 			}

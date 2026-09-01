@@ -41,7 +41,6 @@ export interface TaskApiResponse {
   strmType?: string;
   strmPrefix?: string;
   removeExtraFiles?: boolean;
-  enable302?: boolean;
   status?: string;
   runtime?: TaskRuntimeApi;
   schedule?: TaskScheduleApi;

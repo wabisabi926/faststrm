@@ -20,6 +20,8 @@ export interface EmbySettings {
   refreshOnCreate?: boolean;  // 创建 STRM 后是否刷库
   refreshOnDelete?: boolean;  // 删除 STRM 后是否刷库
   debounceSeconds?: number;   // 刷库防抖秒数
+  // Emby 反向代理（PlaybackInfo 拦截，强制 STRM DirectPlay）
+  proxyPort?: number;  // 反代监听端口，0 或空 = 不启用
 }
 
 export interface TestResult {

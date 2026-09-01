@@ -341,7 +341,6 @@ type LifeMonitorPatch struct {
 	MoveMediaMode        string   `json:"moveMediaMode"`
 	StrmPrefix           string   `json:"strmPrefix"`
 	EnablePathEncoding   *bool    `json:"enablePathEncoding"`
-	Enable302            *bool    `json:"enable302"`
 	AutoDownloadMetadata *bool    `json:"autoDownloadMetadata"`
 	DownloadExtensions   []string `json:"downloadExtensions"`
 	NotifyOnlyOnError    *bool    `json:"notifyOnlyOnError"`
@@ -356,7 +355,6 @@ type settingsPostBody struct {
 	MediaMountPath     []string                `json:"mediaMountPath"`
 	StrmPrefix         string                  `json:"strmPrefix"`
 	EnablePathEncoding bool                    `json:"enablePathEncoding"`
-	Enable302          bool                    `json:"enable302"`
 	RemoveExtraFiles   bool                    `json:"removeExtraFiles"`
 	Download           *model.DownloadSettings `json:"download"`
 	Strm               *model.StrmSettings     `json:"strm"`
@@ -405,7 +403,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 		// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
 		settings.EnablePathEncoding = body.EnablePathEncoding
-		settings.Enable302 = body.Enable302
 		settings.RemoveExtraFiles = body.RemoveExtraFiles
 
 		// ====== Download 嵌套对象 ======
@@ -534,9 +531,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			}
 			if body.LifeMonitor.EnablePathEncoding != nil {
 				lm.EnablePathEncoding = *body.LifeMonitor.EnablePathEncoding
-			}
-			if body.LifeMonitor.Enable302 != nil {
-				lm.Enable302 = *body.LifeMonitor.Enable302
 			}
 			if body.LifeMonitor.AutoDownloadMetadata != nil {
 				lm.AutoDownloadMetadata = *body.LifeMonitor.AutoDownloadMetadata

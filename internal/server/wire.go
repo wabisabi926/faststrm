@@ -115,10 +115,6 @@ func initPhase6Deps(
 		}
 		// Enable302/EnablePathEncoding：以全局为准（life 未单独开关的场景）
 		// 若 life 自身未显式设置，继承全局
-		// （注意：bool 零值无法区分"未设置"和"显式 false"，这里直接用全局 OR 覆盖即可）
-		if s.Enable302 {
-			life.Enable302 = true
-		}
 		if s.EnablePathEncoding {
 			life.EnablePathEncoding = true
 		}

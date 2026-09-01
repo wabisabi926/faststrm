@@ -19,7 +19,6 @@ export type LifeMonitorConfig = {
   };
   strmPrefix?: string;
   enablePathEncoding?: boolean;
-  enable302?: boolean;
   minFileSize?: number;
   firstPullMode?: "latest" | "all" | "last";
   moveMediaMode?: "recreate" | "local_move";
@@ -33,7 +32,6 @@ export type Settings = {
   // 全局 STRM 生成设置
   strmPrefix?: string;
   enablePathEncoding?: boolean;
-  enable302?: boolean;
   removeExtraFiles?: boolean;
   // STRM 路由策略配置（302 模式生效）
   strm?: {

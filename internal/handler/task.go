@@ -268,23 +268,23 @@ func WriteTextLines(w http.ResponseWriter, lines []string) {
 
 // UpsertTaskRequest 新建/更新任务请求（兼容 form + JSON）
 type UpsertTaskRequest struct {
-	ID             string `json:"id" form:"id"`
-	Name           string `json:"name" form:"name"`
-	Account        string `json:"account" form:"account"`
-	AccountType    string `json:"accountType" form:"accountType"`
-	SourcePath     string `json:"sourcePath" form:"sourcePath"`
-	OriginPath     string `json:"originPath" form:"originPath"` // alias
-	TargetPath     string `json:"targetPath" form:"targetPath"`
-	Enabled        string `json:"enabled" form:"enabled"`           // "on"/"true"/"1" 表示 true
-	ScheduleMode   string `json:"scheduleMode" form:"scheduleMode"` // interval/daily/weekly/manual
-	ScheduleValue  string `json:"scheduleValue" form:"scheduleValue"`
-	StrmType       string `json:"strmType" form:"strmType"` // STRM 类型
-	StrmPrefix     string `json:"strmPrefix" form:"strmPrefix"`
-	RemoveExtra    string `json:"removeExtraFiles" form:"removeExtraFiles"`
-	EnableEnc      string `json:"enablePathEncoding" form:"enablePathEncoding"`
-	Enable302      string `json:"enable302" form:"enable302"`
-	AccountCookie  string `json:"cookie" form:"cookie"` // 兼容旧前端
-	AccountAccount string `json:"account_" form:"account_"`
+	ID             string             `json:"id" form:"id"`
+	Name           string             `json:"name" form:"name"`
+	Account        string             `json:"account" form:"account"`
+	AccountType    string             `json:"accountType" form:"accountType"`
+	SourcePath     string             `json:"sourcePath" form:"sourcePath"`
+	OriginPath     string             `json:"originPath" form:"originPath"` // alias
+	TargetPath     string             `json:"targetPath" form:"targetPath"`
+	Enabled        string             `json:"enabled" form:"enabled"` // "on"/"true"/"1" 表示 true
+	ScheduleMode   string             `json:"scheduleMode" form:"scheduleMode"`
+	ScheduleValue  string             `json:"scheduleValue" form:"scheduleValue"`
+	Schedule       *task.TaskSchedule `json:"schedule,omitempty"` // 嵌套 schedule 对象（前端 TaskScheduleDialog 发）
+	StrmType       string             `json:"strmType" form:"strmType"`
+	StrmPrefix     string             `json:"strmPrefix" form:"strmPrefix"`
+	RemoveExtra    string             `json:"removeExtraFiles" form:"removeExtraFiles"`
+	EnableEnc      string             `json:"enablePathEncoding" form:"enablePathEncoding"`
+	AccountCookie  string             `json:"cookie" form:"cookie"` // 兼容旧前端
+	AccountAccount string             `json:"account_" form:"account_"`
 }
 
 func parseBoolAny(v string) bool {
@@ -352,7 +352,6 @@ func fillUpsertFromBody(r *http.Request, req *UpsertTaskRequest) {
 	req.StrmPrefix = r.FormValue("strmPrefix")
 	req.RemoveExtra = r.FormValue("removeExtraFiles")
 	req.EnableEnc = r.FormValue("enablePathEncoding")
-	req.Enable302 = r.FormValue("enable302")
 	req.StrmPrefix = r.FormValue("strmPrefix")
 }
 
@@ -394,13 +393,23 @@ func (req *UpsertTaskRequest) toTask(existing *task.Task) task.Task {
 	}
 	t.RemoveExtraFiles = parseBoolAny(req.RemoveExtra)
 	t.EnablePathEncoding = parseBoolAny(req.EnableEnc)
-	t.Enable302 = parseBoolAny(req.Enable302)
-	sched := parseSchedule(req.ScheduleMode, req.ScheduleValue)
-	if sched != nil {
-		sched.Enabled = parseBoolAny(req.Enabled)
-		t.Schedule = sched
-	} else if req.ScheduleMode == "manual" {
-		t.Schedule = nil
+
+	// 优先处理前端 TaskScheduleDialog 发的嵌套 schedule 对象
+	if req.Schedule != nil {
+		if !req.Schedule.Enabled {
+			t.Schedule = nil
+		} else {
+			t.Schedule = req.Schedule
+		}
+	} else {
+		// 向后兼容旧的扁平字段
+		sched := parseSchedule(req.ScheduleMode, req.ScheduleValue)
+		if sched != nil {
+			sched.Enabled = parseBoolAny(req.Enabled)
+			t.Schedule = sched
+		} else if req.ScheduleMode == "manual" {
+			t.Schedule = nil
+		}
 	}
 	return t
 }

@@ -1,6 +1,8 @@
 # STRM 路由策略
 
-当 `enable302: true` 时，播放器请求 faststrm 的 `/api/strm` 接口，faststrm 根据**规则引擎**自动决策走 302 重定向还是代理中转。
+当播放器请求 faststrm 的 `/api/strm` 接口（v1.2.3+ 统一端点），faststrm 根据**规则引擎**自动决策走 302 重定向还是代理中转。
+
+> **v1.2.3 架构变更**：`enable302` 开关已废弃，所有 STRM 统一走 `/api/strm`。旧 STRM 文件中引用的 `/api/fs/get` 仍兼容（路由内部自动转发到 `/api/strm`）。
 
 ---
 
@@ -139,15 +141,19 @@
 
 ## STRM 内容格式
 
-### 302 模式（enable302=true）
+### 统一 STRM URL 格式（v1.2.3+）
+
+所有 STRM 文件统一生成以下格式，智能路由自动决策：
 
 ```
 http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&file_name=电影.mkv
 ```
 
+> **向后兼容**：v1.2.3 前生成的 `/api/fs/get?...` 旧 STRM 仍可正常使用（`/api/fs/get` 路由内部转发到 `/api/strm`），但建议使用 `scripts/rebuild_strm.ps1` 重建。
+
 - `account`：账号名
 - `pickcode`：115 文件唯一标识（17 位字母数字）
-- `file_name`：文件名（用于 Content-Disposition）
+- `file_name`：文件名（用于 Content-Disposition 和格式判断，ISO 等格式会强制 proxy 模式）
 
 ### URL 签名（enableTokenSigning=true，v1.1.1 新增）
 
@@ -164,18 +170,10 @@ http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123&file_name=电
 - 默认关闭（老用户零感知）
 - 开启后首次启动自动生成 32-byte secret，保存在 `settings.json → strm.tokenSecret`
 - 非法签名或过期 URL 返回 **401 Unauthorized**
-- `/api/strm` 和 `/api/fs/get` 两个代理接口都校验
+- `/api/strm` 和 `/api/fs/get` 两个接口都校验（后者兼容旧 STRM）
 - 签名 key 丢失时关闭开关即可恢复无签名模式
 
 > ⚠️ 签名开启后，已生成的 STRM 文件会在 secret 变更后失效。如需重置 secret：关闭签名开关 → 删除 `tokenSecret` 字段 → 重新开启。
-
-### 非 302 模式（enable302=false）
-
-```
-http://OpenList地址/电影/小王子.mkv
-```
-
-播放器直连 OpenList，faststrm 不参与路由决策。
 
 ### pickcode 获取方式
 
@@ -190,7 +188,7 @@ http://OpenList地址/电影/小王子.mkv
 
 ## pickcode 缺失兜底保护
 
-当 `enable302=true` 但 `pickcode` 缺失时，系统有 4 层防御链：
+当 `pickcode` 缺失时，系统有 4 层防御链：
 
 1. `generateStrmContent` 返回空字符串 + `console.warn` 警告
 2. `enqueueForAccount.downloadOrCreateStrm` 检查空字符串，跳过写入
@@ -199,7 +197,7 @@ http://OpenList地址/电影/小王子.mkv
 
 日志示例：
 ```
-[STRM] enable302=true 但 pickcode 缺失，跳过生成: cloudPath=电影/xxx.mkv, account=小号
+[STRM] pickcode 缺失，跳过生成: cloudPath=电影/xxx.mkv, account=小号
 ```
 
 ---

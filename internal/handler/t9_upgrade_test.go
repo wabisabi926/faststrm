@@ -145,7 +145,6 @@ func TestT9_Store_Migration_LegacySettings_NoCrash(t *testing.T) {
 
 	// 模拟老 settings.json：只有 302 模式和 redirect timeout，没有 T9 字段
 	legacyJSON := `{
-  "enable302": true,
   "enablePathEncoding": true,
   "user-agent": "TestUA/1.0",
   "strmExtensions": [".strm"],
@@ -178,9 +177,6 @@ func TestT9_Store_Migration_LegacySettings_NoCrash(t *testing.T) {
 	}
 
 	// 其他老字段应该正常保留
-	if !cfg.Enable302 {
-		t.Error("legacy enable302 lost after migration")
-	}
 	if cfg.Strm.AccountProxyConcurrencyLimit != 6 {
 		t.Errorf("legacy accountProxyConcurrencyLimit lost: got %d, want 6", cfg.Strm.AccountProxyConcurrencyLimit)
 	}
@@ -208,7 +204,6 @@ func TestT9_Store_Migration_EnableSwitch_AutoSecret(t *testing.T) {
 
 	// 用户打开开关后保存的 settings.json（前端保存）
 	userEnabledJSON := `{
-  "enable302": true,
   "strm": {
     "forceProxyUaTokens": [],
     "enableTokenSigning": true,

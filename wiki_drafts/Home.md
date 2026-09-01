@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
   <img src="https://raw.githubusercontent.com/wabisabi926/faststrm/refs/heads/main/frontend/public/logo.png" alt="Fast Strm Logo" width="160" style="margin-bottom: 8px;">
 
@@ -90,11 +90,12 @@
 
 > 📖 [生活监控](生活事件监控) · [清理对账](STRM-清理对账)
 
-### 📺 Emby 集成（刮削等待 + 删除同步）
+### 📺 Emby 集成（刮削等待 + 删除同步 + **反向代理**）
 
 - **入库通知等刮削完成**：webhook 收到 → 3 秒轮询等待 → 拿到完整元数据（标题/海报/评分）才发通知
 - **删除同步三道防误删保护**：STRM 物理存在检查 → Movie/Episode 标题匹配 → 整季目录文件数 ≤ 100 才执行
 - 60 秒去重窗口 · **试运行模式**（首次配置只记日志不删除）
+- **Emby 反向代理（embyproxy）**：拦截 PlaybackInfo API，STRM 源强制 DirectPlay，解决 Emby for Kodi 播放 ISO 报「没有兼容的流」、4K 被强转 HLS 等问题（v1.1.8+）
 - 自动刷库 + 删除通知 + STRM 路径映射
 
 > 📖 [Emby 集成全攻略](Emby集成)

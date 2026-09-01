@@ -135,37 +135,40 @@ func HandleRemoteDirList(deps DirectoryDeps) http.HandlerFunc {
 
 		frontendNodes := make([]map[string]any, 0, len(entries.Data))
 		for i, e := range entries.Data {
-			fc, _ := strconvAtoi64(anyToString(e.FC))
-			// 修正 isDir 判断：fc > 0 表示有子项数，是目录；否则看 pickCode 和 size
-			isDir := fc > 0
-			if !isDir {
-				pc := anyToString(e.PickCode)
-				sz, _ := strconvAtoi64(anyToString(e.Size))
-				isDir = pc == "" && sz == 0
-			}
+			// 直接使用 client115.FsFiles 里已正确判断的 IsDir 字段
+			// 判断规则：有 fid → 文件；无 fid 但有 cid → 目录；都无 → 用 fc 兜底
+			isDir := e.IsDir
 			cidVal, _ := strconvAtoi64(anyToString(e.CID))
 			fidVal, _ := strconvAtoi64(anyToString(e.FID))
+			fcVal, _ := strconvAtoi64(anyToString(e.FC))
 			uniqueID := int64(i + 1)
 			if isDir {
 				if cidVal > 0 {
 					uniqueID = cidVal
-				} else if fc > 0 {
-					uniqueID = fc
+				} else if fcVal > 0 {
+					uniqueID = fcVal
 				}
 			} else {
 				if fidVal > 0 {
 					uniqueID = fidVal
 				}
 			}
-			frontendNodes = append(frontendNodes, map[string]any{
-				"id":       uniqueID,
+			// id / cid / fid 都用字符串输出，避免 JS Number 超过 MAX_SAFE_INTEGER 时精度丢失
+			node := map[string]any{
+				"id":       strconvInt64(uniqueID),
 				"name":     e.Name,
 				"isDir":    isDir,
 				"size":     e.Size,
 				"pickCode": e.PickCode,
-				"cid":      cidVal,
-				"fid":      fidVal,
-			})
+			}
+			// 只有真实 CID/FID 才输出，否则前端会把 0 当有效值请求根目录
+			if cidVal > 0 {
+				node["cid"] = strconvInt64(cidVal)
+			}
+			if fidVal > 0 {
+				node["fid"] = strconvInt64(fidVal)
+			}
+			frontendNodes = append(frontendNodes, node)
 		}
 		httpx.WriteJson(w, http.StatusOK, map[string]any{
 			"code":    200,

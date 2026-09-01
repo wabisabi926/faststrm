@@ -2,7 +2,87 @@
 
 ## 概述
 
-Fast Strm 与 Emby 的集成包含三部分：媒体库刷新、Webhook 通知、删除同步。
+Fast Strm 与 Emby 的集成包含四部分：**媒体库刷新**、**Webhook 通知**、**删除同步**、**反向代理（PlaybackInfo 拦截）**。
+
+## Emby 反向代理（v1.1.8+ 推荐开启）
+
+### 为什么需要反向代理？
+
+**问题**：Emby 对 STRM 远程文件默认强制转码（认为远程 HTTP URL 不安全），导致：
+
+- Emby for Kodi 播放 STRM 时报「没有兼容的流」
+- Emby Web 播放 ISO 原盘被强制作 HLS 转码，4K 卡顿
+- Kodi 无法使用原生 Libdvd 菜单 / 章节功能
+
+**解决方案**：FastStrm 提供一个轻量级 Emby 反向代理（embyproxy），拦截 PlaybackInfo API 响应，识别 STRM 源文件（`IsRemote=true` + `Protocol=Http`）并**强制改写为 DirectPlay**，同时移除转码相关字段。
+
+### 工作原理
+
+```
+┌──────────────┐       ┌───────────────────────┐       ┌──────────────┐
+│ Emby for Kodi │──────▶│ FastStrm EmbyProxy     │──────▶│ Emby Server   │
+│ (或 Emby Web) │ :8097 │ (拦截 PlaybackInfo)    │       │ :8096         │
+└──────────────┘       └───────────────────────┘       └──────────────┘
+                              │
+                    POST /Items/{id}/PlaybackInfo
+                    识别 STRM 源 → 强制 SupportsDirectPlay=true
+                    移除 TranscodingUrl 等转码字段
+                    缓存 MediaSourceId → STRM URL 映射
+```
+
+### 启用步骤
+
+1. 进入「Emby 通知」页面 → 「Emby 反向代理」卡片
+2. 勾选「启用 Emby 反向代理」
+3. **代理端口**默认 `8097`（确保不与主服务 `8090` 和 Emby `8096` 冲突）
+4. 保存后，查看 faststrm 日志确认启动：
+   ```
+   [EmbyProxy] 启动中: 0.0.0.0:8097 → http://192.168.1.10:8096
+   [EmbyProxy] 请将 Emby 客户端连接到 http://192.168.1.10:8097
+   [EmbyProxy] STRM ISO/MKV 自动强制 DirectPlay，绕过 Emby 转码限制
+   ```
+
+### Emby 客户端配置
+
+#### Emby for Kodi / Emby for Android TV
+
+服务器地址改为指向 **FastStrm 代理端口**（而不是 Emby 原生端口）：
+
+```
+Emby 服务器地址: http://192.168.1.10:8097
+```
+
+> Emby Server 原生端口（默认 8096）保持不变，faststrm 反代会把所有请求透传给 Emby，只修改 PlaybackInfo 响应。
+
+#### Emby Web
+
+直接在浏览器访问 `http://192.168.1.10:8097` 就能使用反代的 Emby Web 界面。
+
+### 功能范围
+
+| API | 行为 |
+|-----|------|
+| `POST /Items/{id}/PlaybackInfo` | **拦截** — STRM 源强制 DirectPlay，缓存 MediaSourceId |
+| `GET /MediaStream/{id}.{container}` | **302 重定向** — 返回 STRM 文件 URL，交由 `/api/strm` 处理 |
+| 其他所有 Emby API | **原样透传** — 登录、刮削、通知、管理等完全不受影响 |
+
+### 日志验证
+
+播放 STRM 时 faststrm 日志会显示：
+```
+[EmbyProxy] PlaybackInfo 强制 DirectPlay: path=/emby/Items/123/PlaybackInfo, sources=2
+[STRM] account=我的115 pickcode=csv7…567 decision=proxy reason=format_force_proxy:iso
+```
+
+### 端口说明
+
+| 端口 | 服务 | 说明 |
+|------|------|------|
+| `8090`（默认） | FastStrm 主服务 | Web UI + 任务管理 + STRM 路由 |
+| `8096`（默认） | Emby Server | Emby 原生端口，**不需要改** |
+| `8097`（默认） | FastStrm EmbyProxy | Emby 反代，**客户端连接此端口** |
+
+---
 
 ## 媒体库刷新
 

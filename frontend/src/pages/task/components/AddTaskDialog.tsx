@@ -44,7 +44,6 @@ export const taskFormSchema = z.object({
   strmType: z.string().optional(),
   strmPrefix: z.string().optional(),
   removeExtraFiles: z.boolean().optional(),
-  enable302: z.boolean().optional(),
 });
 
 export type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -117,7 +116,6 @@ export function AddTaskDialog({
     defaultValues: task ? {
       ...task,
       strmPrefix: getInitialStrmPrefix(),
-      enable302: undefined,
     } : {
       account: "",
       originPath: "",
