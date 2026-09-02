@@ -209,6 +209,34 @@ func GetEntryCount(db *sql.DB, account string) (int64, error) {
 	return n, err
 }
 
+// CountFilesByPrefix 统计指定 account + cloudPath 前缀下的 files 表记录数
+// 用于 STRM 清理「全量对账」返回 dbRecordCount 字段
+// cloudPathPrefix 为空时统计该 account 下全部记录
+// 匹配规则与 ListSnapshotByAccount 一致：path = cloudPath OR path LIKE cloudPath/%
+func CountFilesByPrefix(db *sql.DB, account, cloudPathPrefix string) (int64, error) {
+	if db == nil || account == "" {
+		return 0, nil
+	}
+	if cloudPathPrefix == "" {
+		var n int64
+		err := db.QueryRow("SELECT COUNT(*) FROM files WHERE account = ?", account).Scan(&n)
+		return n, err
+	}
+	// 与存储时一致：去掉前导 "/"，避免 "/电影" 查不到 "电影/..."
+	base := normalizeDbPath(cloudPathPrefix)
+	prefixNorm := base
+	if !strings.HasSuffix(prefixNorm, "/") {
+		prefixNorm = prefixNorm + "/"
+	}
+	like := prefixNorm + "%"
+	var n int64
+	err := db.QueryRow(
+		"SELECT COUNT(*) FROM files WHERE account = ? AND (path = ? OR path LIKE ?)",
+		account, base, like,
+	).Scan(&n)
+	return n, err
+}
+
 // SnapshotEntry P2-3 增量同步 snapshot entry（比 FilePathEntry 精简，仅含无变化判断字段）
 type SnapshotEntry struct {
 	Path     string

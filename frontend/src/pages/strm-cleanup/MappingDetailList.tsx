@@ -10,9 +10,17 @@ export interface MappingDetailListProps {
 }
 
 export function MappingDetailList({ mappings }: MappingDetailListProps) {
+  const hasAnyAssoc = mappings.some((m) => m.associatedFileCount !== undefined);
   return (
     <div className="space-y-2">
-      <div className="text-sm font-medium">路径映射扫描明细</div>
+      <div className="text-sm font-medium flex items-center gap-2">
+        路径映射扫描明细
+        {hasAnyAssoc && (
+          <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-300">
+            P2：已含关联文件列
+          </Badge>
+        )}
+      </div>
       <div className="space-y-2">
         {mappings.map((m) => (
           <div
@@ -30,9 +38,32 @@ export function MappingDetailList({ mappings }: MappingDetailListProps) {
                 <Badge>完成</Badge>
               )}
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <div className={`grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground ${hasAnyAssoc ? "sm:grid-cols-6" : m.dbRecordCount !== undefined ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
               <span>网盘文件：{m.remoteFileCount}</span>
+              {/* DB 列：有数据时展示（差值 = DB - 网盘），≥5 用琥珀色 Badge 高亮 */}
+              {m.dbRecordCount !== undefined &&
+                (() => {
+                  const db = m.dbRecordCount;
+                  const diff = db - m.remoteFileCount;
+                  const abs = Math.abs(diff);
+                  if (abs === 0) return <span className="text-emerald-600">DB：{db} ✓</span>;
+                  if (abs >= 5) {
+                    return (
+                      <span>
+                        DB：
+                        <Badge variant="outline" className="border-amber-400 text-amber-700 align-middle">
+                          {db}（差{diff > 0 ? "+" : ""}{diff}）
+                        </Badge>
+                      </span>
+                    );
+                  }
+                  return <span>DB：{db}（差{diff > 0 ? "+" : ""}{diff}）</span>;
+                })()}
               <span>本地 STRM：{m.localStrmCount}</span>
+              {/* P2：关联文件列，仅当至少有一个 mapping 提供 associatedFileCount 时才展示 */}
+              {m.associatedFileCount !== undefined && (
+                <span className="text-sky-700">关联：{m.associatedFileCount}</span>
+              )}
               <span className="text-destructive">失效：{m.staleStrms.length}</span>
               <span className="text-amber-600">漏生成：{m.missingStrms.length}</span>
             </div>
@@ -45,3 +76,4 @@ export function MappingDetailList({ mappings }: MappingDetailListProps) {
     </div>
   );
 }
+

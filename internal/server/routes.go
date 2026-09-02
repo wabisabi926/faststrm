@@ -201,6 +201,7 @@ func RegisterRoutes(
 		TasksStore:  tasksStore,
 		StrmCache:   strmCacheStore,
 		Interaction: cleanupInteraction,
+		SQLiteDB:    execDeps.SQLiteDB,
 	}
 	// P0 注入 cleanupInteraction 到 TG CommandHandler（处理 inline 按钮回调）
 	if cleanupInteraction != nil && notifyDeps.CommandHandler != nil {
@@ -215,6 +216,8 @@ func RegisterRoutes(
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodPost, Path: "/api/strmCleanup/scan", Handler: corsJWT(handler.HandleStrmCleanupScanPOST(strmCleanupDeps))},
 		{Method: http.MethodPost, Path: "/api/strmCleanup/execute", Handler: corsJWT(handler.HandleStrmCleanupExecutePOST(strmCleanupDeps))},
+		// P3：STRM 内容预览（StaleStrmDialog "查看完整"调用）
+		{Method: http.MethodPost, Path: "/api/strmCleanup/preview", Handler: corsJWT(handler.HandleStrmCleanupPreviewPOST(strmCleanupDeps))},
 		// P0 待删批次二次确认 API
 		{Method: http.MethodGet, Path: "/api/strmCleanup/pending", Handler: corsJWT(handler.HandleStrmCleanupPendingListGET(strmCleanupDeps))},
 		{Method: http.MethodPost, Path: "/api/strmCleanup/pending/cancel", Handler: corsJWT(handler.HandleStrmCleanupPendingCancelPOST(strmCleanupDeps))},
@@ -236,3 +239,4 @@ func RegisterRoutes(
 	// ==================== API 文档（Swagger UI，公开） ====================
 	RegisterDocs(server)
 }
+

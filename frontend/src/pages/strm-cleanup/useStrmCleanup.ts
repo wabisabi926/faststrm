@@ -11,10 +11,9 @@ import {
   type LogEntry,
   type MappingResult,
   type MissingStrm,
-  type ReconcileItem,
-  type ReconcileResponse,
   type ScanSummary,
   type StaleStrm,
+  type StrmPreviewResponse,
   staleKey,
 } from "./types";
 import {
@@ -46,6 +45,11 @@ export interface UseStrmCleanupResult {
   // 日志
   appendLog: (action: string, detail: string, success: boolean) => void;
   clearLogs: () => void;
+  // P3：STRM 内容预览（StaleStrmDialog "查看完整"）
+  previewStrm: (p: { localPath: string; relPath: string; maxBytes?: number }) => Promise<StrmPreviewResponse>;
+  // P3：扫描缓存 1 分钟窗口 — 当前是否命中（Toolbar 展示 Badge）
+  cacheActive: boolean;
+  cacheWindowSec: number;
 }
 
 export function useStrmCleanup(
@@ -88,47 +92,148 @@ export function useStrmCleanup(
     setSelectedStale((prev) => toggleStaleInSet(prev, key, checked));
   };
 
+  // v1.2.5：扫描/对账复用同一 normalize；后端已统一为 ScanResponse
+  type ScanMode = "scan" | "reconcile";
+  const normalizeScanResponse = (
+    raw: {
+      mappings: Array<
+        Omit<MappingResult, "mappingId" | "staleStrms" | "missingStrms"> & {
+          staleStrms?: Array<Omit<StaleStrm, "localPath" | "mappingId">>;
+          missingStrms?: Array<Omit<MissingStrm, "mappingId">>;
+          dbRecordCount?: number;
+          associatedFileCount?: number;
+        }
+      >;
+      totalRemoteFiles?: number;
+      totalLocalStrms?: number;
+      totalAssociatedFiles?: number;
+      totalStale?: number;
+      totalMissing?: number;
+      totalDbRecords?: number;
+      durationMs?: number;
+    },
+    idPrefix: string
+  ): ScanSummary => {
+    const normalizedMappings: MappingResult[] = (raw.mappings || []).map((m, idx) => ({
+      mappingId: `${idPrefix}-${idx}`,
+      account: m.account,
+      cloudPath: m.cloudPath,
+      localPath: m.localPath,
+      remoteFileCount: Number(m.remoteFileCount ?? 0),
+      localStrmCount: Number(m.localStrmCount ?? 0),
+      associatedFileCount: m.associatedFileCount,
+      dbRecordCount: m.dbRecordCount,
+      staleStrms: (m.staleStrms || []).map((s) => {
+        const content: string | undefined =
+          (s as unknown as { content?: string }).content ??
+          (s as unknown as { strmContent?: string }).strmContent;
+        const truncated = (s as unknown as { truncated?: boolean }).truncated;
+        const size = (s as unknown as { size?: number }).size;
+        return {
+          ...s,
+          localPath: m.localPath,
+          mappingId: `${idPrefix}-${idx}`,
+          content,
+          strmContent: content, // 兼容老 StaleStrmDialog（s.strmContent || "-"）
+          truncated,
+          size,
+        } as StaleStrm;
+      }),
+      missingStrms: (m.missingStrms || []).map((mi) => ({
+        ...mi,
+        mappingId: `${idPrefix}-${idx}`,
+      })),
+      error: m.error,
+    }));
+    const totalRemote = raw.totalRemoteFiles ?? normalizedMappings.reduce((s, m) => s + m.remoteFileCount, 0);
+    const totalLocal = raw.totalLocalStrms ?? normalizedMappings.reduce((s, m) => s + m.localStrmCount, 0);
+    const totalAssoc =
+      raw.totalAssociatedFiles ??
+      normalizedMappings.reduce((s, m) => s + (m.associatedFileCount ?? 0), 0);
+    const totalStale = raw.totalStale ?? normalizedMappings.reduce((s, m) => s + m.staleStrms.length, 0);
+    const totalMissing = raw.totalMissing ?? normalizedMappings.reduce((s, m) => s + m.missingStrms.length, 0);
+    return {
+      totalRemoteFiles: totalRemote,
+      totalLocalStrms: totalLocal,
+      totalAssociatedFiles: totalAssoc > 0 ? totalAssoc : undefined,
+      totalStale,
+      totalMissing,
+      durationMs: raw.durationMs ?? 0,
+      totalDbRecords: raw.totalDbRecords,
+      mappings: normalizedMappings,
+    };
+  };
+  // P2：用后端 refreshedMappingStats 覆盖 mappings[i] 的 localStrmCount / associatedFileCount，再重新计算聚合计数
+  // 避免"基于 deletedCount / regeneratedCount 的增量估算"造成累计漂移（删除相关文件、补生成同目录重叠文件等特殊场景会产生误差）
+  const applyRefreshedStats = (r: ExecuteResult, prev: ScanSummary): ScanSummary => {
+    if (!r.refreshedMappingStats || r.refreshedMappingStats.length === 0) return prev;
+    const byPath = new Map(r.refreshedMappingStats.filter((s) => s.localPath).map((s) => [s.localPath, s]));
+    if (byPath.size === 0) return prev;
+    let recomputeAssoc = false;
+    const newMappings = prev.mappings.map((m) => {
+      const hit = byPath.get(m.localPath);
+      if (!hit) return m;
+      if (hit.associatedFileCount !== undefined) recomputeAssoc = true;
+      return {
+        ...m,
+        localStrmCount: hit.localStrmCount,
+        associatedFileCount:
+          hit.associatedFileCount !== undefined ? hit.associatedFileCount : m.associatedFileCount,
+      };
+    });
+    const newTotalLocal = newMappings.reduce((s, m) => s + m.localStrmCount, 0);
+    const baseAssoc = newMappings.reduce((s, m) => s + (m.associatedFileCount ?? 0), 0);
+    return {
+      ...prev,
+      mappings: newMappings,
+      totalLocalStrms: newTotalLocal,
+      totalAssociatedFiles: recomputeAssoc ? (baseAssoc > 0 ? baseAssoc : undefined) : prev.totalAssociatedFiles,
+    };
+  };
+  // P3：上次成功扫描的时间戳（scan 和 reconcile 共享），1 分钟内再扫 → 自动 useCache=true, cacheTTLMs=60000
+  const lastScanAtRef = React.useRef<{ ts: number; mode: ScanMode } | null>(null);
+  const postScanInternal = async (mode: ScanMode) => {
+    const body: {
+      useSettingsDefaults: boolean;
+      action?: string;
+      useCache?: boolean;
+      cacheTTLMs?: number;
+    } = { useSettingsDefaults: true };
+    if (mode === "reconcile") body.action = "reconcile";
+    const now = Date.now();
+    const last = lastScanAtRef.current;
+    const P3_CACHE_WINDOW = 60 * 1000; // 1 分钟
+    if (last && now - last.ts < P3_CACHE_WINDOW) {
+      body.useCache = true;
+      body.cacheTTLMs = P3_CACHE_WINDOW;
+    }
+    const res = await axiosInstance.post("/api/strmCleanup/scan", body);
+    lastScanAtRef.current = { ts: now, mode };
+    const normalized = normalizeScanResponse(res.data, mode === "reconcile" ? "reconcile" : "mapping");
+    // 是否命中缓存：后端 mapping[*].error 有 fallback 到 network scan 文案的情况未命中；这里传 header 判断
+    (normalized as unknown as { __fromCacheHint?: boolean }).__fromCacheHint = Boolean(body.useCache);
+    return normalized;
+  };
+
+  // P3：preview 指定 .strm 文件（供 StaleStrmDialog "查看完整"按钮）
+  const previewStrm = async (p: { localPath: string; relPath: string; maxBytes?: number }): Promise<StrmPreviewResponse> => {
+    const res = await axiosInstance.post("/api/strmCleanup/preview", {
+      localPath: p.localPath,
+      relPath: p.relPath,
+      maxBytes: p.maxBytes,
+    });
+    return res.data as StrmPreviewResponse;
+  };
+
   const handleScan = async () => {
     setScanning(true);
     setScanResult(null);
     setSelectedStale(new Set());
     try {
-      const res = await axiosInstance.post("/api/strmCleanup/scan", {
-        useSettingsDefaults: true,
-      });
-      const data = res.data as ScanSummary;
-      const normalizedMappings: MappingResult[] = data.mappings.map(
-        (raw: Omit<MappingResult, "mappingId">, idx: number) => ({
-          mappingId: `mapping-${idx}`,
-          account: raw.account,
-          cloudPath: raw.cloudPath,
-          localPath: raw.localPath,
-          remoteFileCount: raw.remoteFileCount,
-          localStrmCount: raw.localStrmCount,
-          staleStrms: (raw.staleStrms || []).map((s: Omit<StaleStrm, "localPath" | "mappingId">) => ({
-            ...s,
-            localPath: raw.localPath,
-            mappingId: `mapping-${idx}`,
-          })),
-          missingStrms: (raw.missingStrms || []).map((m: Omit<MissingStrm, "mappingId">) => ({
-            ...m,
-            mappingId: `mapping-${idx}`,
-          })),
-          error: raw.error,
-        })
-      );
-      setScanResult({
-        totalRemoteFiles: data.totalRemoteFiles ?? 0,
-        totalLocalStrms: data.totalLocalStrms ?? 0,
-        totalStale: data.totalStale ?? 0,
-        totalMissing: data.totalMissing ?? 0,
-        durationMs: data.durationMs ?? 0,
-        mappings: normalizedMappings,
-      });
-      appendLog("扫描", `完成：${data.totalStale ?? 0} 失效 / ${data.totalMissing ?? 0} 漏生成`, true);
-      toast.success(
-        `扫描完成：发现 ${data.totalStale ?? 0} 个失效 STRM，${data.totalMissing ?? 0} 个漏生成`
-      );
+      const data = await postScanInternal("scan");
+      setScanResult(data);
+      appendLog("扫描", `完成：${data.totalStale} 失效 / ${data.totalMissing} 漏生成`, true);
+      toast.success(`扫描完成：发现 ${data.totalStale} 个失效 STRM，${data.totalMissing} 个漏生成`);
     } catch (err) {
       const axiosErr = err as AxiosError;
       const msg = axiosErr?.response?.data?.error || axiosErr?.message || "扫描失败";
@@ -142,48 +247,32 @@ export function useStrmCleanup(
 
   const handleReconcile = async () => {
     setReconcileLoading(true);
+    setScanResult(null);
+    setSelectedStale(new Set());
     try {
-      const res = await axiosInstance.post("/api/strmCleanup/scan", {
-        action: "reconcile",
-        useSettingsDefaults: true,
-      });
-      const data = res.data as ReconcileResponse;
-      const totalCloud = data.results?.reduce((s: number, r: ReconcileItem) => s + r.cloudFileCount, 0) || 0;
-      const totalLocal = data.results?.reduce((s: number, r: ReconcileItem) => s + r.localStrmCount, 0) || 0;
-      const totalDb = data.results?.reduce((s: number, r: ReconcileItem) => s + r.dbRecordCount, 0) || 0;
-      const totalStale = data.results?.reduce((s: number, r: ReconcileItem) => s + r.staleStrms.length, 0) || 0;
-      const totalMissing = data.results?.reduce((s: number, r: ReconcileItem) => s + r.missingStrms.length, 0) || 0;
-      const durationMs = data.results?.reduce((s: number, r: ReconcileItem) => s + (r.durationMs || 0), 0) || 0;
-      const mappings: MappingResult[] = (data.results || []).map((r, idx) => ({
-        mappingId: `reconcile-${idx}`,
-        account: r.account,
-        cloudPath: r.cloudPath,
-        localPath: r.localPath,
-        remoteFileCount: r.cloudFileCount,
-        localStrmCount: r.localStrmCount,
-        staleStrms: (r.staleStrms || []).map((s: Omit<StaleStrm, "localPath" | "mappingId">) => ({
-          ...s,
-          localPath: r.localPath,
-          mappingId: `reconcile-${idx}`,
-        })),
-        missingStrms: (r.missingStrms || []).map((m: Omit<MissingStrm, "mappingId">) => ({
-          ...m,
-          mappingId: `reconcile-${idx}`,
-        })),
-        error: r.error,
-      }));
-      setScanResult({
-        totalRemoteFiles: totalCloud,
-        totalLocalStrms: totalLocal,
-        totalStale,
-        totalMissing,
-        durationMs,
-        mappings,
-      });
-
-      appendLog("全量对账", `云端:${totalCloud} 本地:${totalLocal} DB:${totalDb} 失效:${totalStale} 缺失:${totalMissing}`, true);
+      const data = await postScanInternal("reconcile");
+      setScanResult(data);
+      const totalDb = data.totalDbRecords ?? "-";
+      const dbDiffs: string[] = [];
+      for (const m of data.mappings) {
+        const db = m.dbRecordCount;
+        if (db === undefined) continue;
+        const diff = m.remoteFileCount - db;
+        if (Math.abs(diff) >= 5) {
+          dbDiffs.push(`${m.cloudPath}: 云${m.remoteFileCount} vs DB${db} (差${diff})`);
+        }
+      }
+      appendLog(
+        "全量对账",
+        `云端:${data.totalRemoteFiles} 本地:${data.totalLocalStrms} DB:${totalDb} 失效:${data.totalStale} 缺失:${data.totalMissing}`,
+        true
+      );
+      const diffTip =
+        dbDiffs.length > 0 ? `\n⚠️ 差异较大的映射：\n${dbDiffs.slice(0, 3).join("\n")}` : "";
       toast.success(`全量对账完成`, {
-        description: `云端: ${totalCloud} | 本地STRM: ${totalLocal} | DB记录: ${totalDb} | 失效: ${totalStale} | 缺失: ${totalMissing}`,
+        description:
+          `云端: ${data.totalRemoteFiles} | 本地STRM: ${data.totalLocalStrms} | DB记录: ${totalDb} | 失效: ${data.totalStale} | 缺失: ${data.totalMissing}` +
+          diffTip,
         duration: 10000,
       });
     } catch (err) {
@@ -203,9 +292,9 @@ export function useStrmCleanup(
       `已删除 ${r.deletedCount} 个失效 STRM，清理了 ${r.removedEmptyDirs.length} 个空目录` +
         (r.failedCount > 0 ? `，失败 ${r.failedCount} 个` : "")
     );
+    const deletedKeys = new Set(selectedStale);
     setScanResult((prev) => {
       if (!prev) return prev;
-      const deletedKeys = new Set(selectedStale);
       const newMappings = prev.mappings.map((m) => ({
         ...m,
         staleStrms: m.staleStrms.filter(
@@ -213,12 +302,13 @@ export function useStrmCleanup(
         ),
       }));
       const remainingStale = newMappings.reduce((s, m) => s + m.staleStrms.length, 0);
-      return {
+      const next = {
         ...prev,
         mappings: newMappings,
         totalStale: remainingStale,
         totalLocalStrms: prev.totalLocalStrms - r.deletedCount,
       };
+      return applyRefreshedStats(r, next);
     });
     setSelectedStale(new Set());
     callbacks.setStaleDialogOpen(false);
@@ -230,6 +320,20 @@ export function useStrmCleanup(
       `已补生成 ${r.regeneratedCount || 0} 个 STRM` +
         (r.failedCount > 0 ? `，失败 ${r.failedCount} 个` : "")
     );
+    // 从 scanResult.mappings[].missingStrms 中移除已成功生成的项，避免重复点击覆盖
+    const regenSet = new Set(r.regeneratedPaths || []);
+    const hasStats = r.refreshedMappingStats && r.refreshedMappingStats.length > 0;
+    if (regenSet.size === 0 && !hasStats) return;
+    setScanResult((prev) => {
+      if (!prev) return prev;
+      const newMappings = prev.mappings.map((m) => ({
+        ...m,
+        missingStrms: m.missingStrms.filter((mi) => !regenSet.has(mi.relPath)),
+      }));
+      const remainingMissing = newMappings.reduce((s, m) => s + m.missingStrms.length, 0);
+      const next = { ...prev, mappings: newMappings, totalMissing: remainingMissing };
+      return applyRefreshedStats(r, next);
+    });
   };
 
   const handleCombinedResult = (r: ExecuteResult) => {
@@ -242,17 +346,22 @@ export function useStrmCleanup(
     }
     appendLog("清理+补生成", parts.join(" / "), (summary?.failed || 0) === 0);
     toast.success(`组合操作完成：${parts.join("，")}`);
+    // 同步移除：已删失效 STRM + 已生成漏项 STRM
+    const regenSet = new Set(r.regeneratedPaths || []);
+    const deletedKeys = new Set(selectedStale);
     setScanResult((prev) => {
       if (!prev) return prev;
-      const deletedKeys = new Set(selectedStale);
       const newMappings = prev.mappings.map((m) => ({
         ...m,
         staleStrms: m.staleStrms.filter(
           (s) => !deletedKeys.has(staleKey(s.mappingId, s.relPath))
         ),
+        missingStrms: m.missingStrms.filter((mi) => !regenSet.has(mi.relPath)),
       }));
       const remainingStale = newMappings.reduce((s, m) => s + m.staleStrms.length, 0);
-      return { ...prev, mappings: newMappings, totalStale: remainingStale };
+      const remainingMissing = newMappings.reduce((s, m) => s + m.missingStrms.length, 0);
+      const next = { ...prev, mappings: newMappings, totalStale: remainingStale, totalMissing: remainingMissing };
+      return applyRefreshedStats(r, next);
     });
     setSelectedStale(new Set());
     callbacks.setStaleDialogOpen(false);
@@ -371,5 +480,13 @@ export function useStrmCleanup(
     handleRegenerate,
     appendLog,
     clearLogs,
+    previewStrm,
+    cacheWindowSec: 60,
+    cacheActive: Boolean(
+      lastScanAtRef.current && Date.now() - lastScanAtRef.current.ts < 60000
+    ),
   };
 }
+
+
+

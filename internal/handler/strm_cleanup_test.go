@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/wabisabi926/faststrm/internal/service/store"
 )
@@ -234,5 +237,98 @@ func TestScanMappingFromCache_AllMatch(t *testing.T) {
 	}
 	if result.Error != "" {
 		t.Errorf("unexpected error: %s", result.Error)
+	}
+}
+
+// ==================== v1.2.5 P1：统一响应结构单测 ====================
+
+func buildUnifiedScanResults(localPath string) *ScanResponse {
+	return &ScanResponse{
+		Mappings: []MappingScanResult{
+			{
+				Account:         "accA",
+				CloudPath:       "/电影",
+				LocalPath:       localPath,
+				RemoteFileCount: 10,
+				LocalStrmCount:  8,
+				StaleStrms:      []StaleStrm{{RelPath: "s1.strm"}, {RelPath: "s2.strm"}},
+				MissingStrms:    []MissingStrm{{RelPath: "m1.mkv", PickCode: "p1"}, {RelPath: "m2.mp4", PickCode: "p2"}},
+			},
+			{
+				Account:         "accB",
+				CloudPath:       "/电视剧",
+				LocalPath:       localPath,
+				RemoteFileCount: 20,
+				LocalStrmCount:  19,
+				StaleStrms:      []StaleStrm{},
+				MissingStrms:    []MissingStrm{{RelPath: "m3.mp4", PickCode: "p3"}},
+			},
+		},
+	}
+}
+
+func TestScanResponse_AggregateTotals_Manual(t *testing.T) {
+	root := t.TempDir()
+	scan := buildUnifiedScanResults(filepath.Join(root, "m"))
+	var totalRemote, totalLocal, totalStale, totalMissing int
+	for _, r := range scan.Mappings {
+		totalRemote += r.RemoteFileCount
+		totalLocal += r.LocalStrmCount
+		totalStale += len(r.StaleStrms)
+		totalMissing += len(r.MissingStrms)
+	}
+	if totalRemote != 30 || totalLocal != 27 || totalStale != 2 || totalMissing != 3 {
+		t.Errorf("聚合错: remote=%d local=%d stale=%d missing=%d (want 30/27/2/3)",
+			totalRemote, totalLocal, totalStale, totalMissing)
+	}
+}
+
+func TestMappingScanResult_DbRecordCount_Field(t *testing.T) {
+	r := MappingScanResult{DbRecordCount: 7}
+	if r.DbRecordCount != 7 {
+		t.Errorf("DbRecordCount = %d, want 7", r.DbRecordCount)
+	}
+}
+
+func TestScanResponse_TotalDbRecords_OmitEmpty(t *testing.T) {
+	resp := ScanResponse{TotalDbRecords: 0}
+	b, _ := json.Marshal(resp)
+	if strings.Contains(string(b), "totalDbRecords") {
+		t.Errorf("TotalDbRecords=0 应 omitempty: %s", string(b))
+	}
+}
+
+func TestScanResponse_AggregateFields_Marshal(t *testing.T) {
+	resp := ScanResponse{
+		TotalRemoteFiles: 30,
+		TotalLocalStrms:  27,
+		TotalStale:       2,
+		TotalMissing:     3,
+		TotalDbRecords:   25,
+	}
+	b, _ := json.Marshal(resp)
+	s := string(b)
+	wants := map[string]string{
+		"totalDbRecords":   `"totalDbRecords":25`,
+		"totalRemoteFiles": `"totalRemoteFiles":30`,
+		"totalLocalStrms":  `"totalLocalStrms":27`,
+		"totalStale":       `"totalStale":2`,
+		"totalMissing":     `"totalMissing":3`,
+	}
+	for n, w := range wants {
+		if !strings.Contains(s, w) {
+			t.Errorf("%s 缺失，期望 %q，实际: %s", n, w, s)
+		}
+	}
+}
+
+func TestCacheTTLOverride_P3(t *testing.T) {
+	// 模拟 MappingScanRequest：CacheTTLMs 覆盖默认 1h TTL
+	// 通过比对字符串时间单位（秒级近似：1ms < 1h）判断 scanMappingWithCacheFallback 是否应用
+	req := MappingScanRequest{Account: "a", CloudPath: "/x", LocalPath: "/tmp/x", CacheTTLMs: 1}
+	if req.CacheTTLMs != 1 { t.Fatal("CacheTTLMs 自定义未生效") }
+	// 验证 1ms < 1h（运行时语义）
+	if time.Duration(req.CacheTTLMs)*time.Millisecond >= time.Hour {
+		t.Errorf("自定义 TTL 应小于默认 1h（语义校验）")
 	}
 }

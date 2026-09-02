@@ -19,6 +19,7 @@ import {
   FileWarning,
   ListTree,
   Loader2,
+  Paperclip,
   SearchX,
 } from "lucide-react";
 import { useStrmCleanup } from "./strm-cleanup/useStrmCleanup";
@@ -31,11 +32,13 @@ import { MappingDetailList } from "./strm-cleanup/MappingDetailList";
 
 export function StrmCleanupCard() {
   // 对话框开关由组件层管理
+  // 注：confirmOpen 仅用于 StaleStrmDialog 内的「删除选中」二次确认。
+  // CleanupToolbar 的三个 AlertDialog 已内聚状态（独立 useState），
+  // 不再共享 confirmOpen，避免多个 AlertDialog 同时 open 导致弹窗叠加。
   const [staleDialogOpen, setStaleDialogOpen] = React.useState(false);
   const [missingDialogOpen, setMissingDialogOpen] = React.useState(false);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [regenConfirmOpen, setRegenConfirmOpen] = React.useState(false);
-  const [regenAllConfirmOpen, setRegenAllConfirmOpen] = React.useState(false);
 
   const {
     scanning,
@@ -55,6 +58,9 @@ export function StrmCleanupCard() {
     handleDeleteAndRegenerate,
     handleRegenerate,
     clearLogs,
+    previewStrm,
+    cacheActive,
+    cacheWindowSec,
   } = useStrmCleanup({ setStaleDialogOpen });
 
   return (
@@ -126,8 +132,18 @@ export function StrmCleanupCard() {
 
         {scanResult && (
           <>
-            {/* 统计面板 */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+            {/* 统计面板：
+              P2 新增 totalAssociatedFiles（关联媒体文件）+ 原有 totalDbRecords（DB 同步）
+              列数：4 列（都无）/ 5 列（有其一）/ 6 列（二者都有） */}
+            <div
+              className={(() => {
+                const hasDB = scanResult.totalDbRecords !== undefined;
+                const hasAssoc = scanResult.totalAssociatedFiles !== undefined;
+                if (hasDB && hasAssoc) return "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3";
+                if (hasDB || hasAssoc) return "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3";
+                return "grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3";
+              })()}
+            >
               <StatCard
                 label="网盘媒体文件"
                 value={scanResult.totalRemoteFiles}
@@ -135,12 +151,45 @@ export function StrmCleanupCard() {
                 tone="default"
                 hint={`对比 ${(scanResult.durationMs / 1000).toFixed(1)} 秒`}
               />
+              {scanResult.totalDbRecords !== undefined &&
+                (() => {
+                  const diff = (scanResult.totalDbRecords ?? 0) - scanResult.totalRemoteFiles;
+                  const tone: "default" | "success" | "warning" | "destructive" =
+                    Math.abs(diff) === 0
+                      ? "success"
+                      : Math.abs(diff) <= 5
+                      ? "default"
+                      : "warning";
+                  return (
+                    <StatCard
+                      label="DB 同步记录"
+                      value={scanResult.totalDbRecords}
+                      icon={<DatabaseZap className="size-4" />}
+                      tone={tone}
+                      hint={diff === 0 ? "与网盘一致 ✓" : `差值：${diff > 0 ? "+" : ""}${diff}`}
+                    />
+                  );
+                })()}
               <StatCard
                 label="本地 STRM"
                 value={scanResult.totalLocalStrms}
                 icon={<CheckCircle2 className="size-4" />}
                 tone="default"
+                hint={
+                  scanResult.totalAssociatedFiles !== undefined
+                    ? "仅统计 .strm（已与关联文件分离，P2 语义纯净）"
+                    : undefined
+                }
               />
+              {scanResult.totalAssociatedFiles !== undefined && (
+                <StatCard
+                  label="关联媒体文件"
+                  value={scanResult.totalAssociatedFiles}
+                  icon={<Paperclip className="size-4" />}
+                  tone="default"
+                  hint=".nfo / .jpg / .png / .srt / .ass / .sub / .vtt"
+                />
+              )}
               <StatCard
                 label="失效 STRM"
                 value={scanResult.totalStale}
@@ -159,6 +208,7 @@ export function StrmCleanupCard() {
                     toggleAllStale={toggleAllStale}
                     toggleStale={toggleStale}
                     onExecuteDelete={handleExecuteDelete}
+                    previewStrm={previewStrm}
                   />
                 )}
               </StatCard>
@@ -188,13 +238,12 @@ export function StrmCleanupCard() {
               totalStale={scanResult.totalStale}
               totalMissing={scanResult.totalMissing}
               executing={executing}
-              confirmOpen={confirmOpen}
-              setConfirmOpen={setConfirmOpen}
-              regenAllConfirmOpen={regenAllConfirmOpen}
-              setRegenAllConfirmOpen={setRegenAllConfirmOpen}
               onDeleteAll={handleDeleteAll}
               onRegenerate={handleRegenerate}
               onDeleteAndRegenerate={handleDeleteAndRegenerate}
+              selectedStaleCount={selectedStale.size}
+              cacheActive={cacheActive}
+              cacheWindowSec={cacheWindowSec}
             />
 
             {/* 操作日志 */}
@@ -208,3 +257,5 @@ export function StrmCleanupCard() {
     </Card>
   );
 }
+
+

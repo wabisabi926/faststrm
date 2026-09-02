@@ -1,5 +1,5 @@
 appname               = faststrm
-version = 1.2.4
+version = 1.2.5
 display_name          = FastStrm
 desc                  = 115 网盘 STRM 自动生成器。监控网盘变动实时生成 STRM 文件，配合 Emby 实现云盘资源本地化播放。核心特性：STRM 302 直连/代理路由、ISO 原盘双扩展名支持、STRM URL HMAC 签名、Emby 入库/删除/播放通知、自动刷库与删除同步、SQLite Schema 迁移、Emby 反向代理热重启。
 platform              = x86
