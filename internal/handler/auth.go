@@ -248,7 +248,9 @@ func ChangeCredentials() http.HandlerFunc {
 				return
 			}
 			if usernameInput != "" {
-				if usernameInput == admin.Username { return }
+				if usernameInput == admin.Username {
+					return
+				}
 				admin.Username = usernameInput
 			}
 			if passwordInput != "" {
