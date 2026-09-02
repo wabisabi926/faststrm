@@ -178,7 +178,7 @@ export default function AccountAlertsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-4xl lg:max-w-5xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -208,11 +208,11 @@ export default function AccountAlertsPage() {
             共 {accounts.length} 个账号
           </span>
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="flex flex-col gap-3">
           {accounts.map((acc) => (
             <div
               key={acc.name}
-              className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 border rounded"
+              className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-3 border rounded"
             >
               <div className="flex items-center gap-2 min-w-0">
                 <span className="font-medium break-words">{acc.name}</span>
