@@ -77,16 +77,16 @@ type MissingStrm struct {
 }
 
 type MappingScanResult struct {
-	Account         string        `json:"account"`
-	CloudPath       string        `json:"cloudPath"`
-	LocalPath       string        `json:"localPath"`
-	RemoteFileCount int           `json:"remoteFileCount"`
-	LocalStrmCount  int           `json:"localStrmCount"`
+	Account         string `json:"account"`
+	CloudPath       string `json:"cloudPath"`
+	LocalPath       string `json:"localPath"`
+	RemoteFileCount int    `json:"remoteFileCount"`
+	LocalStrmCount  int    `json:"localStrmCount"`
 	// AssociatedFileCount 本地关联文件数（.nfo/.jpg/.png/.srt/.sub/.ass/.vtt），与 STRM 分开统计（P2 语义纯净）
-	AssociatedFileCount int         `json:"associatedFileCount,omitempty"`
-	StaleStrms          []StaleStrm `json:"staleStrms"`
+	AssociatedFileCount int           `json:"associatedFileCount,omitempty"`
+	StaleStrms          []StaleStrm   `json:"staleStrms"`
 	MissingStrms        []MissingStrm `json:"missingStrms"`
-	Error               string      `json:"error,omitempty"`
+	Error               string        `json:"error,omitempty"`
 	// DbRecordCount 该路径映射下 SQLite files 表真实记录数（=云路径前缀精确匹配）
 	// 未开启 sqlite 时为 0（前端可通过是否提供过 reconcile 结果判断语义）
 	DbRecordCount int `json:"dbRecordCount,omitempty"`
@@ -501,7 +501,6 @@ func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, dep
 	return scanMappingFromCache(m, entry)
 }
 
-
 // readStrmHead P3：读取本地 .strm 文件前 maxBytes 字节，返回 (content, truncated)
 // 失败时返回空字符串（不把 preview 失败上升为扫描失败），内容里 CR/LF 保留原样
 func readStrmHead(fullPath string, maxBytes int) (string, bool) {
@@ -913,6 +912,7 @@ func deleteAllStaleFromScan(body ExecuteRequest, resp *ExecuteResponse, cleanup 
 // STRM URL 内容生成规则：
 //  1. settings.Strm.StrmUrlTemplate 非空 → 调用 model.RenderStrmUrlTemplate
 //  2. 否则 fallback: {StrmPrefix}/api/strm?account={account}&pickcode={pickcode}
+//
 // 文件名：默认 {stem}.strm（与 service/task/executor_utils.go getStrmFileName 行为一致）
 func regenerateMissingStrms(body ExecuteRequest, settings *model.Settings, resp *ExecuteResponse) (int, int) {
 	if body.ScanSummary == nil {
@@ -1215,11 +1215,3 @@ func HandleStrmCleanupPendingExecutePOST(deps StrmCleanupDeps) http.HandlerFunc 
 		httpx.WriteJson(w, http.StatusOK, resp)
 	}
 }
-
-
-
-
-
-
-
-

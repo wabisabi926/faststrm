@@ -13,7 +13,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/http"; "os"
+	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -41,7 +42,9 @@ func buildStrmE2E(t *testing.T, withSQLite bool) *strmE2E {
 	mediaA := filepath.Join(root, "media_a")
 	mediaB := filepath.Join(root, "media_b")
 	for _, d := range []string{cfgDir, dataDir, mediaA, filepath.Join(mediaA, "sub"), mediaB} {
-		if err := os.MkdirAll(d, 0o755); err != nil { t.Fatalf("mkdir %s: %v", d, err) }
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
 	}
 	accountName := "e2e_user"
 	salt := "strm_e2e_salt_pad_to_32_chars_ok"
@@ -56,9 +59,13 @@ func buildStrmE2E(t *testing.T, withSQLite bool) *strmE2E {
 		{Account: accountName, CloudPath: "/电视剧", LocalPath: mediaB},
 	}
 	settingsStore := store.NewSettingsStore(salt, cfgDir)
-	if err := settingsStore.SaveSettings(settings); err != nil { t.Fatalf("SaveSettings: %v", err) }
+	if err := settingsStore.SaveSettings(settings); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
 	accountStore, err := store.NewAccountStore(salt, cfgDir)
-	if err != nil { t.Fatalf("NewAccountStore: %v", err) }
+	if err != nil {
+		t.Fatalf("NewAccountStore: %v", err)
+	}
 
 	_ = os.WriteFile(filepath.Join(mediaA, "staleA1.strm"), []byte("oldA1"), 0o600)
 	_ = os.WriteFile(filepath.Join(mediaA, "sub", "staleA2.strm"), []byte("oldA2"), 0o600)
@@ -78,7 +85,9 @@ func buildStrmE2E(t *testing.T, withSQLite bool) *strmE2E {
 	var sqliteDB *sql.DB
 	if withSQLite {
 		sqliteDB, err = db.OpenNew(dataDir)
-		if err != nil { t.Fatalf("db.OpenNew: %v", err) }
+		if err != nil {
+			t.Fatalf("db.OpenNew: %v", err)
+		}
 		t.Cleanup(func() { _ = sqliteDB.Close() })
 		// DB file_id 列是 INTEGER，必须用纯数字字符串
 		batchA := make([]db.FilePathEntry, 4)
@@ -91,8 +100,12 @@ func buildStrmE2E(t *testing.T, withSQLite bool) *strmE2E {
 			id := fmt.Sprintf("%d", 2000+i)
 			batchB[i] = db.FilePathEntry{FileID: id, Path: "/电视剧/" + id + ".mp4", FileName: id + ".mp4", PickCode: "pickB" + id, UpdateTime: 1_700_000_000}
 		}
-		if err := db.UpsertFilePathEntryBatch(sqliteDB, accountName, batchA); err != nil { t.Fatalf("upsert batchA: %v", err) }
-		if err := db.UpsertFilePathEntryBatch(sqliteDB, accountName, batchB); err != nil { t.Fatalf("upsert batchB: %v", err) }
+		if err := db.UpsertFilePathEntryBatch(sqliteDB, accountName, batchA); err != nil {
+			t.Fatalf("upsert batchA: %v", err)
+		}
+		if err := db.UpsertFilePathEntryBatch(sqliteDB, accountName, batchB); err != nil {
+			t.Fatalf("upsert batchB: %v", err)
+		}
 	}
 	deps := handler.StrmCleanupDeps{
 		SettingsStore: settingsStore,
@@ -130,34 +143,61 @@ func TestE2E_StrmCleanup_ScanVsReconcile_UnifiedResponse(t *testing.T) {
 	_, recRaw := doReq(handler.HandleStrmCleanupScanPOST(f.Deps), "POST", "/api/strmCleanup/scan", map[string]any{"useSettingsDefaults": true, "action": "reconcile"}, "")
 	scanMap := decodeAsMap(t, scanRaw)
 	recMap := decodeAsMap(t, recRaw)
-	if _, ok := scanMap["results"]; ok { t.Error("scan 响应不应含 results 字段（旧 ReconcileScanResponse 残留）") }
-	if _, ok := recMap["results"]; ok  { t.Error("reconcile 响应不应含 results 字段，已合并为统一 ScanResponse") }
-	if scanMap["mappings"] == nil { t.Fatalf("scan 缺 mappings 字段: %s", scanRaw) }
-	if recMap["mappings"] == nil  { t.Fatalf("reconcile 缺 mappings 字段: %s", recRaw) }
+	if _, ok := scanMap["results"]; ok {
+		t.Error("scan 响应不应含 results 字段（旧 ReconcileScanResponse 残留）")
+	}
+	if _, ok := recMap["results"]; ok {
+		t.Error("reconcile 响应不应含 results 字段，已合并为统一 ScanResponse")
+	}
+	if scanMap["mappings"] == nil {
+		t.Fatalf("scan 缺 mappings 字段: %s", scanRaw)
+	}
+	if recMap["mappings"] == nil {
+		t.Fatalf("reconcile 缺 mappings 字段: %s", recRaw)
+	}
 	for name, m := range map[string]map[string]any{"scan": scanMap, "reconcile": recMap} {
 		for _, k := range []string{"totalRemoteFiles", "totalLocalStrms", "totalStale", "totalMissing"} {
-			if _, ok := m[k]; !ok { t.Errorf("%s 响应缺少聚合字段 %s", name, k) }
+			if _, ok := m[k]; !ok {
+				t.Errorf("%s 响应缺少聚合字段 %s", name, k)
+			}
 		}
-		if _, ok := m["totalDbRecords"]; !ok { t.Errorf("%s (with SQLite) 必须带 totalDbRecords；响应=%s", name, func() string { b, _ := json.Marshal(m); return string(b) }()) }
+		if _, ok := m["totalDbRecords"]; !ok {
+			t.Errorf("%s (with SQLite) 必须带 totalDbRecords；响应=%s", name, func() string { b, _ := json.Marshal(m); return string(b) }())
+		}
 	}
 	// dbRecordCount per mapping：电影=4 电视剧=6
-	msgs := []struct{ Cloud string; Want int }{{"/电影", 4}, {"/电视剧", 6}}
-	for _, src := range []struct{ N string; M map[string]any }{{"scan", scanMap}, {"reconcile", recMap}} {
+	msgs := []struct {
+		Cloud string
+		Want  int
+	}{{"/电影", 4}, {"/电视剧", 6}}
+	for _, src := range []struct {
+		N string
+		M map[string]any
+	}{{"scan", scanMap}, {"reconcile", recMap}} {
 		mapsAny, _ := src.M["mappings"].([]any)
-		if len(mapsAny) != 2 { t.Errorf("%s mappings 长度=%d, want 2", src.N, len(mapsAny)); continue }
+		if len(mapsAny) != 2 {
+			t.Errorf("%s mappings 长度=%d, want 2", src.N, len(mapsAny))
+			continue
+		}
 		for _, want := range msgs {
 			for _, anyMap := range mapsAny {
 				mi, _ := anyMap.(map[string]any)
-				if mi["cloudPath"] != want.Cloud { continue }
+				if mi["cloudPath"] != want.Cloud {
+					continue
+				}
 				cnt, _ := mi["dbRecordCount"].(float64)
-				if int(cnt) != want.Want { t.Errorf("%s mapping[%s] dbRecordCount=%v, want %d", src.N, want.Cloud, cnt, want.Want) }
+				if int(cnt) != want.Want {
+					t.Errorf("%s mapping[%s] dbRecordCount=%v, want %d", src.N, want.Cloud, cnt, want.Want)
+				}
 			}
 		}
 	}
 	// totalDbRecords = 10
 	for name, m := range map[string]map[string]any{"scan": scanMap, "reconcile": recMap} {
 		c, _ := m["totalDbRecords"].(float64)
-		if int(c) != 10 { t.Errorf("%s totalDbRecords=%v, want 10", name, c) }
+		if int(c) != 10 {
+			t.Errorf("%s totalDbRecords=%v, want 10", name, c)
+		}
 	}
 }
 
@@ -165,11 +205,15 @@ func TestE2E_StrmCleanup_Scan_NoSQLite_NoTotalDbRecords(t *testing.T) {
 	f := buildStrmE2E(t, false)
 	_, raw := doReq(handler.HandleStrmCleanupScanPOST(f.Deps), "POST", "/api/strmCleanup/scan", map[string]any{"useSettingsDefaults": true}, "")
 	m := decodeAsMap(t, raw)
-	if _, ok := m["totalDbRecords"]; ok { t.Errorf("未开 SQLite 时 totalDbRecords 应 omitempty: %s", raw) }
+	if _, ok := m["totalDbRecords"]; ok {
+		t.Errorf("未开 SQLite 时 totalDbRecords 应 omitempty: %s", raw)
+	}
 	mapsAny, _ := m["mappings"].([]any)
 	for i, a := range mapsAny {
 		mi, _ := a.(map[string]any)
-		if _, ok := mi["dbRecordCount"]; ok { t.Errorf("mapping[%d] dbRecordCount 不应出现: %v", i, mi["dbRecordCount"]) }
+		if _, ok := mi["dbRecordCount"]; ok {
+			t.Errorf("mapping[%d] dbRecordCount 不应出现: %v", i, mi["dbRecordCount"])
+		}
 	}
 }
 
@@ -188,11 +232,21 @@ func TestE2E_StrmCleanup_DeleteAndRegenerate_OnlySelectedEntries(t *testing.T) {
 	resp := decodeAsMap(t, raw)
 	dAll, _ := resp["deletedAllCount"].(float64)
 	dCnt, _ := resp["deletedCount"].(float64)
-	if int(dAll) != 0 { t.Errorf("deletedAllCount=%v, want 0（不走 delete_all 分支）", dAll) }
-	if int(dCnt) != 2  { t.Errorf("deletedCount=%v, want 2（仅删选中）", dCnt) }
-	if _, err := os.Stat(filepath.Join(f.MediaA, "staleA1.strm"));      !os.IsNotExist(err) { t.Error("staleA1.strm 应被删（选中）") }
-	if _, err := os.Stat(filepath.Join(f.MediaB, "staleB1.strm"));      !os.IsNotExist(err) { t.Error("staleB1.strm 应被删（选中）") }
-	if _, err := os.Stat(filepath.Join(f.MediaA, "sub", "staleA2.strm")); err != nil       { t.Errorf("sub/staleA2.strm 未选中不应删: %v", err) }
+	if int(dAll) != 0 {
+		t.Errorf("deletedAllCount=%v, want 0（不走 delete_all 分支）", dAll)
+	}
+	if int(dCnt) != 2 {
+		t.Errorf("deletedCount=%v, want 2（仅删选中）", dCnt)
+	}
+	if _, err := os.Stat(filepath.Join(f.MediaA, "staleA1.strm")); !os.IsNotExist(err) {
+		t.Error("staleA1.strm 应被删（选中）")
+	}
+	if _, err := os.Stat(filepath.Join(f.MediaB, "staleB1.strm")); !os.IsNotExist(err) {
+		t.Error("staleB1.strm 应被删（选中）")
+	}
+	if _, err := os.Stat(filepath.Join(f.MediaA, "sub", "staleA2.strm")); err != nil {
+		t.Errorf("sub/staleA2.strm 未选中不应删: %v", err)
+	}
 }
 
 // E2E-4 regenerate 返回 regeneratedPaths
@@ -202,20 +256,40 @@ func TestE2E_StrmCleanup_Regenerate_ReturnsRegeneratedPaths(t *testing.T) {
 	body := handler.ExecuteRequest{Entries: []handler.ExecuteEntry{}, Action: "regenerate", ScanSummary: scan, DryRun: false}
 	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
 	var resp handler.ExecuteResponse
-	if err := json.Unmarshal(raw, &resp); err != nil { t.Fatalf("unmarshal ExecuteResponse: %v (raw=%s)", err, raw) }
-	if resp.RegeneratedCount != 3 { t.Errorf("RegeneratedCount=%d, want 3", resp.RegeneratedCount) }
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("unmarshal ExecuteResponse: %v (raw=%s)", err, raw)
+	}
+	if resp.RegeneratedCount != 3 {
+		t.Errorf("RegeneratedCount=%d, want 3", resp.RegeneratedCount)
+	}
 	// 后端 regeneratedPaths 返回 missingStrm 原始 relPath（相对路径 + 原扩展名），供前端直接过滤
 	want := map[string]bool{"goodA.mkv": false, "sub/goodA2.mp4": false, "goodB.mkv": false}
-	if len(resp.RegeneratedPaths) != len(want) { t.Errorf("regeneratedPaths len=%d want %d; paths=%v", len(resp.RegeneratedPaths), len(want), resp.RegeneratedPaths) }
-	for _, p := range resp.RegeneratedPaths { if _, ok := want[p]; !ok { t.Errorf("未知 regenerated path: %s", p) } else { want[p] = true } }
-	for p := range want { if !want[p] { t.Errorf("缺少 regenerated path %s", p) } }
+	if len(resp.RegeneratedPaths) != len(want) {
+		t.Errorf("regeneratedPaths len=%d want %d; paths=%v", len(resp.RegeneratedPaths), len(want), resp.RegeneratedPaths)
+	}
+	for _, p := range resp.RegeneratedPaths {
+		if _, ok := want[p]; !ok {
+			t.Errorf("未知 regenerated path: %s", p)
+		} else {
+			want[p] = true
+		}
+	}
+	for p := range want {
+		if !want[p] {
+			t.Errorf("缺少 regenerated path %s", p)
+		}
+	}
 	// 磁盘上的文件（扩展名被改为 .strm）应当被创建
 	diskFiles := []string{
 		filepath.Join(f.MediaA, "goodA.strm"),
 		filepath.Join(f.MediaA, "sub", "goodA2.strm"),
 		filepath.Join(f.MediaB, "goodB.strm"),
 	}
-	for _, p := range diskFiles { if _, err := os.Stat(p); err != nil { t.Errorf("regenerated %s 磁盘不存在: %v", p, err) } }
+	for _, p := range diskFiles {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("regenerated %s 磁盘不存在: %v", p, err)
+		}
+	}
 }
 
 // E2E-5 组合响应
@@ -231,11 +305,21 @@ func TestE2E_StrmCleanup_DeleteAndRegenerate_CombinedResponse(t *testing.T) {
 	}
 	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
 	var resp handler.ExecuteResponse
-	if err := json.Unmarshal(raw, &resp); err != nil { t.Fatalf("unmarshal: %v (raw=%s)", err, raw) }
-	if resp.DeletedCount != 3      { t.Errorf("DeletedCount=%d want 3",     resp.DeletedCount) }
-	if resp.RegeneratedCount != 3  { t.Errorf("RegeneratedCount=%d want 3", resp.RegeneratedCount) }
-	if len(resp.RegeneratedPaths) != 3 { t.Errorf("regeneratedPaths len=%d want 3", len(resp.RegeneratedPaths)) }
-	if resp.CleanupSummary == nil { t.Fatal("cleanupSummary 不应 nil") }
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("unmarshal: %v (raw=%s)", err, raw)
+	}
+	if resp.DeletedCount != 3 {
+		t.Errorf("DeletedCount=%d want 3", resp.DeletedCount)
+	}
+	if resp.RegeneratedCount != 3 {
+		t.Errorf("RegeneratedCount=%d want 3", resp.RegeneratedCount)
+	}
+	if len(resp.RegeneratedPaths) != 3 {
+		t.Errorf("regeneratedPaths len=%d want 3", len(resp.RegeneratedPaths))
+	}
+	if resp.CleanupSummary == nil {
+		t.Fatal("cleanupSummary 不应 nil")
+	}
 	if resp.CleanupSummary.Deleted != 3 || resp.CleanupSummary.Regenerated != 3 || resp.CleanupSummary.Failed != 0 {
 		t.Errorf("cleanupSummary=%+v want {3,3,0}", resp.CleanupSummary)
 	}
@@ -251,13 +335,17 @@ func TestE2E_StrmCleanup_DeleteAll_DeletesFromScanSummary(t *testing.T) {
 	resp := decodeAsMap(t, raw)
 	dAll, _ := resp["deletedAllCount"].(float64)
 	dCnt, _ := resp["deletedCount"].(float64)
-	if int(dAll) != 3 || int(dCnt) != 3 { t.Errorf("delete_all counts=(%v,%v) want (3,3)", dAll, dCnt) }
+	if int(dAll) != 3 || int(dCnt) != 3 {
+		t.Errorf("delete_all counts=(%v,%v) want (3,3)", dAll, dCnt)
+	}
 	for _, p := range []string{
 		filepath.Join(f.MediaA, "staleA1.strm"),
 		filepath.Join(f.MediaA, "sub", "staleA2.strm"),
 		filepath.Join(f.MediaB, "staleB1.strm"),
 	} {
-		if _, err := os.Stat(p); !os.IsNotExist(err) { t.Errorf("delete_all 后仍存在: %s", p) }
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("delete_all 后仍存在: %s", p)
+		}
 	}
 }
 
@@ -271,17 +359,25 @@ func TestE2E_StrmCleanup_Scan_AssociatedFileCounts(t *testing.T) {
 	totalAssoc, _ := m["totalAssociatedFiles"].(float64)
 	// fixture：mediaA 6 个关联文件 (goodA.nfo+staleA1.nfo+sub/staleA2.nfo+goodA.jpg+poster.jpg+goodA.srt)
 	//         mediaB 4 个 (goodB.nfo+staleB1.nfo+fanart.png+goodB.ass)
-	if int(totalAssoc) != 10 { t.Errorf("totalAssociatedFiles=%d want 10; raw=%v", int(totalAssoc), m["totalAssociatedFiles"]) }
+	if int(totalAssoc) != 10 {
+		t.Errorf("totalAssociatedFiles=%d want 10; raw=%v", int(totalAssoc), m["totalAssociatedFiles"])
+	}
 	maps, _ := m["mappings"].([]any)
-	if len(maps) != 2 { t.Fatalf("mappings len=%d want 2", len(maps)) }
+	if len(maps) != 2 {
+		t.Fatalf("mappings len=%d want 2", len(maps))
+	}
 	// mapping 0 = mediaA ("电影")
 	a, _ := maps[0].(map[string]any)
 	aAssoc, _ := a["associatedFileCount"].(float64)
-	if int(aAssoc) != 6 { t.Errorf("mappingA associatedFileCount=%d want 6; raw=%s", int(aAssoc), fmt.Sprint(a["associatedFileCount"])) }
+	if int(aAssoc) != 6 {
+		t.Errorf("mappingA associatedFileCount=%d want 6; raw=%s", int(aAssoc), fmt.Sprint(a["associatedFileCount"]))
+	}
 	// mapping 1 = mediaB ("电视剧")
 	b, _ := maps[1].(map[string]any)
 	bAssoc, _ := b["associatedFileCount"].(float64)
-	if int(bAssoc) != 4 { t.Errorf("mappingB associatedFileCount=%d want 4; raw=%s", int(bAssoc), fmt.Sprint(b["associatedFileCount"])) }
+	if int(bAssoc) != 4 {
+		t.Errorf("mappingB associatedFileCount=%d want 4; raw=%s", int(bAssoc), fmt.Sprint(b["associatedFileCount"]))
+	}
 }
 
 // P2-2b：NoSQLite 也能统计 associatedFileCount（totalDbRecords 省略，但 totalAssociatedFiles 仍然有）
@@ -289,9 +385,13 @@ func TestE2E_StrmCleanup_Scan_NoSQLite_HasAssociatedFileCounts(t *testing.T) {
 	f := buildStrmE2E(t, false)
 	_, raw := doReq(handler.HandleStrmCleanupScanPOST(f.Deps), "POST", "/api/strmCleanup/scan", map[string]any{"useSettingsDefaults": true}, "")
 	m := decodeAsMap(t, raw)
-	if _, ok := m["totalDbRecords"]; ok { t.Error("NoSQLite 时不应含 totalDbRecords") }
+	if _, ok := m["totalDbRecords"]; ok {
+		t.Error("NoSQLite 时不应含 totalDbRecords")
+	}
 	totalAssoc, _ := m["totalAssociatedFiles"].(float64)
-	if int(totalAssoc) != 10 { t.Errorf("NoSQLite totalAssociatedFiles=%d want 10", int(totalAssoc)) }
+	if int(totalAssoc) != 10 {
+		t.Errorf("NoSQLite totalAssociatedFiles=%d want 10", int(totalAssoc))
+	}
 }
 
 // P2-1a：delete_all 执行后 refreshedMappingStats 为权威 Walk 值，且反映关联文件被删除
@@ -302,7 +402,9 @@ func TestE2E_StrmCleanup_DeleteAll_RefreshedMappingStats(t *testing.T) {
 	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
 	resp := decodeAsMap(t, raw)
 	statsRaw, ok := resp["refreshedMappingStats"].([]any)
-	if !ok || len(statsRaw) == 0 { t.Fatalf("refreshedMappingStats 缺失：%v", resp["refreshedMappingStats"]) }
+	if !ok || len(statsRaw) == 0 {
+		t.Fatalf("refreshedMappingStats 缺失：%v", resp["refreshedMappingStats"])
+	}
 	byPath := make(map[string]map[string]any)
 	for _, s := range statsRaw {
 		st, _ := s.(map[string]any)
@@ -310,18 +412,32 @@ func TestE2E_StrmCleanup_DeleteAll_RefreshedMappingStats(t *testing.T) {
 		byPath[lp] = st
 	}
 	// A：删除 staleA1.strm + sub/staleA2.strm → strm 0
-	a, ok := byPath[f.MediaA]; if !ok { t.Fatalf("stats 缺失 mediaA: %v", byPath) }
+	a, ok := byPath[f.MediaA]
+	if !ok {
+		t.Fatalf("stats 缺失 mediaA: %v", byPath)
+	}
 	aStrm, _ := a["localStrmCount"].(float64)
-	if int(aStrm) != 0 { t.Errorf("A.localStrmCount=%d want 0", int(aStrm)) }
+	if int(aStrm) != 0 {
+		t.Errorf("A.localStrmCount=%d want 0", int(aStrm))
+	}
 	// A 的关联：goodA.nfo/goodA.jpg/poster.jpg/goodA.srt（删 staleA1.nfo + sub/staleA2.nfo）= 4
 	aAssoc, _ := a["associatedFileCount"].(float64)
-	if int(aAssoc) != 4 { t.Errorf("A.associatedFileCount=%d want 4", int(aAssoc)) }
+	if int(aAssoc) != 4 {
+		t.Errorf("A.associatedFileCount=%d want 4", int(aAssoc))
+	}
 	// B：删除 staleB1.strm → strm 0；关联 goodB.nfo/fanart.png/goodB.ass（删 staleB1.nfo）= 3
-	b, ok := byPath[f.MediaB]; if !ok { t.Fatalf("stats 缺失 mediaB") }
+	b, ok := byPath[f.MediaB]
+	if !ok {
+		t.Fatalf("stats 缺失 mediaB")
+	}
 	bStrm, _ := b["localStrmCount"].(float64)
-	if int(bStrm) != 0 { t.Errorf("B.localStrmCount=%d want 0", int(bStrm)) }
+	if int(bStrm) != 0 {
+		t.Errorf("B.localStrmCount=%d want 0", int(bStrm))
+	}
 	bAssoc, _ := b["associatedFileCount"].(float64)
-	if int(bAssoc) != 3 { t.Errorf("B.associatedFileCount=%d want 3", int(bAssoc)) }
+	if int(bAssoc) != 3 {
+		t.Errorf("B.associatedFileCount=%d want 3", int(bAssoc))
+	}
 }
 
 // P2-1b：DryRun=true 不触发 refreshedMappingStats（因为没有真实磁盘变更）
@@ -335,15 +451,18 @@ func TestE2E_StrmCleanup_DryRun_NoRefreshedMappingStats(t *testing.T) {
 		t.Errorf("DryRun 不应产生 refreshedMappingStats, got %d 项", len(stats))
 	}
 	dAll, _ := resp["deletedAllCount"].(float64)
-	if int(dAll) != 3 { t.Errorf("dryRun deletedAllCount=%d want 3", int(dAll)) }
+	if int(dAll) != 3 {
+		t.Errorf("dryRun deletedAllCount=%d want 3", int(dAll))
+	}
 	// 磁盘文件不应改变：3 个 stale strm 都还在
 	for _, p := range []string{filepath.Join(f.MediaA, "staleA1.strm"), filepath.Join(f.MediaA, "sub", "staleA2.strm"), filepath.Join(f.MediaB, "staleB1.strm")} {
-		if _, err := os.Stat(p); err != nil { t.Errorf("DryRun: %s 被删除了: %v", p, err) }
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("DryRun: %s 被删除了: %v", p, err)
+		}
 	}
 }
 
 // ========== P3：preview 接口 + 扫描预读 Content + CacheTTL ==========
-
 
 // P3-1b：POST /api/strmCleanup/preview 存在文件 / 不存在文件 / 参数错误三分支
 func TestE2E_StrmCleanup_PreviewEndpoint(t *testing.T) {
@@ -395,4 +514,3 @@ func TestE2E_StrmCleanup_Scan_CacheTTLMs_Accepted(t *testing.T) {
 		t.Errorf("cacheTTLMs accepted: totalAssociatedFiles=%d want 10", int(total))
 	}
 }
-

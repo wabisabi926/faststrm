@@ -326,7 +326,9 @@ func TestCacheTTLOverride_P3(t *testing.T) {
 	// 模拟 MappingScanRequest：CacheTTLMs 覆盖默认 1h TTL
 	// 通过比对字符串时间单位（秒级近似：1ms < 1h）判断 scanMappingWithCacheFallback 是否应用
 	req := MappingScanRequest{Account: "a", CloudPath: "/x", LocalPath: "/tmp/x", CacheTTLMs: 1}
-	if req.CacheTTLMs != 1 { t.Fatal("CacheTTLMs 自定义未生效") }
+	if req.CacheTTLMs != 1 {
+		t.Fatal("CacheTTLMs 自定义未生效")
+	}
 	// 验证 1ms < 1h（运行时语义）
 	if time.Duration(req.CacheTTLMs)*time.Millisecond >= time.Hour {
 		t.Errorf("自定义 TTL 应小于默认 1h（语义校验）")
