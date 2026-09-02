@@ -58,7 +58,10 @@ RUN addgroup -g 12331 faststrm && \
 
 VOLUME ["/app/config", "/app/data"]
 
-EXPOSE 8090
+# 8090 = FastStrm 主应用端口（UI + API）
+# 8097 = Emby 反代端口（用户在 UI 里启用 ProxyPort 后动态监听）
+#        如果用户改了 ProxyPort（比如 8098/9000），需要在 docker-compose.yml 同步加端口映射
+EXPOSE 8090 8097 8098 8099
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["/app/faststrm"]

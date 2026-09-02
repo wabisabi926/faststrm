@@ -1,6 +1,6 @@
 {
   "name": "faststrm",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Fast Strm - Strm Management Platform Frontend",
   "license": "MIT",
   "private": true,
@@ -62,3 +62,4 @@
     "vitest": "^2.1.9"
   }
 }
+

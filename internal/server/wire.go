@@ -5,6 +5,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
+	"github.com/wabisabi926/faststrm/internal/service/embyproxy"
 	"github.com/wabisabi926/faststrm/internal/service/monitor"
 	"github.com/wabisabi926/faststrm/internal/service/notify"
 	"github.com/wabisabi926/faststrm/internal/service/runtime"
@@ -31,6 +32,7 @@ func initPhase6Deps(
 	execDeps task.ExecutorDeps,
 	embyClient *emby.Client,
 	embyRefresh *emby.MediaServerRefresh,
+	embyProxyManager *embyproxy.Manager,
 ) (handler.NotifyDeps, handler.EmbyDeps, handler.LifeMonitorDeps, *monitor.Monitor) {
 	// 读取启动时配置，用于初始化 TelegramBot
 	initSettings, _ := settingsStore.ReadSettings()
@@ -92,10 +94,11 @@ func initPhase6Deps(
 	}
 
 	embyDeps := handler.EmbyDeps{
-		SettingsStore: settingsStore,
-		EmbyNotifier:  embyNotifier,
-		EmbyClient:    embyClient,
-		SyncDelete:    embySyncDel,
+		SettingsStore:    settingsStore,
+		EmbyNotifier:     embyNotifier,
+		EmbyClient:       embyClient,
+		SyncDelete:       embySyncDel,
+		EmbyProxyManager: embyProxyManager,
 	}
 
 	// ---------- LifeMonitor ----------

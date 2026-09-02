@@ -12,16 +12,18 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
+	"github.com/wabisabi926/faststrm/internal/service/embyproxy"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // EmbyDeps Emby 相关 handler 依赖
 type EmbyDeps struct {
-	SettingsStore *store.SettingsStore
-	EmbyNotifier  *emby.Notifier
-	EmbyClient    *emby.Client
-	SyncDelete    *emby.SyncDelete
+	SettingsStore    *store.SettingsStore
+	EmbyNotifier     *emby.Notifier
+	EmbyClient       *emby.Client
+	SyncDelete       *emby.SyncDelete
+	EmbyProxyManager *embyproxy.Manager
 }
 
 // ==================== 辅助 ====================
@@ -116,19 +118,26 @@ func HandleEmbySettingsGET(deps EmbyDeps) http.HandlerFunc {
 
 // embySettingsPatch POST /api/emby/settings 局部 patch（仅允许白名单字段）
 type embySettingsPatch struct {
-	URL                    *string                        `json:"url,omitempty"`
-	APIKey                 *string                        `json:"apiKey,omitempty"`
-	NotifyMediaAdded       *bool                          `json:"notifyMediaAdded,omitempty"`
-	NotifyMediaRemoved     *bool                          `json:"notifyMediaRemoved,omitempty"`
-	NotifyPlayback         *bool                          `json:"notifyPlayback,omitempty"`
-	PlaybackShowProgress   *bool                          `json:"playbackShowProgress,omitempty"`
-	PlaybackShowOverview   *bool                          `json:"playbackShowOverview,omitempty"`
-	WebhookAuth            *string                        `json:"webhookAuth,omitempty"`
-	LibraryID              *string                        `json:"libraryId,omitempty"`
-	SyncDeleteEnabled      *bool                          `json:"syncDeleteEnabled,omitempty"`
-	SyncDeletePathMappings *[]model.SyncDeletePathMapping `json:"syncDeletePathMappings,omitempty"`
-	SyncDeleteNotify       *bool                          `json:"syncDeleteNotify,omitempty"`
-	SyncDeleteDryRun       *bool                          `json:"syncDeleteDryRun,omitempty"`
+	URL                      *string                        `json:"url,omitempty"`
+	APIKey                   *string                        `json:"apiKey,omitempty"`
+	NotifyMediaAdded         *bool                          `json:"notifyMediaAdded,omitempty"`
+	NotifyMediaRemoved       *bool                          `json:"notifyMediaRemoved,omitempty"`
+	NotifyPlayback           *bool                          `json:"notifyPlayback,omitempty"`
+	PlaybackShowProgress     *bool                          `json:"playbackShowProgress,omitempty"`
+	PlaybackShowOverview     *bool                          `json:"playbackShowOverview,omitempty"`
+	WebhookAuth              *string                        `json:"webhookAuth,omitempty"`
+	LibraryID                *string                        `json:"libraryId,omitempty"`
+	SyncDeleteEnabled        *bool                          `json:"syncDeleteEnabled,omitempty"`
+	SyncDeletePathMappings   *[]model.SyncDeletePathMapping `json:"syncDeletePathMappings,omitempty"`
+	SyncDeleteNotify         *bool                          `json:"syncDeleteNotify,omitempty"`
+	SyncDeleteDryRun         *bool                          `json:"syncDeleteDryRun,omitempty"`
+	SyncDeleteDeleteSymlink  *bool                          `json:"syncDeleteDeleteSymlink,omitempty"`
+	SyncDeleteRemoveVersions *bool                          `json:"syncDeleteRemoveVersions,omitempty"`
+	SyncDeleteSource         *bool                          `json:"syncDeleteSource,omitempty"`
+	RefreshOnCreate          *bool                          `json:"refreshOnCreate,omitempty"`
+	RefreshOnDelete          *bool                          `json:"refreshOnDelete,omitempty"`
+	DebounceSeconds          *int                           `json:"debounceSeconds,omitempty"`
+	ProxyPort                *int                           `json:"proxyPort,omitempty"`
 }
 
 // HandleEmbySettingsPOST POST /api/emby/settings 局部 patch 保存 Emby 设置
@@ -194,6 +203,27 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 		if patch.SyncDeleteDryRun != nil {
 			em.SyncDeleteDryRun = *patch.SyncDeleteDryRun
 		}
+		if patch.SyncDeleteDeleteSymlink != nil {
+			em.SyncDeleteDeleteSymlink = *patch.SyncDeleteDeleteSymlink
+		}
+		if patch.SyncDeleteRemoveVersions != nil {
+			em.SyncDeleteRemoveVersions = *patch.SyncDeleteRemoveVersions
+		}
+		if patch.SyncDeleteSource != nil {
+			em.SyncDeleteSource = *patch.SyncDeleteSource
+		}
+		if patch.RefreshOnCreate != nil {
+			em.RefreshOnCreate = *patch.RefreshOnCreate
+		}
+		if patch.RefreshOnDelete != nil {
+			em.RefreshOnDelete = *patch.RefreshOnDelete
+		}
+		if patch.DebounceSeconds != nil {
+			em.DebounceSeconds = *patch.DebounceSeconds
+		}
+		if patch.ProxyPort != nil {
+			em.ProxyPort = *patch.ProxyPort
+		}
 		settings.Emby = em
 
 		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
@@ -205,6 +235,33 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 		// 保存后清除 Notifier 的 Client 缓存，确保下次获取最新配置
 		if deps.EmbyNotifier != nil {
 			deps.EmbyNotifier.InvalidateClientCache()
+		}
+
+		// ============ EmbyProxy 热重启 ============
+		// ProxyPort 或 Emby.URL 变更时自动启停反代，无需重启主程序
+		if deps.EmbyProxyManager != nil {
+			mgr := deps.EmbyProxyManager
+			if em.ProxyPort > 0 && em.URL != "" {
+				// 从 manager Status 判断当前 host，缺省沿用当前值或回退 0.0.0.0
+				host := "0.0.0.0"
+				if st := mgr.Status(); st.Running && st.Addr != "" {
+					// 从当前 addr 解析 host 部分，避免改端口时丢 host
+					if idx := strings.LastIndex(st.Addr, ":"); idx > 0 {
+						host = st.Addr[:idx]
+					}
+				}
+				if err := mgr.Restart(host, em.ProxyPort, em.URL); err != nil {
+					logger.S().Warnf("[EmbyProxy] 热重启失败: %v", err)
+				} else {
+					logger.S().Infof("[EmbyProxy] 热重启完成: %s:%d → %s", host, em.ProxyPort, em.URL)
+				}
+			} else {
+				// ProxyPort=0 或 Emby URL 为空 → 停服
+				if st := mgr.Status(); st.Running {
+					logger.S().Infof("[EmbyProxy] 配置已禁用，停服 %s", st.Addr)
+					mgr.StopAll()
+				}
+			}
 		}
 
 		// 返回保存后的配置（apiKey 脱敏）

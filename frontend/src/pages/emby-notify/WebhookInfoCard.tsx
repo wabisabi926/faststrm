@@ -66,29 +66,26 @@ export function WebhookInfoCard({
             在 Emby Webhook 设置中勾选以下事件：
           </p>
           <div className="flex flex-wrap gap-2">
-            <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-              媒体入库 (library.new)
-            </code>
-            <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-              媒体删除 (library.deleted)
-            </code>
-            <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-              播放开始 (playback.start)
-            </code>
-            <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-              播放暂停 (playback.pause)
-            </code>
-            <code className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-xs">
-              播放结束 (playback.stop)
-            </code>
+            {[
+              "媒体入库 (library.new)",
+              "媒体删除 (library.deleted)",
+              "播放开始 (playback.start)",
+              "播放暂停 (playback.pause)",
+              "播放结束 (playback.stop)",
+            ].map((label) => (
+              <span
+                key={label}
+                className="inline-flex items-center text-xs font-medium text-foreground bg-background border border-border rounded-md px-2.5 py-1 shadow-sm"
+              >
+                {label}
+              </span>
+            ))}
           </div>
         </div>
 
-        <div className="rounded-lg bg-muted/50 p-3">
-          <p className="text-sm text-muted-foreground">
-            <strong>提示：</strong>配置完成后，Emby 的媒体变动（入库/删除）和播放状态将实时推送到你的 Telegram。
-          </p>
-        </div>
+        <p className="text-xs text-muted-foreground pt-1">
+          💡 配置完成后，Emby 的媒体变动（入库/删除）和播放状态将实时推送到你的 Telegram。
+        </p>
       </div>
     </section>
   );

@@ -11,6 +11,9 @@ services:
     container_name: faststrm
     ports:
       - "8090:8090"
+      # Emby 反代端口：默认 8097，对应 UI 里 "Emby 反向代理 → 反代监听端口"
+      # 改了 ProxyPort 记得同步修改下面这个值（例如改成 8098:8098）
+      - "8097:8097"
     environment:
       - TZ=Asia/Shanghai
       - APP_ENV=prod

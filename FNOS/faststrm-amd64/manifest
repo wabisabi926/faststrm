@@ -1,7 +1,7 @@
 appname               = faststrm
-version = 1.2.2
+version = 1.2.4
 display_name          = FastStrm
-desc                  = 115 网盘 STRM 自动生成器。监控网盘变动实时生成 STRM 文件，配合 Emby/Jellyfin 实现云盘资源本地化播放。核心特性：STRM 302 直连/代理路由、ISO 原盘双扩展名支持、STRM URL HMAC 签名、Emby 入库/删除/播放通知、自动刷库与删除同步、SQLite Schema 迁移。单二进制 SPA 部署，开箱即用。
+desc                  = 115 网盘 STRM 自动生成器。监控网盘变动实时生成 STRM 文件，配合 Emby 实现云盘资源本地化播放。核心特性：STRM 302 直连/代理路由、ISO 原盘双扩展名支持、STRM URL HMAC 签名、Emby 入库/删除/播放通知、自动刷库与删除同步、SQLite Schema 迁移、Emby 反向代理热重启。
 platform              = x86
 source       = thirdparty
 maintainer    = wabisabi926
@@ -19,4 +19,5 @@ service_run_dir    = /app_data/faststrm/run
 ; 共享卷授权（对齐 qmediasync）：用户在应用管理 - 共享目录中勾选后，对应路径会被映射到沙箱并注入到 TRIM_DATA_SHARE_PATHS 环境变量
 ; 支持逗号分隔的卷根前缀 / 具体路径。下列声明覆盖飞牛常见的 /vol1~/vol4、群晖 /volume1~/volume4、UNRAID /mnt/user 等。
 share_dirs         = /vol1,/vol2,/vol3,/vol4,/volume1,/volume2,/volume3,/volume4,/mnt/user,/mnt/ssd,/mnt/cache,/share,/public,/home
+
 

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -155,10 +154,14 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	_ = scheduler.Init(execDeps, tasksStore, store.NewSettingsAdapter(settingsStore))
 
 	// ==================== 阶段6: 通知 + Emby + 生活监控依赖 ====================
+	// 创建 EmbyProxyManager（支持热重启：用户改 ProxyPort / EmbyURL 后无需重启主程序）
+	embyProxyManager := embyproxy.NewManager()
+
 	notifyDeps, embyDeps, lifeMonitorDeps, mon := initPhase6Deps(
 		settingsStore, tasksStore, accountStore,
 		lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
 		taskRuntime, execDeps, embyClient, embyRefresh,
+		embyProxyManager,
 	)
 
 	// 延迟注入 Notifier：dispatcher 在 initPhase6Deps 内创建
@@ -271,37 +274,19 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	logger.S().Infof("   internal_token: %s", maskToken(cfg.Settings.InternalToken))
 
 	// ==================== Emby 反向代理（可选） ====================
-	// 如果用户配置了 Emby.ProxyPort，启动反代 server 拦截 PlaybackInfo 强制 STRM DirectPlay
+	// 如果用户配置了 Emby.ProxyPort，通过 manager.Start 启动反代
+	// manager 封装了 Start/Stop/Restart，支持后续热重启
 	if initSettings != nil && initSettings.Emby.ProxyPort > 0 && initSettings.Emby.URL != "" {
 		embyURL := initSettings.Emby.URL
 		proxyPort := initSettings.Emby.ProxyPort
-		proxy, err := embyproxy.New(embyURL)
-		if err != nil {
+		if err := embyProxyManager.Start(cfg.Server.Host, proxyPort, embyURL); err != nil {
 			logger.S().Warnf("[EmbyProxy] 配置无效，跳过启动: %v", err)
 		} else {
-			proxyHandler := proxy.Handler()
-
-			proxyAddr := fmt.Sprintf("%s:%d", cfg.Server.Host, proxyPort)
 			proxyDisplayAddr := fmt.Sprintf("http://localhost:%d", proxyPort)
 			if cfg.Server.Host != "" && cfg.Server.Host != "0.0.0.0" && cfg.Server.Host != "::" {
 				proxyDisplayAddr = fmt.Sprintf("http://%s:%d", cfg.Server.Host, proxyPort)
 			}
-
-			go func() {
-				logger.S().Infof("[EmbyProxy] 启动中: %s → %s", proxyAddr, embyURL)
-				logger.S().Infof("[EmbyProxy] 请将 Emby 客户端连接到 %s", proxyDisplayAddr)
-				logger.S().Infof("[EmbyProxy] STRM ISO/MKV 自动强制 DirectPlay，绕过 Emby 转码限制")
-				proxySrv := &http.Server{
-					Addr:         proxyAddr,
-					Handler:      proxyHandler,
-					ReadTimeout:  120 * time.Second,
-					WriteTimeout: 120 * time.Second,
-					IdleTimeout:  60 * time.Second,
-				}
-				if err := proxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					logger.S().Warnf("[EmbyProxy] 启动失败 %s: %v", proxyAddr, err)
-				}
-			}()
+			logger.S().Infof("[EmbyProxy] 请将 Emby 客户端连接到 %s", proxyDisplayAddr)
 		}
 	}
 

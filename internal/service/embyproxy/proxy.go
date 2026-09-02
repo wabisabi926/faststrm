@@ -155,8 +155,12 @@ type Proxy struct {
 // New 创建 Emby 反向代理
 func New(embyHost string) (*Proxy, error) {
 	embyHost = strings.TrimRight(embyHost, "/")
-	if _, err := url.Parse(embyHost); err != nil {
+	parsed, err := url.Parse(embyHost)
+	if err != nil {
 		return nil, fmt.Errorf("invalid emby host %q: %w", embyHost, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("invalid emby host %q: missing http/https scheme", embyHost)
 	}
 
 	// Client A: 用于 Emby 反向代理透传，不跟随重定向
