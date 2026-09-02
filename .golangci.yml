@@ -27,7 +27,7 @@ linters-settings:
     # 测试文件圈复杂度天然偏高（场景覆盖分支多），通过 exclude-rules 排除
 
 # ============================================================
-# 技术债登记册：16 个高复杂度函数（cyclop > 25），均带 //nolint:cyclop 注释
+# 技术债登记册：17 个高复杂度函数（cyclop > 25），均带 //nolint:cyclop 注释
 # 这些函数处理状态机 / 事件处理 / 设置项映射逻辑，分支天然密集，
 # 拆分反而会降低可读性。中长期重构计划：
 #   1. 提取分支表驱动（map[state]handler）替代 if-else 链
@@ -36,12 +36,13 @@ linters-settings:
 # 新增高复杂度函数时请评估是否可以拆分；如确实无法拆分，
 # 在函数上方加 //nolint:cyclop 注释并在本登记册追加条目。
 # ============================================================
-# Top 5（按复杂度排序，数字为当前 cyclop 测量值）：
+# Top 6（按复杂度排序，数字为当前 cyclop 测量值）：
 #   ExecuteTask              executor.go        112  任务执行主循环
 #   handleMoveEvent          event_move.go       96  115 移动事件处理
 #   handleRenameEvent        event_rename.go     90  115 重命名事件处理
 #   processEvent             event_handler.go    58  事件分发
-#   HandleSettingsPOST      emby.go              51  Emby 设置 POST handler
+#   HandleSettingsPOST        emby.go              51  Emby 设置 POST handler（聚合视图）
+#   HandleEmbySettingsPOST   emby.go              36  Emby 设置 POST handler（局部 patch + 反代热重启）
 # 其余 11 个函数：见各文件 //nolint:cyclop 注释处
 
 issues:
@@ -53,8 +54,10 @@ issues:
   max-issues-per-linter: 0
   max-same-issues: 0
   exclude-rules:
-    # cyclop：集成测试/E2E 测试函数包含大量 if-else 场景分支，圈复杂度天然偏高
+    # 测试文件：cyclop 场景分支多、errcheck 忽略 mock data 解析失败不可能发生、gosec http.Get URL 均为本地 httptest localhost
     - path: _test\.go$
       linters:
         - cyclop
+        - errcheck
+        - gosec
 

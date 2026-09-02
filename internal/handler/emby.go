@@ -141,6 +141,8 @@ type embySettingsPatch struct {
 }
 
 // HandleEmbySettingsPOST POST /api/emby/settings 局部 patch 保存 Emby 设置
+//
+//nolint:cyclop // complexity: 36；含 EmbyProxyManager 热重启分支，与 HandleSettingsPOST(51) 同属设置 POST handler 高复杂度家族
 func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var patch embySettingsPatch

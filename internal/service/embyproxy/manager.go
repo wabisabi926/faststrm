@@ -18,16 +18,16 @@ import (
 // Status 当前反代运行状态
 type Status struct {
 	Running bool   `json:"running"`
-	Addr    string `json:"addr,omitempty"`     // 正在监听的 host:port
+	Addr    string `json:"addr,omitempty"`    // 正在监听的 host:port
 	EmbyURL string `json:"embyURL,omitempty"` // 当前代理的 Emby 源 URL
 }
 
 // Manager 管理反代 server 生命周期
 type Manager struct {
-	mu     sync.Mutex
-	server *http.Server
-	proxy  *Proxy
-	addr   string // 当前监听地址 "host:port"
+	mu      sync.Mutex
+	server  *http.Server
+	proxy   *Proxy
+	addr    string // 当前监听地址 "host:port"
 	embyURL string // 当前代理的 Emby 源 URL
 }
 

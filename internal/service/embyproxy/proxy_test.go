@@ -93,14 +93,14 @@ func buildISOPlaybackInfoResp(strmURL string) []byte {
 	resp := map[string]interface{}{
 		"MediaSources": []interface{}{
 			map[string]interface{}{
-				"Id":                    "iso-src-001",
-				"Path":                  strmURL,
-				"IsRemote":              true,
-				"Protocol":              "Http",
-				"Type":                  "Video",
-				"SupportsDirectPlay":    false,
-				"TranscodingUrl":        "http://emby:8096/videos/123/master.m3u8",
-				"TranscodingContainer":  "mkv",
+				"Id":                     "iso-src-001",
+				"Path":                   strmURL,
+				"IsRemote":               true,
+				"Protocol":               "Http",
+				"Type":                   "Video",
+				"SupportsDirectPlay":     false,
+				"TranscodingUrl":         "http://emby:8096/videos/123/master.m3u8",
+				"TranscodingContainer":   "mkv",
 				"TranscodingSubProtocol": "subrip",
 			},
 		},
@@ -950,8 +950,8 @@ func TestPlaybackInfo_HttpPathButNotRemote(t *testing.T) {
 			map[string]interface{}{
 				"Id":                  "src-http-path",
 				"Path":                strmURL, // http:// 开头
-				"IsRemote":            false,    // 但 IsRemote=false
-				"Protocol":            "File",   // Protocol=File
+				"IsRemote":            false,   // 但 IsRemote=false
+				"Protocol":            "File",  // Protocol=File
 				"Type":                "Video",
 				"SupportsDirectPlay":  true,
 				"SupportsTranscoding": true,
