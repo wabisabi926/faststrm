@@ -36,7 +36,18 @@ jobs:
       run: |
         go mod download
         PKGS=$(go list ./... | grep -v -E '/tools/|/scripts/')
-        go test $PKGS -count=1 -timeout=15m
+        # -v + 失败摘要，便于下次在 Release 前的 ci-verify 也能定位 race；
+        # 注意：release 的 ci-verify 仍不启用 -race（只在 push CI 上启用），避免已知 race 阻塞发版
+        go test $PKGS -v -count=1 -timeout=15m 2>&1 | tee test_output.txt
+        EXIT=${PIPESTATUS[0]}
+        if [ $EXIT -ne 0 ]; then
+          echo ""
+          echo "=== Fail Summary ==="
+          grep -nE '^(--- FAIL:|FAIL |fatal error:|panic:|goroutine [0-9]+)' test_output.txt | head -120 || true
+          echo "❌ ci-verify Go tests failed (exit=$EXIT)"
+          exit $EXIT
+        fi
+        echo "✅ ci-verify Go tests passed"
       env:
         GOPROXY: https://proxy.golang.org,direct
 

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -43,7 +44,62 @@ type ServerConfig struct {
 	Mode string `json:"mode"` // dev / prod
 }
 
-var appCfg *AppConfig
+var (
+	appCfgMu sync.RWMutex
+	appCfg   *AppConfig
+)
+
+// Snapshot 返回当前配置的**值语义快照**，避免外部直接修改全局共享指针下的字段导致 data race。
+// 需要"读取+就地修改+保存"语义的代码路径，改用 MutateAdmin / MutateSettings 或手动 Clone+Replace。
+func (c *AppConfig) Snapshot() AppConfig {
+	if c == nil {
+		return AppConfig{}
+	}
+	out := *c
+	if c.Settings != nil {
+		s := *c.Settings
+		out.Settings = &s
+		// Settings 里有可变切片/指针字段：做一层深拷贝，避免调用者 append/mutation 穿透
+		out.Settings.StrmExtensions = append([]string(nil), c.Settings.StrmExtensions...)
+		out.Settings.DownloadExtensions = append([]string(nil), c.Settings.DownloadExtensions...)
+		// 可变切片/指针字段：复制底层切片头指向的 backing array，避免 snapshot 的 append/mutation 穿透全局
+		if c.Settings.Strm.ForceProxyUaTokens != nil {
+			tokens := make([]string, len(c.Settings.Strm.ForceProxyUaTokens))
+			copy(tokens, c.Settings.Strm.ForceProxyUaTokens)
+			out.Settings.Strm.ForceProxyUaTokens = tokens
+		}
+		if c.Settings.Emby.SyncDeletePathMappings != nil {
+			pm := make([]model.SyncDeletePathMapping, len(c.Settings.Emby.SyncDeletePathMappings))
+			copy(pm, c.Settings.Emby.SyncDeletePathMappings)
+			out.Settings.Emby.SyncDeletePathMappings = pm
+		}
+		if c.Settings.LifeMonitor.Accounts != nil {
+			out.Settings.LifeMonitor.Accounts = append([]string(nil), c.Settings.LifeMonitor.Accounts...)
+		}
+		if c.Settings.LifeMonitor.PathMappings != nil {
+			pm := make([]model.MonitorPathMapping, len(c.Settings.LifeMonitor.PathMappings))
+			copy(pm, c.Settings.LifeMonitor.PathMappings)
+			out.Settings.LifeMonitor.PathMappings = pm
+		}
+
+		if c.Settings.LifeMonitor.StrmGenerateBlacklist != nil {
+			out.Settings.LifeMonitor.StrmGenerateBlacklist = append([]string(nil), c.Settings.LifeMonitor.StrmGenerateBlacklist...)
+		}
+		if c.Settings.Download.StrmGenerateBlacklist != nil {
+			out.Settings.Download.StrmGenerateBlacklist = append([]string(nil), c.Settings.Download.StrmGenerateBlacklist...)
+		}
+		if c.Settings.Telegram.AllowedUsers != nil {
+			users := make([]int64, len(c.Settings.Telegram.AllowedUsers))
+			copy(users, c.Settings.Telegram.AllowedUsers)
+			out.Settings.Telegram.AllowedUsers = users
+		}
+	}
+	if c.Admin != nil {
+		a := *c.Admin
+		out.Admin = &a
+	}
+	return out
+}
 
 // Load 加载配置。优先从 JSON 文件加载，缺失字段填充默认值。
 func Load(paths AppConfigPaths) (*AppConfig, error) {
@@ -68,7 +124,7 @@ func Load(paths AppConfigPaths) (*AppConfig, error) {
 		return nil, fmt.Errorf("read config.json: %w", err)
 	}
 
-	appCfg = &AppConfig{
+	cfg := &AppConfig{
 		Paths:    paths,
 		Settings: settings,
 		Admin:    admin,
@@ -78,47 +134,177 @@ func Load(paths AppConfigPaths) (*AppConfig, error) {
 			Mode: getEnv("APP_ENV", "prod"),
 		},
 	}
-	return appCfg, nil
+	appCfgMu.Lock()
+	appCfg = cfg
+	appCfgMu.Unlock()
+	return cfg, nil
 }
 
-// Get 获取全局配置（需先 Load）
-func Get() *AppConfig {
+// Get 获取全局配置（需先 Load）。返回的是当前快照（值语义拷贝），
+// 调用者可以自由读取字段；但不要把快照里的指针字段再写回全局，否则仍有 race。
+// 若需要修改并保存配置，使用 MutateAdmin / MutateSettings 或 Replace / ReplaceAndPersist。
+func Get() AppConfig {
+	appCfgMu.RLock()
+	cfg := appCfg
+	appCfgMu.RUnlock()
+	if cfg == nil {
+		panic("config not loaded, call config.Load() first")
+	}
+	return cfg.Snapshot()
+}
+
+// Ptr 返回当前全局配置指针（仅用于启动阶段需要真实引用传参的调用方；
+// 业务 handler 一律禁止使用，避免跨 goroutine 共享可变对象）。
+func Ptr() *AppConfig {
+	appCfgMu.RLock()
+	defer appCfgMu.RUnlock()
 	if appCfg == nil {
 		panic("config not loaded, call config.Load() first")
 	}
 	return appCfg
 }
 
-// SetForTest 设置全局配置（仅用于测试）
+// SetForTest 设置全局配置（仅用于测试）。
 func SetForTest(cfg *AppConfig) {
+	appCfgMu.Lock()
 	appCfg = cfg
+	appCfgMu.Unlock()
+}
+
+// Replace 替换全局 AppConfig（仍为快照语义：先对入参做深拷贝，再替换内部指针）。
+func Replace(cfg AppConfig) {
+	snap := cfg.Snapshot()
+	// Snapshot 返回值语义，需要取其地址保存为全局指针
+	ptr := snap
+	appCfgMu.Lock()
+	appCfg = &ptr
+	appCfgMu.Unlock()
+}
+
+// MutateAdmin 原子地读取-修改-写回 cfg.Admin，并可选持久化到磁盘。
+// 保证修改过程与并发 Get / 其他 Mutate* 之间无 data race。
+func MutateAdmin(mutate func(admin *model.AppConfig), persist bool) error {
+	appCfgMu.Lock()
+	defer appCfgMu.Unlock()
+	if appCfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	// 构造新 Admin：先克隆当前值，再让用户在克隆体上修改，最后整体替换（copy-on-write）
+	var nextAdmin model.AppConfig
+	if appCfg.Admin != nil {
+		nextAdmin = *appCfg.Admin
+	}
+	mutate(&nextAdmin)
+	appCfg.Admin = &nextAdmin
+	if persist {
+		return saveAdminLocked()
+	}
+	return nil
+}
+
+// MutateSettings 原子地读取-修改-写回 cfg.Settings，并可选持久化到磁盘。
+func MutateSettings(mutate func(settings *model.Settings), persist bool) error {
+	appCfgMu.Lock()
+	defer appCfgMu.Unlock()
+	if appCfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	var next model.Settings
+	if appCfg.Settings != nil {
+		next = *appCfg.Settings
+		// 切片/指针字段深拷贝，避免 mutate 里的 append/map 写回影响旧对象
+		next.StrmExtensions = append([]string(nil), appCfg.Settings.StrmExtensions...)
+		next.DownloadExtensions = append([]string(nil), appCfg.Settings.DownloadExtensions...)
+		if appCfg.Settings.Strm.ForceProxyUaTokens != nil {
+			tokens := make([]string, len(appCfg.Settings.Strm.ForceProxyUaTokens))
+			copy(tokens, appCfg.Settings.Strm.ForceProxyUaTokens)
+			next.Strm.ForceProxyUaTokens = tokens
+		}
+		if appCfg.Settings.Emby.SyncDeletePathMappings != nil {
+			pm := make([]model.SyncDeletePathMapping, len(appCfg.Settings.Emby.SyncDeletePathMappings))
+			copy(pm, appCfg.Settings.Emby.SyncDeletePathMappings)
+			next.Emby.SyncDeletePathMappings = pm
+		}
+		if appCfg.Settings.LifeMonitor.Accounts != nil {
+			next.LifeMonitor.Accounts = append([]string(nil), appCfg.Settings.LifeMonitor.Accounts...)
+		}
+		if appCfg.Settings.LifeMonitor.PathMappings != nil {
+			pm := make([]model.MonitorPathMapping, len(appCfg.Settings.LifeMonitor.PathMappings))
+			copy(pm, appCfg.Settings.LifeMonitor.PathMappings)
+			next.LifeMonitor.PathMappings = pm
+		}
+
+		if appCfg.Settings.LifeMonitor.StrmGenerateBlacklist != nil {
+			next.LifeMonitor.StrmGenerateBlacklist = append([]string(nil), appCfg.Settings.LifeMonitor.StrmGenerateBlacklist...)
+		}
+		if appCfg.Settings.Download.StrmGenerateBlacklist != nil {
+			next.Download.StrmGenerateBlacklist = append([]string(nil), appCfg.Settings.Download.StrmGenerateBlacklist...)
+		}
+		if appCfg.Settings.Telegram.AllowedUsers != nil {
+			users := make([]int64, len(appCfg.Settings.Telegram.AllowedUsers))
+			copy(users, appCfg.Settings.Telegram.AllowedUsers)
+			next.Telegram.AllowedUsers = users
+		}
+		if appCfg.Settings.Telegram.AccountAlerts != nil {
+			a := *appCfg.Settings.Telegram.AccountAlerts
+			next.Telegram.AccountAlerts = &a
+		}
+	}
+	mutate(&next)
+	appCfg.Settings = &next
+	if persist {
+		return saveSettingsLocked()
+	}
+	return nil
 }
 
 // SaveSettings 持久化 settings.json 到磁盘
 func SaveSettings() error {
-	cfg := Get()
-	data, err := json.MarshalIndent(cfg.Settings, "", "  ")
+	appCfgMu.RLock()
+	defer appCfgMu.RUnlock()
+	return saveSettingsLocked()
+}
+
+// saveSettingsLocked 在持有锁的前提下持久化 settings.json
+func saveSettingsLocked() error {
+	if appCfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	data, err := json.MarshalIndent(appCfg.Settings, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfg.Paths.SettingsPath, data, 0600)
+	return os.WriteFile(appCfg.Paths.SettingsPath, data, 0600)
 }
 
 // SaveAdmin 持久化 config.json（admin 用户名/密码）到磁盘
 func SaveAdmin() error {
-	cfg := Get()
-	data, err := json.MarshalIndent(cfg.Admin, "", "  ")
+	appCfgMu.RLock()
+	defer appCfgMu.RUnlock()
+	return saveAdminLocked()
+}
+
+// saveAdminLocked 在持有锁的前提下持久化 config.json
+func saveAdminLocked() error {
+	if appCfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	data, err := json.MarshalIndent(appCfg.Admin, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfg.Paths.ConfigPath, data, 0600)
+	return os.WriteFile(appCfg.Paths.ConfigPath, data, 0600)
 }
 
 // GenerateInternalToken 如果 settings 没有 internalToken 则生成并持久化
 func GenerateInternalToken() (string, error) {
-	cfg := Get()
-	if cfg.Settings.InternalToken != "" {
-		return cfg.Settings.InternalToken, nil
+	appCfgMu.Lock()
+	defer appCfgMu.Unlock()
+	if appCfg == nil {
+		return "", fmt.Errorf("config not loaded")
+	}
+	if appCfg.Settings.InternalToken != "" {
+		return appCfg.Settings.InternalToken, nil
 	}
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {
@@ -126,8 +312,14 @@ func GenerateInternalToken() (string, error) {
 	}
 	// base64url 编码（无 padding）
 	token := hex.EncodeToString(buf)[:32] // 简化：32 hex 字符
-	cfg.Settings.InternalToken = token
-	if err := SaveSettings(); err != nil {
+	// copy-on-write：替换新 Settings 指针，避免直接写共享结构体
+	var next model.Settings
+	if appCfg.Settings != nil {
+		next = *appCfg.Settings
+	}
+	next.InternalToken = token
+	appCfg.Settings = &next
+	if err := saveSettingsLocked(); err != nil {
 		return "", err
 	}
 	logger.S().Info("Generated new internalToken")
@@ -280,18 +472,31 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 	}
 
 	// 5. 加载完整配置
-	cfg, err := Load(paths)
-	if err != nil {
+	if _, err = Load(paths); err != nil {
 		return nil, err
 	}
-	cfg.Salt = salt
+	// Load 已经把 cfg 放到全局了，但 Load 内部没有填 Salt。
+	// 用写锁 clone 一份替换，保证与并发 Get 之间无 data race。
+	appCfgMu.Lock()
+	if appCfg != nil {
+		clone := *appCfg
+		clone.Salt = salt
+		appCfg = &clone
+	}
+	appCfgMu.Unlock()
 
-	// 6. 生成 internalToken
+	// 6. 生成 internalToken（GenerateInternalToken 自己拿写锁）
 	if _, err := GenerateInternalToken(); err != nil {
 		return nil, fmt.Errorf("generate internalToken: %w", err)
 	}
 
-	return cfg, nil
+	appCfgMu.RLock()
+	defer appCfgMu.RUnlock()
+	if appCfg == nil {
+		return nil, fmt.Errorf("config not loaded after InitApp")
+	}
+	out := appCfg.Snapshot()
+	return &out, nil
 }
 
 // resolvePaths 解析应用路径

@@ -9,6 +9,7 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 
 	"github.com/wabisabi926/faststrm/internal/config"
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/auth"
 	"github.com/wabisabi926/faststrm/internal/service/pwdcrypto"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -125,19 +126,30 @@ func ChangePassword() http.HandlerFunc {
 			return
 		}
 
-		cfg := config.Get()
+		snap := config.Get()
 
-		// 验证当前密码
-		if !pwdcrypto.VerifyPassword(cfg.Salt, req.CurrentPassword, cfg.Admin.Password) {
+		// 验证当前密码（前置快速失败；原子更新里再比对一次，避免 ABA 窗口误写）
+		if !pwdcrypto.VerifyPassword(snap.Salt, req.CurrentPassword, snap.Admin.Password) {
 			httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "当前密码错误"})
 			return
 		}
 
-		// 更新密码
-		cfg.Admin.Password = pwdcrypto.HashPassword(cfg.Salt, req.NewPassword)
-		if err := config.SaveAdmin(); err != nil {
+		// 原子更新：copy-on-write 替换 cfg.Admin 指针并持久化，避免与并发 config.Get()/其他写入产生 data race
+		var updated bool
+		err := config.MutateAdmin(func(admin *model.AppConfig) {
+			if !pwdcrypto.VerifyPassword(snap.Salt, req.CurrentPassword, admin.Password) {
+				return // 二次校验不通过：保持 admin 不变，外层再返回错误
+			}
+			admin.Password = pwdcrypto.HashPassword(snap.Salt, req.NewPassword)
+			updated = true
+		}, true)
+		if err != nil {
 			logger.S().Errorf("save admin config failed: %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存失败"})
+			return
+		}
+		if !updated {
+			httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "当前密码错误"})
 			return
 		}
 
@@ -176,10 +188,10 @@ func ChangeCredentials() http.HandlerFunc {
 			return
 		}
 
-		cfg := config.Get()
+		snap := config.Get()
 
-		// 验证当前密码
-		if !pwdcrypto.VerifyPassword(cfg.Salt, req.CurrentPassword, cfg.Admin.Password) {
+		// 验证当前密码（前置快速失败，实际写入再二次校验）
+		if !pwdcrypto.VerifyPassword(snap.Salt, req.CurrentPassword, snap.Admin.Password) {
 			httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "当前密码错误"})
 			return
 		}
@@ -190,7 +202,7 @@ func ChangeCredentials() http.HandlerFunc {
 
 		var changes []string
 
-		// 处理用户名修改
+		// 处理用户名修改（前置校验，失败快速返回）
 		if usernameInput != "" {
 			if len(usernameInput) < usernameMinLen || len(usernameInput) > usernameMaxLen {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "用户名长度需在 3-32 位之间"})
@@ -204,15 +216,14 @@ func ChangeCredentials() http.HandlerFunc {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "用户名不能为纯数字"})
 				return
 			}
-			if usernameInput == cfg.Admin.Username {
+			if usernameInput == snap.Admin.Username {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "新用户名不能与当前用户名相同"})
 				return
 			}
-			cfg.Admin.Username = usernameInput
 			changes = append(changes, "用户名")
 		}
 
-		// 处理密码修改
+		// 处理密码修改（前置校验）
 		if passwordInput != "" {
 			if len(passwordInput) < 6 {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "密码长度不能少于 6 位"})
@@ -222,7 +233,6 @@ func ChangeCredentials() http.HandlerFunc {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "两次输入的新密码不一致"})
 				return
 			}
-			cfg.Admin.Password = pwdcrypto.HashPassword(cfg.Salt, passwordInput)
 			changes = append(changes, "密码")
 		}
 
@@ -231,9 +241,28 @@ func ChangeCredentials() http.HandlerFunc {
 			return
 		}
 
-		if err := config.SaveAdmin(); err != nil {
+		// 原子更新：先在 mutate 内部二次校验密码，再合并 username/password 修改并持久化，避免 data race
+		var updated bool
+		err := config.MutateAdmin(func(admin *model.AppConfig) {
+			if !pwdcrypto.VerifyPassword(snap.Salt, req.CurrentPassword, admin.Password) {
+				return
+			}
+			if usernameInput != "" {
+				if usernameInput == admin.Username { return }
+				admin.Username = usernameInput
+			}
+			if passwordInput != "" {
+				admin.Password = pwdcrypto.HashPassword(snap.Salt, passwordInput)
+			}
+			updated = true
+		}, true)
+		if err != nil {
 			logger.S().Errorf("save admin config failed: %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存失败"})
+			return
+		}
+		if !updated {
+			httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "当前密码错误"})
 			return
 		}
 

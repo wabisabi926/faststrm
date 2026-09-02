@@ -49,7 +49,9 @@ jobs:
         # tools/check_db、scripts/probe_db.go 等为一次性调试脚本，依赖硬编码本地路径，无法在 CI 中运行
         PKGS=$(go list ./... | grep -v -E '/tools/|/scripts/')
         COVERPKGS=$(echo "$PKGS" | paste -sd, -)
+        # -v 让失败时能看到具体哪条 test 卡在 race / panic；失败时在末尾用 grep 提炼 DATA RACE / FAIL 摘要
         go test $PKGS -count=1 -timeout=15m -race -coverprofile=coverage.out \
+          -v \
           -coverpkg="$COVERPKGS" \
           2>&1 | tee test_output.txt
         EXIT=${PIPESTATUS[0]}
@@ -62,9 +64,12 @@ jobs:
           | grep -v 'frontend/node_modules' \
           | tail -1
 
-        # 失败退出
         if [ $EXIT -ne 0 ]; then
-          echo "❌ Go tests failed"
+          echo ""
+          echo "=== Fail Summary (FAIL / Data Race / PANIC lines from -v output) ==="
+          grep -nE '^(--- FAIL:|FAIL |DATA RACE|fatal error:|panic:|goroutine [0-9]+)' test_output.txt | head -120 || true
+          echo ""
+          echo "❌ Go tests failed (exit=$EXIT). Full log saved in artifact go-test-output."
           exit $EXIT
         fi
         echo "✅ All Go tests passed"
