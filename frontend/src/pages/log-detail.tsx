@@ -13,15 +13,32 @@ interface Progress {
   message?: string;
 }
 
+// 任务状态统一映射：只保留 开始 / 已完成 / 失败 / 已取消 四种可读状态。
+// 后端原始值 pending/running 均归为「开始」，避免不准确的中间态误导。
+const STATUS_LABEL: Record<string, string> = {
+  pending: "开始",
+  running: "开始",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  "开始": "#3b82f6",
+  "已完成": "#059669",
+  "失败": "#dc2626",
+  "已取消": "#6b7280",
+  "不存在": "#6b7280",
+};
+
 export default function DownloadProgressPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const [searchParams] = useSearchParams();
   const executionId = searchParams.get("executionId") || undefined;
   const [logs, setLogs] = useState<Progress[]>([]);
-  const [overall, setOverall] = useState<string>("0");
   const [connectionStatus, setConnectionStatus] = useState<string>("连接中...");
   const [isCancelling, setIsCancelling] = useState<boolean>(false);
-  const [taskStatus, setTaskStatus] = useState<string>("运行中");
+  const [taskStatus, setTaskStatus] = useState<string>("开始");
 
   const loadHistoryLogs = useCallback(async () => {
     try {
@@ -32,9 +49,7 @@ export default function DownloadProgressPage() {
 
       if (execution) {
         setConnectionStatus("历史记录");
-        setTaskStatus(execution.status === "completed" ? "已完成" :
-                     execution.status === "failed" ? "失败" :
-                     execution.status === "cancelled" ? "已取消" : "运行中");
+        setTaskStatus(STATUS_LABEL[execution.status] ?? "开始");
 
         const parsedLogs: Progress[] = [];
         execution.logs.forEach((logLine: string) => {
@@ -47,15 +62,6 @@ export default function DownloadProgressPage() {
         });
 
         setLogs(parsedLogs);
-
-        let finalOverallPercent = "0";
-        for (let i = parsedLogs.length - 1; i >= 0; i--) {
-          if (parsedLogs[i]?.overallPercent) {
-            finalOverallPercent = parsedLogs[i].overallPercent!;
-            break;
-          }
-        }
-        setOverall(finalOverallPercent);
       } else {
         setConnectionStatus("历史记录不存在");
         setTaskStatus("不存在");
@@ -122,7 +128,6 @@ export default function DownloadProgressPage() {
 
                   if (data.error) {
                     setLogs([]);
-                    setOverall("0");
                     setConnectionStatus("任务不存在");
                     setTaskStatus("不存在");
                     return;
@@ -130,12 +135,10 @@ export default function DownloadProgressPage() {
 
                   if (data.cancelled) {
                     setTaskStatus("已取消");
-                  } else if (data.done && data.overallPercent === "100.00") {
-                    setTaskStatus("已完成");
                   } else if (data.done) {
                     setTaskStatus("已完成");
                   } else {
-                    setTaskStatus("运行中");
+                    setTaskStatus("开始");
                   }
 
                   setLogs((prev) => {
@@ -148,8 +151,6 @@ export default function DownloadProgressPage() {
                       return [...prev, data];
                     }
                   });
-
-                  if (data.overallPercent) setOverall(data.overallPercent);
                 } catch (e) {
                   console.error('Error parsing SSE data:', e, 'Raw data:', dataStr);
                 }
@@ -239,16 +240,14 @@ export default function DownloadProgressPage() {
               margin: 0,
               fontSize: 16,
               fontWeight: 600,
-              color: taskStatus === "已完成" ? "#059669" :
-                     taskStatus === "已取消" ? "#dc2626" :
-                     taskStatus === "运行中" ? "#3b82f6" : "#6b7280"
+              color: STATUS_COLOR[taskStatus] ?? "#6b7280"
             }}>
               {taskStatus}
             </p>
           </div>
         </div>
 
-        {taskStatus === "运行中" && (
+        {taskStatus === "开始" && (
           <div style={{ marginTop: 16, textAlign: 'center' }}>
             <button
               onClick={cancelTask}
@@ -313,52 +312,23 @@ export default function DownloadProgressPage() {
             boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
             border: "1px solid #e5e7eb"
           }}>
-            <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8
-          }}>
-              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "#111827" }}>整体进度</h2>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "#111827", marginBottom: 12 }}>任务进度</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <span style={{
-                fontSize: 24,
-                fontWeight: 700,
-                color: "#059669",
-                background: "linear-gradient(135deg, #059669, #10b981)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent"
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '6px 16px',
+                borderRadius: 999,
+                fontSize: 15,
+                fontWeight: 600,
+                color: "#fff",
+                backgroundColor: STATUS_COLOR[taskStatus] ?? "#6b7280"
               }}>
-                {parseFloat(overall).toFixed(2)}%
+                {taskStatus}
               </span>
-            </div>
-
-            <div style={{
-              position: 'relative',
-              width: "100%",
-              height: 12,
-              backgroundColor: "#f3f4f6",
-              borderRadius: 6,
-              overflow: 'hidden',
-              boxShadow: "inset 0 1px 3px rgba(0,0,0,0.1)"
-            }}>
-              <div
-                style={{
-                  width: `${overall}%`,
-                  height: "100%",
-                  background: "linear-gradient(90deg, #10b981, #059669, #047857)",
-                  borderRadius: 6,
-                  transition: "width 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                  position: 'relative',
-                  overflow: 'hidden'
-                }}
-              >
-                <div style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)",
-                  animation: "shimmer 2s infinite"
-                }} />
-              </div>
+              <span style={{ fontSize: 14, color: "#6b7280" }}>
+                已完成 {logs.filter((l) => l.done).length} / {logs.length} 个文件
+              </span>
             </div>
           </div>
 
