@@ -228,8 +228,10 @@ func (p *Proxy) Handler() http.Handler {
 
 	// 媒体流路径走 HandleMediaStream（查缓存/解析重定向链 → 302），其余透传反代
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		lowerPath := strings.ToLower(r.URL.Path)
-		if strings.HasPrefix(lowerPath, "/videos/") || strings.HasPrefix(lowerPath, "/audio/") {
+		// 只拦截我们生成的直链流请求（/videos/{id}/stream 或 /audio/{id}/stream 且 Static=true）。
+		// 其余 /videos、/audio 请求（尤其是 Emby 的转码请求 Static=false / 动态转码 URL）透传给上游 Emby，
+		// 让浏览器等无法 DirectPlay 的客户端可以走 Emby 正常转码，避免「当前没有兼容的流」。
+		if isStaticDirectStream(r.URL.Path, r) {
 			p.HandleMediaStream(w, r)
 			return
 		}
@@ -360,11 +362,9 @@ func (p *Proxy) forceDirectPlay(data map[string]interface{}, req *http.Request) 
 
 		ms["SupportsDirectPlay"] = true
 		ms["SupportsDirectStream"] = true
-		ms["SupportsTranscoding"] = false
-
-		for _, key := range []string{"TranscodingUrl", "TranscodingContainer", "TranscodingSubProtocol"} {
-			delete(ms, key)
-		}
+		// 保留 Emby 原始的 SupportsTranscoding / TranscodingUrl：
+		// 能直接播的客户端（如 Kodi 走 Static=true 直链）由 HandleMediaStream 解析 CDN；
+		// 浏览器等无法 DirectPlay 的客户端仍可走 Emby 转码，避免「当前没有兼容的流」。
 
 		sid, _ := ms["Id"].(string)
 		if sid == "" {
@@ -694,6 +694,15 @@ func (p *Proxy) getUserForPlayback(r *http.Request, itemID string) string {
 // ============================================================
 // 辅助函数
 // ============================================================
+
+// isStaticDirectStream 判断是否为反代自己生成的直链流请求（/videos/ 或 /audio/ 且 Static=true）
+func isStaticDirectStream(path string, r *http.Request) bool {
+	lower := strings.ToLower(path)
+	if !strings.HasPrefix(lower, "/videos/") && !strings.HasPrefix(lower, "/audio/") {
+		return false
+	}
+	return strings.EqualFold(r.URL.Query().Get("Static"), "true")
+}
 
 // extractItemID 从 Emby API 路径中提取 Item ID
 func extractItemID(path string) string {

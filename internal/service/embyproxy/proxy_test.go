@@ -75,13 +75,14 @@ func buildStrmPlaybackInfoResp(strmURL, sourceID string) []byte {
 	resp := map[string]interface{}{
 		"MediaSources": []interface{}{
 			map[string]interface{}{
-				"Id":                 sourceID,
-				"Path":               strmURL,
-				"IsRemote":           true,
-				"Protocol":           "Http",
-				"Type":               "Video",
-				"SupportsDirectPlay": false,
-				"TranscodingUrl":     "http://emby:8096/videos/123/master.m3u8",
+				"Id":                  sourceID,
+				"Path":                strmURL,
+				"IsRemote":            true,
+				"Protocol":            "Http",
+				"Type":                "Video",
+				"SupportsDirectPlay":  false,
+				"SupportsTranscoding": true,
+				"TranscodingUrl":      "http://emby:8096/videos/123/master.m3u8",
 			},
 		},
 	}
@@ -99,6 +100,7 @@ func buildISOPlaybackInfoResp(strmURL string) []byte {
 				"Protocol":               "Http",
 				"Type":                   "Video",
 				"SupportsDirectPlay":     false,
+				"SupportsTranscoding":    true,
 				"TranscodingUrl":         "http://emby:8096/videos/123/master.m3u8",
 				"TranscodingContainer":   "mkv",
 				"TranscodingSubProtocol": "subrip",
@@ -138,11 +140,11 @@ func TestPlaybackInfo_StrmSource(t *testing.T) {
 	if v, _ := ms["SupportsDirectPlay"].(bool); !v {
 		t.Error("SupportsDirectPlay should be true")
 	}
-	if v, _ := ms["SupportsTranscoding"].(bool); v {
-		t.Error("SupportsTranscoding should be false")
+	if v, _ := ms["SupportsTranscoding"].(bool); !v {
+		t.Error("SupportsTranscoding should be preserved (true)")
 	}
-	if _, ok := ms["TranscodingUrl"]; ok {
-		t.Error("TranscodingUrl should be deleted")
+	if _, ok := ms["TranscodingUrl"]; !ok {
+		t.Error("TranscodingUrl should be preserved so browsers can transcode")
 	}
 	dsURL, ok := ms["DirectStreamUrl"].(string)
 	if !ok || !strings.Contains(dsURL, "/videos/123/stream") {
@@ -217,12 +219,12 @@ func TestPlaybackInfo_ISOSource(t *testing.T) {
 	if v, _ := ms["SupportsDirectStream"].(bool); !v {
 		t.Error("SupportsDirectStream should be true for ISO")
 	}
-	if v, _ := ms["SupportsTranscoding"].(bool); v {
-		t.Error("SupportsTranscoding should be false for ISO")
+	if v, _ := ms["SupportsTranscoding"].(bool); !v {
+		t.Error("SupportsTranscoding should be preserved (true) for ISO")
 	}
 	for _, key := range []string{"TranscodingUrl", "TranscodingContainer", "TranscodingSubProtocol"} {
-		if _, ok := ms[key]; ok {
-			t.Errorf("%s should be deleted for ISO", key)
+		if _, ok := ms[key]; !ok {
+			t.Errorf("%s should be preserved for ISO (so browsers can transcode)", key)
 		}
 	}
 	dsURL, _ := ms["DirectStreamUrl"].(string)
@@ -980,9 +982,12 @@ func TestPlaybackInfo_HttpPathButNotRemote(t *testing.T) {
 	sources, _ := result["MediaSources"].([]interface{})
 	ms := sources[0].(map[string]interface{})
 
-	// 第二分支应该识别成功 → TranscodingUrl 被删 + DirectPlay 被强制
-	if _, ok := ms["TranscodingUrl"]; ok {
-		t.Error("TranscodingUrl should be deleted (http-path recognized as STRM)")
+	// 第二分支应该识别成功 → DirectPlay 被强制 + DirectStreamUrl 生成，同时保留转码
+	if v, _ := ms["SupportsTranscoding"].(bool); !v {
+		t.Error("SupportsTranscoding should be preserved (true)")
+	}
+	if _, ok := ms["TranscodingUrl"]; !ok {
+		t.Error("TranscodingUrl should be preserved so browsers can transcode")
 	}
 	if v, _ := ms["SupportsDirectPlay"].(bool); !v {
 		t.Error("SupportsDirectPlay should be forced true")
@@ -991,6 +996,50 @@ func TestPlaybackInfo_HttpPathButNotRemote(t *testing.T) {
 		t.Error("DirectStreamUrl should be set")
 	}
 	t.Logf("✅ IsRemote=false + http-path → STRM recognized via second branch")
+}
+
+// TestHandler_OnlyInterceptStaticStreams 验证反代只拦截 Static=true 的直链流，
+// 非 Static 的 /videos/ 请求（浏览器转码等）应透传给上游 Emby。
+func TestHandler_OnlyInterceptStaticStreams(t *testing.T) {
+	strmSrc := mockStrmSrc(t, "")
+	defer strmSrc.Close()
+	strmURL := strmSrc.URL + "/video.iso"
+	body := buildStrmPlaybackInfoResp(strmURL, "src1")
+
+	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+	defer emby.Close()
+
+	proxy, _ := New(emby.URL)
+
+	// 先走一次 PlaybackInfo，缓存 STRM 源
+	req0 := httptest.NewRequest("POST", emby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
+	proxy.Handler().ServeHTTP(httptest.NewRecorder(), req0)
+
+	t.Run("Static=true → 反代拦截并 302 到 CDN", func(t *testing.T) {
+		req := httptest.NewRequest("GET", emby.URL+"/Videos/123/stream?Static=true&MediaSourceId=src1", nil)
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusFound {
+			t.Fatalf("status = %d, want 302 (intercepted)", rr.Code)
+		}
+		t.Logf("✅ Static=true stream intercepted → %s", rr.Header().Get("Location"))
+	})
+
+	t.Run("Static=false → 透传给 Emby（转码路径不被劫持）", func(t *testing.T) {
+		req := httptest.NewRequest("GET", emby.URL+"/Videos/123/stream?MediaSourceId=src1&transcoding=true", nil)
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (passthrough)", rr.Code)
+		}
+		if !strings.Contains(rr.Body.String(), "emby-video-passthrough") {
+			t.Errorf("body should come from upstream Emby, got: %s", rr.Body.String())
+		}
+		t.Logf("✅ Non-Static stream passed through to Emby (status=%d)", rr.Code)
+	})
 }
 
 // TestHandleMediaStream_StrmURLMiss_Passthrough 没缓存也没拿到 STRM URL → 透传到 Emby
