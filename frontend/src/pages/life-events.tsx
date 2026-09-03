@@ -119,7 +119,7 @@ export default function LifeEventsPage() {
   const failCount = items.length - successCount;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold break-words">生活事件日志</h1>
