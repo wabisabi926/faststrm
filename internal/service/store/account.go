@@ -39,6 +39,7 @@ type AccountStore struct {
 	accounts  map[string]*model.AccountInfo
 	dirty     bool
 	stopCh    chan struct{}
+	doneCh    chan struct{} // bgFlushLoop 退出后关闭，Close 用来等待
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -50,6 +51,7 @@ func NewAccountStore(salt, configDir string) (*AccountStore, error) {
 		salt:     salt,
 		accounts: make(map[string]*model.AccountInfo),
 		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -108,6 +110,7 @@ func (s *AccountStore) load() error {
 func (s *AccountStore) bgFlushLoop() {
 	ticker := time.NewTicker(bgFlushInterval)
 	defer ticker.Stop()
+	defer close(s.doneCh)
 	for {
 		select {
 		case <-s.stopCh:
@@ -365,6 +368,7 @@ func (s *AccountStore) Close() error {
 	s.closeOnce.Do(func() {
 		close(s.stopCh)
 	})
+	<-s.doneCh // 等 bgFlushLoop 退出，避免 t.TempDir RemoveAll 与 Flush 写文件竞争
 	return s.closeErr
 }
 
