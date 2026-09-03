@@ -192,7 +192,10 @@ export function useStrmCleanup(
   };
   // P3：上次成功扫描的时间戳（scan 和 reconcile 共享），1 分钟内再扫 → 自动 useCache=true, cacheTTLMs=60000
   const lastScanAtRef = React.useRef<{ ts: number; mode: ScanMode } | null>(null);
-  const postScanInternal = async (mode: ScanMode) => {
+  const postScanInternal = async (
+    mode: ScanMode,
+    opts?: { skipCache?: boolean }
+  ) => {
     const body: {
       useSettingsDefaults: boolean;
       action?: string;
@@ -203,7 +206,10 @@ export function useStrmCleanup(
     const now = Date.now();
     const last = lastScanAtRef.current;
     const P3_CACHE_WINDOW = 60 * 1000; // 1 分钟
-    if (last && now - last.ts < P3_CACHE_WINDOW) {
+    // 批量操作后强制重扫：跳过缓存，让统计完全由真实磁盘/云端扫描决定，避免残留/缓存的失效列表失真
+    if (opts?.skipCache) {
+      body.useCache = false;
+    } else if (last && now - last.ts < P3_CACHE_WINDOW) {
       body.useCache = true;
       body.cacheTTLMs = P3_CACHE_WINDOW;
     }
@@ -223,6 +229,30 @@ export function useStrmCleanup(
       maxBytes: p.maxBytes,
     });
     return res.data as StrmPreviewResponse;
+  };
+
+  // 批量操作（全量清理/补生成/组合）成功后强制重扫，让失效/漏生成本数与本地 STRM 数完全由
+  // 真实磁盘+云端扫描决定，避免「清理后仍是 113」「缓存残留」等统计失真。
+  // 重扫失败不阻断：已经完成的删除/生成保持生效，仅用错误提示告知。
+  const refreshAfterBulk = async () => {
+    try {
+      const fresh = await postScanInternal("scan", { skipCache: true });
+      setScanResult(fresh);
+      setSelectedStale(new Set());
+      appendLog(
+        "复扫",
+        `完成：${fresh.totalStale} 失效 / ${fresh.totalMissing} 漏生成`,
+        true
+      );
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "操作后复扫失败";
+      appendLog("复扫", msg, false);
+      toast.warning("操作已完成，但刷新统计失败，请稍后手动扫描", {
+        description: msg,
+      });
+      console.error(err);
+    }
   };
 
   const handleScan = async () => {
@@ -398,6 +428,7 @@ export function useStrmCleanup(
         dryRun: false,
       });
       handleDeleteResult(res.data);
+      await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
       const msg = axiosErr?.response?.data?.error || axiosErr?.message || "批量删除失败";
@@ -425,6 +456,7 @@ export function useStrmCleanup(
         dryRun: false,
       });
       handleCombinedResult(res.data);
+      await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
       const msg = axiosErr?.response?.data?.error || axiosErr?.message || "组合操作失败";
@@ -451,6 +483,7 @@ export function useStrmCleanup(
         dryRun: false,
       });
       handleRegenerateResult(res.data);
+      await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
       const msg = axiosErr?.response?.data?.error || axiosErr?.message || "补生成失败";

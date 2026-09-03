@@ -880,7 +880,11 @@ func deleteAllStaleFromScan(body ExecuteRequest, resp *ExecuteResponse, cleanup 
 			}
 			if cleanup.RemoveStrm {
 				if err := os.Remove(stalePath); err != nil {
-					if !os.IsNotExist(err) {
+					if os.IsNotExist(err) {
+						// 失效 STRM 已不存在：清理目标（本地不再存在该失效 STRM）已达成，视为清理成功（幂等）。
+						// 避免 ScanSummary 可能是缓存/残留列表时，os.Remove 全部 IsNotExist 导致「删除 0 个」的假象。
+						deleted++
+					} else {
 						failed++
 						resp.Errors = append(resp.Errors, map[string]string{
 							"path":  stalePath,
