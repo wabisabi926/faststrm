@@ -76,7 +76,7 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 		out.DownloadExtensions = def.DownloadExtensions
 		changed = true
 	}
-	if len(out.Strm.ForceProxyUaTokens) == 0 {
+	if len(out.Strm.ForceProxyUaTokens) == 0 && len(def.Strm.ForceProxyUaTokens) > 0 {
 		out.Strm.ForceProxyUaTokens = def.Strm.ForceProxyUaTokens
 		changed = true
 	}

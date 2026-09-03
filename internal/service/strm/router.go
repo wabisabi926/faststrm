@@ -604,9 +604,7 @@ func StrmRouteConfig(cfg *config.AppConfig) struct {
 } {
 	st := cfg.Settings.Strm
 	tokens := st.ForceProxyUaTokens
-	if len(tokens) == 0 {
-		tokens = append([]string{}, model.DefaultSettings().Strm.ForceProxyUaTokens...)
-	}
+	// 尊重用户配置：即使为空也不回填默认值，确保默认全部直连。
 	proxyLimit := st.AccountProxyConcurrencyLimit
 	if proxyLimit <= 0 {
 		proxyLimit = model.DefaultSettings().Strm.AccountProxyConcurrencyLimit

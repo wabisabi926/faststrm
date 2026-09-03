@@ -118,9 +118,8 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 		if def.LifeMonitor.PollInterval <= 0 {
 			t.Errorf("default LifeMonitor.PollInterval should be >0, got %d", def.LifeMonitor.PollInterval)
 		}
-		if len(def.Strm.ForceProxyUaTokens) == 0 {
-			t.Errorf("default Strm.ForceProxyUaTokens empty")
-		}
+		// ForceProxyUaTokens 默认已清空，默认全部直连；保留设置给高级用户按需配置。
+		_ = def.Strm.ForceProxyUaTokens
 
 		// 修改并保存（故意不含 "iso"，验证后续迁移会自动补入）
 		def.StrmPrefix = "http://custom:8090/strm"

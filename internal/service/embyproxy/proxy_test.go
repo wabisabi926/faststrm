@@ -1123,6 +1123,110 @@ func TestHandleMediaStream_POSTMethod(t *testing.T) {
 	t.Logf("✅ POST /Videos/123/stream → 302 %s", loc)
 }
 
+// ================================================================
+// isBrowserClient — 浏览器/强播放器识别（反代层 DirectPlay 决策）
+// ================================================================
+
+func TestIsBrowserClient(t *testing.T) {
+	proxy, _ := New("http://emby.local:8096")
+
+	cases := []struct {
+		name   string
+		client string
+		ua     string
+		want   bool
+	}{
+		{"emby_web", "Emby Web", "Mozilla/5.0 (Macintosh)", true},
+		{"jellyfin_web", "Jellyfin Web", "Mozilla/5.0", true},
+		{"browser", "Browser", "Mozilla/5.0", true},
+		{"empty_both_is_player", "", "", false},
+		{"infuse", "Infuse", "", false},
+		{"vidhub", "VidHub", "", false},
+		{"senplayer", "SenPlayer", "", false},
+		{"kodi", "Kodi", "", false},
+		{"emby_theater", "Emby Theater", "", false},
+		{"empty_client_mozilla_ua", "", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", true},
+		{"empty_client_infuse_ua", "", "Infuse/7.6", false},
+	}
+
+	for _, c := range cases {
+		req := httptest.NewRequest("GET", "http://x/", nil)
+		if c.client != "" {
+			req.Header.Set("X-Emby-Client", c.client)
+		}
+		if c.ua != "" {
+			req.Header.Set("User-Agent", c.ua)
+		}
+		if got := proxy.isBrowserClient(req); got != c.want {
+			t.Errorf("%s: isBrowserClient = %v, want %v", c.name, got, c.want)
+		}
+	}
+	t.Logf("✅ isBrowserClient 识别矩阵通过")
+}
+
+// TestPlaybackInfo_BrowserVsPlayer 验证反代层核心行为：
+// 强播放器 → 强制 DirectPlay（生成 DirectStreamUrl）；浏览器 → 保持原样走转码。
+func TestPlaybackInfo_BrowserVsPlayer(t *testing.T) {
+	strmSrc := mockStrmSrc(t, "")
+	defer strmSrc.Close()
+	strmURL := strmSrc.URL + "/test.mkv"
+	body := buildStrmPlaybackInfoResp(strmURL, "src1")
+
+	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+	defer emby.Close()
+
+	proxy, _ := New(emby.URL)
+
+	t.Run("player_forced_directplay", func(t *testing.T) {
+		req := httptest.NewRequest("POST", emby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
+		req.Header.Set("X-Emby-Client", "Infuse")
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+
+		var result map[string]interface{}
+		json.Unmarshal(rr.Body.Bytes(), &result)
+		sources, _ := result["MediaSources"].([]interface{})
+		ms := sources[0].(map[string]interface{})
+
+		if v, _ := ms["SupportsDirectPlay"].(bool); !v {
+			t.Error("player should get SupportsDirectPlay=true")
+		}
+		if _, ok := ms["DirectStreamUrl"]; !ok {
+			t.Error("player should get DirectStreamUrl")
+		}
+	})
+
+	t.Run("browser_passthrough", func(t *testing.T) {
+		req := httptest.NewRequest("POST", emby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
+		req.Header.Set("X-Emby-Client", "Emby Web")
+		req.Header.Set("User-Agent", "Mozilla/5.0")
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+
+		var result map[string]interface{}
+		json.Unmarshal(rr.Body.Bytes(), &result)
+		sources, _ := result["MediaSources"].([]interface{})
+		ms := sources[0].(map[string]interface{})
+
+		// 浏览器保持原样：buildStrmPlaybackInfoResp 里 SupportsDirectPlay 本来就是 false
+		if v, _ := ms["SupportsDirectPlay"].(bool); v {
+			t.Error("browser should NOT get SupportsDirectPlay forced true")
+		}
+		if _, ok := ms["DirectStreamUrl"]; ok {
+			t.Error("browser should NOT get DirectStreamUrl")
+		}
+		// 转码字段应保留（浏览器依赖它）
+		if _, ok := ms["TranscodingUrl"]; !ok {
+			t.Error("browser should keep TranscodingUrl for transcoding fallback")
+		}
+	})
+
+	t.Logf("✅ 浏览器走转码 / 强播放器走直连 行为验证通过")
+}
+
 // itoa helper（manager_test.go 已定义，这里重复避免依赖）
 func itoa(i int) string {
 	if i == 0 {

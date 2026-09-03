@@ -252,7 +252,8 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 						host = st.Addr[:idx]
 					}
 				}
-				if err := mgr.Restart(host, em.ProxyPort, em.URL); err != nil {
+				forceProxyUaTokens := settings.Strm.ForceProxyUaTokens
+				if err := mgr.Restart(host, em.ProxyPort, em.URL, forceProxyUaTokens); err != nil {
 					logger.S().Warnf("[EmbyProxy] 热重启失败: %v", err)
 				} else {
 					logger.S().Infof("[EmbyProxy] 热重启完成: %s:%d → %s", host, em.ProxyPort, em.URL)
