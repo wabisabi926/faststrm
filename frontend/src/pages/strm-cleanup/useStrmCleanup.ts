@@ -316,13 +316,15 @@ export function useStrmCleanup(
     }
   };
 
-  const handleDeleteResult = (r: ExecuteResult) => {
+  const handleDeleteResult = (r: ExecuteResult, explicitDeletedKeys?: Set<string>) => {
     appendLog("删除", `删除 ${r.deletedCount} 个失效 STRM，失败 ${r.failedCount} 个`, r.failedCount === 0);
     toast.success(
       `已删除 ${r.deletedCount} 个失效 STRM，清理了 ${r.removedEmptyDirs.length} 个空目录` +
         (r.failedCount > 0 ? `，失败 ${r.failedCount} 个` : "")
     );
-    const deletedKeys = new Set(selectedStale);
+    // delete_all 一键清理时 selectedStale 可能为空集，此时由调用方传入"本次清理的全部失效 key"，
+    // 让 UI 立即移除，不必完全依赖后续复扫结果。
+    const deletedKeys = explicitDeletedKeys ?? new Set(selectedStale);
     setScanResult((prev) => {
       if (!prev) return prev;
       const newMappings = prev.mappings.map((m) => ({
@@ -427,7 +429,11 @@ export function useStrmCleanup(
         scanSummary: { mappings: scanResult!.mappings },
         dryRun: false,
       });
-      handleDeleteResult(res.data);
+      // delete_all 删除的是全部失效项，前端用后端权威的 deletedAllCount 判定是否真正删除了文件，
+      // 立即将全部失效从 UI 移除（selectedStale 可能为空集，需显式传入），避免刷新前仍显示旧计数。
+      const deleted = res.data?.deletedAllCount ?? 0;
+      const allStaleKeys = new Set(allStale.map((s) => staleKey(s.mappingId, s.relPath)));
+      handleDeleteResult(res.data, deleted > 0 ? allStaleKeys : new Set());
       await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
