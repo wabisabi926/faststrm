@@ -593,7 +593,7 @@ export default function SettingsPage() {
 
   return (
     <>
-    <div className="mx-auto max-w-3xl space-y-4 sm:space-y-6 pb-24">
+    <div className="mx-auto max-w-6xl space-y-4 sm:space-y-6 pb-24">
       {/* Page Title */}
       <div className="px-1">
         <h1 className="text-xl sm:text-2xl font-semibold">设置</h1>

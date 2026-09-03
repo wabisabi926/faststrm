@@ -81,7 +81,7 @@ export default function EmbyNotifyPage() {
   const webhookUrl = `${window.location.origin}/api/emby/webhook`;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       {/* 页面标题 */}
       <div className="min-w-0 break-words">
         <h1 className="text-2xl font-semibold break-words">Emby 通知</h1>
