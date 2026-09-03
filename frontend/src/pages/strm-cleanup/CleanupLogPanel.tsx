@@ -20,7 +20,7 @@ export function CleanupLogPanel({ logs, onClear }: CleanupLogPanelProps) {
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 px-2 text-xs"
+          className="h-7 px-2.5 text-xs ml-auto shrink-0"
           onClick={onClear}
         >
           清空
@@ -33,7 +33,7 @@ export function CleanupLogPanel({ logs, onClear }: CleanupLogPanelProps) {
             <span className={`w-14 shrink-0 ${log.success ? "text-green-600" : "text-destructive"}`}>
               {log.action}
             </span>
-            <span className="truncate">{log.detail}</span>
+            <span className="min-w-0 flex-1 truncate" title={log.detail}>{log.detail}</span>
           </div>
         ))}
       </div>

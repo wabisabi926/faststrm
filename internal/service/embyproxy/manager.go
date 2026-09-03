@@ -24,11 +24,12 @@ type Status struct {
 
 // Manager 管理反代 server 生命周期
 type Manager struct {
-	mu      sync.Mutex
-	server  *http.Server
-	proxy   *Proxy
-	addr    string // 当前监听地址 "host:port"
-	embyURL string // 当前代理的 Emby 源 URL
+	mu                 sync.Mutex
+	server             *http.Server
+	proxy              *Proxy
+	addr               string // 当前监听地址 "host:port"
+	embyURL            string // 当前代理的 Emby 源 URL
+	forceProxyUaTokens []string
 }
 
 // NewManager 创建一个空的 Manager（未启动）
@@ -39,7 +40,12 @@ func NewManager() *Manager {
 // Start 在 host:port 启动反代，embyURL 为上游 Emby 源地址。
 // 幂等：如果已经在运行且地址 + embyURL 完全一致，直接返回 nil。
 // 否则先 Stop 旧 server 再启动新的。
-func (m *Manager) Start(host string, port int, embyURL string) error {
+func (m *Manager) Start(host string, port int, embyURL string, forceProxyUaTokens ...[]string) error {
+	var uaTokens []string
+	if len(forceProxyUaTokens) > 0 {
+		uaTokens = forceProxyUaTokens[0]
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -61,10 +67,11 @@ func (m *Manager) Start(host string, port int, embyURL string) error {
 		m.proxy = nil
 		m.addr = ""
 		m.embyURL = ""
+		m.forceProxyUaTokens = nil
 	}
 
 	// 创建新 Proxy
-	proxy, err := New(embyURL)
+	proxy, err := New(embyURL, uaTokens)
 	if err != nil {
 		return fmt.Errorf("embyproxy.New(%q): %w", embyURL, err)
 	}
@@ -88,10 +95,11 @@ func (m *Manager) Start(host string, port int, embyURL string) error {
 	m.proxy = proxy
 	m.addr = wantAddr
 	m.embyURL = embyURL
+	m.forceProxyUaTokens = uaTokens
 
 	go func() {
 		logger.S().Infof("[EmbyProxy] 启动中: %s → %s", wantAddr, embyURL)
-		logger.S().Infof("[EmbyProxy] STRM ISO/MKV 自动强制 DirectPlay，绕过 Emby 转码限制")
+		logger.S().Infof("[EmbyProxy] 反代策略：默认强制 DirectPlay；浏览器/Web 客户端走 Emby 转码（STRM 端点代理 UA: %v）", uaTokens)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.S().Warnf("[EmbyProxy] 监听 %s 出错: %v", wantAddr, err)
 		}
@@ -127,6 +135,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 	m.proxy = nil
 	m.addr = ""
 	m.embyURL = ""
+	m.forceProxyUaTokens = nil
 	m.mu.Unlock()
 
 	if shutdownErr != nil {
@@ -136,8 +145,8 @@ func (m *Manager) Stop(ctx context.Context) error {
 }
 
 // Restart 等价于 Start。在旧实例上换地址/embyURL 时会自动先 Stop 再 Start。
-func (m *Manager) Restart(host string, port int, embyURL string) error {
-	return m.Start(host, port, embyURL)
+func (m *Manager) Restart(host string, port int, embyURL string, forceProxyUaTokens ...[]string) error {
+	return m.Start(host, port, embyURL, forceProxyUaTokens...)
 }
 
 // StopAll 方便全局关闭时调用（context.Background 超时 5s）

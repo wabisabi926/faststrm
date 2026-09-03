@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -117,9 +118,16 @@ type playbackUserEntry struct {
 	expiry time.Time
 }
 
+// strmSourceMeta PlaybackInfo 阶段识别到的单个 STRM 源元数据
+type strmSourceMeta struct {
+	path      string // STRM URL（http://.../api/strm?...）
+	container string // Emby 推断的容器类型（iso/mkv/m2ts/...，可能为空）
+	name      string // 文件名（含扩展名，可能为空）
+}
+
 // strmCacheEntry PlaybackInfo 阶段识别到的 STRM 源
 type strmCacheEntry struct {
-	sources map[string]string // mediaSourceID → httpPath
+	sources map[string]strmSourceMeta // mediaSourceID → meta
 	expiry  time.Time
 }
 
@@ -129,12 +137,15 @@ type strmCacheEntry struct {
 
 // Proxy Emby 反向代理核心
 type Proxy struct {
-	embyHost string
+	embyHost           string
+	forceProxyUaTokens []string
 
 	// httpClient 透传给 Emby 的客户端（不跟随重定向）
 	httpClient *http.Client
 	// followRedirectClient 用于解析重定向链拿最终 CDN URL（跟随所有重定向）
 	followRedirectClient *http.Client
+	// streamClient 用于代理流（透传 Range 到 STRM 端点，跟随重定向、无超时）
+	streamClient *http.Client
 
 	// ===== 三层缓存 =====
 
@@ -153,7 +164,12 @@ type Proxy struct {
 }
 
 // New 创建 Emby 反向代理
-func New(embyHost string) (*Proxy, error) {
+// forceProxyUaTokens 可选变长参数：仅传一个 []string。未传时视为空白名单（所有客户端强制 DirectPlay）。
+func New(embyHost string, forceProxyUaTokens ...[]string) (*Proxy, error) {
+	var uaTokens []string
+	if len(forceProxyUaTokens) > 0 {
+		uaTokens = forceProxyUaTokens[0]
+	}
 	embyHost = strings.TrimRight(embyHost, "/")
 	parsed, err := url.Parse(embyHost)
 	if err != nil {
@@ -183,10 +199,32 @@ func New(embyHost string) (*Proxy, error) {
 		},
 	}
 
+	// Client C: 代理流（透传 Range 到 FastStrm 自身 STRM 端点，跟随重定向、无总超时）
+	// 用于 ISO/BDMV 等需要 byte-range seek 的格式，避免 302 到 CDN 后 Range 被拒。
+	streamClient := &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			MaxIdleConns:          128,
+			MaxIdleConnsPerHost:   64,
+			IdleConnTimeout:       90 * time.Second,
+			ResponseHeaderTimeout: 0,
+			DisableCompression:    true,
+			Proxy:                 http.ProxyFromEnvironment,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects: %d", len(via))
+			}
+			return nil
+		},
+	}
+
 	return &Proxy{
 		embyHost:             embyHost,
+		forceProxyUaTokens:   uaTokens,
 		httpClient:           proxyHTTPClient,
 		followRedirectClient: followClient,
+		streamClient:         streamClient,
 		playbackURLCache:     make(map[playbackCacheKey]playbackCacheEntry),
 		playbackCacheOrder:   make([]playbackCacheKey, 0, MaxCacheSize),
 		playbackUserCache:    make(map[playbackUserKey]playbackUserEntry),
@@ -276,7 +314,7 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 	// 识别 STRM 源
 	sources, _ := data["MediaSources"].([]interface{})
 	isStrm := false
-	strmMap := make(map[string]string)
+	strmMap := make(map[string]strmSourceMeta)
 
 	for _, s := range sources {
 		ms, ok := s.(map[string]interface{})
@@ -290,7 +328,9 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 			sid, _ := ms["Id"].(string)
 			path, _ := ms["Path"].(string)
 			if sid != "" && strings.HasPrefix(path, "http") {
-				strmMap[sid] = path
+				container, _ := ms["Container"].(string)
+				name, _ := ms["Name"].(string)
+				strmMap[sid] = strmSourceMeta{path: path, container: container, name: name}
 			}
 		}
 	}
@@ -306,9 +346,12 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 			if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 				isStrm = true
 				sid, _ := ms["Id"].(string)
-				if sid != "" {
-					strmMap[sid] = path
+				if sid == "" {
+					continue
 				}
+				container, _ := ms["Container"].(string)
+				name, _ := ms["Name"].(string)
+				strmMap[sid] = strmSourceMeta{path: path, container: container, name: name}
 			}
 		}
 	}
@@ -321,28 +364,33 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 
 	itemID := extractItemID(resp.Request.URL.Path)
 
-	// 强制 DirectPlay
-	p.forceDirectPlay(data, resp.Request)
+	// 默认强制 DirectPlay；浏览器/Web 客户端因 H.265/DTS 兼容性问题，保持 Emby 原始响应走转码。
+	if p.isBrowserClient(resp.Request) {
+		logger.S().Infof("[EmbyProxy] PlaybackInfo 保持原样（浏览器/Web 客户端，走 Emby 转码）: path=%s", resp.Request.URL.Path)
+	} else {
+		// 强制 DirectPlay
+		p.forceDirectPlay(data, resp.Request)
 
-	// 缓存 STRM 源映射（带 TTL 过期）
-	if itemID != "" && len(strmMap) > 0 {
-		p.cacheStrmSources(itemID, strmMap)
-		logger.S().Infof("[EmbyProxy] STRM 缓存: item=%s sources=%d", itemID, len(strmMap))
-	}
-
-	// 同时缓存 (ip, ua, itemID) → userID 关联，供 HandleMediaStream 构建 playbackCacheKey
-	if itemID != "" {
-		if uid, _ := data["UserId"].(string); uid != "" {
-			p.cachePlaybackUser(resp.Request, itemID, uid)
+		// 缓存 STRM 源映射（带 TTL 过期）
+		if itemID != "" && len(strmMap) > 0 {
+			p.cacheStrmSources(itemID, strmMap)
+			logger.S().Infof("[EmbyProxy] STRM 缓存: item=%s sources=%d", itemID, len(strmMap))
 		}
+
+		// 同时缓存 (ip, ua, itemID) → userID 关联，供 HandleMediaStream 构建 playbackCacheKey
+		if itemID != "" {
+			if uid, _ := data["UserId"].(string); uid != "" {
+				p.cachePlaybackUser(resp.Request, itemID, uid)
+			}
+		}
+
+		logger.S().Infof("[EmbyProxy] PlaybackInfo 强制 DirectPlay: path=%s, sources=%d", resp.Request.URL.Path, len(strmMap))
 	}
 
 	newBody, _ := json.Marshal(data)
 	resp.Body = io.NopCloser(strings.NewReader(string(newBody)))
 	resp.ContentLength = int64(len(newBody))
 	resp.Header.Del("Content-Encoding")
-
-	logger.S().Infof("[EmbyProxy] PlaybackInfo 强制 DirectPlay: path=%s, sources=%d", resp.Request.URL.Path, len(strmMap))
 	return nil
 }
 
@@ -384,6 +432,134 @@ func (p *Proxy) forceDirectPlay(data map[string]interface{}, req *http.Request) 
 }
 
 // ============================================================
+// 客户端浏览器识别 + ISO/原盘 seek 格式识别
+// ============================================================
+
+// isBrowserClient 判断请求是否来自浏览器/Web 客户端。
+// 强播放器插件（Infuse/Kodi/VidHub 等）通常会带明确的 X-Emby-Client 标识；
+// Web 客户端的 X-Emby-Client 通常为空或包含 "web"；UA 为空时也视为 Web。
+func (p *Proxy) isBrowserClient(req *http.Request) bool {
+	client := strings.ToLower(strings.TrimSpace(req.Header.Get("X-Emby-Client")))
+	ua := strings.ToLower(strings.TrimSpace(req.Header.Get("User-Agent")))
+
+	// 1) 明确的 Web 客户端
+	if strings.Contains(client, "web") || strings.Contains(client, "browser") {
+		return true
+	}
+
+	// 1.5) 没有任何客户端信息时，无法判定为浏览器，按强播放器处理（默认直连）
+	if client == "" && ua == "" {
+		return false
+	}
+
+	// 2) 明确的非 Web 客户端（Infuse/VidHub/SenPlayer/Kodi/Emby 等）
+	nonWebClients := []string{"infuse", "vidhub", "senplayer", "senplayerhd", "emby", "kodi", "fileball", "vlc", "mxplayer", "nplayer", "ddplay", "potplayer", "omniplayer", "figplayer", "mpv"}
+	for _, c := range nonWebClients {
+		if strings.Contains(client, c) {
+			return false
+		}
+	}
+
+	// 3) 兜底：常见浏览器 UA 且没有播放器标识
+	if strings.Contains(ua, "mozilla/5.0") {
+		return true
+	}
+
+	return false
+}
+
+// seekRequiredContainers Emby Container 字段中需要 byte-range seek 的容器（原盘/直播流）
+var seekRequiredContainers = map[string]bool{
+	"iso":   true,
+	"bdmv":  true,
+	"bdav":  true,
+	"dvd":   true,
+	"bluray": true,
+	"m2ts":  true,
+	"ts":    true,
+	"vob":   true,
+	"ifo":   true,
+	"bup":   true,
+}
+
+// seekRequiredExts 文件名扩展名中需要 byte-range seek 的格式（含点号，小写）
+var seekRequiredExts = map[string]bool{
+	".iso":  true,
+	".bdmv": true,
+	".bdav": true,
+	".ts":   true,
+	".m2ts": true,
+	".vob":  true,
+	".ifo":  true,
+	".bup":  true,
+}
+
+// isSeekRequiredFormat 判断 STRM 源是否需要代理流（而非 302）。
+// 依据：Emby 的 Container 字段，或文件名扩展名。
+func isSeekRequiredFormat(container, name string) bool {
+	if c := strings.ToLower(strings.TrimSpace(container)); c != "" {
+		if seekRequiredContainers[c] {
+			return true
+		}
+	}
+	if name != "" {
+		ext := strings.ToLower(filepath.Ext(name))
+		if seekRequiredExts[ext] {
+			return true
+		}
+	}
+	return false
+}
+
+// proxyStreamToStrm 将媒体流请求透传给 FastStrm 自身 STRM 端点（/api/strm?...），
+// 由 STRM handler 层走 proxy 模式转发 Range 到 115 CDN，保证 ISO/原盘 seek 正常。
+func (p *Proxy) proxyStreamToStrm(w http.ResponseWriter, r *http.Request, strmURL string) {
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, strmURL, nil)
+	if err != nil {
+		logger.S().Warnf("[EmbyProxy] proxyStreamToStrm: 构造请求失败: %v", err)
+		http.Error(w, "Upstream init failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	// 透传客户端 Range/If-Range/UA，让 STRM handler 正确转发 seek 请求
+	if rng := r.Header.Get("Range"); rng != "" {
+		req.Header.Set("Range", rng)
+	}
+	if ifr := r.Header.Get("If-Range"); ifr != "" {
+		req.Header.Set("If-Range", ifr)
+	}
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+
+	upstream, err := p.streamClient.Do(req)
+	if err != nil {
+		logger.S().Warnf("[EmbyProxy] proxyStreamToStrm: 上游请求失败: %v", err)
+		http.Error(w, "Upstream fetch failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer upstream.Body.Close()
+
+	// 回写响应头（过滤 hop-by-hop + set-cookie，避免泄漏 115 cookie）
+	for k, vv := range upstream.Header {
+		lk := strings.ToLower(k)
+		if hopByHopHeaders[lk] {
+			continue
+		}
+		if lk == "set-cookie" {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(upstream.StatusCode)
+
+	if r.Method != http.MethodHead {
+		_, _ = io.Copy(w, upstream.Body)
+	}
+}
+
+// ============================================================
 // HandleMediaStream — 核心媒体流路由
 // ============================================================
 
@@ -415,27 +591,36 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1b. strmSourcesCache — PlaybackInfo 阶段缓存的 STRM Path
-	httpPath := ""
+	// 1b. strmSourcesCache — PlaybackInfo 阶段缓存的 STRM 源元数据
+	meta := strmSourceMeta{}
 	if itemID != "" && sourceID != "" {
 		if strmEntry, ok := p.getCachedStrmSources(itemID); ok {
-			if path, ok2 := strmEntry.sources[sourceID]; ok2 {
-				httpPath = path
+			if m, ok2 := strmEntry.sources[sourceID]; ok2 {
+				meta = m
 				logger.S().Debugf("[EmbyProxy] strmSourcesCache 命中: item=%s source=%s", itemID, sourceID)
 			}
 		}
 	}
 
 	// 没拿到 STRM URL → 透传到 Emby
-	if httpPath == "" {
+	if meta.path == "" {
 		p.passthroughToEmby(w, r)
 		return
 	}
 
+	// ISO/BDMV/M2TS/TS 等需要 byte-range seek 的格式：不走 302，改走代理流。
+	// 302 后客户端 Range 直连 CDN，可能因 CDN UA 绑定/签名过期而被拒；
+	// 代理流由 FastStrm 服务器转发 Range 到 STRM 端点（STRM handler 层已支持 proxy 转发），保证 seek 正常。
+	if isSeekRequiredFormat(meta.container, meta.name) {
+		logger.S().Infof("[EmbyProxy] media proxy(seek): item=%s source=%s container=%q name=%q", itemID, sourceID, meta.container, meta.name)
+		p.proxyStreamToStrm(w, r, meta.path)
+		return
+	}
+
 	// ===== 步骤 2: 解析重定向链拿最终 CDN URL =====
-	finalURL := p.resolveRedirectChain(r.Context(), httpPath, r, userID)
-	if finalURL != httpPath {
-		logger.S().Infof("[EmbyProxy] resolveRedirectChain: item=%s %s -> %s", itemID, httpPath, finalURL)
+	finalURL := p.resolveRedirectChain(r.Context(), meta.path, r, userID)
+	if finalURL != meta.path {
+		logger.S().Infof("[EmbyProxy] resolveRedirectChain: item=%s %s -> %s", itemID, meta.path, finalURL)
 	}
 
 	// ===== 步骤 3: 缓存最终 URL 并 302 =====
@@ -610,7 +795,7 @@ func (p *Proxy) removeOrderKeyLocked(key playbackCacheKey) {
 }
 
 // cacheStrmSources 缓存 PlaybackInfo 阶段识别到的 STRM 源（带 TTL 过期）
-func (p *Proxy) cacheStrmSources(itemID string, sources map[string]string) {
+func (p *Proxy) cacheStrmSources(itemID string, sources map[string]strmSourceMeta) {
 	p.strmSourcesMu.Lock()
 	defer p.strmSourcesMu.Unlock()
 

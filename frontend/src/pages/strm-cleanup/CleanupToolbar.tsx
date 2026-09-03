@@ -137,7 +137,6 @@ export function CleanupToolbar({
             >
               <AlertDialogTrigger asChild>
                 <Button
-                  variant="outline"
                   size="sm"
                   disabled={executing}
                   className="w-full sm:w-auto"

@@ -159,7 +159,8 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             <h3 className="text-sm font-medium">STRM 路由策略</h3>
           </div>
           <p className="text-xs text-muted-foreground">
-            后端智能路由自动决策：默认 redirect（不走本机带宽），但以下两种情况自动强制走 proxy：
+            仅作用于 STRM 端点层（直接打开 .strm 文件的场景）。默认 302 redirect 直连 CDN（不走本机带宽），
+            以下两种情况强制走 proxy：
             <span className="ml-1">
               ① UA 匹配下方标识 &nbsp; ② <b>.iso / .bdmv / .m2ts / .ts / .vob</b> 等需要精确 seek 的原盘格式
             </span>
@@ -173,7 +174,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   placeholder="Infuse, VidHub"
                 />
                 <p className="text-xs text-muted-foreground">
-                  逗号分隔
+                  逗号分隔。留空时 STRM 端点默认全部直连，仅在特殊播放器直接打开 .strm 且需要代理时填写。
                 </p>
               </div>
               <div className="space-y-3">

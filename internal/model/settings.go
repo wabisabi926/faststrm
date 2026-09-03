@@ -268,7 +268,9 @@ func DefaultSettings() *Settings {
 			OverwriteMode:         "always",   // 默认始终覆盖（与 MoviePilot 默认行为一致）
 		},
 		Strm: StrmSettings{
-			ForceProxyUaTokens:           []string{"Infuse", "VidHub", "SenPlayer", "SenPlayerHD", "EmbyServer"},
+			// ForceProxyUaTokens 仅对 STRM 端点层生效（命中则强制走 proxy）。
+			// 默认空：STRM 端点默认全部直连，仅 seek 格式或直连失败时走 proxy。
+			ForceProxyUaTokens:           []string{},
 			AccountProxyConcurrencyLimit: 8,
 			RedirectCheckTimeoutMs:       5000,
 		},

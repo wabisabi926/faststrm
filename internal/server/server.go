@@ -279,7 +279,8 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	if initSettings != nil && initSettings.Emby.ProxyPort > 0 && initSettings.Emby.URL != "" {
 		embyURL := initSettings.Emby.URL
 		proxyPort := initSettings.Emby.ProxyPort
-		if err := embyProxyManager.Start(cfg.Server.Host, proxyPort, embyURL); err != nil {
+		forceProxyUaTokens := initSettings.Strm.ForceProxyUaTokens
+		if err := embyProxyManager.Start(cfg.Server.Host, proxyPort, embyURL, forceProxyUaTokens); err != nil {
 			logger.S().Warnf("[EmbyProxy] 配置无效，跳过启动: %v", err)
 		} else {
 			proxyDisplayAddr := fmt.Sprintf("http://localhost:%d", proxyPort)
