@@ -66,8 +66,14 @@ jobs:
 
         if [ $EXIT -ne 0 ]; then
           echo ""
-          echo "=== Fail Summary (FAIL / Data Race / PANIC lines from -v output) ==="
-          grep -nE '^(--- FAIL:|FAIL |DATA RACE|fatal error:|panic:|goroutine [0-9]+)' test_output.txt | head -120 || true
+          echo "=== Fail Summary (FAIL / DATA RACE / PANIC lines from merged output) ==="
+          # go test -v 里的 FAIL 行 + Go 1.25 race detector 的 WARNING: DATA RACE 块（含前后围栏 ======= 行）+ panic / fatal / goroutine 堆栈
+          (grep -nE '^(--- FAIL:|FAIL |fatal error:|panic:|goroutine [0-9]+|== Failed)' test_output.txt || true) | head -120 || true
+          echo "--- (DATA RACE blocks with surrounding context) ---"
+          (grep -nE 'WARNING: DATA RACE|DATA RACE' -B 2 -A 20 test_output.txt || true) | head -240 || true
+          echo ""
+          echo "--- (last 140 lines raw tail) ---"
+          tail -140 test_output.txt
           echo ""
           echo "❌ Go tests failed (exit=$EXIT). Full log saved in artifact go-test-output."
           exit $EXIT

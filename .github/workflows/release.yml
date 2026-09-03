@@ -42,8 +42,14 @@ jobs:
         EXIT=${PIPESTATUS[0]}
         if [ $EXIT -ne 0 ]; then
           echo ""
-          echo "=== Fail Summary ==="
-          grep -nE '^(--- FAIL:|FAIL |fatal error:|panic:|goroutine [0-9]+)' test_output.txt | head -120 || true
+          echo "=== Fail Summary (FAIL / DATA RACE / PANIC lines from merged output) ==="
+          (grep -nE '^(--- FAIL:|FAIL |fatal error:|panic:|goroutine [0-9]+|== Failed)' test_output.txt || true) | head -120 || true
+          echo "--- (DATA RACE blocks with surrounding context) ---"
+          (grep -nE 'WARNING: DATA RACE|DATA RACE' -B 2 -A 20 test_output.txt || true) | head -240 || true
+          echo ""
+          echo "--- (last 140 lines raw tail) ---"
+          tail -140 test_output.txt
+          echo ""
           echo "❌ ci-verify Go tests failed (exit=$EXIT)"
           exit $EXIT
         fi

@@ -145,12 +145,11 @@ func Load(paths AppConfigPaths) (*AppConfig, error) {
 // 若需要修改并保存配置，使用 MutateAdmin / MutateSettings 或 Replace / ReplaceAndPersist。
 func Get() AppConfig {
 	appCfgMu.RLock()
-	cfg := appCfg
-	appCfgMu.RUnlock()
-	if cfg == nil {
+	defer appCfgMu.RUnlock()
+	if appCfg == nil {
 		panic("config not loaded, call config.Load() first")
 	}
-	return cfg.Snapshot()
+	return appCfg.Snapshot()
 }
 
 // Ptr 返回当前全局配置指针（仅用于启动阶段需要真实引用传参的调用方；
