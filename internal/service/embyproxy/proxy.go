@@ -470,16 +470,16 @@ func (p *Proxy) isBrowserClient(req *http.Request) bool {
 
 // seekRequiredContainers Emby Container 字段中需要 byte-range seek 的容器（原盘/直播流）
 var seekRequiredContainers = map[string]bool{
-	"iso":   true,
-	"bdmv":  true,
-	"bdav":  true,
-	"dvd":   true,
+	"iso":    true,
+	"bdmv":   true,
+	"bdav":   true,
+	"dvd":    true,
 	"bluray": true,
-	"m2ts":  true,
-	"ts":    true,
-	"vob":   true,
-	"ifo":   true,
-	"bup":   true,
+	"m2ts":   true,
+	"ts":     true,
+	"vob":    true,
+	"ifo":    true,
+	"bup":    true,
 }
 
 // seekRequiredExts 文件名扩展名中需要 byte-range seek 的格式（含点号，小写）
