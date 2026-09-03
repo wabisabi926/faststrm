@@ -178,7 +178,7 @@ export default function AccountAlertsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl lg:max-w-5xl space-y-6">
+    <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
           <h1 className="text-2xl font-bold flex items-center gap-2">

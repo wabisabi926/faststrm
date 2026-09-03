@@ -220,7 +220,7 @@ export default function TelegramNotifyPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-5 min-w-0">
+    <div className="mx-auto max-w-3xl space-y-5 min-w-0">
       <div className="break-words">
         <h1 className="text-2xl font-semibold">Telegram 通知</h1>
         <p className="text-sm text-muted-foreground mt-0.5 break-words">

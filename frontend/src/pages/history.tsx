@@ -143,7 +143,7 @@ export default function TaskHistoryPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
           <h1 className="text-2xl font-semibold break-words">任务执行历史</h1>
