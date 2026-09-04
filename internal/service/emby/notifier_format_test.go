@@ -30,17 +30,17 @@ func TestFormatMovieNotification_NoDirector(t *testing.T) {
 	if !strings.HasPrefix(out, "功夫熊猫 (2008)") {
 		t.Errorf("应以 功夫熊猫 (2008) 开头, 实际 %s", out)
 	}
-	if !strings.Contains(out, "🆔 评分: 8.2") {
-		t.Errorf("应含 🆔 评分: 8.2, 实际 %s", out)
+	if !strings.Contains(out, "🆔 评分：8.2") {
+		t.Errorf("应含 🆔 评分：8.2, 实际 %s", out)
 	}
-	if !strings.Contains(out, "🎬 类型: 动画, 动作") {
-		t.Errorf("应含 🎬 类型: 动画, 动作, 实际 %s", out)
+	if !strings.Contains(out, "🎬 类型：动画, 动作") {
+		t.Errorf("应含 🎬 类型：动画, 动作, 实际 %s", out)
 	}
-	if !strings.Contains(out, "👤 主演: 演员A, 演员B") {
-		t.Errorf("应含 👤 主演: 演员A, 演员B, 实际 %s", out)
+	if !strings.Contains(out, "👤 主演：演员A, 演员B") {
+		t.Errorf("应含 👤 主演：演员A, 演员B, 实际 %s", out)
 	}
-	if !strings.Contains(out, "⏰ 入库时间:") {
-		t.Errorf("应含 ⏰ 入库时间:, 实际 %s", out)
+	if !strings.Contains(out, "⏰ 入库时间：") {
+		t.Errorf("应含 ⏰ 入库时间：, 实际 %s", out)
 	}
 	if !strings.Contains(out, "📝 简介") {
 		t.Errorf("应含 📝 简介 独立段落, 实际 %s", out)
@@ -57,9 +57,9 @@ func TestFormatMovieNotification_NilItem(t *testing.T) {
 	}
 }
 
-// TestFormatMovieNotification_OverviewTruncated 验证简介超长被截断为100字（对齐 qmediasync）
+// TestFormatMovieNotification_OverviewTruncated 验证简介原文输出不截断、不补省略号（对齐 qmediasync：L486-490 直接原文）
 func TestFormatMovieNotification_OverviewTruncated(t *testing.T) {
-	// 100字以上才会被截断
+	// 100字以上不截断（严格 qms 行为）
 	long := strings.Repeat("一二三四五六七八九十", 11) // 110字
 	item := &ItemDetail{
 		Name:     "长简介电影",
@@ -67,13 +67,11 @@ func TestFormatMovieNotification_OverviewTruncated(t *testing.T) {
 		People:   []Person{},
 	}
 	out := FormatMovieNotification(item, "library.new")
-	if !strings.Contains(out, "...") {
-		t.Errorf("超长简介应被截断加 ..., 实际 %s", out)
+	if strings.Contains(out, "...") {
+		t.Errorf("长简介不应被截断补 ..., 实际 %s", out)
 	}
-	// 验证截断位置在100字处
-	expectedPrefix := long[:100]
-	if !strings.Contains(out, expectedPrefix) {
-		t.Errorf("应包含前100字, 实际 %s", out)
+	if !strings.Contains(out, long) {
+		t.Errorf("应包含完整 110 字简介, 实际 %s", out)
 	}
 }
 
@@ -108,13 +106,13 @@ func TestFormatSeriesNotification_SeasonEpisodesPosition(t *testing.T) {
 	out := FormatSeriesNotification(series, episodes, "library.new")
 
 	// 验证季集信息包含正确格式
-	if !strings.Contains(out, "📺 入库季集:") {
-		t.Errorf("应含 📺 入库季集:, 实际 %s", out)
+	if !strings.Contains(out, "📺 入库季集：") {
+		t.Errorf("应含 📺 入库季集：, 实际 %s", out)
 	}
 
 	// 验证季集信息在入库时间之前
-	seasonIdx := strings.Index(out, "📺 入库季集:")
-	timeIdx := strings.Index(out, "⏰ 入库时间:")
+	seasonIdx := strings.Index(out, "📺 入库季集：")
+	timeIdx := strings.Index(out, "⏰ 入库时间：")
 	if seasonIdx == -1 || timeIdx == -1 {
 		t.Fatal("应包含季集和入库时间")
 	}
@@ -134,7 +132,7 @@ func TestFormatSeriesNotification_NoEpisodes(t *testing.T) {
 		People:         []Person{},
 	}
 	out := FormatSeriesNotification(series, nil, "library.new")
-	if strings.Contains(out, "📺 入库季集:") {
+	if strings.Contains(out, "📺 入库季集：") {
 		t.Errorf("无季集时不应显示季集行, 实际 %s", out)
 	}
 }
@@ -166,17 +164,17 @@ func TestFormatSeriesNotification_NoDirector(t *testing.T) {
 	if !strings.HasPrefix(out, "权力的游戏 (2011)") {
 		t.Errorf("应以 权力的游戏 (2011) 开头, 实际 %s", out)
 	}
-	if !strings.Contains(out, "🆔 评分: 9.2") {
-		t.Errorf("应含 🆔 评分: 9.2, 实际 %s", out)
+	if !strings.Contains(out, "🆔 评分：9.2") {
+		t.Errorf("应含 🆔 评分：9.2, 实际 %s", out)
 	}
-	if !strings.Contains(out, "🎬 类型: 剧情, 奇幻") {
-		t.Errorf("应含 🎬 类型: 剧情, 奇幻, 实际 %s", out)
+	if !strings.Contains(out, "🎬 类型：剧情, 奇幻") {
+		t.Errorf("应含 🎬 类型：剧情, 奇幻, 实际 %s", out)
 	}
-	if !strings.Contains(out, "👤 主演: 演员C") {
-		t.Errorf("应含 👤 主演: 演员C, 实际 %s", out)
+	if !strings.Contains(out, "👤 主演：演员C") {
+		t.Errorf("应含 👤 主演：演员C, 实际 %s", out)
 	}
-	if !strings.Contains(out, "⏰ 入库时间:") {
-		t.Errorf("应含 ⏰ 入库时间:, 实际 %s", out)
+	if !strings.Contains(out, "⏰ 入库时间：") {
+		t.Errorf("应含 ⏰ 入库时间：, 实际 %s", out)
 	}
 	if !strings.Contains(out, "📝 简介") {
 		t.Errorf("应含 📝 简介 独立段落, 实际 %s", out)
