@@ -38,7 +38,7 @@ export function StatusCell({
   const downloadedFiles = task.runtime?.downloadedFiles;
 
   return (
-    <div className="flex flex-col gap-1.5 min-w-[240px]">
+    <div className="flex flex-col gap-1.5">
       {/* 顶部：状态徽章 + 阶段徽章 + 已用时间 */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge

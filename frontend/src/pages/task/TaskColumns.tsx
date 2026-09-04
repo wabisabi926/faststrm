@@ -50,6 +50,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       accessorKey: "id",
       header: "任务ID",
+      size: 80,
       cell: ({ row }) => (
         <code className="text-xs bg-muted px-2 py-1 rounded">
           {row.original.id.slice(0, 8)}...
@@ -59,6 +60,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       accessorKey: "account",
       header: "账户",
+      size: 100,
       cell: ({ row }) => {
         const task = row.original;
         const isBusy = isAccountBusy(task.account);
@@ -88,6 +90,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       accessorKey: "originPath",
       header: "远程路径",
+      size: 120,
       cell: ({ row }) => {
         const task = row.original;
         return (
@@ -100,6 +103,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       accessorKey: "targetPath",
       header: "本地路径",
+      size: 180,
       cell: ({ row }) => {
         const task = row.original;
         return (
@@ -113,6 +117,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       accessorKey: "status",
       header: "状态 / 进度",
+      size: 220,
       cell: ({ row }) => {
         const task = row.original;
         return (
@@ -127,6 +132,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       id: "schedule",
       header: "定时",
+      size: 110,
       cell: ({ row }) => {
         const task = row.original;
         return <ScheduleCell task={task} />;
@@ -135,6 +141,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       id: "actions",
       header: "操作",
+      size: 200,
       cell: ({ row }) => {
         const task = row.original;
         return (
