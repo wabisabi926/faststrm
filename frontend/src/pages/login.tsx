@@ -44,7 +44,7 @@ export default function LoginPage() {
             className="mb-4"
           />
           <h1 className="text-2xl font-bold text-center">登录</h1>
-          <p className="text-sm text-muted-foreground mt-1">Fast Strm 管理系统</p>
+          <p className="text-sm text-muted-foreground mt-1">更快、更强、更硬</p>
         </div>
 
         <Form {...form}>
