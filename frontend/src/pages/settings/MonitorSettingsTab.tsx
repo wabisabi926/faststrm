@@ -149,12 +149,11 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
           <AlertTitle>首次使用或升级后建议先跑一次全量同步</AlertTitle>
           <AlertDescription>
             <p>
-              全量同步会扫描任务指定的 115 网盘文件夹（不是整个网盘），将其中文件和文件夹写入数据库。
-              数据库记录是 move/rename/delete 事件正常工作的前提——
-              如果数据库缺少文件/文件夹记录，删除、移动、重命名时旧 STRM 无法被正确清理。
+              首次使用或升级后，建议执行一次全量同步。全量同步仅扫描任务指定的 115 网盘文件夹，把文件、目录写入数据库。
+              数据库记录是移动、重命名、删除事件正常生效的基础；缺少记录会导致旧 STRM 无法正确清理。
             </p>
             <p className="mt-1">
-              操作：左侧菜单「任务」→ 新建全量同步任务 → 保存后点击任务行右侧 ▶ 执行按钮。
+              操作：左侧菜单「任务」→新建任务→保存，点击任务▶运行。
             </p>
           </AlertDescription>
         </Alert>
