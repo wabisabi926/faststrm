@@ -19,6 +19,7 @@ on:
       - '*.md'
       - 'FNOS/**'
       - 'scripts/**'
+  workflow_dispatch:
 
 jobs:
   # ---- Job 1: Go 单元测试 + 覆盖率 ----
