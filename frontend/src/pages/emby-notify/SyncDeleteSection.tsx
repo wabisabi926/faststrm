@@ -144,8 +144,24 @@ export function SyncDeleteSection({
           <Label>路径映射（Emby 路径 → 115 网盘路径）</Label>
           {(settings.syncDeletePathMappings || []).map((mapping, index) => (
             <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Select
+                value={mapping.account || "__all__"}
+                onValueChange={(v) => updatePathMapping(index, "account", v === "__all__" ? "" : v)}
+              >
+                <SelectTrigger className="w-full sm:w-[120px] h-9 shrink-0">
+                  <SelectValue placeholder="账号（可选）" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">遍历全部账号</SelectItem>
+                  {accounts.map((acc) => (
+                    <SelectItem key={acc} value={acc}>
+                      {acc}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
-                <div className="flex gap-1 items-center">
+                <div className="flex-1 flex gap-1 items-center">
                   <Input
                     className="flex-1 min-w-0"
                     placeholder="Emby 路径前缀，如 /app/data/strm/电影"
@@ -175,7 +191,7 @@ export function SyncDeleteSection({
                 </div>
                 <span className="text-muted-foreground hidden sm:inline self-center">→</span>
                 <span className="text-muted-foreground sm:hidden w-full text-center">↓</span>
-                <div className="flex gap-1 items-center">
+                <div className="flex-1 flex gap-1 items-center">
                   <Input
                     className="flex-1 min-w-0"
                     placeholder="网盘路径前缀，如 /电影"
@@ -205,37 +221,35 @@ export function SyncDeleteSection({
                   </TooltipProvider>
                 </div>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Select
-                  value={mapping.account || "__all__"}
-                  onValueChange={(v) => updatePathMapping(index, "account", v === "__all__" ? "" : v)}
-                >
-                  <SelectTrigger className="w-full sm:w-[120px] h-9">
-                    <SelectValue placeholder="账号（可选）" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">遍历全部账号</SelectItem>
-                    {accounts.map((acc) => (
-                      <SelectItem key={acc} value={acc}>
-                        {acc}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => removePathMapping(index)}
-                  className="w-full sm:w-auto"
-                >
-                  删除
-                </Button>
-              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => removePathMapping(index)}
+                className="w-full sm:w-auto shrink-0"
+              >
+                删除
+              </Button>
             </div>
           ))}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Select
+              value={newMappingAccount || "__all__"}
+              onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
+            >
+              <SelectTrigger className="w-full sm:w-[120px] h-9 shrink-0">
+                <SelectValue placeholder="账号（可选）" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">遍历全部账号</SelectItem>
+                {accounts.map((acc) => (
+                  <SelectItem key={acc} value={acc}>
+                    {acc}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
-              <div className="flex gap-1 items-center">
+              <div className="flex-1 flex gap-1 items-center">
                 <Input
                   className="flex-1 min-w-0"
                   placeholder="Emby 路径前缀"
@@ -265,7 +279,7 @@ export function SyncDeleteSection({
               </div>
               <span className="text-muted-foreground hidden sm:inline">→</span>
               <span className="text-muted-foreground sm:hidden">↓</span>
-              <div className="flex gap-1 items-center">
+              <div className="flex-1 flex gap-1 items-center">
                 <Input
                   className="flex-1 min-w-0"
                   placeholder="网盘路径前缀"
@@ -295,27 +309,9 @@ export function SyncDeleteSection({
                 </TooltipProvider>
               </div>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Select
-                value={newMappingAccount || "__all__"}
-                onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
-              >
-                <SelectTrigger className="w-full sm:w-[120px] h-9">
-                  <SelectValue placeholder="账号（可选）" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">遍历全部账号</SelectItem>
-                  {accounts.map((acc) => (
-                    <SelectItem key={acc} value={acc}>
-                      {acc}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button size="sm" onClick={addPathMapping} className="w-full sm:w-auto">
-                添加
-              </Button>
-            </div>
+            <Button size="sm" onClick={addPathMapping} className="w-full sm:w-auto shrink-0">
+              添加
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground">
             只有匹配到 Emby 路径前缀的删除事件才会被处理。账号留空时遍历所有 115 账号删除 DB 记录。

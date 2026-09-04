@@ -309,20 +309,15 @@ export default function TelegramNotifyPage() {
                 启用通知
               </label>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="autoPolling"
-                  checked={config.autoPolling !== false}
-                  onCheckedChange={(checked) => setConfig({ ...config, autoPolling: checked === true })}
-                />
-                <label htmlFor="autoPolling" className="text-sm font-medium leading-none cursor-pointer">
-                  启动时自动轮询
-                </label>
-              </div>
-              <p className="text-xs text-muted-foreground pl-6">
-                勾选后，下次启动服务时自动开轮询，无需公网也能接收 Bot 命令和按钮回复
-              </p>
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="autoPolling"
+                checked={config.autoPolling !== false}
+                onCheckedChange={(checked) => setConfig({ ...config, autoPolling: checked === true })}
+              />
+              <label htmlFor="autoPolling" className="text-sm font-medium leading-none cursor-pointer">
+                启动时自动轮询
+              </label>
             </div>
           </div>
           <div className="flex gap-2 shrink-0 flex-wrap">
@@ -343,13 +338,13 @@ export default function TelegramNotifyPage() {
       {botInfo ? (
         <section className="border rounded-md p-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <Badge variant="outline" className="bg-muted text-muted-foreground">
                 <CheckCircle className="h-3 w-3 mr-1" />
                 已连接
               </Badge>
-              <span className="text-sm font-medium">@{botInfo.username}</span>
-              <span className="text-xs text-muted-foreground">{botInfo.first_name}</span>
+              <span className="text-sm font-medium truncate">@{botInfo.username}</span>
+              <span className="text-xs text-muted-foreground truncate">{botInfo.first_name}</span>
             </div>
             <Button onClick={testBot} disabled={loading} size="sm" variant="outline">
               <MessageSquare className="h-3.5 w-3.5 mr-1" />

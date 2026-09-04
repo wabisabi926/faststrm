@@ -183,7 +183,7 @@ export default function TaskHistoryPage() {
                     <div className="flex items-center space-x-3 min-w-0">
                       <StatusIcon className="h-5 w-5 shrink-0" />
                       <div className="min-w-0">
-                        <CardTitle className="text-lg break-words">
+                        <CardTitle className="text-base font-medium break-words">
                           任务 {execution.taskId}
                         </CardTitle>
                         <CardDescription className="flex flex-col sm:flex-row sm:items-center gap-2 sm:space-x-4 mt-1">

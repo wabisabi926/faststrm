@@ -354,7 +354,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                     </SelectContent>
                   </Select>
                   <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
-                    <div className="flex gap-1 items-center">
+                    <div className="flex-1 flex gap-1 items-center">
                       <Input
                         value={mapping.cloudPath}
                         onChange={(e) => {
@@ -390,7 +390,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                       </TooltipProvider>
                     </div>
                     <span className="text-muted-foreground hidden sm:inline">→</span>
-                    <div className="flex gap-1 items-center">
+                    <div className="flex-1 flex gap-1 items-center">
                       <Input
                         value={mapping.localPath}
                         onChange={(e) => {
@@ -439,7 +439,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                 </SelectContent>
               </Select>
               <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
-                <div className="flex gap-1 items-center">
+                <div className="flex-1 flex gap-1 items-center">
                   <Input
                     value={newCloudPath}
                     onChange={(e) => setNewCloudPath(e.target.value)}
@@ -471,7 +471,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                   </TooltipProvider>
                 </div>
                 <span className="text-muted-foreground hidden sm:inline">→</span>
-                <div className="flex gap-1 items-center">
+                <div className="flex-1 flex gap-1 items-center">
                   <Input
                     value={newLocalPath}
                     onChange={(e) => setNewLocalPath(e.target.value)}
