@@ -99,7 +99,7 @@ func (m *Manager) Start(host string, port int, embyURL string, forceProxyUaToken
 
 	go func() {
 		logger.S().Infof("[EmbyProxy] 启动中: %s → %s", wantAddr, embyURL)
-		logger.S().Infof("[EmbyProxy] 反代策略：默认强制 DirectPlay；浏览器/Web 客户端走 Emby 转码（STRM 端点代理 UA: %v）", uaTokens)
+		logger.S().Infof("[EmbyProxy] 反代策略：STRM 源一律强制 DirectPlay（含浏览器，禁止转码；STRM 端点代理 UA: %v）", uaTokens)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.S().Warnf("[EmbyProxy] 监听 %s 出错: %v", wantAddr, err)
 		}

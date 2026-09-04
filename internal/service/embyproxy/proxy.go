@@ -267,8 +267,7 @@ func (p *Proxy) Handler() http.Handler {
 	// 媒体流路径走 HandleMediaStream（查缓存/解析重定向链 → 302），其余透传反代
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 只拦截我们生成的直链流请求（/videos/{id}/stream 或 /audio/{id}/stream 且 Static=true）。
-		// 其余 /videos、/audio 请求（尤其是 Emby 的转码请求 Static=false / 动态转码 URL）透传给上游 Emby，
-		// 让浏览器等无法 DirectPlay 的客户端可以走 Emby 正常转码，避免「当前没有兼容的流」。
+		// 其余 /videos、/audio 请求（非 Static 的动态转码 URL 等）透传给上游 Emby。
 		if isStaticDirectStream(r.URL.Path, r) {
 			p.HandleMediaStream(w, r)
 			return
@@ -364,28 +363,26 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 
 	itemID := extractItemID(resp.Request.URL.Path)
 
-	// 默认强制 DirectPlay；浏览器/Web 客户端因 H.265/DTS 兼容性问题，保持 Emby 原始响应走转码。
-	if p.isBrowserClient(resp.Request) {
-		logger.S().Infof("[EmbyProxy] PlaybackInfo 保持原样（浏览器/Web 客户端，走 Emby 转码）: path=%s", resp.Request.URL.Path)
-	} else {
-		// 强制 DirectPlay
-		p.forceDirectPlay(data, resp.Request)
+	// 对齐参考项目 embyreverseproxy：STRM 源一律强制 DirectPlay（含浏览器）。
+	// 原因：STRM 源是带签名/防盗链的 115 CDN 直链，走转码时 Emby ffmpeg 拉流会因
+	// UA 不匹配而失败，导致浏览器反复重试 PlaybackInfo 却始终无法开始播放；
+	// DirectPlay 由客户端自己拿 302 直链（带正确 UA）拉流，才是可靠路径。
+	p.forceDirectPlay(data, resp.Request)
 
-		// 缓存 STRM 源映射（带 TTL 过期）
-		if itemID != "" && len(strmMap) > 0 {
-			p.cacheStrmSources(itemID, strmMap)
-			logger.S().Infof("[EmbyProxy] STRM 缓存: item=%s sources=%d", itemID, len(strmMap))
-		}
-
-		// 同时缓存 (ip, ua, itemID) → userID 关联，供 HandleMediaStream 构建 playbackCacheKey
-		if itemID != "" {
-			if uid, _ := data["UserId"].(string); uid != "" {
-				p.cachePlaybackUser(resp.Request, itemID, uid)
-			}
-		}
-
-		logger.S().Infof("[EmbyProxy] PlaybackInfo 强制 DirectPlay: path=%s, sources=%d", resp.Request.URL.Path, len(strmMap))
+	// 缓存 STRM 源映射（带 TTL 过期）
+	if itemID != "" && len(strmMap) > 0 {
+		p.cacheStrmSources(itemID, strmMap)
+		logger.S().Infof("[EmbyProxy] STRM 缓存: item=%s sources=%d", itemID, len(strmMap))
 	}
+
+	// 同时缓存 (ip, ua, itemID) → userID 关联，供 HandleMediaStream 构建 playbackCacheKey
+	if itemID != "" {
+		if uid, _ := data["UserId"].(string); uid != "" {
+			p.cachePlaybackUser(resp.Request, itemID, uid)
+		}
+	}
+
+	logger.S().Infof("[EmbyProxy] PlaybackInfo 强制 DirectPlay: path=%s, sources=%d", resp.Request.URL.Path, len(strmMap))
 
 	newBody, _ := json.Marshal(data)
 	resp.Body = io.NopCloser(strings.NewReader(string(newBody)))
@@ -410,9 +407,13 @@ func (p *Proxy) forceDirectPlay(data map[string]interface{}, req *http.Request) 
 
 		ms["SupportsDirectPlay"] = true
 		ms["SupportsDirectStream"] = true
-		// 保留 Emby 原始的 SupportsTranscoding / TranscodingUrl：
-		// 能直接播的客户端（如 Kodi 走 Static=true 直链）由 HandleMediaStream 解析 CDN；
-		// 浏览器等无法 DirectPlay 的客户端仍可走 Emby 转码，避免「当前没有兼容的流」。
+		// 对齐参考项目：显式关闭转码能力并删除转码相关字段。
+		// STRM 源走转码会让 Emby ffmpeg 直接拉 115 直链（UA 不匹配→失败），
+		// 因此必须让所有客户端（含浏览器）都走 DirectPlay 302 直链。
+		ms["SupportsTranscoding"] = false
+		delete(ms, "TranscodingUrl")
+		delete(ms, "TranscodingContainer")
+		delete(ms, "TranscodingSubProtocol")
 
 		sid, _ := ms["Id"].(string)
 		if sid == "" {
@@ -436,8 +437,8 @@ func (p *Proxy) forceDirectPlay(data map[string]interface{}, req *http.Request) 
 // ============================================================
 
 // isBrowserClient 判断请求是否来自浏览器/Web 客户端。
-// 强播放器插件（Infuse/Kodi/VidHub 等）通常会带明确的 X-Emby-Client 标识；
-// Web 客户端的 X-Emby-Client 通常为空或包含 "web"；UA 为空时也视为 Web。
+// 注意：v1.2.8 起该函数已不再参与 PlaybackInfo 的 DirectPlay 决策——STRM 源一律
+// 强制 DirectPlay（含浏览器）。此函数仅保留用于诊断/日志或未来的差异化策略。
 func (p *Proxy) isBrowserClient(req *http.Request) bool {
 	client := strings.ToLower(strings.TrimSpace(req.Header.Get("X-Emby-Client")))
 	ua := strings.ToLower(strings.TrimSpace(req.Header.Get("User-Agent")))

@@ -140,11 +140,11 @@ func TestPlaybackInfo_StrmSource(t *testing.T) {
 	if v, _ := ms["SupportsDirectPlay"].(bool); !v {
 		t.Error("SupportsDirectPlay should be true")
 	}
-	if v, _ := ms["SupportsTranscoding"].(bool); !v {
-		t.Error("SupportsTranscoding should be preserved (true)")
+	if v, _ := ms["SupportsTranscoding"].(bool); v {
+		t.Error("SupportsTranscoding should be false (STRM 一律 DirectPlay，禁止转码)")
 	}
-	if _, ok := ms["TranscodingUrl"]; !ok {
-		t.Error("TranscodingUrl should be preserved so browsers can transcode")
+	if _, ok := ms["TranscodingUrl"]; ok {
+		t.Error("TranscodingUrl should be removed so browsers cannot transcode")
 	}
 	dsURL, ok := ms["DirectStreamUrl"].(string)
 	if !ok || !strings.Contains(dsURL, "/videos/123/stream") {
@@ -219,12 +219,12 @@ func TestPlaybackInfo_ISOSource(t *testing.T) {
 	if v, _ := ms["SupportsDirectStream"].(bool); !v {
 		t.Error("SupportsDirectStream should be true for ISO")
 	}
-	if v, _ := ms["SupportsTranscoding"].(bool); !v {
-		t.Error("SupportsTranscoding should be preserved (true) for ISO")
+	if v, _ := ms["SupportsTranscoding"].(bool); v {
+		t.Error("SupportsTranscoding should be false for ISO (STRM 一律 DirectPlay)")
 	}
 	for _, key := range []string{"TranscodingUrl", "TranscodingContainer", "TranscodingSubProtocol"} {
-		if _, ok := ms[key]; !ok {
-			t.Errorf("%s should be preserved for ISO (so browsers can transcode)", key)
+		if _, ok := ms[key]; ok {
+			t.Errorf("%s should be removed for ISO (禁止转码)", key)
 		}
 	}
 	dsURL, _ := ms["DirectStreamUrl"].(string)
@@ -982,12 +982,12 @@ func TestPlaybackInfo_HttpPathButNotRemote(t *testing.T) {
 	sources, _ := result["MediaSources"].([]interface{})
 	ms := sources[0].(map[string]interface{})
 
-	// 第二分支应该识别成功 → DirectPlay 被强制 + DirectStreamUrl 生成，同时保留转码
-	if v, _ := ms["SupportsTranscoding"].(bool); !v {
-		t.Error("SupportsTranscoding should be preserved (true)")
+	// 第二分支应该识别成功 → DirectPlay 被强制 + DirectStreamUrl 生成，并关闭转码
+	if v, _ := ms["SupportsTranscoding"].(bool); v {
+		t.Error("SupportsTranscoding should be false (STRM 一律 DirectPlay)")
 	}
-	if _, ok := ms["TranscodingUrl"]; !ok {
-		t.Error("TranscodingUrl should be preserved so browsers can transcode")
+	if _, ok := ms["TranscodingUrl"]; ok {
+		t.Error("TranscodingUrl should be removed so browsers cannot transcode")
 	}
 	if v, _ := ms["SupportsDirectPlay"].(bool); !v {
 		t.Error("SupportsDirectPlay should be forced true")
@@ -1165,7 +1165,7 @@ func TestIsBrowserClient(t *testing.T) {
 }
 
 // TestPlaybackInfo_BrowserVsPlayer 验证反代层核心行为：
-// 强播放器 → 强制 DirectPlay（生成 DirectStreamUrl）；浏览器 → 保持原样走转码。
+// STRM 源一律强制 DirectPlay（强播放器与浏览器行为一致），禁止转码。
 func TestPlaybackInfo_BrowserVsPlayer(t *testing.T) {
 	strmSrc := mockStrmSrc(t, "")
 	defer strmSrc.Close()
@@ -1197,9 +1197,12 @@ func TestPlaybackInfo_BrowserVsPlayer(t *testing.T) {
 		if _, ok := ms["DirectStreamUrl"]; !ok {
 			t.Error("player should get DirectStreamUrl")
 		}
+		if v, _ := ms["SupportsTranscoding"].(bool); v {
+			t.Error("player should get SupportsTranscoding=false")
+		}
 	})
 
-	t.Run("browser_passthrough", func(t *testing.T) {
+	t.Run("browser_forced_directplay", func(t *testing.T) {
 		req := httptest.NewRequest("POST", emby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
 		req.Header.Set("X-Emby-Client", "Emby Web")
 		req.Header.Set("User-Agent", "Mozilla/5.0")
@@ -1211,20 +1214,20 @@ func TestPlaybackInfo_BrowserVsPlayer(t *testing.T) {
 		sources, _ := result["MediaSources"].([]interface{})
 		ms := sources[0].(map[string]interface{})
 
-		// 浏览器保持原样：buildStrmPlaybackInfoResp 里 SupportsDirectPlay 本来就是 false
-		if v, _ := ms["SupportsDirectPlay"].(bool); v {
-			t.Error("browser should NOT get SupportsDirectPlay forced true")
+		// 浏览器也应强制 DirectPlay（STRM 走转码会让 ffmpeg 拉 115 直链失败）
+		if v, _ := ms["SupportsDirectPlay"].(bool); !v {
+			t.Error("browser should get SupportsDirectPlay forced true")
 		}
-		if _, ok := ms["DirectStreamUrl"]; ok {
-			t.Error("browser should NOT get DirectStreamUrl")
+		if _, ok := ms["DirectStreamUrl"]; !ok {
+			t.Error("browser should get DirectStreamUrl")
 		}
-		// 转码字段应保留（浏览器依赖它）
-		if _, ok := ms["TranscodingUrl"]; !ok {
-			t.Error("browser should keep TranscodingUrl for transcoding fallback")
+		// 转码字段应被移除
+		if _, ok := ms["TranscodingUrl"]; ok {
+			t.Error("browser should NOT keep TranscodingUrl")
 		}
 	})
 
-	t.Logf("✅ 浏览器走转码 / 强播放器走直连 行为验证通过")
+	t.Logf("✅ STRM 源一律强制 DirectPlay（浏览器/强播放器一致）验证通过")
 }
 
 // itoa helper（manager_test.go 已定义，这里重复避免依赖）
