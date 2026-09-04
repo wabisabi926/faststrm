@@ -125,8 +125,8 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
   } = props;
 
   return (
-    <div className="space-y-6">
-      <section className="border rounded-md p-3 sm:p-5 space-y-5">
+    <div className="space-y-6 w-full min-w-0 overflow-hidden">
+      <section className="w-full min-w-0 overflow-hidden border rounded-md p-3 sm:p-5 space-y-5">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h2 className="text-base font-medium">115 生活事件监控</h2>
           <div className="flex items-center gap-2">
@@ -329,32 +329,57 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
             </p>
           </div>
 
-          {/* Path Mappings */}
-          <div className="space-y-3">
+          {/* Path Mappings（严格对齐用户"移动端 4 行规格"文字图，1:1）
+             ============================================================
+             移动端（<640px）每行 4 行堆叠（与截图 / 文字图完全一致）：
+               Line 1 :  [账号下拉 ▼]  [115 网盘路径输入 ...............]  [📂]
+               Line 2 :                     ↓  (居中，单独一行)
+               Line 3 :  [本地保存路径输入 ...........................]  [📂]
+               Line 4 :  [删除 / 添加]  (整行宽按钮，不挤右缘)
+             sm+（>=640px，桌面横排）保持传统一行：
+               [账号▼  云盘📂 → 本地📂  删除/添加]
+             ============================================================
+             - 账号下拉：sm 下 160px shrink-0；mobile 下 1/3 宽度（"遍历全部账号" 6 字 + chevron 不溢出）
+             - 所有 Input 统一 min-w-0 + w-full + truncate/break-all；SelectValue/SelectItem 都 truncate
+             - 每行容器统一 gap-2（mobile 竖排）/ sm:gap-2（sm 横排 items-center）
+          */}
+          <div className="space-y-4 w-full min-w-0">
             <Label>路径映射（115 网盘路径 → 本地保存路径）</Label>
-            <div className="space-y-3">
+            <div className="space-y-4 w-full min-w-0">
               {pathMappings.map((mapping, index) => (
-                <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Select
-                    value={mapping.account || "__all__"}
-                    onValueChange={(val) => {
-                      const updated = [...pathMappings];
-                      updated[index] = { ...updated[index], account: val === "__all__" ? undefined : val };
-                      setPathMappings(updated);
-                    }}
-                  >
-                    <SelectTrigger className="w-full sm:w-[120px] shrink-0">
-                      <SelectValue placeholder="全部账号" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">全部账号</SelectItem>
-                      {accounts.map(acc => (
-                        <SelectItem key={acc} value={acc}>{acc}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
-                    <div className="flex-1 flex gap-1 items-center">
+                <div
+                  key={index}
+                  className="w-full min-w-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2"
+                >
+                  {/* ============ Line 1 / sm 左段：账号下拉 ▼ + 网盘路径输入 + 📂
+                                 sm  ：拆成两个独立 shrink-0 / flex-1
+                                 mobile：同一行 flex，账号 1/3 左、网盘 2/3 右
+                  ============ */}
+                  <div className="w-full sm:w-auto min-w-0 flex flex-row gap-1 sm:gap-0 items-center">
+                    {/* 账号下拉：mobile 1/3；sm 固定 160px（"遍历全部账号" 6 字 + chevron 不截断）*/}
+                    <div className="w-1/3 sm:w-[160px] sm:shrink-0 min-w-0 sm:mr-2">
+                      <Select
+                        value={mapping.account || "__all__"}
+                        onValueChange={(val) => {
+                          const updated = [...pathMappings];
+                          updated[index] = { ...updated[index], account: val === "__all__" ? undefined : val };
+                          setPathMappings(updated);
+                        }}
+                      >
+                        <SelectTrigger className="h-9 w-full min-w-0">
+                          <SelectValue placeholder="遍历全部账号" className="truncate" />
+                        </SelectTrigger>
+                        <SelectContent align="start" className="min-w-[140px]">
+                          <SelectItem value="__all__" className="truncate whitespace-nowrap pr-2">遍历全部账号</SelectItem>
+                          {accounts.map(acc => (
+                            <SelectItem key={acc} value={acc} className="truncate whitespace-nowrap pr-2">{acc}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* 网盘路径输入 + 📂 */}
+                    <div className="flex-1 flex gap-1 items-center min-w-0 sm:mr-2">
                       <Input
                         value={mapping.cloudPath}
                         onChange={(e) => {
@@ -363,7 +388,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                           setPathMappings(updated);
                         }}
                         placeholder="115 网盘路径，如 /电影"
-                        className="flex-1 min-w-0"
+                        className="flex-1 min-w-0 w-full truncate break-all"
                       />
                       <TooltipProvider delayDuration={100}>
                         <Tooltip>
@@ -383,68 +408,101 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                           </TooltipTrigger>
                           {!mapping.account && (
                             <TooltipContent side="top" className="max-w-[240px]">
-                              <p>全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
+                              <p>遍历全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
                             </TooltipContent>
                           )}
                         </Tooltip>
                       </TooltipProvider>
                     </div>
-                    <span className="text-muted-foreground hidden sm:inline">→</span>
-                    <div className="flex-1 flex gap-1 items-center">
-                      <Input
-                        value={mapping.localPath}
-                        onChange={(e) => {
-                          const updated = [...pathMappings];
-                          updated[index] = { ...updated[index], localPath: e.target.value };
-                          setPathMappings(updated);
-                        }}
-                        placeholder="本地路径，如/app/data/media/电影"
-                        className="flex-1 min-w-0"
-                      />
+
+                    {/* [删除] sm 时内联在行尾；mobile 时另起整行（Line 4） */}
+                    <div className="hidden sm:flex sm:shrink-0 sm:w-auto">
                       <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => openLocalPicker(index)}
-                        title="选择本地目录"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => removePathMapping(index)}
+                        className="shrink-0"
                       >
-                        <FolderOpen className="w-4 h-4" />
+                        删除
                       </Button>
                     </div>
                   </div>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => removePathMapping(index)}
-                    className="w-full sm:w-auto shrink-0"
+
+                  {/* ============ Line 2：↓ 居中（仅 mobile；sm 已在行内用 →） ============ */}
+                  <span className="text-muted-foreground hidden sm:inline shrink-0 self-center px-1 sm:order-2">→</span>
+                  <span
+                    className="sm:hidden w-full text-center shrink-0 select-none text-muted-foreground"
+                    aria-hidden
                   >
-                    删除
-                  </Button>
+                    ↓
+                  </span>
+
+                  {/* ============ Line 3 / sm 中段：本地路径输入 + 📂 ============ */}
+                  <div className="flex-1 flex gap-1 items-center min-w-0 w-full sm:w-auto sm:order-3">
+                    <Input
+                      value={mapping.localPath}
+                      onChange={(e) => {
+                        const updated = [...pathMappings];
+                        updated[index] = { ...updated[index], localPath: e.target.value };
+                        setPathMappings(updated);
+                      }}
+                      placeholder="本地路径，如/app/data/media/电影"
+                      className="flex-1 min-w-0 w-full truncate break-all"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => openLocalPicker(index)}
+                      title="选择本地目录"
+                      className="shrink-0"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                    </Button>
+                  </div>
+
+                  {/* ============ Line 4（mobile only）：删除按钮整行宽 ============ */}
+                  <div className="sm:hidden w-full min-w-0">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => removePathMapping(index)}
+                      className="w-full shrink-0"
+                    >
+                      删除
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Select
-                value={newMappingAccount}
-                onValueChange={setNewMappingAccount}
-              >
-                <SelectTrigger className="w-full sm:w-[120px] shrink-0">
-                  <SelectValue placeholder="全部账号" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">全部账号</SelectItem>
-                  {accounts.map(acc => (
-                    <SelectItem key={acc} value={acc}>{acc}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="flex-1 flex flex-col gap-1 sm:flex-row sm:gap-2 sm:items-center">
-                <div className="flex-1 flex gap-1 items-center">
+
+            {/* 新建行：与已有映射行严格同构（账号▼+网盘 / ↓ / 本地 / 添加） */}
+            <div className="w-full min-w-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2 pt-1 border-t border-dashed">
+              {/* Line 1：账号下拉 ▼ + 网盘路径输入 + 📂 */}
+              <div className="w-full sm:w-auto min-w-0 flex flex-row gap-1 sm:gap-0 items-center">
+                <div className="w-1/3 sm:w-[160px] sm:shrink-0 min-w-0 sm:mr-2">
+                  <Select
+                    value={newMappingAccount}
+                    onValueChange={setNewMappingAccount}
+                  >
+                    <SelectTrigger className="h-9 w-full min-w-0">
+                      <SelectValue placeholder="遍历全部账号" className="truncate" />
+                    </SelectTrigger>
+                    <SelectContent align="start" className="min-w-[140px]">
+                      <SelectItem value="__all__" className="truncate whitespace-nowrap pr-2">遍历全部账号</SelectItem>
+                      {accounts.map(acc => (
+                        <SelectItem key={acc} value={acc} className="truncate whitespace-nowrap pr-2">{acc}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex-1 flex gap-1 items-center min-w-0 sm:mr-2">
                   <Input
                     value={newCloudPath}
                     onChange={(e) => setNewCloudPath(e.target.value)}
                     placeholder="115 网盘路径，如 /电影"
-                    className="flex-1 min-w-0"
+                    className="flex-1 min-w-0 w-full truncate break-all"
                   />
                   <TooltipProvider delayDuration={100}>
                     <Tooltip>
@@ -464,36 +522,49 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                       </TooltipTrigger>
                       {newMappingAccount === "__all__" && (
                         <TooltipContent side="top" className="max-w-[240px]">
-                          <p>全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
+                          <p>遍历全部账号模式下，不同账号的目录结构可能不一致，请手动输入路径，或先选择具体账号再选择目录。</p>
                         </TooltipContent>
                       )}
                     </Tooltip>
                   </TooltipProvider>
                 </div>
-                <span className="text-muted-foreground hidden sm:inline">→</span>
-                <div className="flex-1 flex gap-1 items-center">
-                  <Input
-                    value={newLocalPath}
-                    onChange={(e) => setNewLocalPath(e.target.value)}
-                    placeholder="本地路径，如/app/data/media/电影"
-                    className="flex-1 min-w-0"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={openNewLocalPicker}
-                    title="选择本地目录"
-                  >
-                    <FolderOpen className="w-4 h-4" />
-                  </Button>
+
+                <div className="hidden sm:flex sm:shrink-0 sm:w-auto">
+                  <Button size="sm" onClick={addPathMapping} className="shrink-0">添加</Button>
                 </div>
               </div>
-              <Button size="sm" onClick={addPathMapping} className="w-full sm:w-auto shrink-0">
-                添加
-              </Button>
+
+              {/* Line 2：↓ 居中 */}
+              <span className="text-muted-foreground hidden sm:inline shrink-0 self-center px-1 sm:order-2">→</span>
+              <span className="sm:hidden w-full text-center shrink-0 select-none text-muted-foreground" aria-hidden>↓</span>
+
+              {/* Line 3：本地路径输入 + 📂 */}
+              <div className="flex-1 flex gap-1 items-center min-w-0 w-full sm:w-auto sm:order-3">
+                <Input
+                  value={newLocalPath}
+                  onChange={(e) => setNewLocalPath(e.target.value)}
+                  placeholder="本地路径，如/app/data/media/电影"
+                  className="flex-1 min-w-0 w-full truncate break-all"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={openNewLocalPicker}
+                  title="选择本地目录"
+                  className="shrink-0"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                </Button>
+              </div>
+
+              {/* Line 4（mobile only）：添加按钮整行宽 */}
+              <div className="sm:hidden w-full min-w-0">
+                <Button size="sm" onClick={addPathMapping} className="w-full shrink-0">添加</Button>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
+
+            <p className="text-xs text-muted-foreground break-words">
               只有匹配到网盘路径前缀的文件才会被处理。支持多个路径映射。
             </p>
           </div>

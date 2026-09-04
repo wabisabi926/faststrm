@@ -66,7 +66,7 @@ export function SyncDeleteSection({
   openCloudPickerForMapping,
 }: SyncDeleteSectionProps) {
   return (
-    <section className="border rounded-md p-3 sm:p-5 space-y-5">
+    <section className="w-full min-w-0 border rounded-md p-3 sm:p-5 space-y-5">
       <div className="flex items-center gap-2">
         <XCircle className="h-5 w-5" />
         <h2 className="text-base font-medium">删除同步</h2>
@@ -139,21 +139,31 @@ export function SyncDeleteSection({
           </div>
         </div>
 
-        {/* 路径映射表
-           行结构：[Emby输入 📂] → [网盘输入 💾] [账号下拉] [操作按钮]
-           账号 & 操作按钮在右侧，所有行垂直对齐 */}
-        <div className="space-y-2">
+        {/* 路径映射表（严格对齐用户"移动端 4 行规格"文字图，1:1；与 MonitorSettingsTab 同构仅方向相反）
+           ============================================================
+           移动端（<640px）每行 4 行堆叠：
+             Line 1 :  [Emby 本地路径输入 .........................]  [📂]
+             Line 2 :                    ↓  (单独一行，居中)
+             Line 3 :  [账号下拉 ▼]  [网盘路径输入 ...............]  [💾]
+             Line 4 :  [删除 / 添加]  (整行宽按钮，不挤右缘)
+           sm+（>=640px，桌面横排）传统一行：
+             [Emby📂]  →  [账号▼ 网盘💾]  [删除/添加]
+           ============================================================
+           min-w-0 + Input/SelectValue.truncate 贯穿；账号 mobile 1/3、sm 140px，网盘 flex-1。
+        */}
+        <div className="space-y-4 w-full min-w-0">
           <Label>路径映射（Emby 路径 → 115 网盘路径）</Label>
 
           {(settings.syncDeletePathMappings || []).map((mapping, index) => (
+            /* 行容器：mobile 堆叠 gap-2；sm 切横排 items-center */
             <div
               key={index}
-              className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2"
+              className="w-full min-w-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2"
             >
-              {/* 左段：Emby 输入 + 目录选择图标 */}
-              <div className="flex-1 flex gap-1 items-center">
+              {/* ============ Line 1 / sm 左段：Emby 输入 + 📂 ============ */}
+              <div className="flex-1 flex gap-1 items-center min-w-0 w-full sm:w-auto sm:mr-2">
                 <Input
-                  className="flex-1 min-w-0"
+                  className="flex-1 min-w-0 w-full truncate break-all"
                   placeholder="Emby 路径前缀，如 /app/data/strm/电影"
                   value={mapping.embyPath}
                   onChange={(e) => updatePathMapping(index, "embyPath", e.target.value)}
@@ -178,67 +188,92 @@ export function SyncDeleteSection({
                 </TooltipProvider>
               </div>
 
-              {/* 箭头：sm 横排 → / mobile 竖排 ↓ */}
+              {/* ============ Line 2：↓ 居中（mobile only；sm 内联 →） ============ */}
               <span className="text-muted-foreground hidden sm:inline self-center shrink-0 px-1">→</span>
-              <span className="text-muted-foreground sm:hidden w-full text-center shrink-0">↓</span>
+              <span
+                className="sm:hidden w-full text-center shrink-0 select-none text-muted-foreground"
+                aria-hidden
+              >
+                ↓
+              </span>
 
-              {/* 中段：115 网盘输入 + 网盘选择图标（💾 账号为空则灰）*/}
-              <div className="flex-1 flex gap-1 items-center">
-                <Input
-                  className="flex-1 min-w-0"
-                  placeholder="网盘路径前缀，如 /电影"
-                  value={mapping.cloudPath}
-                  onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
-                />
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="shrink-0 inline-flex">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0"
-                          disabled={!mapping.account}
-                          onClick={() => openCloudPickerForMapping(index)}
-                        >
-                          <HardDrive className="h-4 w-4" />
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {mapping.account ? "选择网盘目录" : "请先选择具体账号"}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+              {/* ============ Line 3 / sm 中段+右段：账号▼(左) + 网盘输入(右) + 💾 + [删除 sm 内联]
+                             mobile：账号 1/3 左、网盘 2/3 右，同一行；sm 账号 140px 网盘 flex-1
+              ============ */}
+              <div className="w-full sm:w-auto sm:flex-1 min-w-0 flex flex-row gap-1 sm:gap-0 items-center">
+                {/* 账号下拉 */}
+                <div className="w-1/3 sm:w-[140px] sm:shrink-0 min-w-0 sm:mr-2">
+                  <Select
+                    value={mapping.account || "__all__"}
+                    onValueChange={(v) =>
+                      updatePathMapping(index, "account", v === "__all__" ? "" : v)
+                    }
+                  >
+                    <SelectTrigger className="h-9 w-full min-w-0">
+                      <SelectValue placeholder="账号（可选）" className="truncate" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__" className="truncate">遍历全部账号</SelectItem>
+                      {accounts.map((acc) => (
+                        <SelectItem key={acc} value={acc} className="truncate">
+                          {acc}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* 网盘路径输入 + 💾 */}
+                <div className="flex-1 flex gap-1 items-center min-w-0">
+                  <Input
+                    className="flex-1 min-w-0 w-full truncate break-all"
+                    placeholder="网盘路径前缀，如 /电影"
+                    value={mapping.cloudPath}
+                    onChange={(e) => updatePathMapping(index, "cloudPath", e.target.value)}
+                  />
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="shrink-0 inline-flex">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="shrink-0"
+                            disabled={!mapping.account}
+                            onClick={() => openCloudPickerForMapping(index)}
+                          >
+                            <HardDrive className="h-4 w-4" />
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {mapping.account ? "选择网盘目录" : "请先选择具体账号"}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+
+                {/* [删除] sm 内联在行尾 */}
+                <div className="hidden sm:flex sm:shrink-0 sm:w-auto sm:ml-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => removePathMapping(index)}
+                    className="shrink-0"
+                  >
+                    删除
+                  </Button>
+                </div>
               </div>
 
-              {/* 右段：账号下拉 + 删除按钮，两排对齐 */}
-              <div className="flex gap-2 items-center shrink-0 w-full sm:w-auto sm:justify-end justify-end">
-                <Select
-                  value={mapping.account || "__all__"}
-                  onValueChange={(v) =>
-                    updatePathMapping(index, "account", v === "__all__" ? "" : v)
-                  }
-                >
-                  <SelectTrigger className="h-9 w-full sm:w-[120px] shrink-0">
-                    <SelectValue placeholder="账号（可选）" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">遍历全部账号</SelectItem>
-                    {accounts.map((acc) => (
-                      <SelectItem key={acc} value={acc}>
-                        {acc}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
+              {/* ============ Line 4（mobile only）：删除按钮整行宽 ============ */}
+              <div className="sm:hidden w-full min-w-0">
                 <Button
                   variant="destructive"
                   size="sm"
                   onClick={() => removePathMapping(index)}
-                  className="shrink-0"
+                  className="w-full shrink-0"
                 >
                   删除
                 </Button>
@@ -246,11 +281,12 @@ export function SyncDeleteSection({
             </div>
           ))}
 
-          {/* 新建一行，与上面映射行结构完全一致：[Emby 📂] → [网盘 💾] [账号] [添加] */}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-            <div className="flex-1 flex gap-1 items-center">
+          {/* ============ 新建行：与已有映射行严格同构 ============ */}
+          <div className="w-full min-w-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2 pt-1 border-t border-dashed">
+            {/* Line 1：Emby 输入 + 📂 */}
+            <div className="flex-1 flex gap-1 items-center min-w-0 w-full sm:w-auto sm:mr-2">
               <Input
-                className="flex-1 min-w-0"
+                className="flex-1 min-w-0 w-full truncate break-all"
                 placeholder="Emby 路径前缀"
                 value={newMappingEmbyPath}
                 onChange={(e) => setNewMappingEmbyPath(e.target.value)}
@@ -275,68 +311,74 @@ export function SyncDeleteSection({
               </TooltipProvider>
             </div>
 
+            {/* Line 2：↓ 居中 */}
             <span className="text-muted-foreground hidden sm:inline self-center shrink-0 px-1">→</span>
-            <span className="text-muted-foreground sm:hidden w-full text-center shrink-0">↓</span>
+            <span className="sm:hidden w-full text-center shrink-0 select-none text-muted-foreground" aria-hidden>↓</span>
 
-            <div className="flex-1 flex gap-1 items-center">
-              <Input
-                className="flex-1 min-w-0"
-                placeholder="网盘路径前缀"
-                value={newMappingCloudPath}
-                onChange={(e) => setNewMappingCloudPath(e.target.value)}
-              />
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="shrink-0 inline-flex">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="shrink-0"
-                        disabled={!newMappingAccount}
-                        onClick={openCloudPickerForNew}
-                      >
-                        <HardDrive className="h-4 w-4" />
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {newMappingAccount ? "选择网盘目录" : "请先选择具体账号"}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+            {/* Line 3：账号▼ + 网盘路径 + 💾 + [添加 sm 内联] */}
+            <div className="w-full sm:w-auto sm:flex-1 min-w-0 flex flex-row gap-1 sm:gap-0 items-center">
+              <div className="w-1/3 sm:w-[140px] sm:shrink-0 min-w-0 sm:mr-2">
+                <Select
+                  value={newMappingAccount || "__all__"}
+                  onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
+                >
+                  <SelectTrigger className="h-9 w-full min-w-0">
+                    <SelectValue placeholder="账号（可选）" className="truncate" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__" className="truncate">遍历全部账号</SelectItem>
+                    {accounts.map((acc) => (
+                      <SelectItem key={acc} value={acc} className="truncate">
+                        {acc}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex-1 flex gap-1 items-center min-w-0">
+                <Input
+                  className="flex-1 min-w-0 w-full truncate break-all"
+                  placeholder="网盘路径前缀"
+                  value={newMappingCloudPath}
+                  onChange={(e) => setNewMappingCloudPath(e.target.value)}
+                />
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="shrink-0 inline-flex">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0"
+                          disabled={!newMappingAccount}
+                          onClick={openCloudPickerForNew}
+                        >
+                          <HardDrive className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {newMappingAccount ? "选择网盘目录" : "请先选择具体账号"}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+
+              {/* [添加] sm 内联在行尾 */}
+              <div className="hidden sm:flex sm:shrink-0 sm:w-auto sm:ml-2">
+                <Button size="sm" onClick={addPathMapping} className="shrink-0">添加</Button>
+              </div>
             </div>
 
-            <div className="flex gap-2 items-center shrink-0 w-full sm:w-auto sm:justify-end justify-end">
-              <Select
-                value={newMappingAccount || "__all__"}
-                onValueChange={(v) => setNewMappingAccount(v === "__all__" ? "" : v)}
-              >
-                <SelectTrigger className="h-9 w-full sm:w-[120px] shrink-0">
-                  <SelectValue placeholder="账号（可选）" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">遍历全部账号</SelectItem>
-                  {accounts.map((acc) => (
-                    <SelectItem key={acc} value={acc}>
-                      {acc}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Button
-                size="sm"
-                onClick={addPathMapping}
-                className="shrink-0"
-              >
-                添加
-              </Button>
+            {/* Line 4（mobile only）：添加按钮整行宽 */}
+            <div className="sm:hidden w-full min-w-0">
+              <Button size="sm" onClick={addPathMapping} className="w-full shrink-0">添加</Button>
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground break-words">
             只有匹配到 Emby 路径前缀的删除事件才会被处理。账号留空时遍历所有 115 账号删除 DB 记录。
           </p>
         </div>
