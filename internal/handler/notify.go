@@ -231,6 +231,41 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 			return
 		}
 
+		// ================= 先读旧配置，用作两种安全回退 =================
+		settings, err := deps.SettingsStore.ReadSettings()
+		if err != nil {
+			logger.S().Errorf("[notify/bot POST] read settings: %v", err)
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
+			return
+		}
+		old := settings.Telegram
+
+		// 回退 1：前端 SPA 资源有 1 天强缓存，旧版本加载时只拿 /api/notify/bot 的脱敏 token（含 * / ***），
+		// 保存时把掩码 token 原样回传。掩码 token 格式 digits:*****LAST4 仍能过下方 sep 校验，
+		// 直接拿去探测会被 Telegram 404，表现为用户看到「机器人令牌无效：init ... 未找到」。
+		// 这里只要：请求 token 是掩码形态（含 * 或 == "***"）&& 旧配置里有 token，就用旧明文。
+		if isMaskedBotToken(req.BotToken) {
+			if old.BotToken == "" {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+					"error":   "页面显示的是已脱敏令牌，无法用于校验。请重新粘贴完整机器人令牌，或 Ctrl+Shift+R 刷新页面后重试。",
+					"details": "got masked token, but no existing plain token in settings to fallback",
+				})
+				return
+			}
+			logger.S().Infof("[notify/bot POST] got masked token, reuse saved plain token (len=%d)", len(old.BotToken))
+			req.BotToken = old.BotToken
+			// token 明确沿用旧的：tokenModified 语义（等价）置位，避免 ProxyURL/ChatID 被错误覆盖（合并处不依赖此字段）
+		}
+
+		// 回退 2：如果本次前端因缓存/老版本根本没传 ProxyURL，但旧 settings 里已经有代理，
+		// 用户只改 ChatID/勾选 自动轮询 时，若探测不带代理必然失败（国内直连 404/重置）。
+		// 规则：req.ProxyURL 为空 且 old.ProxyURL 非空 → 复用旧 ProxyURL 用于探测。
+		// （用户显式想清空代理：前端要传空字符串目前与"没传"无法区分，暂时保持"没传=沿用旧代理"语义，
+		//  如需真清空代理，后续可新增 clearProxy bool 字段。）
+		if req.ProxyURL == "" && old.ProxyURL != "" {
+			req.ProxyURL = old.ProxyURL
+		}
+
 		// 校验 token 格式: digits:35-char-secret
 		sep := strings.Index(req.BotToken, ":")
 		if sep <= 0 || sep == len(req.BotToken)-1 {
@@ -246,10 +281,7 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		if pErr != nil {
 			logger.S().Warnf("[notify/bot POST] new probe bot failed: %v", pErr)
 			errMsg, errDetail := classifyTelegramInitError(pErr)
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
-				"error":   errMsg,
-				"details": errDetail,
-			})
+			writeTgProbeError(w, errMsg, errDetail, req)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -258,22 +290,10 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		if err != nil {
 			logger.S().Warnf("[notify/bot POST] getMe validation failed: %v", err)
 			errMsg, errDetail := classifyTelegramInitError(err)
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
-				"error":   errMsg,
-				"details": errDetail,
-			})
+			writeTgProbeError(w, errMsg, errDetail, req)
 			return
 		}
 
-		// 读取当前配置并合并
-		settings, err := deps.SettingsStore.ReadSettings()
-		if err != nil {
-			logger.S().Errorf("[notify/bot POST] read settings: %v", err)
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
-			return
-		}
-
-		old := settings.Telegram
 		newTg := model.TelegramSettings{
 			BotToken:           req.BotToken,
 			ChatID:             req.ChatID,
@@ -945,12 +965,16 @@ func HandleTelegramWebhook(deps NotifyDeps) http.HandlerFunc {
 func classifyTelegramInitError(err error) (string, string) {
 	raw := err.Error()
 	detail := raw
+	lower := strings.ToLower(raw)
 
 	// === 协议级 ===
 	if strings.Contains(raw, "code=401") || strings.Contains(raw, "Unauthorized") {
 		return "机器人令牌已被吊销，请重新获取", detail
 	}
-	if strings.Contains(raw, "code=404") {
+	// tgbotapi v5 getMe 404 时错误文本形如 "api.telegram.org…: Not Found"。
+	// HTTP 语义 404 → bot 不存在 / token 错（不要和 DNS 的 no such host 合并到网络层）
+	if strings.Contains(raw, "code=404") ||
+		(strings.Contains(lower, "not found") && !strings.Contains(lower, "no such host") && !strings.Contains(lower, "host not found")) {
 		return "机器人令牌无效（机器人不存在或令牌错误）", detail
 	}
 
@@ -968,9 +992,8 @@ func classifyTelegramInitError(err error) (string, string) {
 	// === 网络层 (国内最常见。直连 api.telegram.org 被 GFW 重置时，
 	//     tgbotapi 底层 net/http 返回 "no such host" / "connection refused" /
 	//     "connection reset by peer" / "i/o timeout" / "context deadline exceeded") ===
-	lower := strings.ToLower(raw)
 	switch {
-	case strings.Contains(lower, "no such host"), strings.Contains(lower, "not found"):
+	case strings.Contains(lower, "no such host"), strings.Contains(lower, "host not found"):
 		return "无法连接 Telegram（DNS 被污染或无网络）。国内环境请填写代理 URL", detail
 	case strings.Contains(lower, "connection refused"), strings.Contains(lower, "actively refused"):
 		return "代理端口未监听或 Telegram 直连被拒绝。请核对代理 URL 或改用代理", detail
@@ -982,6 +1005,50 @@ func classifyTelegramInitError(err error) (string, string) {
 		return "TLS 握手失败：代理中间人 / 系统证书问题", detail
 	}
 
-	// === Token 格式等其它兜底 ===
-	return "机器人令牌无效", detail
+	// === 兜底：不再误标为「机器人令牌无效」。避免用户看到"令牌错"的心理暗示，
+	// 实际大多数是网络/代理层。主文案改为直连友好提示，details 保留原始错误以便技术排查。
+	return "无法连接 Telegram 进行令牌校验（国内请先填 HTTP/SOCKS5 代理；或 Ctrl+Shift+R 刷新页面重试）", detail
+}
+
+// isMaskedBotToken 判断前端是否把掩码形式的 bot token 回传回来。
+// 掩码形式（与前端 maskToken 及后端 maskBotToken 一致）：
+//   - 短 token → "***"
+//   - 长 token → "digits:****************abcd" (中段 * 号 + 末 4 位明文)
+//
+// 安全原则：合法 token 不应包含 *。只要有 * 就视为掩码。
+func isMaskedBotToken(token string) bool {
+	if token == "" {
+		return false
+	}
+	if token == "***" {
+		return true
+	}
+	return strings.Contains(token, "*")
+}
+
+// writeTgProbeError 统一写出 Telegram 探测失败响应：
+//   - error 主文案就是 classify 返回的中文，不再在前端被拼"机器人令牌无效："前缀（之前误让所有网络错都伪装成令牌错）
+//   - details 追加"当前使用的代理/掩码"信息，让用户截图时一眼能看出是否命中了缓存的旧前端
+func writeTgProbeError(w http.ResponseWriter, msg, details string, req NotifyBotRequest) {
+	// 附加诊断元信息（不暴露完整 token）
+	probe := fmt.Sprintf("tokenLen=%d masked=%v proxyPresent=%v proxyScheme=%q",
+		len(req.BotToken),
+		isMaskedBotToken(req.BotToken),
+		req.ProxyURL != "",
+		func() string {
+			if i := strings.Index(req.ProxyURL, "://"); i >= 0 {
+				return req.ProxyURL[:i]
+			}
+			return ""
+		}(),
+	)
+	if details != "" {
+		details = fmt.Sprintf("%s | probe=%s", details, probe)
+	} else {
+		details = probe
+	}
+	httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+		"error":   msg,
+		"details": details,
+	})
 }
