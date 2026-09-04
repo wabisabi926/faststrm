@@ -226,19 +226,22 @@ func (n *Notifier) handleMediaAdded(ctx context.Context, item ItemInfo) error {
 	}
 }
 
-// handleMovieAdded 处理电影入库（严格对齐 qmediasync sendNewMovieNotification）
-// 策略：直接一次 GetItemDetail，拿不到 return（不降级、不兜底简版、不轮询刮削）
+// handleMovieAdded 处理电影入库
+// 策略：优先用 GetItemDetail 补充 People/CommunityRating（评分、演员）；
+// 失败时用 webhook 自带字段兜底（Name/Overview/Genres/ProductionYear/ImageTags 已足够发通知），
+// 不再因详情获取失败而跳过整条通知。
 func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
+	// 用 webhook 字段构造基础 detail（Name/Overview/Genres/ProductionYear/ImageTags 都有）
+	detail := itemInfoToDetail(item)
+
 	client := n.getClient()
-	if client == nil {
-		logger.S().Warnf("[Emby] Emby client 未配置，跳过电影入库通知 id=%s", item.ID)
-		return nil
-	}
-	// 严格对齐 qmediasync L441：一次 GetEmbyItemDetail，失败（detail=nil）直接 return，不发降级通知
-	detail, err := client.GetItemDetail(ctx, item.ID)
-	if err != nil || detail == nil {
-		logger.S().Errorf("[Emby] 获取 Emby 媒体 %s 详情失败，跳过入库通知: %v", item.ID, err)
-		return nil
+	if client != nil {
+		// 尝试获取详情补充 People/CommunityRating（不轮询，失败就用 webhook 字段兜底）
+		if d, err := client.GetItemDetail(ctx, item.ID); err == nil && d != nil {
+			mergeDetail(detail, d)
+		} else {
+			logger.S().Warnf("[Emby] 获取电影详情失败，使用 webhook 字段发通知 id=%s: %v", item.ID, err)
+		}
 	}
 
 	body := FormatMovieNotification(detail, "library.new")
@@ -247,8 +250,8 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 
 	// 海报：严格大小写敏感(\"backdrop\" 小写 / \"Primary\" 大写 P) → 下载到本地临时路径 → SendPhoto 本地路径
 	// （Telegram Bot 在公网，通常无法访问家庭内网 Emby，URL 直传必然失败；下载到本地再发是对齐 qms 的唯一正确做法）
-	if detail.ImageTags != nil {
-		imageURL := buildImageURLCaseSensitive(client, detail.ID, detail.ImageTags, ImageMaxWidth)
+	if client != nil && detail.ImageTags != nil {
+		imageURL := buildImageURLCaseSensitive(client, detail.ID, detail.ImageTags)
 		if imageURL != "" {
 			posterPath, perr := createEmbyTempImagePath(detail.ID)
 			if perr != nil {
@@ -257,21 +260,21 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 				derr := downloadImage(imageURL, posterPath, "faststrm")
 				if derr != nil {
 					_ = removeEmbyTempImage(posterPath)
-					logger.S().Errorf("[Emby] 下载 Emby 海报失败：%v", derr)
+					logger.S().Warnf("[Emby] 下载 Emby 海报失败，降级纯文本：%v", derr)
 				} else {
 					// 发送完成后临时文件由 Dispatcher.safeRemoveEmbyTempImage 统一负责清理（避免 worker 竞态先删）
 					sendErr := n.dispatcher.NotifyWithPhoto(ctx, msg, posterPath)
 					if sendErr != nil {
-						logger.S().Errorf("[Emby] 发送入库图片通知失败：%v", sendErr)
-						// 未入队成功时兜底清理
+						logger.S().Errorf("[Emby] 发送入库图片通知失败，降级纯文本：%v", sendErr)
 						_ = removeEmbyTempImage(posterPath)
+					} else {
+						return nil
 					}
-					return nil
 				}
 			}
 		}
 	}
-	// 无图时发纯文本（对齐 qms sendNewItemNotification：imagePath 为空仍用 Title+Content 发文本）
+	// 无图 / 下载失败 / 发送失败时发纯文本
 	return n.dispatcher.Notify(ctx, msg)
 }
 
@@ -314,8 +317,9 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 	n.addedTimers[seriesID] = timer
 }
 
-// flushAddedEpisodeBuffer 刷新入库缓冲（严格对齐 qmediasync sendNewSeriesNotification）
-// 直接一次 GetItemDetail(seriesId)，nil 直接 return；image 下载到本地再发图
+// flushAddedEpisodeBuffer 刷新入库缓冲
+// 策略：优先用 GetItemDetail 获取剧集完整详情；失败时用缓冲中的 seriesName 构造最小 detail 兜底，
+// 不再因详情获取失败而跳过整条通知。
 func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string) {
 	n.addedMu.Lock()
 	timer := n.addedTimers[seriesID]
@@ -340,25 +344,29 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 		return
 	}
 
-	client := n.getClient()
-	if client == nil {
-		logger.S().Warnf("[Emby] Emby client 未配置，跳过剧集入库通知 seriesID=%s", seriesID)
-		return
+	// 用缓冲中的 seriesName 构造最小 detail（兜底用）
+	seriesDetail := &ItemDetail{
+		ID:   seriesID,
+		Name: buf.seriesName,
+		Type: "Series",
 	}
 
-	// 严格对齐 qms L498：直接一次 GetEmbyItemDetail，nil 打 Error return，不兜底简版
-	seriesDetail, err := client.GetItemDetail(ctx, seriesID)
-	if err != nil || seriesDetail == nil {
-		logger.S().Errorf("[Emby] 获取 Emby 剧集 %s 详情失败，跳过入库通知: %v", seriesID, err)
-		return
+	client := n.getClient()
+	if client != nil {
+		// 尝试获取剧集完整详情（Overview/Genres/People/CommunityRating/ImageTags）
+		if d, err := client.GetItemDetail(ctx, seriesID); err == nil && d != nil {
+			seriesDetail = d
+		} else {
+			logger.S().Warnf("[Emby] 获取剧集详情失败，使用缓冲 seriesName 发通知 seriesID=%s: %v", seriesID, err)
+		}
 	}
 
 	body := FormatSeriesNotification(seriesDetail, buf.episodes, "library.new")
 	msg := notify.FormatMessage("📚 Emby 电视剧入库通知", body, nil)
 
 	// 海报：严格大小写敏感键 → 下载本地 → NotifyWithPhoto（本地路径）
-	if seriesDetail.ImageTags != nil {
-		imageURL := buildImageURLCaseSensitive(client, seriesDetail.ID, seriesDetail.ImageTags, ImageMaxWidth)
+	if client != nil && seriesDetail.ImageTags != nil {
+		imageURL := buildImageURLCaseSensitive(client, seriesDetail.ID, seriesDetail.ImageTags)
 		if imageURL != "" {
 			posterPath, perr := createEmbyTempImagePath(seriesDetail.ID)
 			if perr != nil {
@@ -367,15 +375,16 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 				derr := downloadImage(imageURL, posterPath, "faststrm")
 				if derr != nil {
 					_ = removeEmbyTempImage(posterPath)
-					logger.S().Errorf("[Emby] 下载 Emby 海报失败：%v", derr)
+					logger.S().Warnf("[Emby] 下载 Emby 海报失败，降级纯文本：%v", derr)
 				} else {
 					// 发送完成后临时文件由 Dispatcher 统一清理，避免 notifier 提前删除造成 worker 竞态
 					sendErr := n.dispatcher.NotifyWithPhoto(ctx, msg, posterPath)
 					if sendErr != nil {
-						logger.S().Errorf("[Emby] 发送剧集图片通知失败：%v", sendErr)
+						logger.S().Errorf("[Emby] 发送剧集图片通知失败，降级纯文本：%v", sendErr)
 						_ = removeEmbyTempImage(posterPath)
+					} else {
+						return
 					}
-					return
 				}
 			}
 		}
@@ -1050,10 +1059,7 @@ func formatSeasonEpisodes(episodes []ItemDetail) string {
 		}
 		parts = append(parts, fmt.Sprintf("S%d%s", season, sb.String()))
 	}
-	// 替换成 "S1E1-E3, E5" 风格（逗号后加空格更美观）
-	for i, p := range parts {
-		parts[i] = strings.ReplaceAll(p, ",", ", ")
-	}
+	// 对齐 QMS formatSeasonEpisodes：逗号后无空格（S1E1-E3,E5），季之间用 "; " 分隔
 	return strings.Join(parts, "; ")
 }
 
@@ -1222,20 +1228,18 @@ func downloadImage(targetURL, filePath, userAgent string) error {
 // - 优先 ImageTags["backdrop"] 全小写 → Backdrop 图
 // - 回退 ImageTags["Primary"] 大写-P 开头 → Primary 图
 // 注意：不做 strings.EqualFold，不要大小写不敏感兜底（跟 qms 一模一样）
-func buildImageURLCaseSensitive(client *Client, itemID string, imageTags map[string]string, maxWidth int) string {
+// 注意：QMS 不传 maxWidth，原图发送；faststrm 也不传，完全对齐
+func buildImageURLCaseSensitive(client *Client, itemID string, imageTags map[string]string) string {
 	if client == nil || len(imageTags) == 0 || itemID == "" {
 		return ""
 	}
-	if maxWidth <= 0 {
-		maxWidth = 400
-	}
 	if tag, ok := imageTags["backdrop"]; ok && tag != "" {
-		return fmt.Sprintf("%s/emby/Items/%s/Images/Backdrop?tag=%s&maxWidth=%d&api_key=%s",
-			client.baseURL, itemID, tag, maxWidth, client.apiKey)
+		return fmt.Sprintf("%s/emby/Items/%s/Images/Backdrop?tag=%s&api_key=%s",
+			client.baseURL, itemID, tag, client.apiKey)
 	}
 	if tag, ok := imageTags["Primary"]; ok && tag != "" {
-		return fmt.Sprintf("%s/emby/Items/%s/Images/Primary?tag=%s&maxWidth=%d&api_key=%s",
-			client.baseURL, itemID, tag, maxWidth, client.apiKey)
+		return fmt.Sprintf("%s/emby/Items/%s/Images/Primary?tag=%s&api_key=%s",
+			client.baseURL, itemID, tag, client.apiKey)
 	}
 	return ""
 }

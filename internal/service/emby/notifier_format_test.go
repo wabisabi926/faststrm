@@ -326,3 +326,53 @@ func TestFormatPlaybackNotification_StopEmoji(t *testing.T) {
 		t.Errorf("stop 不应再用 ⛔, 实际 %s", out)
 	}
 }
+
+// TestFormatSeasonEpisodes_QMSFormat 验证季集格式严格对齐 QMS formatSeasonEpisodes：
+// - 连续区间用 E1-E3，不连续用 E1,E5（逗号后无空格）
+// - 季之间用 "; " 分隔
+// - 去重 + 排序
+func TestFormatSeasonEpisodes_QMSFormat(t *testing.T) {
+	episodes := []ItemDetail{
+		{IndexNumber: 5, ParentIndexNumber: 1},
+		{IndexNumber: 1, ParentIndexNumber: 1},
+		{IndexNumber: 3, ParentIndexNumber: 1},
+		{IndexNumber: 2, ParentIndexNumber: 1},
+		{IndexNumber: 1, ParentIndexNumber: 1}, // 重复，应去重
+		{IndexNumber: 8, ParentIndexNumber: 2},
+		{IndexNumber: 7, ParentIndexNumber: 2},
+	}
+	out := formatSeasonEpisodes(episodes)
+	// S1: 1,2,3 连续 → E1-E3；5 不连续 → E5 → "S1E1-E3,E5"
+	// S2: 7,8 连续 → E7-E8 → "S2E7-E8"
+	want := "S1E1-E3,E5; S2E7-E8"
+	if out != want {
+		t.Errorf("季集格式应为 %q（对齐 QMS，逗号后无空格），实际 %q", want, out)
+	}
+}
+
+// TestBuildImageURLCaseSensitive_NoMaxWidth 验证入库通知海报 URL 不带 maxWidth（对齐 QMS）
+func TestBuildImageURLCaseSensitive_NoMaxWidth(t *testing.T) {
+	client := NewClient("http://emby:8096", "apikey123")
+
+	// backdrop 优先
+	tags := map[string]string{"backdrop": "tag1", "Primary": "tag2"}
+	got := buildImageURLCaseSensitive(client, "item1", tags)
+	want := "http://emby:8096/emby/Items/item1/Images/Backdrop?tag=tag1&api_key=apikey123"
+	if got != want {
+		t.Errorf("backdrop URL 应为 %q（无 maxWidth），实际 %q", want, got)
+	}
+	if strings.Contains(got, "maxWidth") {
+		t.Errorf("入库通知海报 URL 不应含 maxWidth（对齐 QMS），实际 %q", got)
+	}
+
+	// Primary 兜底
+	tags2 := map[string]string{"Primary": "tag2"}
+	got2 := buildImageURLCaseSensitive(client, "item1", tags2)
+	want2 := "http://emby:8096/emby/Items/item1/Images/Primary?tag=tag2&api_key=apikey123"
+	if got2 != want2 {
+		t.Errorf("Primary URL 应为 %q（无 maxWidth），实际 %q", want2, got2)
+	}
+	if strings.Contains(got2, "maxWidth") {
+		t.Errorf("入库通知海报 URL 不应含 maxWidth（对齐 QMS），实际 %q", got2)
+	}
+}

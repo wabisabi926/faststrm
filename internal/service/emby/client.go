@@ -19,8 +19,8 @@ import (
 // ==================== 常量 ====================
 
 const (
-	// DefaultTimeout HTTP 默认超时（对齐 TS DEFAULT_TIMEOUT）
-	DefaultTimeout = 5 * time.Second
+	// DefaultTimeout HTTP 默认超时（对齐 QMS embyclient-rest-go：30s，避免国内 Emby 刮削慢导致 GetItemDetail 超时）
+	DefaultTimeout = 30 * time.Second
 )
 
 // ==================== 类型定义（对齐 TS emby/types.ts） ====================
