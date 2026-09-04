@@ -481,7 +481,8 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 		// ====== STRM 嵌套对象 ======
 		if body.Strm != nil {
-			if len(body.Strm.ForceProxyUaTokens) > 0 {
+			// 空数组也允许覆盖：用户清空输入框时前端发送 []，必须能清掉旧值
+			if body.Strm.ForceProxyUaTokens != nil {
 				settings.Strm.ForceProxyUaTokens = body.Strm.ForceProxyUaTokens
 			}
 			if body.Strm.AccountProxyConcurrencyLimit > 0 {

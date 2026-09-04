@@ -78,7 +78,7 @@ export default function Home() {
     : null;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       {/* 动画 keyframes（供 TaskColumns 的骨架条使用） */}
       <style>{`
         @keyframes skeleton-shimmer {

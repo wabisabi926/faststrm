@@ -139,9 +139,9 @@ export function StrmCleanupCard() {
               className={(() => {
                 const hasDB = scanResult.totalDbRecords !== undefined;
                 const hasAssoc = scanResult.totalAssociatedFiles !== undefined;
-                if (hasDB && hasAssoc) return "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3";
-                if (hasDB || hasAssoc) return "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3";
-                return "grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3";
+                if (hasDB && hasAssoc) return "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3";
+                if (hasDB || hasAssoc) return "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3";
+                return "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3";
               })()}
             >
               <StatCard

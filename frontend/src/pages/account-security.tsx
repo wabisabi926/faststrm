@@ -102,7 +102,7 @@ export default function AccountSecurityPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 sm:space-y-6 pb-8">
+    <div className="mx-auto max-w-5xl space-y-4 sm:space-y-6 pb-8">
       {/* Page Title */}
       <div className="px-1">
         <h1 className="text-xl sm:text-2xl font-semibold">账号安全</h1>
