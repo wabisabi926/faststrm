@@ -354,7 +354,12 @@ func fillUpsertFromBody(r *http.Request, req *UpsertTaskRequest) {
 		_ = json.NewDecoder(r.Body).Decode(req)
 		return
 	}
-	_ = r.ParseForm()
+	// form 解析：multipart 必须走 ParseMultipartForm，否则 PostForm 为空
+	if strings.Contains(ct, "multipart/form-data") {
+		_ = r.ParseMultipartForm(32 << 20)
+	} else {
+		_ = r.ParseForm()
+	}
 	req.ID = r.FormValue("id")
 	req.Name = r.FormValue("name")
 	req.Account = r.FormValue("account")
