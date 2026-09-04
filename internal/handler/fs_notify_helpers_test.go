@@ -215,11 +215,19 @@ func TestFillUpsertFromBody(t *testing.T) {
 		if u.StrmPrefix != "/prefix" {
 			t.Fatalf("StrmPrefix: got %q, want %q", u.StrmPrefix, "/prefix")
 		}
-		if u.RemoveExtra != "on" {
-			t.Fatalf("RemoveExtra: got %q, want %q", u.RemoveExtra, "on")
+		if u.RemoveExtra == nil || !*u.RemoveExtra {
+			var got any = u.RemoveExtra
+			if u.RemoveExtra != nil {
+				got = *u.RemoveExtra
+			}
+			t.Fatalf("RemoveExtra: got %v, want *true", got)
 		}
-		if u.EnableEnc != "true" {
-			t.Fatalf("EnableEnc: got %q, want %q", u.EnableEnc, "true")
+		if u.EnableEnc == nil || !*u.EnableEnc {
+			var got any = u.EnableEnc
+			if u.EnableEnc != nil {
+				got = *u.EnableEnc
+			}
+			t.Fatalf("EnableEnc: got %v, want *true", got)
 		}
 		if u.ScheduleMode != "daily" {
 			t.Fatalf("ScheduleMode: got %q, want %q", u.ScheduleMode, "daily")
@@ -227,8 +235,12 @@ func TestFillUpsertFromBody(t *testing.T) {
 		if u.ScheduleValue != "09:00" {
 			t.Fatalf("ScheduleValue: got %q, want %q", u.ScheduleValue, "09:00")
 		}
-		if u.Enabled != "on" {
-			t.Fatalf("Enabled: got %q, want %q", u.Enabled, "on")
+		if u.Enabled == nil || !*u.Enabled {
+			var got any = u.Enabled
+			if u.Enabled != nil {
+				got = *u.Enabled
+			}
+			t.Fatalf("Enabled: got %v, want *true", got)
 		}
 	})
 

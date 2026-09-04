@@ -316,11 +316,11 @@ func TestUpsertTaskRequest_ToTask_FullRequestNilExisting(t *testing.T) {
 		TargetPath:    "/data/target",
 		StrmType:      "remote",
 		StrmPrefix:    "PREFIX_",
-		RemoveExtra:   "on",
-		EnableEnc:     "TRUE",
+		RemoveExtra:   ptrBool("on"),
+		EnableEnc:     ptrBool("TRUE"),
 		ScheduleMode:  "interval",
 		ScheduleValue: "120",
-		Enabled:       "yes",
+		Enabled:       ptrBool("yes"),
 	}
 	got := req.toTask(nil)
 
@@ -438,13 +438,14 @@ func TestUpsertTaskRequest_ToTask_PartialOverridesExisting(t *testing.T) {
 		t.Fatalf("StrmPrefix = %q, want 'OLD_'", got.StrmPrefix)
 	}
 
-	// bool 标志——req 里是假值（空字符串 parseBoolAny→false），会覆盖 existing 的值
-	// RemoveExtraFiles: existing=true → req.RemoveExtra="" → parseBoolAny("")=false → 覆盖！
-	if got.RemoveExtraFiles {
-		t.Fatalf("RemoveExtraFiles should be false (req empty overrides existing true)")
+	// bool 标志——req 里未传（nil 指针）=保留 existing 原值，避免编辑没改这字段被归零
+	// RemoveExtraFiles: existing=true，req.RemoveExtra=nil → 保留 true
+	if !got.RemoveExtraFiles {
+		t.Fatalf("RemoveExtraFiles should remain true (req nil preserves existing true)")
 	}
+	// EnablePathEncoding: existing=false，req.EnableEnc=nil → 保留 false
 	if got.EnablePathEncoding {
-		t.Fatalf("EnablePathEncoding should be false")
+		t.Fatalf("EnablePathEncoding should remain false (req nil preserves existing false)")
 	}
 	// Schedule——req.ScheduleMode 为空 → parseSchedule 返回 nil
 	// req.ScheduleMode != "manual" → 保留 existing 的 Schedule
@@ -486,7 +487,7 @@ func TestUpsertTaskRequest_ToTask_ScheduleOverride(t *testing.T) {
 	req := &UpsertTaskRequest{
 		ScheduleMode:  "interval",
 		ScheduleValue: "15",
-		Enabled:       "on",
+		Enabled:       ptrBool("on"),
 	}
 	got := req.toTask(existing)
 	if got.Schedule == nil {
@@ -511,7 +512,7 @@ func TestUpsertTaskRequest_ToTask_EmptyEnabledKeepsDefault(t *testing.T) {
 		SourcePath:    "/o",
 		ScheduleMode:  "interval",
 		ScheduleValue: "60",
-		Enabled:       "",
+		Enabled:       nil, // nil = 未传值 → Schedule.Enabled 默认 false（与原语义一致）
 	}
 	got := req.toTask(nil)
 	if got.Schedule == nil {

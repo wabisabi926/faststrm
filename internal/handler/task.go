@@ -267,6 +267,9 @@ func WriteTextLines(w http.ResponseWriter, lines []string) {
 }
 
 // UpsertTaskRequest 新建/更新任务请求（兼容 form + JSON）
+// 布尔字段用 *bool：
+//   - nil = 请求未显式传值（PUT 更新时保留 existing 里的原值，避免"编辑不改这字段"被归零）
+//   - 非 nil = 显式 true/false，请求体 JSON bool / form value string("on"/"true"/"1"/…) 两种格式都能解
 type UpsertTaskRequest struct {
 	ID             string             `json:"id" form:"id"`
 	Name           string             `json:"name" form:"name"`
@@ -275,14 +278,14 @@ type UpsertTaskRequest struct {
 	SourcePath     string             `json:"sourcePath" form:"sourcePath"`
 	OriginPath     string             `json:"originPath" form:"originPath"` // alias
 	TargetPath     string             `json:"targetPath" form:"targetPath"`
-	Enabled        string             `json:"enabled" form:"enabled"` // "on"/"true"/"1" 表示 true
+	Enabled        *bool              `json:"enabled" form:"-"` // form 字符串路径在 fillUpsertFromBody 单独写
 	ScheduleMode   string             `json:"scheduleMode" form:"scheduleMode"`
 	ScheduleValue  string             `json:"scheduleValue" form:"scheduleValue"`
 	Schedule       *task.TaskSchedule `json:"schedule,omitempty"` // 嵌套 schedule 对象（前端 TaskScheduleDialog 发）
 	StrmType       string             `json:"strmType" form:"strmType"`
 	StrmPrefix     string             `json:"strmPrefix" form:"strmPrefix"`
-	RemoveExtra    string             `json:"removeExtraFiles" form:"removeExtraFiles"`
-	EnableEnc      string             `json:"enablePathEncoding" form:"enablePathEncoding"`
+	RemoveExtra    *bool              `json:"removeExtraFiles" form:"-"`
+	EnableEnc      *bool              `json:"enablePathEncoding" form:"-"`
 	AccountCookie  string             `json:"cookie" form:"cookie"` // 兼容旧前端
 	AccountAccount string             `json:"account_" form:"account_"`
 }
@@ -293,6 +296,18 @@ func parseBoolAny(v string) bool {
 		return true
 	}
 	return false
+}
+
+// ptrBool 把 form 字符串形式的布尔值转成 *bool 指针：
+//   - 未传值（空串）→ nil：表示请求未显式指定（PUT 更新时保留 existing 原值）
+//   - 传值 → 对应 *bool，"on"/"off"/… 按 parseBoolAny 解析
+func ptrBool(v string) *bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	b := parseBoolAny(v)
+	return &b
 }
 
 // parseSchedule 将 (scheduleMode, scheduleValue) 解析成 TaskSchedule
@@ -346,12 +361,12 @@ func fillUpsertFromBody(r *http.Request, req *UpsertTaskRequest) {
 	req.AccountType = r.FormValue("accountType")
 	req.SourcePath = r.FormValue("sourcePath")
 	req.TargetPath = r.FormValue("targetPath")
-	req.Enabled = r.FormValue("enabled")
+	req.Enabled = ptrBool(r.FormValue("enabled"))
 	req.ScheduleMode = r.FormValue("scheduleMode")
 	req.ScheduleValue = r.FormValue("scheduleValue")
 	req.StrmPrefix = r.FormValue("strmPrefix")
-	req.RemoveExtra = r.FormValue("removeExtraFiles")
-	req.EnableEnc = r.FormValue("enablePathEncoding")
+	req.RemoveExtra = ptrBool(r.FormValue("removeExtraFiles"))
+	req.EnableEnc = ptrBool(r.FormValue("enablePathEncoding"))
 	req.StrmPrefix = r.FormValue("strmPrefix")
 }
 
@@ -391,8 +406,13 @@ func (req *UpsertTaskRequest) toTask(existing *task.Task) task.Task {
 	if req.StrmPrefix != "" {
 		t.StrmPrefix = req.StrmPrefix
 	}
-	t.RemoveExtraFiles = parseBoolAny(req.RemoveExtra)
-	t.EnablePathEncoding = parseBoolAny(req.EnableEnc)
+	// 三字段 nil = 请求未传，保留 existing；非 nil = 显式覆盖
+	if req.RemoveExtra != nil {
+		t.RemoveExtraFiles = *req.RemoveExtra
+	}
+	if req.EnableEnc != nil {
+		t.EnablePathEncoding = *req.EnableEnc
+	}
 
 	// 优先处理前端 TaskScheduleDialog 发的嵌套 schedule 对象
 	if req.Schedule != nil {
@@ -405,7 +425,11 @@ func (req *UpsertTaskRequest) toTask(existing *task.Task) task.Task {
 		// 向后兼容旧的扁平字段
 		sched := parseSchedule(req.ScheduleMode, req.ScheduleValue)
 		if sched != nil {
-			sched.Enabled = parseBoolAny(req.Enabled)
+			if req.Enabled != nil {
+				sched.Enabled = *req.Enabled
+			} else {
+				sched.Enabled = false
+			}
 			t.Schedule = sched
 		} else if req.ScheduleMode == "manual" {
 			t.Schedule = nil
