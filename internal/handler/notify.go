@@ -326,48 +326,10 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		}
 
 		// ============ 热更新：让 deps 中的实例同步新配置，避免通知发往旧 Bot/ChatID ============
-		if deps.TelegramBot != nil {
-			deps.TelegramBot.UpdateCredentials(newTg.BotToken, newTg.ChatID)
-		}
-		if deps.Dispatcher != nil {
-			deps.Dispatcher.ApplySettings(newTg)
-		}
-		// 如果 deps.TelegramBot 本来是 nil（启动时未配置），但 Dispatcher 需要它，ApplySettings 内部已经懒创建了。
-		// 再把懒创建出来的 tg 回传到 deps.TelegramBot？其实不用，因为后续发通知是 dispatcher 走的，handler 层的 botFromSettings 会按 settings 临时建。
-		if deps.CommandHandler != nil {
-			// 若 deps.TelegramBot 已更新直接用；否则临时新建一个临时 bot 给 handler
-			botForCmd := deps.TelegramBot
-			if botForCmd == nil && newTg.BotToken != "" {
-				botForCmd = notify.NewTelegramBot(newTg.BotToken, newTg.ChatID)
-			}
-			if botForCmd != nil {
-				deps.CommandHandler.ReplaceBot(botForCmd)
-			}
-		}
+		applyTelegramHotUpdates(deps, newTg)
 
 		// ============ 互斥：轮询 ↔ Webhook 不能共存 ============
-		if req.WebhookURL != "" {
-			// 切到 Webhook → 先停所有正在运行的 Polling（包括 server.go 注入的 deps.PollingManager 和懒加载的 sharedPollingMgr）
-			if deps.PollingManager != nil {
-				deps.PollingManager.Stop()
-			}
-			// resetSharedPolling() 已经在上面调用过，会 Stop sharedPollingMgr 并置 nil
-
-			wctx, wcancel := context.WithTimeout(r.Context(), 8*time.Second)
-			defer wcancel()
-			if err := probe.SetWebhook(wctx, req.WebhookURL, newTg.WebhookSecretToken); err != nil {
-				logger.S().Warnf("[notify/bot POST] setWebhook failed: %v", err)
-				// 不影响主流程
-			}
-		} else if req.AutoPolling == nil || *req.AutoPolling {
-			// 留空 WebhookURL + 用户没显式取消 AutoPolling → 切到轮询模式 → 删除 Webhook
-			dctx, dcancel := context.WithTimeout(r.Context(), 8*time.Second)
-			defer dcancel()
-			if err := probe.DeleteWebhook(dctx); err != nil {
-				logger.S().Warnf("[notify/bot POST] deleteWebhook (switch to polling): %v", err)
-				// 不影响主流程，用户可以点下方"启动"手动触发删除
-			}
-		}
+		switchTelegramWebhookOrPolling(r, probe, req, newTg, deps)
 
 		httpx.OkJson(w, map[string]any{
 			"success": true,
@@ -376,6 +338,59 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 			"enabled": newTg.Enabled,
 			"message": "Telegram bot configured successfully",
 		})
+	}
+}
+
+// applyTelegramHotUpdates 将新的 Telegram 配置热更新到 deps 里的运行时组件，
+// 避免下一轮通知 / 按钮回调仍然用旧 BotToken / ChatID。
+func applyTelegramHotUpdates(deps NotifyDeps, newTg model.TelegramSettings) {
+	if deps.TelegramBot != nil {
+		deps.TelegramBot.UpdateCredentials(newTg.BotToken, newTg.ChatID)
+	}
+	if deps.Dispatcher != nil {
+		deps.Dispatcher.ApplySettings(newTg)
+	}
+	// 如果 deps.TelegramBot 本来是 nil（启动时未配置），但 Dispatcher 需要它，
+	// ApplySettings 内部已经懒创建；后续发通知走 dispatcher，handler 层的 botFromSettings
+	// 会按 settings 临时建，所以不需要把懒创建的 bot 回写到 deps.TelegramBot。
+	if deps.CommandHandler == nil {
+		return
+	}
+	botForCmd := deps.TelegramBot
+	if botForCmd == nil && newTg.BotToken != "" {
+		botForCmd = notify.NewTelegramBot(newTg.BotToken, newTg.ChatID)
+	}
+	if botForCmd != nil {
+		deps.CommandHandler.ReplaceBot(botForCmd)
+	}
+}
+
+// switchTelegramWebhookOrPolling 在保存后切换「Webhook ↔ 轮询」两种接收模式，
+// 二者互斥：设了 WebhookURL 就停 Polling 并 SetWebhook；否则（默认启用轮询）删除 Webhook。
+func switchTelegramWebhookOrPolling(r *http.Request, probe *notify.TelegramBot, req NotifyBotRequest, newTg model.TelegramSettings, deps NotifyDeps) {
+	if req.WebhookURL != "" {
+		// 切到 Webhook → 先停所有正在运行的 Polling（包括 server 注入的 deps.PollingManager 和懒加载的 sharedPollingMgr）
+		if deps.PollingManager != nil {
+			deps.PollingManager.Stop()
+		}
+		// resetSharedPolling() 已经在 HandleNotifyBotPOST 主流程调用过，这里只关显式注入的。
+		wctx, wcancel := context.WithTimeout(r.Context(), 8*time.Second)
+		defer wcancel()
+		if err := probe.SetWebhook(wctx, req.WebhookURL, newTg.WebhookSecretToken); err != nil {
+			logger.S().Warnf("[notify/bot POST] setWebhook failed: %v", err)
+			// 不影响主流程
+		}
+		return
+	}
+	// 留空 WebhookURL + 用户没显式取消 AutoPolling → 切到轮询模式 → 删除 Webhook
+	if req.AutoPolling != nil && !*req.AutoPolling {
+		return
+	}
+	dctx, dcancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer dcancel()
+	if err := probe.DeleteWebhook(dctx); err != nil {
+		logger.S().Warnf("[notify/bot POST] deleteWebhook (switch to polling): %v", err)
+		// 不影响主流程，用户可以点下方"启动"手动触发删除
 	}
 }
 
