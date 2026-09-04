@@ -248,13 +248,13 @@ export default function TelegramNotifyPage() {
           <Bot className="h-5 w-5" />
           <h2 className="text-base font-medium">机器人配置</h2>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
           <div className="space-y-1.5 min-w-0">
-            <Label htmlFor="botToken">Bot Token</Label>
+            <Label htmlFor="botToken">机器人令牌</Label>
             <Input
               id="botToken"
               type="password"
-              placeholder="123456789:ABCdef..."
+              placeholder="从 @BotFather 获取（形如 123456789:ABCdefGHI...）"
               value={config.botToken || ""}
               onChange={(e) => {
                 setConfig({ ...config, botToken: e.target.value });
@@ -263,11 +263,11 @@ export default function TelegramNotifyPage() {
             />
             <p className="text-xs text-muted-foreground">从 @BotFather 获取</p>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="chatId">Chat ID</Label>
+          <div className="space-y-1.5 min-w-0">
+            <Label htmlFor="chatId">聊天 ID</Label>
             <Input
               id="chatId"
-              placeholder="你的聊天 ID"
+              placeholder="你的 Chat ID（个人/群）"
               value={config.chatId || ""}
               onChange={(e) => setConfig({ ...config, chatId: e.target.value })}
             />
@@ -275,7 +275,7 @@ export default function TelegramNotifyPage() {
           </div>
         </div>
 
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 min-w-0">
           <Label htmlFor="webhookUrl">Webhook URL <span className="text-xs text-muted-foreground">（可选，家用留空）</span></Label>
           <Input
             id="webhookUrl"
@@ -286,8 +286,8 @@ export default function TelegramNotifyPage() {
           <p className="text-xs text-muted-foreground">留空使用轮询模式（5秒延迟），填写则使用 Webhook（毫秒级）</p>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="proxyUrl">代理 URL <span className="text-xs text-muted-foreground">（可选）</span></Label>
+        <div className="space-y-1.5 min-w-0">
+          <Label htmlFor="proxyUrl">代理 URL <span className="text-xs text-muted-foreground">（可选，国内必填）</span></Label>
           <Input
             id="proxyUrl"
             placeholder="socks5://127.0.0.1:7890 或 http://127.0.0.1:7890"
@@ -297,7 +297,7 @@ export default function TelegramNotifyPage() {
           <p className="text-xs text-muted-foreground">支持 HTTP/HTTPS/SOCKS5 协议，国内访问 Telegram 时填写</p>
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-x-6 gap-y-3">
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -320,7 +320,7 @@ export default function TelegramNotifyPage() {
               </label>
             </div>
           </div>
-          <div className="flex gap-2 shrink-0 flex-wrap">
+          <div className="flex gap-2 flex-wrap sm:justify-end">
             {botInfo && (
               <Button variant="outline" onClick={handleDelete} disabled={loading} size="sm">
                 删除
