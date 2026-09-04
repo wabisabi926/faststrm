@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -197,24 +198,82 @@ func (d *Dispatcher) dispatchTextDirect(ctx context.Context, message string) {
 }
 
 // dispatchPhotoDirect 直接发送图片（绕过队列，用于队列满时降级）
-func (d *Dispatcher) dispatchPhotoDirect(ctx context.Context, caption, photoURL string) {
-	// 先下载图片到本地临时文件，再 multipart 上传到 Telegram（对齐 qmediasync）
-	// 原因：绝大多数 Emby 部署在内网（192.168.x.x / 127.0.0.1 / 局域网域名），
-	// Telegram 官方服务器无法主动抓取 URL，会导致 sendPhoto 失败或返回空图。
-	tmpPath, err := downloadImageToTemp(ctx, photoURL)
-	if err != nil {
-		logger.S().Warnf("下载 Emby 图片失败，降级为纯文本通知: %v", err)
-		d.dispatchTextDirect(ctx, caption)
-		return
+// 对齐 QMS sendNewItemNotification：若 photo 参数已是本地路径 → 直接上传；若是 URL → 先下载到临时文件
+// 若 photo 是受控 Emby 临时文件（fs_emby_ 前缀），发送完成后自动清理，避免 notifier 层与 worker 竞争删除
+func (d *Dispatcher) dispatchPhotoDirect(ctx context.Context, caption, photo string) {
+	var (
+		finalPath  string
+		needRemove bool
+	)
+	if isLocalFilePath(photo) {
+		finalPath = photo
+		// 受控临时图：Dispatcher 发送完删除，避免 notifier 层与 worker 的竞态
+		if looksLikeEmbyTempImage(finalPath) {
+			needRemove = true
+		}
+	} else {
+		p, err := downloadImageToTemp(ctx, photo)
+		if err != nil {
+			logger.S().Warnf("下载 Emby 图片失败，降级为纯文本通知: %v", err)
+			d.dispatchTextDirect(ctx, caption)
+			return
+		}
+		finalPath = p
+		needRemove = true
 	}
-	defer func() { _ = os.Remove(tmpPath) }()
+	if needRemove {
+		defer func() { _ = safeRemoveEmbyTempImage(finalPath) }()
+	}
 
-	if err := d.tg.SendPhotoFromFile(ctx, d.chatID, caption, tmpPath); err != nil {
-		logger.S().Errorf("SendPhotoFromFile 失败，降级为纯文本通知: %v", err)
-		d.dispatchTextDirect(ctx, caption)
+	if err := d.tg.SendPhotoFromFile(ctx, d.chatID, caption, finalPath); err != nil {
+		// 严格对齐 QMS handlers.go L104-107：SendPhoto 失败不再发纯文本兜底，直接记录错误返回
+		logger.S().Errorf("SendPhotoFromFile 失败，按 QMS 行为不再降级纯文本: %v", err)
+		d.sendWebhookText(ctx, caption)
 		return
 	}
 	d.sendWebhookText(ctx, caption)
+}
+
+// isLocalFilePath 判断字符串是否是本地文件路径（而非 http(s):// URL 或其他 scheme）
+func isLocalFilePath(s string) bool {
+	if s == "" {
+		return false
+	}
+	// http/https/ftp/data/... 等显式 scheme：非本地
+	if idx := strings.Index(s, "://"); idx > 0 {
+		return false
+	}
+	// 路径绝对或相对，只要能 stat 到普通文件→算本地；Windows 盘符( C:\ )或 Unix / 或相对路径都 ok
+	info, err := os.Stat(s)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// looksLikeEmbyTempImage 文件名匹配 notifier.createEmbyTempImagePath 产生的受控前缀
+func looksLikeEmbyTempImage(path string) bool {
+	name := filepath.Base(path)
+	return strings.HasPrefix(name, "fs_emby_") && strings.HasSuffix(name, ".jpg")
+}
+
+// safeRemoveEmbyTempImage 只允许删除 TempDir 下且以 fs_emby_ 开头的 jpg，避免误删
+func safeRemoveEmbyTempImage(path string) error {
+	if !looksLikeEmbyTempImage(path) {
+		return fmt.Errorf("拒绝删除非受控 Emby 临时图: %s", path)
+	}
+	tempDir, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	if filepath.Dir(abs) != tempDir {
+		return fmt.Errorf("拒绝删除 TempDir 外的文件: %s", path)
+	}
+	return os.Remove(abs)
 }
 
 // downloadImageToTemp 把 URL 图片下载到系统临时目录，返回临时文件路径（调用方负责 os.Remove）
@@ -286,11 +345,21 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 	}
 
 	if n.ImageFile != "" || n.ImageURL != "" {
-		// 优先本地文件（ImageFile），否则 ImageURL 下载到临时文件再上传
-		var finalPath string
-		var needCleanup bool
+		// 优先级：ImageFile(已明确本地) > ImageURL（可能是本地路径，也可能是 http URL）
+		var (
+			finalPath  string
+			needRemove bool
+		)
 		if n.ImageFile != "" {
 			finalPath = n.ImageFile
+			if looksLikeEmbyTempImage(finalPath) {
+				needRemove = true
+			}
+		} else if isLocalFilePath(n.ImageURL) {
+			finalPath = n.ImageURL
+			if looksLikeEmbyTempImage(finalPath) {
+				needRemove = true
+			}
 		} else {
 			p, err := downloadImageToTemp(ctx, n.ImageURL)
 			if err != nil {
@@ -300,15 +369,15 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 				return
 			}
 			finalPath = p
-			needCleanup = true
+			needRemove = true
 		}
-		if needCleanup {
-			defer func() { _ = os.Remove(finalPath) }()
+		if needRemove {
+			defer func() { _ = safeRemoveEmbyTempImage(finalPath) }()
 		}
 		if err := d.tg.SendPhotoFromFile(ctx, d.chatID, n.Content, finalPath); err != nil {
-			logger.S().Warnf("Dispatch photo: SendPhotoFromFile 失败，降级纯文本: %v", err)
+			// 严格对齐 QMS：图片发送失败不再降级纯文本，只记录错误
+			logger.S().Warnf("Dispatch photo: SendPhotoFromFile 失败，按 QMS 行为不降级纯文本: %v", err)
 			d.sendWebhookNotification(ctx, n)
-			_ = d.tg.SendNotification(ctx, n.Content)
 			return
 		}
 		d.sendWebhookNotification(ctx, n)

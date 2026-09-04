@@ -198,7 +198,7 @@ func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail,
 // getItemDetailWithoutUser 使用无用户上下文的端点获取详情
 // 与 qmediasync 保持一致：不使用 url 编码
 func (c *Client) getItemDetailWithoutUser(ctx context.Context, itemID string) (*ItemDetail, error) {
-	u := fmt.Sprintf("%s/emby/Items/%s?api_key=%s&Fields=Overview,People,CommunityRating,Genres,ImageTags,ProductionYear,DateCreated,Studios,Taglines",
+	u := fmt.Sprintf("%s/emby/Items/%s?api_key=%s",
 		c.baseURL,
 		itemID,
 		c.apiKey,
@@ -719,7 +719,7 @@ func (c *Client) GetItemDetailByUser(ctx context.Context, itemID, userID string)
 
 	// 与 qmediasync 保持一致：直接拼接字符串，不使用 url 编码
 	// 注意：不要使用 url.PathEscape/QueryEscape，否则会改变 ID 和 API Key 的值
-	u := fmt.Sprintf("%s/emby/Users/%s/Items/%s?api_key=%s&Fields=Overview,People,CommunityRating,Genres,ImageTags,ProductionYear,DateCreated,Studios,Taglines",
+	u := fmt.Sprintf("%s/emby/Users/%s/Items/%s?api_key=%s",
 		c.baseURL,
 		userID,
 		itemID,
