@@ -1208,11 +1208,12 @@ func downloadImage(targetURL, filePath, userAgent string) error {
 	if err != nil {
 		return fmt.Errorf("读取 %s 的 HTTP 响应失败：%w", targetURL, err)
 	}
-	// 对齐 qms L245：写入 + 0777（跨平台，Windows 会忽略位但 Unix 生效）
-	if err := os.WriteFile(filePath, content, 0o777); err != nil {
+	// 权限 0600：Emby 海报为一次性临时文件，仅当前进程需要读写；
+	// 避免 gosec G306（写入权限超过 0600）。跨平台时 Windows 会忽略 Unix 位。
+	if err := os.WriteFile(filePath, content, 0o600); err != nil {
 		return fmt.Errorf("写入 %s 失败：%w", filePath, err)
 	}
-	_ = os.Chmod(filePath, 0o777)
+	_ = os.Chmod(filePath, 0o600)
 	logger.S().Debugf("[Emby] 下载海报 %s => %s 成功 (%d bytes)", targetURL, filePath, len(content))
 	return nil
 }

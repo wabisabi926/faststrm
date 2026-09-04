@@ -213,6 +213,7 @@ type NotifyBotRequest struct {
 	BotToken    string `json:"botToken"`
 	ChatID      string `json:"chatId"`
 	WebhookURL  string `json:"webhookUrl"`
+	ProxyURL    string `json:"proxyUrl"`
 	Enabled     *bool  `json:"enabled"`
 	AutoPolling *bool  `json:"autoPolling"`
 }
@@ -240,21 +241,23 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 			return
 		}
 
-		// 通过 getMe 验证 token 有效性
-		probe := notify.NewTelegramBot(req.BotToken, "")
+		// 通过 getMe 验证 token 有效性（严格带代理：国内直连会直接被 GFW 重置成 "未找到"）
+		probe, pErr := notify.NewTelegramBotWithProxy(req.BotToken, "", req.ProxyURL)
+		if pErr != nil {
+			logger.S().Warnf("[notify/bot POST] new probe bot failed: %v", pErr)
+			errMsg, errDetail := classifyTelegramInitError(pErr)
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+				"error":   errMsg,
+				"details": errDetail,
+			})
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 		botInfo, err := probe.GetMe(ctx)
 		if err != nil {
 			logger.S().Warnf("[notify/bot POST] getMe validation failed: %v", err)
-			// 根据错误类型给出中文友好提示
-			errMsg := "机器人令牌无效"
-			errDetail := err.Error()
-			if strings.Contains(errDetail, "code=404") {
-				errMsg = "机器人令牌无效（机器人不存在或令牌错误）"
-			} else if strings.Contains(errDetail, "code=401") {
-				errMsg = "机器人令牌已被吊销，请重新获取"
-			}
+			errMsg, errDetail := classifyTelegramInitError(err)
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
 				"error":   errMsg,
 				"details": errDetail,
@@ -275,6 +278,7 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 			BotToken:           req.BotToken,
 			ChatID:             req.ChatID,
 			WebhookURL:         req.WebhookURL,
+			ProxyURL:           req.ProxyURL,
 			Enabled:            true,
 			AutoPolling:        true,
 			AllowedUsers:       old.AllowedUsers,
@@ -933,4 +937,51 @@ func HandleTelegramWebhook(deps NotifyDeps) http.HandlerFunc {
 
 		httpx.OkJson(w, map[string]bool{"ok": true})
 	}
+}
+
+// classifyTelegramInitError 把 Telegram 初始化/探测的底层错误翻译为前台友好中文提示。
+// 保存配置阶段常见问题：国内直连 → TCP Reset/超时/No such host；代理未填 / 协议写错 / 监听端口未起。
+// 返回 (前端展示的简短错误, 用于展开的详细原文)
+func classifyTelegramInitError(err error) (string, string) {
+	raw := err.Error()
+	detail := raw
+
+	// === 协议级 ===
+	if strings.Contains(raw, "code=401") || strings.Contains(raw, "Unauthorized") {
+		return "机器人令牌已被吊销，请重新获取", detail
+	}
+	if strings.Contains(raw, "code=404") {
+		return "机器人令牌无效（机器人不存在或令牌错误）", detail
+	}
+
+	// === 代理层 ===
+	if strings.Contains(raw, "unsupported proxy scheme") {
+		return "代理协议不支持：仅支持 http/https/socks5/socks5h", detail
+	}
+	if strings.Contains(raw, "build proxy client") || strings.Contains(raw, "parse proxy url") {
+		return "代理 URL 格式错误，请核对协议、地址、端口", detail
+	}
+	if strings.Contains(raw, "socks5 dialer") {
+		return "SOCKS5 代理连接失败：请确认代理已启动且端口正确", detail
+	}
+
+	// === 网络层 (国内最常见。直连 api.telegram.org 被 GFW 重置时，
+	//     tgbotapi 底层 net/http 返回 "no such host" / "connection refused" /
+	//     "connection reset by peer" / "i/o timeout" / "context deadline exceeded") ===
+	lower := strings.ToLower(raw)
+	switch {
+	case strings.Contains(lower, "no such host"), strings.Contains(lower, "not found"):
+		return "无法连接 Telegram（DNS 被污染或无网络）。国内环境请填写代理 URL", detail
+	case strings.Contains(lower, "connection refused"), strings.Contains(lower, "actively refused"):
+		return "代理端口未监听或 Telegram 直连被拒绝。请核对代理 URL 或改用代理", detail
+	case strings.Contains(lower, "connection reset"), strings.Contains(lower, "reset by peer"):
+		return "连接被重置。国内访问 Telegram 必须填写可用的 HTTP/SOCKS5 代理", detail
+	case strings.Contains(lower, "i/o timeout"), strings.Contains(lower, "deadline exceeded"), strings.Contains(lower, "timeout awaiting response"):
+		return "连接超时（8 秒）。若在国内请务必填写代理；若已填代理，请检查其连通性", detail
+	case strings.Contains(lower, "tls handshake") || strings.Contains(lower, "certificate"):
+		return "TLS 握手失败：代理中间人 / 系统证书问题", detail
+	}
+
+	// === Token 格式等其它兜底 ===
+	return "机器人令牌无效", detail
 }
