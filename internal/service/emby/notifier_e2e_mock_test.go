@@ -376,6 +376,10 @@ func TestNotifierE2E_MovieNoActors(t *testing.T) {
 // ============================== 用例 3：剧集缓冲 + debounce 合并 ==============================
 
 func TestNotifierE2E_SeriesDebounced(t *testing.T) {
+	// CI 默认 -short：跳过 EpisodeDebounceWindow=10s 的真实防抖；本地想测全链路不加 -short 即可。
+	if testing.Short() {
+		t.Skip("skip Series debounce e2e in -short mode (needs ~11s wall clock)")
+	}
 	series := &ItemDetail{
 		ID:              "series-S01",
 		Name:            "长安的荔枝",
