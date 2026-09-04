@@ -51,7 +51,8 @@ jobs:
         PKGS=$(go list ./... | grep -v -E '/tools/|/scripts/')
         COVERPKGS=$(echo "$PKGS" | paste -sd, -)
         # -v 让失败时能看到具体哪条 test 卡在 race / panic；失败时在末尾用 grep 提炼 DATA RACE / FAIL 摘要
-        go test $PKGS -count=1 -timeout=15m -race -coverprofile=coverage.out \
+        # -short：跳过 Series debounce E2E 等 wall-clock > 10s 的端到端长用例，本地手动再跑
+        go test $PKGS -count=1 -timeout=15m -race -short -coverprofile=coverage.out \
           -v \
           -coverpkg="$COVERPKGS" \
           2>&1 | tee test_output.txt
