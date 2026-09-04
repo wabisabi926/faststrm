@@ -95,3 +95,9 @@ wiki_drafts/*.html
 # ==== OpenSquilla / local tooling ====
 .fetch/
 .opensquilla/
+
+# ==== TRAE 工作区文件：只入库 skills/ 声明，其余(缓存/会话/记忆)忽略 ====
+.trae/*
+!.trae/skills
+.trae/skills/*
+!.trae/skills/*
