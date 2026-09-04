@@ -42,30 +42,42 @@ export default function DownloadProgressPage() {
 
   const loadHistoryLogs = useCallback(async () => {
     try {
-      const response = await axiosInstance.get("/api/taskHistory");
-      const allHistoryRaw = response.data;
+      if (!executionId) {
+        setConnectionStatus("历史记录不存在");
+        setTaskStatus("不存在");
+        return;
+      }
+
+      // 1) 先查询执行摘要（状态等）
+      const historyResponse = await axiosInstance.get("/api/taskHistory");
+      const allHistoryRaw = historyResponse.data;
       const allHistory = Array.isArray(allHistoryRaw) ? allHistoryRaw : (allHistoryRaw?.items || []);
-      const execution = allHistory.find((h: { id: string }) => h.id === executionId);
+      // 后端 id 为 int64，URL 参数为字符串，统一成字符串比较
+      const execution = allHistory.find((h: { id: number | string }) => String(h.id) === String(executionId));
 
       if (execution) {
         setConnectionStatus("历史记录");
         setTaskStatus(STATUS_LABEL[execution.status] ?? "开始");
-
-        const parsedLogs: Progress[] = [];
-        execution.logs.forEach((logLine: string) => {
-          try {
-            const logData = JSON.parse(logLine);
-            parsedLogs.push(logData);
-          } catch {
-            console.error("Failed to parse log line:", logLine);
-          }
-        });
-
-        setLogs(parsedLogs);
       } else {
         setConnectionStatus("历史记录不存在");
         setTaskStatus("不存在");
       }
+
+      // 2) 查询该 execution 的日志（后端单独接口，避免 TaskExecution 未携带 logs 字段）
+      const logsResponse = await axiosInstance.get(`/api/taskHistory/${executionId}/logs`);
+      const rawLogs = Array.isArray(logsResponse.data) ? logsResponse.data : (logsResponse.data?.logs || []);
+
+      const parsedLogs: Progress[] = [];
+      rawLogs.forEach((logLine: string) => {
+        try {
+          const logData = JSON.parse(logLine);
+          parsedLogs.push(logData);
+        } catch {
+          console.error("Failed to parse log line:", logLine);
+        }
+      });
+
+      setLogs(parsedLogs);
     } catch (error) {
       console.error("Failed to load history logs:", error);
       setConnectionStatus("加载历史记录失败");

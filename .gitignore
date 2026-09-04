@@ -91,3 +91,7 @@ frontend/__smoke_*.mjs
 wiki_drafts/*.html
 
 .golangci-cache/
+
+# ==== OpenSquilla / local tooling ====
+.fetch/
+.opensquilla/

@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 
@@ -46,5 +47,42 @@ func HandleTaskHistory(deps TaskHistoryDeps) http.HandlerFunc {
 			items = []db.TaskExecution{}
 		}
 		httpx.WriteJson(w, http.StatusOK, map[string]any{"items": items})
+	}
+}
+
+// HandleTaskHistoryLogs GET /api/taskHistory/:executionId/logs
+// 返回指定 execution 的日志行数组
+func HandleTaskHistoryLogs(deps TaskHistoryDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Repo == nil {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{"logs": []string{}})
+			return
+		}
+
+		path := strings.TrimPrefix(r.URL.Path, "/api/taskHistory/")
+		executionIDStr := strings.TrimSuffix(path, "/logs")
+		executionID, err := strconv.ParseInt(executionIDStr, 10, 64)
+		if err != nil || executionID <= 0 {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid executionId"})
+			return
+		}
+
+		limit := 20000
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 {
+				limit = n
+			}
+		}
+
+		logs, err := deps.Repo.GetLogs(r.Context(), executionID, limit)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if logs == nil {
+			logs = []string{}
+		}
+
+		httpx.WriteJson(w, http.StatusOK, map[string]any{"logs": logs})
 	}
 }
