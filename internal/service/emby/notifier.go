@@ -34,8 +34,6 @@ const (
 	PlaybackDedupWindow = 60 * time.Second
 	// PlaybackCacheTTL 播放缓存条目 TTL（5 分钟）
 	PlaybackCacheTTL = 5 * time.Minute
-	// ImageMaxWidth 通知图片默认最大宽度（对齐 qmediasync 竖版海报效果）
-	ImageMaxWidth = 720
 )
 
 // ==================== Dispatcher 接口 ====================
@@ -245,8 +243,8 @@ func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
 	}
 
 	body := FormatMovieNotification(detail, "library.new")
-	// Title + Content 双段结构（对齐 qmediasync sendNewItemNotification L586）
-	msg := notify.FormatMessage("📚 Emby 电影入库通知", body, nil)
+	// Title + Content 双段结构（对齐 qmediasync sendNewItemNotification L586）；content 前加空行，使片名与「📚 入库通知」标题隔开
+	msg := notify.FormatMessage("📚 Emby 电影入库通知", "\n"+body, nil)
 
 	// 海报：严格大小写敏感(\"backdrop\" 小写 / \"Primary\" 大写 P) → 下载到本地临时路径 → SendPhoto 本地路径
 	// （Telegram Bot 在公网，通常无法访问家庭内网 Emby，URL 直传必然失败；下载到本地再发是对齐 qms 的唯一正确做法）
@@ -362,7 +360,8 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 	}
 
 	body := FormatSeriesNotification(seriesDetail, buf.episodes, "library.new")
-	msg := notify.FormatMessage("📚 Emby 电视剧入库通知", body, nil)
+	// content 前加空行，使片名与「📚 入库通知」标题隔开
+	msg := notify.FormatMessage("📚 Emby 电视剧入库通知", "\n"+body, nil)
 
 	// 海报：严格大小写敏感键 → 下载本地 → NotifyWithPhoto（本地路径）
 	if client != nil && seriesDetail.ImageTags != nil {
@@ -578,29 +577,55 @@ func (n *Notifier) handlePlaybackEvent(ctx context.Context, event WebhookEvent) 
 		}
 	}
 
-	// 4. 格式化通知
+	// 4. 设备/客户端：优先从 Session 取（对齐 QMS EmbyPlaybackSession），fallback 顶层字段
+	deviceName, clientName := event.DeviceName, event.Client
+	if event.Session != nil {
+		if event.Session.DeviceName != "" {
+			deviceName = event.Session.DeviceName
+		}
+		if event.Session.Client != "" {
+			clientName = event.Session.Client
+		}
+	}
+
+	// 5. 格式化通知
 	msg := FormatPlaybackNotification(
 		event.Event,
 		item,
 		user,
-		event.DeviceName,
-		event.Client,
+		deviceName,
+		clientName,
 		positionTicks,
 		showProgress,
 		showOverview,
 	)
 
-	// 5. 带海报发送（优先使用 Webhook/详情中的 ImageTags）
-	if item.ID != "" {
-		client := n.getClient()
-		if client != nil {
-			photoURL := client.BuildPrimaryImageURL(item.ID, item.ImageTags, ImageMaxWidth)
-			if photoURL != "" {
-				if err := n.dispatcher.NotifyWithPhoto(ctx, msg, photoURL); err != nil {
-					logger.S().Warnf("[Emby] 播放图片通知失败，降级纯文本: %v", err)
-					return n.dispatcher.Notify(ctx, msg)
+	// 6. 带海报发送（对齐 QMS createPlaybackNotification：只用 ImageTags["Primary"]，下载到本地再发）
+	// （Telegram Bot 通常无法访问内网 Emby，URL 直传必失败；下载本地是唯一正确做法）
+	if item.ID != "" && item.ImageTags != nil {
+		if tag, ok := item.ImageTags["Primary"]; ok && tag != "" {
+			client := n.getClient()
+			if client != nil {
+				imageURL := fmt.Sprintf("%s/emby/Items/%s/Images/Primary?tag=%s&api_key=%s",
+					client.baseURL, item.ID, tag, client.apiKey)
+				posterPath, perr := createEmbyTempImagePath(item.ID)
+				if perr != nil {
+					logger.S().Errorf("[Emby] 创建播放通知海报临时文件失败：%v", perr)
+				} else {
+					derr := downloadImage(imageURL, posterPath, "faststrm")
+					if derr != nil {
+						_ = removeEmbyTempImage(posterPath)
+						logger.S().Warnf("[Emby] 下载播放通知海报失败，降级纯文本：%v", derr)
+					} else {
+						sendErr := n.dispatcher.NotifyWithPhoto(ctx, msg, posterPath)
+						if sendErr != nil {
+							logger.S().Errorf("[Emby] 发送播放图片通知失败，降级纯文本：%v", sendErr)
+							_ = removeEmbyTempImage(posterPath)
+						} else {
+							return nil
+						}
+					}
 				}
-				return nil
 			}
 		}
 	}
@@ -617,9 +642,18 @@ func (n *Notifier) buildPlaybackCacheKey(event WebhookEvent) string {
 		itemType = event.Item.Type
 		itemName = event.Item.Name
 	}
-	// 设备信息也加入 key，避免同一用户不同设备触发被去重
+	// 设备信息也加入 key，避免同一用户不同设备触发被去重；优先取 Session 字段（对齐 QMS EmbyPlaybackSession）
+	deviceName, client := event.DeviceName, event.Client
+	if event.Session != nil {
+		if event.Session.DeviceName != "" {
+			deviceName = event.Session.DeviceName
+		}
+		if event.Session.Client != "" {
+			client = event.Session.Client
+		}
+	}
 	return fmt.Sprintf("%s_%s_%s_%s_%s_%s",
-		userID, itemType, itemName, event.Event, event.DeviceName, event.Client)
+		userID, itemType, itemName, event.Event, deviceName, client)
 }
 
 // isPlaybackDuplicate 检查播放事件是否在去重窗口内重复
@@ -835,9 +869,9 @@ func FormatDeletedSeriesNotification(item *ItemDetail, episodes []ItemDetail) st
 	return notify.FormatMessage("🗑️ Emby 媒体删除通知", content, metadata)
 }
 
-// FormatPlaybackNotification 格式化播放通知（qmediasync 风格）
-// emoji 前缀 + 半角冒号 + 无 HTML 标签，与入库通知风格统一
-// showProgress/showOverview 由调用方从 EmbySettings 传入，关闭时不显示对应字段
+// FormatPlaybackNotification 格式化播放通知（完全复刻 QMS formatPlaybackNotificationContent + createPlaybackNotification）
+// 文案：中文冒号（用户/设备/电视剧/季集/播放进度/时长/简介），设备行无条件显示
+// 观看时长：对齐 QMS —— 作为 metadata 独立字段，仅 playback.stop 事件且 position>0 时显示
 func FormatPlaybackNotification(event string, item *ItemDetail, user *UserInfo, deviceName, client string, positionTicks int64, showProgress, showOverview bool) string {
 	if item == nil {
 		return ""
@@ -845,64 +879,61 @@ func FormatPlaybackNotification(event string, item *ItemDetail, user *UserInfo, 
 
 	var sb strings.Builder
 
-	// 标题行：emoji + 事件名 + 片名
-	title := orDefault(item.Name, "未知")
-	fmt.Fprintf(&sb, "%s %s %s\n", GetEventTypeEmoji(event), GetEventTypeName(event), title)
-
-	// 用户信息
+	// 用户信息（对齐 QMS：用户：xxx，无条件显示，空则"未知"；加 👤 图标）
 	userName := "未知"
 	if user != nil && user.Name != "" {
 		userName = user.Name
 	}
-	fmt.Fprintf(&sb, "👤 用户: %s\n", userName)
+	fmt.Fprintf(&sb, "👤 用户：%s\n", userName)
 
-	// 设备信息
-	if deviceName != "" || client != "" {
-		if deviceName != "" && client != "" {
-			fmt.Fprintf(&sb, "📱 设备: %s (%s)\n", deviceName, client)
-		} else if deviceName != "" {
-			fmt.Fprintf(&sb, "📱 设备: %s\n", deviceName)
-		} else {
-			fmt.Fprintf(&sb, "📱 设备: %s\n", client)
-		}
+	// 设备信息（对齐 QMS：设备：xxx (客户端)，无条件显示；加 📱 图标）
+	fmt.Fprintf(&sb, "📱 设备：%s", orDefault(deviceName, "未知"))
+	if client != "" {
+		fmt.Fprintf(&sb, " (%s)", client)
 	}
+	sb.WriteString("\n")
 
-	// 剧集信息
+	// 剧集信息（对齐 QMS：仅 Episode 显示电视剧/季集，S%02dE%02d 补零；加 🎬/📺 图标）
 	if item.Type == "Episode" {
 		if item.SeriesName != "" {
-			fmt.Fprintf(&sb, "📺 电视剧: %s\n", item.SeriesName)
+			fmt.Fprintf(&sb, "🎬 电视剧：%s\n", item.SeriesName)
 		}
 		if item.ParentIndexNumber > 0 && item.IndexNumber > 0 {
-			fmt.Fprintf(&sb, "🎬 季集: S%dE%d\n", item.ParentIndexNumber, item.IndexNumber)
+			fmt.Fprintf(&sb, "📺 季集：S%02dE%02d\n", item.ParentIndexNumber, item.IndexNumber)
 		}
 	}
 
-	// 观看时长（暂停/停止事件）
-	if (event == "playback.pause" || event == "playback.stop") && positionTicks > 0 {
-		fmt.Fprintf(&sb, "⏱️ 观看时长: %s\n", formatWatchedDuration(positionTicks))
-	}
-
-	// 播放进度
+	// 播放进度 / 时长（对齐 QMS：showProgress 开启时，position>0 显示进度，否则仅显示总时长）
 	if showProgress && positionTicks > 0 && item.RunTimeTicks > 0 {
 		positionStr := FormatTicksToTime(positionTicks)
 		runtimeStr := FormatTicksToTime(item.RunTimeTicks)
 		percentage := float64(positionTicks) / float64(item.RunTimeTicks) * 100
-		fmt.Fprintf(&sb, "📊 播放进度: %s / %s (%.0f%%)\n", positionStr, runtimeStr, percentage)
+		fmt.Fprintf(&sb, "📊 播放进度：%s / %s (%.0f%%)\n", positionStr, runtimeStr, percentage)
 	} else if showProgress && item.RunTimeTicks > 0 {
-		fmt.Fprintf(&sb, "⏱️ 时长: %s\n", FormatTicksToTime(item.RunTimeTicks))
+		fmt.Fprintf(&sb, "⏱️ 时长：%s\n", FormatTicksToTime(item.RunTimeTicks))
 	}
 
-	// 剧情简介
+	// 剧情简介（对齐 QMS：showOverview 开启时请求详情，超 100 字截断补 …，紧跟进度行无空行）
 	if showOverview && item.Overview != "" {
 		overview := item.Overview
 		runes := []rune(overview)
 		if len(runes) > 100 {
-			overview = string(runes[:100]) + "..."
+			overview = string(runes[:100]) + "…"
 		}
-		fmt.Fprintf(&sb, "\n📝 简介\n%s", overview)
+		fmt.Fprintf(&sb, "📝 简介：%s", overview)
 	}
 
-	return sb.String()
+	// 标题：emoji + 事件名 + 片名（对齐 QMS createPlaybackNotification L761）
+	title := fmt.Sprintf("%s %s %s", GetEventTypeEmoji(event), GetEventTypeName(event), orDefault(item.Name, "未知"))
+
+	// 观看时长：对齐 QMS —— 仅 playback.stop 事件且 position>0，作为 metadata 独立字段
+	// content 前加空行，使首行「👤 用户」与标题隔开
+	content := strings.TrimSuffix(sb.String(), "\n")
+	var metadata map[string]string
+	if event == "playback.stop" && positionTicks > 0 {
+		metadata = map[string]string{"观看时长": formatWatchedDuration(positionTicks)}
+	}
+	return notify.FormatMessage(title, "\n"+content, metadata)
 }
 
 // FormatTicksToTime 将 Emby ticks（100ns 单位）转为 HH:MM:SS 或 MM:SS
@@ -918,19 +949,21 @@ func FormatTicksToTime(ticks int64) string {
 	return fmt.Sprintf("%02d:%02d", minutes, seconds)
 }
 
-// formatWatchedDuration 把 ticks 转为中文"观看时长"描述（qmediasync 风格："12分钟"/"1小时5分钟"）
+// formatWatchedDuration 把 ticks 转为中文观看时长描述（对齐 QMS FormatPlaybackDuration）
+// QMS: PositionTicks/10000 转毫秒 → time.Duration → "X 小时 Y 分钟" / "X 分钟" / "X 秒" / "0 秒"
 func formatWatchedDuration(ticks int64) string {
-	totalSeconds := ticks / 10_000_000
-	// 不到 1 分钟按 1 分钟显示，避免"0分钟"
-	if totalSeconds < 60 {
-		return "1分钟"
-	}
-	hours := totalSeconds / 3600
-	minutes := (totalSeconds % 3600) / 60
+	durationMs := ticks / 10000
+	duration := time.Duration(durationMs) * time.Millisecond
+	hours := int(duration.Hours())
+	minutes := int(duration.Minutes()) % 60
+	seconds := int(duration.Seconds()) % 60
 	if hours > 0 {
-		return fmt.Sprintf("%d小时%d分钟", hours, minutes)
+		return fmt.Sprintf("%d 小时 %d 分钟", hours, minutes)
 	}
-	return fmt.Sprintf("%d分钟", minutes)
+	if minutes > 0 {
+		return fmt.Sprintf("%d 分钟", minutes)
+	}
+	return fmt.Sprintf("%d 秒", seconds)
 }
 
 // GetEventTypeEmoji 根据事件类型返回对应 emoji

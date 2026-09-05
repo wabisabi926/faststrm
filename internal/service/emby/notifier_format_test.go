@@ -225,18 +225,23 @@ func TestFormatPlaybackNotification_QMSStyle(t *testing.T) {
 	if !strings.Contains(out, "播放开始") {
 		t.Errorf("标题应含 播放开始, 实际 %s", out)
 	}
-	if !strings.Contains(out, "👤 用户: 测试用户") {
-		t.Errorf("应含 👤 用户: 测试用户, 实际 %s", out)
+	// 图标 + 中文冒号，设备行无条件显示
+	if !strings.Contains(out, "👤 用户：测试用户") {
+		t.Errorf("应含 👤 用户：测试用户, 实际 %s", out)
 	}
-	if !strings.Contains(out, "📱 设备: iPhone (Emby iOS)") {
-		t.Errorf("应含 📱 设备: iPhone (Emby iOS), 实际 %s", out)
+	if !strings.Contains(out, "📱 设备：iPhone (Emby iOS)") {
+		t.Errorf("应含 📱 设备：iPhone (Emby iOS), 实际 %s", out)
 	}
-	// positionTicks=0 时显示时长而非进度
-	if !strings.Contains(out, "⏱️ 时长") {
+	// positionTicks=0 时显示时长而非进度（对齐 QMS：仅运行时长的 else 分支）
+	if !strings.Contains(out, "⏱️ 时长：") {
 		t.Errorf("showProgress=true 且 positionTicks=0 应显示时长, 实际 %s", out)
 	}
-	if !strings.Contains(out, "📝 简介") {
-		t.Errorf("showOverview=true 应显示简介段落, 实际 %s", out)
+	if !strings.Contains(out, "📝 简介：熊猫打怪") {
+		t.Errorf("showOverview=true 应显示 📝 简介：xxx, 实际 %s", out)
+	}
+	// 标题与首行「👤 用户」间应有空行
+	if !strings.Contains(out, "</b>\n\n👤") {
+		t.Errorf("标题后应有空行再显示 👤 用户, 实际 %s", out)
 	}
 }
 
@@ -247,15 +252,16 @@ func TestFormatPlaybackNotification_ShowProgressTrue(t *testing.T) {
 		RunTimeTicks: 600000000,
 	}
 	user := &UserInfo{Name: "u"}
-	out := FormatPlaybackNotification("playback.pause", item, user, "dev", "client", 300000000, true, false)
-	if !strings.Contains(out, "📊 播放进度") {
+	// 对齐 QMS：观看时长仅 playback.stop 事件且 position>0，作为 metadata 独立字段（FormatMessage 中文冒号渲染）；900000000 ticks = 90 秒 = 1 分钟
+	out := FormatPlaybackNotification("playback.stop", item, user, "dev", "client", 900000000, true, false)
+	if !strings.Contains(out, "播放进度：") {
 		t.Errorf("showProgress=true 应显示播放进度, 实际 %s", out)
 	}
 	if !strings.Contains(out, "50%") {
 		t.Errorf("应含 50%%, 实际 %s", out)
 	}
-	if !strings.Contains(out, "⏱️ 观看时长") {
-		t.Errorf("pause 事件应显示观看时长, 实际 %s", out)
+	if !strings.Contains(out, "观看时长") || !strings.Contains(out, "1 分钟") {
+		t.Errorf("stop 事件应含 metadata 观看时长：1 分钟, 实际 %s", out)
 	}
 }
 
@@ -268,14 +274,15 @@ func TestFormatPlaybackNotification_ShowProgressFalse(t *testing.T) {
 	}
 	user := &UserInfo{Name: "u"}
 	out := FormatPlaybackNotification("playback.stop", item, user, "dev", "client", 300000000, false, false)
-	if strings.Contains(out, "📊 播放进度") {
+	if strings.Contains(out, "📊 播放进度：") {
 		t.Errorf("showProgress=false 不应显示播放进度, 实际 %s", out)
 	}
-	if strings.Contains(out, "⏱️ 时长") {
+	// 独立「⏱️ 时长：」内容行（metadata 是「观看时长：」，用行首 \n 区分）
+	if strings.Contains(out, "\n⏱️ 时长：") {
 		t.Errorf("showProgress=false 不应显示时长字段, 实际 %s", out)
 	}
-	if !strings.Contains(out, "⏱️ 观看时长") {
-		t.Errorf("stop 事件应显示观看时长, 实际 %s", out)
+	if !strings.Contains(out, "观看时长") {
+		t.Errorf("stop 事件应显示观看时长 metadata, 实际 %s", out)
 	}
 }
 
@@ -288,12 +295,12 @@ func TestFormatPlaybackNotification_ShowOverviewTrueFalse(t *testing.T) {
 	user := &UserInfo{Name: "u"}
 
 	outOn := FormatPlaybackNotification("playback.start", item, user, "", "", 0, false, true)
-	if !strings.Contains(outOn, "📝 简介") {
-		t.Errorf("showOverview=true 应显示简介, 实际 %s", outOn)
+	if !strings.Contains(outOn, "📝 简介：这是一段剧情简介") {
+		t.Errorf("showOverview=true 应显示 📝 简介：xxx, 实际 %s", outOn)
 	}
 
 	outOff := FormatPlaybackNotification("playback.start", item, user, "", "", 0, false, false)
-	if strings.Contains(outOff, "📝 简介") {
+	if strings.Contains(outOff, "简介：") {
 		t.Errorf("showOverview=false 不应显示简介, 实际 %s", outOff)
 	}
 }
@@ -306,11 +313,11 @@ func TestFormatPlaybackNotification_EpisodeSeasonEpisode(t *testing.T) {
 	}
 	user := &UserInfo{Name: "u"}
 	out := FormatPlaybackNotification("playback.start", item, user, "TV", "Emby", 0, false, false)
-	if !strings.Contains(out, "📺 电视剧: 电视剧A") {
-		t.Errorf("应含 📺 电视剧: 电视剧A, 实际 %s", out)
+	if !strings.Contains(out, "🎬 电视剧：电视剧A") {
+		t.Errorf("应含 🎬 电视剧：电视剧A, 实际 %s", out)
 	}
-	if !strings.Contains(out, "🎬 季集: S2E5") {
-		t.Errorf("应含 🎬 季集: S2E5, 实际 %s", out)
+	if !strings.Contains(out, "📺 季集：S02E05") {
+		t.Errorf("应含 📺 季集：S02E05（对齐 QMS 补零）, 实际 %s", out)
 	}
 }
 

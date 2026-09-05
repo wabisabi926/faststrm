@@ -37,6 +37,14 @@ type WebhookEvent struct {
 	Client       string        `json:"Client,omitempty"`
 	AppVersion   string        `json:"ApplicationVersion,omitempty"`
 	PlaybackInfo *PlaybackInfo `json:"PlaybackInfo,omitempty"`
+	// Session 会话信息：Emby 播放 webhook 的设备/客户端实际在 Session 里（对齐 QMS EmbyPlaybackSession）
+	Session *PlaybackSession `json:"Session,omitempty"`
+}
+
+// PlaybackSession 播放会话信息（对齐 QMS EmbyPlaybackSession）
+type PlaybackSession struct {
+	DeviceName string `json:"DeviceName,omitempty"`
+	Client     string `json:"Client,omitempty"`
 }
 
 // PlaybackInfo 播放事件附带的播放状态信息（对齐 qmediasync EmbyPlaybackInfo）
