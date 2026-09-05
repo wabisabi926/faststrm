@@ -120,6 +120,7 @@ func RegisterRoutes(
 		{Method: http.MethodPost, Path: "/api/startTask", Handler: corsJWT(handler.HandleStartTask(taskDeps))},
 		{Method: http.MethodPost, Path: "/api/cancelTask", Handler: corsJWT(handler.HandleCancelTask(taskDeps))},
 		{Method: http.MethodGet, Path: "/api/taskHistory", Handler: corsJWT(handler.HandleTaskHistory(handler.TaskHistoryDeps{Repo: taskHistoryRepo}))},
+		{Method: http.MethodDelete, Path: "/api/taskHistory", Handler: corsJWT(handler.HandleTaskHistoryDelete(handler.TaskHistoryDeps{Repo: taskHistoryRepo}))},
 		{Method: http.MethodGet, Path: "/api/taskHistory/:executionId/logs", Handler: corsJWT(handler.HandleTaskHistoryLogs(handler.TaskHistoryDeps{Repo: taskHistoryRepo}))},
 		{Method: http.MethodGet, Path: "/api/taskLog", Handler: corsJWT(handler.HandleTaskLog(taskDeps))},
 		{Method: http.MethodGet, Path: "/api/taskLog/:taskId", Handler: corsJWT(handler.HandleTaskLog(taskDeps))},

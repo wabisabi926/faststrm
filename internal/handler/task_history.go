@@ -86,3 +86,41 @@ func HandleTaskHistoryLogs(deps TaskHistoryDeps) http.HandlerFunc {
 		httpx.WriteJson(w, http.StatusOK, map[string]any{"logs": logs})
 	}
 }
+
+// HandleTaskHistoryDelete DELETE /api/taskHistory
+// query:
+//
+//	executionId=xxx    删除单条执行记录（含日志）
+//	action=cleanup     清空全部执行记录（含日志）
+func HandleTaskHistoryDelete(deps TaskHistoryDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Repo == nil {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
+		ctx := r.Context()
+		q := r.URL.Query()
+		if q.Get("action") == "cleanup" {
+			if err := deps.Repo.DeleteAll(ctx); err != nil {
+				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			httpx.WriteJson(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
+		if idStr := q.Get("executionId"); idStr != "" {
+			id, err := strconv.ParseInt(idStr, 10, 64)
+			if err != nil || id <= 0 {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid executionId"})
+				return
+			}
+			if derr := deps.Repo.DeleteExecution(ctx, id); derr != nil {
+				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": derr.Error()})
+				return
+			}
+			httpx.WriteJson(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
+		httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid parameter"})
+	}
+}

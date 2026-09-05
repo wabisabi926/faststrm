@@ -251,6 +251,31 @@ func (r *TaskHistoryRepo) GetLogs(ctx context.Context, executionID int64, limit 
 	return out, rows.Err()
 }
 
+// DeleteExecution 删除单条执行记录及其日志
+// 显式先删 task_logs 再删 task_executions，避免依赖 PRAGMA foreign_keys=ON 的级联
+func (r *TaskHistoryRepo) DeleteExecution(ctx context.Context, id int64) error {
+	if r == nil || r.db == nil {
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM task_logs WHERE execution_id = ?", id); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, "DELETE FROM task_executions WHERE id = ?", id)
+	return err
+}
+
+// DeleteAll 清空全部执行记录及其日志
+func (r *TaskHistoryRepo) DeleteAll(ctx context.Context) error {
+	if r == nil || r.db == nil {
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM task_logs"); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, "DELETE FROM task_executions")
+	return err
+}
+
 // IsErrConstraint 判重/约束冲突
 func IsErrConstraint(err error) bool {
 	if err == nil {
