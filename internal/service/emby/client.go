@@ -174,25 +174,41 @@ func (c *Client) GetItemDetail(ctx context.Context, itemID string) (*ItemDetail,
 
 	// 1. 获取有权限的用户（对齐 qmediasync）
 	userID, err := c.getEmbyUserID(ctx)
-	if err == nil && userID != "" {
-		detail, err := c.GetItemDetailByUser(ctx, itemID, userID)
-		if err == nil {
+	if err != nil {
+		logger.S().Warnf("[Emby] GetItemDetail step1 获取有权限用户失败: %v", err)
+	} else if userID == "" {
+		logger.S().Warnf("[Emby] GetItemDetail step1 未找到 EnableAllFolders=true 的用户")
+	} else {
+		detail, uerr := c.GetItemDetailByUser(ctx, itemID, userID)
+		if uerr == nil {
+			logger.S().Debugf("[Emby] GetItemDetail step1 用户 %s 获取详情成功 (people=%d rating=%.1f)", userID, len(detail.People), detail.CommunityRating)
 			return detail, nil
 		}
 		// 用户上下文失败，清除缓存
-		logger.S().Warnf("[Emby] 用户 %s 获取详情失败: %v", userID, err)
+		logger.S().Warnf("[Emby] GetItemDetail step1 用户 %s 获取详情失败: %v", userID, uerr)
 		c.InvalidateUserCache()
 	}
 
 	// 2. 回退：尝试所有用户（不强制要求 EnableAllFolders）
 	detail, err := c.tryGetDetailWithAnyUser(ctx, itemID)
 	if err == nil {
+		logger.S().Debugf("[Emby] GetItemDetail step2 任意用户获取详情成功 (people=%d rating=%.1f)", len(detail.People), detail.CommunityRating)
 		return detail, nil
 	}
+	logger.S().Warnf("[Emby] GetItemDetail step2 所有用户获取详情失败: %v", err)
 
 	// 3. 最终降级：使用无用户上下文
+	// 注意：/emby/Items/{id} 无用户端点不返回 People/CommunityRating，
+	// 若返回的 detail 缺少 People，说明数据不完整，返回 error 让调用方走兜底（用 webhook 字段）
 	logger.S().Warnf("[Emby] 用户上下文获取详情失败，降级到无用户端点: %v", err)
-	return c.getItemDetailWithoutUser(ctx, itemID)
+	detail, err = c.getItemDetailWithoutUser(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	if len(detail.People) == 0 && detail.CommunityRating == 0 {
+		return nil, fmt.Errorf("no-user endpoint returned incomplete detail (no People/Rating) for item %s", itemID)
+	}
+	return detail, nil
 }
 
 // getItemDetailWithoutUser 使用无用户上下文的端点获取详情
