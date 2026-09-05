@@ -252,7 +252,7 @@ func TestFormatPlaybackNotification_ShowProgressTrue(t *testing.T) {
 		RunTimeTicks: 600000000,
 	}
 	user := &UserInfo{Name: "u"}
-	// 对齐 QMS：观看时长仅 playback.stop 事件且 position>0，作为 metadata 独立字段（FormatMessage 中文冒号渲染）；900000000 ticks = 90 秒 = 1 分钟
+	// 观看时长已移除：播放进度已含时间，不再重复显示
 	out := FormatPlaybackNotification("playback.stop", item, user, "dev", "client", 900000000, true, false)
 	if !strings.Contains(out, "播放进度：") {
 		t.Errorf("showProgress=true 应显示播放进度, 实际 %s", out)
@@ -260,8 +260,8 @@ func TestFormatPlaybackNotification_ShowProgressTrue(t *testing.T) {
 	if !strings.Contains(out, "50%") {
 		t.Errorf("应含 50%%, 实际 %s", out)
 	}
-	if !strings.Contains(out, "观看时长") || !strings.Contains(out, "1 分钟") {
-		t.Errorf("stop 事件应含 metadata 观看时长：1 分钟, 实际 %s", out)
+	if strings.Contains(out, "观看时长") {
+		t.Errorf("不应再显示观看时长, 实际 %s", out)
 	}
 }
 
@@ -277,12 +277,12 @@ func TestFormatPlaybackNotification_ShowProgressFalse(t *testing.T) {
 	if strings.Contains(out, "📊 播放进度：") {
 		t.Errorf("showProgress=false 不应显示播放进度, 实际 %s", out)
 	}
-	// 独立「⏱️ 时长：」内容行（metadata 是「观看时长：」，用行首 \n 区分）
+	// 独立「⏱️ 时长：」内容行
 	if strings.Contains(out, "\n⏱️ 时长：") {
 		t.Errorf("showProgress=false 不应显示时长字段, 实际 %s", out)
 	}
-	if !strings.Contains(out, "观看时长") {
-		t.Errorf("stop 事件应显示观看时长 metadata, 实际 %s", out)
+	if strings.Contains(out, "观看时长") {
+		t.Errorf("不应再显示观看时长, 实际 %s", out)
 	}
 }
 

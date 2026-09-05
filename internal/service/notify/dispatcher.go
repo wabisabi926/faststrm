@@ -283,7 +283,7 @@ func downloadImageToTemp(ctx context.Context, imgURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
-	httpCli := &http.Client{Timeout: 30 * time.Second}
+	httpCli := &http.Client{Timeout: 8 * time.Second}
 	resp, err := httpCli.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http get: %w", err)

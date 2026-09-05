@@ -262,6 +262,11 @@ func TestGetItemDetailWithRetry_404Retry(t *testing.T) {
 }
 
 func TestGetItemDetailWithRetry_MaxRetries(t *testing.T) {
+	// 覆盖退避序列以加速测试（默认序列总等待约 15.5s）
+	oldDelays := getDetailRetryDelays
+	getDetailRetryDelays = []time.Duration{5 * time.Millisecond, 5 * time.Millisecond}
+	defer func() { getDetailRetryDelays = oldDelays }()
+
 	client, server := setupTestServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -283,6 +288,62 @@ func TestGetItemDetailWithRetry_MaxRetries(t *testing.T) {
 	if err == nil {
 		t.Error("期望错误（重试耗尽），实际 nil")
 	}
+}
+
+func TestGetItemDetailWithRetry_MetadataEmptyRetries(t *testing.T) {
+	// 覆盖退避序列以加速测试
+	oldDelays := getDetailRetryDelays
+	getDetailRetryDelays = []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond}
+	defer func() { getDetailRetryDelays = oldDelays }()
+
+	callCount := 0
+	client, server := setupTestServer(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.URL.Path == "/emby/Users" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"Name":"admin","Id":"user-1","Policy":{"EnableAllFolders":true}}]`))
+			return
+		}
+
+		// 前两次详情请求返回 200 但元数据为空（模拟 Emby 刮削未完成），之后返回完整数据
+		if callCount <= 2 {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"Id":"test-id","Name":"测试剧集","Type":"Series"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"Id":"test-id",
+			"Name":"测试剧集",
+			"Type":"Series",
+			"Overview":"一段简介",
+			"Genres":["剧情"],
+			"People":[{"Name":"演员A","Type":"Actor"}],
+			"CommunityRating":8.5,
+			"ImageTags":{"Primary":"tag1"}
+		}`))
+	})
+	defer server.Close()
+
+	client.http = &http.Client{Timeout: 2 * time.Second}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	detail, err := client.GetItemDetailWithRetry(ctx, "test-id")
+	if err != nil {
+		t.Fatalf("GetItemDetailWithRetry 失败: %v", err)
+	}
+	if detail.Overview == "" {
+		t.Errorf("期望重试后拿到完整元数据，实际 Overview 为空")
+	}
+	if callCount < 3 {
+		t.Errorf("期望至少 3 次请求（空元数据触发重试），实际 %d 次", callCount)
+	}
+	t.Logf("调用次数: %d", callCount)
 }
 
 // ==================== InvalidateUserCache 测试 ====================

@@ -28,8 +28,8 @@ const embyTempImagePrefix = "fs_emby_"
 // ==================== 常量 ====================
 
 const (
-	// EpisodeDebounceWindow 剧集缓冲防抖窗口（10 秒）
-	EpisodeDebounceWindow = 10 * time.Second
+	// EpisodeDebounceWindow 剧集缓冲防抖窗口（15 秒，对齐 QMS 实际 10~15s 触发区间，给刮削留时间）
+	EpisodeDebounceWindow = 8 * time.Second
 	// PlaybackDedupWindow 播放事件去重窗口（60 秒）
 	PlaybackDedupWindow = 60 * time.Second
 	// PlaybackCacheTTL 播放缓存条目 TTL（5 分钟）
@@ -216,6 +216,9 @@ func (n *Notifier) handleMediaAdded(ctx context.Context, item ItemInfo) error {
 	switch item.Type {
 	case "Movie":
 		return n.handleMovieAdded(ctx, item)
+	case "Series":
+		// Emby 对整剧目录入库发 Series 类型 webhook（monitor 刷库场景），不能丢弃
+		return n.handleSeriesAdded(ctx, item)
 	case "Episode":
 		n.handleSeriesEpisodeAdded(ctx, item)
 		return nil
@@ -224,22 +227,70 @@ func (n *Notifier) handleMediaAdded(ctx context.Context, item ItemInfo) error {
 	}
 }
 
-// handleMovieAdded 处理电影入库
-// 策略：优先用 GetItemDetail 补充 People/CommunityRating（评分、演员）；
-// 失败时用 webhook 自带字段兜底（Name/Overview/Genres/ProductionYear/ImageTags 已足够发通知），
-// 不再因详情获取失败而跳过整条通知。
-func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
-	// 用 webhook 字段构造基础 detail（Name/Overview/Genres/ProductionYear/ImageTags 都有）
-	detail := itemInfoToDetail(item)
-
+// handleSeriesAdded 处理整剧入库（Emby 对整剧目录发 Series 类型 webhook）
+// 方案 A：只有拿到完整详情才发通知，不发"暂无数据"半成品
+func (n *Notifier) handleSeriesAdded(ctx context.Context, item ItemInfo) error {
 	client := n.getClient()
-	if client != nil {
-		// 尝试获取详情补充 People/CommunityRating（不轮询，失败就用 webhook 字段兜底）
-		if d, err := client.GetItemDetail(ctx, item.ID); err == nil && d != nil {
-			mergeDetail(detail, d)
-		} else {
-			logger.S().Warnf("[Emby] 获取电影详情失败，使用 webhook 字段发通知 id=%s: %v", item.ID, err)
+	if client == nil {
+		logger.S().Warnf("[Emby] Emby client 未初始化，跳过剧集入库通知 id=%s", item.ID)
+		return nil
+	}
+
+	// 带重试获取完整剧集详情；失败则跳过（不发半成品）
+	seriesDetail, err := client.GetItemDetailWithRetry(ctx, item.ID)
+	if err != nil || seriesDetail == nil {
+		logger.S().Warnf("[Emby] 获取剧集详情失败，跳过入库通知 id=%s: %v", item.ID, err)
+		return nil
+	}
+
+	body := FormatSeriesNotification(seriesDetail, nil, "library.new")
+	// content 前加空行，使片名与「📚 入库通知」标题隔开
+	msg := notify.FormatMessage("📚 Emby 电视剧入库通知", "\n"+body, nil)
+
+	// 海报：严格大小写敏感键 → 下载本地 → NotifyWithPhoto（本地路径）
+	if seriesDetail.ImageTags != nil {
+		imageURL := buildImageURLCaseSensitive(client, seriesDetail.ID, seriesDetail.ImageTags)
+		if imageURL != "" {
+			posterPath, perr := createEmbyTempImagePath(seriesDetail.ID)
+			if perr != nil {
+				logger.S().Errorf("[Emby] 创建 Emby 海报临时文件失败：%v", perr)
+			} else {
+				derr := downloadImage(imageURL, posterPath, "faststrm")
+				if derr != nil {
+					_ = removeEmbyTempImage(posterPath)
+					logger.S().Warnf("[Emby] 下载 Emby 海报失败，降级纯文本：%v", derr)
+				} else {
+					// 发送完成后临时文件由 Dispatcher 统一清理，避免 notifier 提前删除造成 worker 竞态
+					sendErr := n.dispatcher.NotifyWithPhoto(ctx, msg, posterPath)
+					if sendErr != nil {
+						logger.S().Errorf("[Emby] 发送剧集图片通知失败，降级纯文本：%v", sendErr)
+						_ = removeEmbyTempImage(posterPath)
+					} else {
+						return nil
+					}
+				}
+			}
 		}
+	}
+	_ = n.dispatcher.Notify(ctx, msg)
+	return nil
+}
+
+// handleMovieAdded 处理电影入库（方案 A：对齐 qmediasync 语义）
+// 只有拿到完整详情（Overview/Genres/People/CommunityRating/ImageTags 至少其一）才发通知；
+// 详情未刮削完成（重试耗尽）时跳过，不发"暂无数据"半成品。
+func (n *Notifier) handleMovieAdded(ctx context.Context, item ItemInfo) error {
+	client := n.getClient()
+	if client == nil {
+		logger.S().Warnf("[Emby] Emby client 未初始化，跳过电影入库通知 id=%s", item.ID)
+		return nil
+	}
+
+	// 带重试获取完整详情；失败则跳过（不发半成品）
+	detail, err := client.GetItemDetailWithRetry(ctx, item.ID)
+	if err != nil || detail == nil {
+		logger.S().Warnf("[Emby] 获取电影详情失败，跳过入库通知 id=%s: %v", item.ID, err)
+		return nil
 	}
 
 	body := FormatMovieNotification(detail, "library.new")
@@ -307,17 +358,17 @@ func (n *Notifier) handleSeriesEpisodeAdded(ctx context.Context, item ItemInfo) 
 		old.Stop()
 	}
 	timer := time.AfterFunc(EpisodeDebounceWindow, func() {
-		// 严格对齐 qms sendNewSeriesNotification：不用轮询，flush 时直接一次 GetItemDetail
-		flushCtx, cancel := context.WithTimeout(context.Background(), DefaultTimeout+10*time.Second)
+		// flush 用带重试的 GetItemDetailWithRetry 取详情（对齐 qms：不轮询缓冲，等待刮削完成）
+		// ctx 需要覆盖 43s 重试窗口 + 余量
+		flushCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		n.flushAddedEpisodeBuffer(flushCtx, seriesID)
 	})
 	n.addedTimers[seriesID] = timer
 }
 
-// flushAddedEpisodeBuffer 刷新入库缓冲
-// 策略：优先用 GetItemDetail 获取剧集完整详情；失败时用缓冲中的 seriesName 构造最小 detail 兜底，
-// 不再因详情获取失败而跳过整条通知。
+// flushAddedEpisodeBuffer 刷新入库缓冲（方案 A：对齐 qmediasync 语义）
+// 只有拿到完整剧集详情才发通知；详情未刮削完成（重试耗尽）时跳过，不发"暂无数据"半成品。
 func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string) {
 	n.addedMu.Lock()
 	timer := n.addedTimers[seriesID]
@@ -342,21 +393,17 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 		return
 	}
 
-	// 用缓冲中的 seriesName 构造最小 detail（兜底用）
-	seriesDetail := &ItemDetail{
-		ID:   seriesID,
-		Name: buf.seriesName,
-		Type: "Series",
+	client := n.getClient()
+	if client == nil {
+		logger.S().Warnf("[Emby] Emby client 未初始化，跳过剧集入库通知 seriesID=%s", seriesID)
+		return
 	}
 
-	client := n.getClient()
-	if client != nil {
-		// 尝试获取剧集完整详情（Overview/Genres/People/CommunityRating/ImageTags）
-		if d, err := client.GetItemDetail(ctx, seriesID); err == nil && d != nil {
-			seriesDetail = d
-		} else {
-			logger.S().Warnf("[Emby] 获取剧集详情失败，使用缓冲 seriesName 发通知 seriesID=%s: %v", seriesID, err)
-		}
+	// 带重试获取完整剧集详情；失败则跳过（不发半成品）
+	seriesDetail, err := client.GetItemDetailWithRetry(ctx, seriesID)
+	if err != nil || seriesDetail == nil {
+		logger.S().Warnf("[Emby] 获取剧集详情失败，跳过入库通知 seriesID=%s: %v", seriesID, err)
+		return
 	}
 
 	body := FormatSeriesNotification(seriesDetail, buf.episodes, "library.new")
@@ -926,14 +973,9 @@ func FormatPlaybackNotification(event string, item *ItemDetail, user *UserInfo, 
 	// 标题：emoji + 事件名 + 片名（对齐 QMS createPlaybackNotification L761）
 	title := fmt.Sprintf("%s %s %s", GetEventTypeEmoji(event), GetEventTypeName(event), orDefault(item.Name, "未知"))
 
-	// 观看时长：对齐 QMS —— 仅 playback.stop 事件且 position>0，作为 metadata 独立字段
 	// content 前加空行，使首行「👤 用户」与标题隔开
 	content := strings.TrimSuffix(sb.String(), "\n")
-	var metadata map[string]string
-	if event == "playback.stop" && positionTicks > 0 {
-		metadata = map[string]string{"观看时长": formatWatchedDuration(positionTicks)}
-	}
-	return notify.FormatMessage(title, "\n"+content, metadata)
+	return notify.FormatMessage(title, "\n"+content, nil)
 }
 
 // FormatTicksToTime 将 Emby ticks（100ns 单位）转为 HH:MM:SS 或 MM:SS
@@ -1199,7 +1241,7 @@ func downloadImage(targetURL, filePath, userAgent string) error {
 	transport := &http.Transport{}
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   300 * time.Second,
+		Timeout:   8 * time.Second,
 		// 关闭自动 302 跟随（可能会丢 ua / 跳到跨域 CDN），手动处理一次
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -1225,7 +1267,7 @@ func downloadImage(targetURL, filePath, userAgent string) error {
 		redirectReq.Header.Set("User-Agent", userAgent)
 		redirectClient := &http.Client{
 			Transport: &http.Transport{},
-			Timeout:   60 * time.Second,
+			Timeout:   8 * time.Second,
 		}
 		r2, err := redirectClient.Do(redirectReq)
 		if err != nil {

@@ -283,43 +283,60 @@ func (c *Client) tryGetDetailWithAnyUser(ctx context.Context, itemID string) (*I
 	return nil, fmt.Errorf("all %d users failed: %v", len(users), lastErr)
 }
 
-// GetItemDetailWithRetry 查询媒体详情，带重试机制
-// 对齐 qmediasync 实现：
-// - 处理 Emby webhook 先于 item 入库的时序问题
-// - 处理临时网络错误、用户上下文暂时失效等场景
-// - 失败时返回 nil（qmediasync 风格：不发送降级通知）
-func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*ItemDetail, error) {
-	const maxRetries = 2
-	const initialDelay = 200 * time.Millisecond
+// getDetailRetryDelays 详情重试退避序列（总等待约 25s，覆盖 Emby 刮削元数据的耗时；测试可覆盖以加速）
+// 前密后疏：刮削通常在数秒内完成，前段密集探测可更快发现；
+// 最坏 25s 仍覆盖绝大多数刮削场景，比原 43s 节省 ~18s
+var getDetailRetryDelays = []time.Duration{
+	500 * time.Millisecond,
+	1 * time.Second,
+	1500 * time.Millisecond,
+	2 * time.Second,
+	3 * time.Second,
+	4 * time.Second,
+	5 * time.Second,
+	8 * time.Second,
+}
 
+// GetItemDetailWithRetry 查询媒体详情，带重试机制
+// 修复入库通知丢内容：Emby 的 library.new 事件先于元数据刮削完成，
+// 接口可能返回 404，也可能返回 200 但 Overview/Genres/People/CommunityRating/ImageTags 全空。
+// 因此：
+//   - HTTP/网络错误（含 404）→ 退避重试
+//   - 200 但元数据为空（detailHasMetadata=false）→ 同样重试，直到刮削完成
+//   - 重试耗尽返回最后一个错误，由调用方决定降级或跳过
+func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*ItemDetail, error) {
 	var lastErr error
-	for i := 0; i < maxRetries; i++ {
+	for attempt := 0; attempt <= len(getDetailRetryDelays); attempt++ {
 		detail, err := c.GetItemDetail(ctx, itemID)
-		if err == nil && detail != nil {
-			if i > 0 {
-				logger.S().Infof("[Emby] 重试获取详情成功 itemID=%s (第%d次)", itemID, i+1)
+		if err == nil && detail != nil && detailHasMetadata(detail) {
+			if attempt > 0 {
+				logger.S().Infof("[Emby] 重试获取详情成功 itemID=%s (第%d次)", itemID, attempt+1)
 			}
 			return detail, nil
 		}
 
-		lastErr = err
 		if err != nil {
+			lastErr = err
 			errStr := err.Error()
 			if strings.Contains(errStr, "emby status 404") {
-				logger.S().Debugf("[Emby] 详情暂不可用(404)，重试 itemID=%s (第%d次): %v", itemID, i+1, err)
+				logger.S().Debugf("[Emby] 详情暂不可用(404)，重试 itemID=%s (第%d次): %v", itemID, attempt+1, err)
 			} else {
-				logger.S().Debugf("[Emby] 获取详情失败，重试 itemID=%s (第%d次): %v", itemID, i+1, err)
+				logger.S().Debugf("[Emby] 获取详情失败，重试 itemID=%s (第%d次): %v", itemID, attempt+1, err)
 			}
+		} else {
+			// 200 但元数据为空：Emby 尚未刮削完成，视为可重试
+			logger.S().Infof("[Emby] 详情返回但元数据为空（刮削未完成），重试 itemID=%s (第%d次)", itemID, attempt+1)
+			lastErr = fmt.Errorf("detail returned but metadata empty for item %s", itemID)
 		}
 
-		// 最后一次失败
-		if i == maxRetries-1 {
+		// 最后一次尝试也失败，直接返回
+		if attempt == len(getDetailRetryDelays) {
 			logger.S().Errorf("[Emby] 获取详情最终失败 itemID=%s: %v", itemID, lastErr)
 			return nil, lastErr
 		}
 
 		// 指数退避
-		delay := initialDelay * time.Duration(1<<uint(i))
+		delay := getDetailRetryDelays[attempt]
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
@@ -327,6 +344,17 @@ func (c *Client) GetItemDetailWithRetry(ctx context.Context, itemID string) (*It
 		}
 	}
 	return nil, lastErr
+}
+
+// detailHasMetadata 判断详情是否已包含有效元数据
+// 入库通知需要 Overview/Genres/People/CommunityRating/ImageTags 至少其一才算刮削完成；
+// 全空说明 Emby 尚未完成刮削，应继续重试而不是当成功。
+func detailHasMetadata(d *ItemDetail) bool {
+	if d == nil {
+		return false
+	}
+	return len(d.Overview) > 0 || len(d.Genres) > 0 ||
+		len(d.People) > 0 || d.CommunityRating > 0 || len(d.ImageTags) > 0
 }
 
 // BuildImageURL 构造主图 URL：/emby/Items/{id}/Images/Primary?maxWidth=...
