@@ -161,7 +161,7 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 		if patch.URL != nil {
 			em.URL = *patch.URL
 		}
-		if patch.APIKey != nil {
+		if patch.APIKey != nil && !containsAsterisk(*patch.APIKey) {
 			em.APIKey = *patch.APIKey
 		}
 		if patch.NotifyMediaAdded != nil {
