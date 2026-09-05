@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/wabisabi926/faststrm/internal/service/db"
@@ -124,5 +125,82 @@ func TestHandleTaskHistoryLogs_ReturnsLogsInOrder(t *testing.T) {
 	}
 	if body.Logs[0] != `{"filePath":"/a","done":true}` || body.Logs[1] != `{"filePath":"/b","done":true}` {
 		t.Errorf("logs order wrong: %v", body.Logs)
+	}
+}
+
+// ================================================================
+// HandleTaskHistoryDelete — DELETE /api/taskHistory
+// ================================================================
+
+func TestHandleTaskHistoryDelete_NilRepo(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/taskHistory?action=cleanup", nil)
+	HandleTaskHistoryDelete(TaskHistoryDeps{Repo: nil}).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("nil repo clean status: got %d, want 200", w.Code)
+	}
+}
+
+func TestHandleTaskHistoryDelete_DeleteOne(t *testing.T) {
+	repo := newTestTaskHistoryRepo(t)
+	id1, err := repo.CreateExecution(context.Background(), db.TaskExecution{TaskID: "t1", Status: "completed", CreatedAt: 1})
+	if err != nil {
+		t.Fatalf("CreateExecution t1: %v", err)
+	}
+	if _, err := repo.CreateExecution(context.Background(), db.TaskExecution{TaskID: "t2", Status: "completed", CreatedAt: 2}); err != nil {
+		t.Fatalf("CreateExecution t2: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/taskHistory?executionId="+strconv.FormatInt(id1, 10), nil)
+	HandleTaskHistoryDelete(TaskHistoryDeps{Repo: repo}).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status: got %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+
+	items, err := repo.Query(context.Background(), db.TaskHistoryQuery{})
+	if err != nil {
+		t.Fatalf("Query err: %v", err)
+	}
+	if len(items) != 1 || items[0].TaskID != "t2" {
+		t.Fatalf("expected 1 remaining (t2), got %+v", items)
+	}
+}
+
+func TestHandleTaskHistoryDelete_Cleanup(t *testing.T) {
+	repo := newTestTaskHistoryRepo(t)
+	if _, err := repo.CreateExecution(context.Background(), db.TaskExecution{TaskID: "t1", Status: "completed", CreatedAt: 1}); err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/taskHistory?action=cleanup", nil)
+	HandleTaskHistoryDelete(TaskHistoryDeps{Repo: repo}).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cleanup status: got %d, want 200", w.Code)
+	}
+
+	items, err := repo.Query(context.Background(), db.TaskHistoryQuery{})
+	if err != nil {
+		t.Fatalf("Query err: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected empty after cleanup, got %d items", len(items))
+	}
+}
+
+func TestHandleTaskHistoryDelete_InvalidParams(t *testing.T) {
+	repo := newTestTaskHistoryRepo(t)
+	cases := []string{
+		"/api/taskHistory",                 // 无参数
+		"/api/taskHistory?executionId=abc", // 非数字
+	}
+	for _, path := range cases {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodDelete, path, nil)
+		HandleTaskHistoryDelete(TaskHistoryDeps{Repo: repo}).ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("path %s: got %d, want 400", path, w.Code)
+		}
 	}
 }

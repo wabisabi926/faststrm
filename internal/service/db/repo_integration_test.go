@@ -151,6 +151,37 @@ func TestPhase3_RepoIntegration(t *testing.T) {
 		if len(logsAll) != 5 {
 			t.Errorf("GetLogs(0) want 5, got %d", len(logsAll))
 		}
+
+		// —— DeleteExecution：删除 id1 及其日志
+		if err := repo.DeleteExecution(ctx, id1); err != nil {
+			t.Fatalf("DeleteExecution err: %v", err)
+		}
+		afterDelLogs, err := repo.GetLogs(ctx, id1, 20000)
+		if err != nil {
+			t.Fatalf("GetLogs after delete err: %v", err)
+		}
+		if len(afterDelLogs) != 0 {
+			t.Errorf("logs should cascade cleaned, got %d", len(afterDelLogs))
+		}
+		remained, err := repo.Query(ctx, TaskHistoryQuery{Limit: 20})
+		if err != nil {
+			t.Fatalf("Query after delete err: %v", err)
+		}
+		if len(remained) != 2 {
+			t.Errorf("after DeleteExecution want 2 rows, got %d", len(remained))
+		}
+
+		// —— DeleteAll：清空全部
+		if err := repo.DeleteAll(ctx); err != nil {
+			t.Fatalf("DeleteAll err: %v", err)
+		}
+		allGone, err := repo.Query(ctx, TaskHistoryQuery{Limit: 20})
+		if err != nil {
+			t.Fatalf("Query after DeleteAll err: %v", err)
+		}
+		if len(allGone) != 0 {
+			t.Errorf("after DeleteAll want 0 rows, got %d", len(allGone))
+		}
 	})
 
 	t.Run("LifeEventRepo insert + ListPending + MarkProcessed", func(t *testing.T) {
