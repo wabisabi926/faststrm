@@ -991,23 +991,6 @@ func FormatTicksToTime(ticks int64) string {
 	return fmt.Sprintf("%02d:%02d", minutes, seconds)
 }
 
-// formatWatchedDuration 把 ticks 转为中文观看时长描述（对齐 QMS FormatPlaybackDuration）
-// QMS: PositionTicks/10000 转毫秒 → time.Duration → "X 小时 Y 分钟" / "X 分钟" / "X 秒" / "0 秒"
-func formatWatchedDuration(ticks int64) string {
-	durationMs := ticks / 10000
-	duration := time.Duration(durationMs) * time.Millisecond
-	hours := int(duration.Hours())
-	minutes := int(duration.Minutes()) % 60
-	seconds := int(duration.Seconds()) % 60
-	if hours > 0 {
-		return fmt.Sprintf("%d 小时 %d 分钟", hours, minutes)
-	}
-	if minutes > 0 {
-		return fmt.Sprintf("%d 分钟", minutes)
-	}
-	return fmt.Sprintf("%d 秒", seconds)
-}
-
 // GetEventTypeEmoji 根据事件类型返回对应 emoji
 // 📚 入库 / 🗑 删除 / 📺 播放 / ⏸ 暂停 / ⛔ 停止
 func GetEventTypeEmoji(eventType string) string {
