@@ -427,7 +427,6 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 		{".config.json", "config.json"},
 		{".account.json", "account.json"},
 		{".tasks.json", "tasks.json"},
-		{".settings.json", "settings.json"},
 	}
 	for _, df := range defaultFiles {
 		dst := filepath.Join(paths.ConfigDir, df.dstName)
@@ -446,6 +445,18 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 		}
 	}
 
+	// 2a. settings.json：不存在时用代码默认值序列化生成（UTF-8 无 BOM）
+	//     避免 .config 旧模板与代码默认值漂移（例如 removeStrm / enablePathEncoding 被旧值覆盖）
+	settingsPath := filepath.Join(paths.ConfigDir, "settings.json")
+	if _, serr := os.Stat(settingsPath); serr == nil {
+		logger.S().Infof("settings.json already exists: %s", settingsPath)
+	} else if defData, marr := json.MarshalIndent(model.DefaultSettings(), "", "  "); marr == nil {
+		if werr := os.WriteFile(settingsPath, append([]byte{}, defData...), 0600); werr != nil {
+			logger.S().Warnf("create settings.json from defaults failed: %v", werr)
+		} else {
+			logger.S().Infof("Created settings.json from DefaultSettings: %s", settingsPath)
+		}
+	}
 	// 3. 确保 salt 存在（用于 AES 凭据加密 + 密码哈希）
 	salt, err := EnsureSalt(paths.SaltPath)
 	if err != nil {
