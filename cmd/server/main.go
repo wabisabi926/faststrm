@@ -20,7 +20,7 @@ import (
 //
 //	go build -ldflags="-X 'main.version=v1.3.0' -X 'main.BuildDate=2026-09-04T17:00:00Z'"
 var (
-	version   = "v1.3.0"
+	version   = "v1.3.1"
 	BuildDate = "unknown"
 )
 
