@@ -32,8 +32,10 @@ func main() {
 	//      DEFAULT_CONFIG_DIR → CONFIG_DIR → 工作目录/.config → /app/.config
 	//    在该目录下，config.InitApp 会创建/读取 config.json / account.json / tasks.json / settings.json
 	var configDir string
+	var noTray bool
 	flag.StringVar(&configDir, "config", "", "path to config DIR (default: $DEFAULT_CONFIG_DIR or $CONFIG_DIR)")
 	flag.StringVar(&configDir, "c", "", "shorthand for --config")
+	flag.BoolVar(&noTray, "no-tray", false, "run without system tray (headless/service mode)")
 	flag.Parse()
 
 	// 2. 初始化应用（建目录/拷贝默认配置/密码哈希/token）
@@ -59,7 +61,9 @@ func main() {
 	readyCh := make(chan bool, 1)
 	quitCh := make(chan struct{}, 1)
 
-	initTray(listenAddr, displayAddr, readyCh, quitCh)
+	if !noTray {
+		initTray(listenAddr, displayAddr, readyCh, quitCh)
+	}
 
 	// 4. 启动 HTTP server（在 goroutine 中，以便托盘可以接收就绪信号）
 	//    cfg.Server.Host（可能 0.0.0.0）始终传给 server.Run，保证局域网绑定；
