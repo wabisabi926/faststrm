@@ -60,6 +60,15 @@ Thumbs.db
 .vscode/
 tmp/
 
+# ==== Lint / coverage 产物（本地生成，不进仓库）====
+lint_*.txt
+lint_*.json
+errcheck_out.txt
+coverage
+cover
+cov_*
+handler_cov
+
 # ==== 本地调试工具（依赖硬编码本地路径，不进仓库）====
 # tools/check_db 等为一次性调试脚本，请保留在本地开发环境
 tools/
@@ -96,8 +105,5 @@ wiki_drafts/*.html
 .fetch/
 .opensquilla/
 
-# ==== TRAE 工作区文件：只入库 skills/ 声明，其余(缓存/会话/记忆)忽略 ====
-.trae/*
-!.trae/skills
-.trae/skills/*
-!.trae/skills/*
+# ==== TRAE 工作区文件：全部忽略（IDE 本地文件，不进仓库）====
+.trae/
