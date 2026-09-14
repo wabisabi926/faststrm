@@ -415,17 +415,6 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                       </TooltipProvider>
                     </div>
 
-                    {/* [删除] sm 时内联在行尾；mobile 时另起整行（Line 4） */}
-                    <div className="hidden sm:flex sm:shrink-0 sm:w-auto">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => removePathMapping(index)}
-                        className="shrink-0"
-                      >
-                        删除
-                      </Button>
-                    </div>
                   </div>
 
                   {/* ============ Line 2：↓ 居中（仅 mobile；sm 已在行内用 →） ============ */}
@@ -459,6 +448,18 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                     >
                       <FolderOpen className="w-4 h-4" />
                     </Button>
+
+                    {/* [删除] sm 时在最右端；mobile 时另起整行（Line 4） */}
+                    <div className="hidden sm:flex sm:shrink-0 sm:w-auto">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => removePathMapping(index)}
+                        className="shrink-0"
+                      >
+                        删除
+                      </Button>
+                    </div>
                   </div>
 
                   {/* ============ Line 4（mobile only）：删除按钮整行宽 ============ */}
@@ -529,9 +530,6 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                   </TooltipProvider>
                 </div>
 
-                <div className="hidden sm:flex sm:shrink-0 sm:w-auto">
-                  <Button size="sm" onClick={addPathMapping} className="shrink-0">添加</Button>
-                </div>
               </div>
 
               {/* Line 2：↓ 居中 */}
@@ -556,6 +554,11 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                 >
                   <FolderOpen className="w-4 h-4" />
                 </Button>
+
+                {/* [添加] sm 时在最右端；mobile 时另起整行（Line 4） */}
+                <div className="hidden sm:flex sm:shrink-0 sm:w-auto">
+                  <Button size="sm" onClick={addPathMapping} className="shrink-0">添加</Button>
+                </div>
               </div>
 
               {/* Line 4（mobile only）：添加按钮整行宽 */}
