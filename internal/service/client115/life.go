@@ -290,10 +290,10 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 		return nil, fmt.Errorf("cookie is empty")
 	}
 
-	// 每次拉取都默认尝试 proapi/ios（字段完整），仅本次失败时回退到 webapi
-	// 避免上一次切换后状态泄漏导致永久走 webapi（参考项目用 web_fallback_until 时间窗口控制）
+	// P4-1: 对齐参考项目 iter_life_behavior_once 的 cycle([...])：
+	// 逐请求轮换 proapi/ios（字段完整含 pick_code）与 webapi（稳定但字段可能缺失），规避风控
+	// 偶数页走 proapi/ios，奇数页走 webapi
 	c.useAlternateHost = false
-	apiHost := c.getApiHost()
 
 	// 对齐参考项目：首批拉 1000 条，后续也 1000 条
 	// 使用 offset 分页，但用 from_time/from_id 过滤
@@ -308,22 +308,26 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 	const maxPages = 100
 
 	for page := 0; page < maxPages; page++ {
-		endpoint := fmt.Sprintf(
-			"%s%s?limit=%d&offset=%d",
-			apiHost, c.getBehaviorDetailPath(), limit, offset,
-		)
+		// P4-1: 逐页轮换 API 域名（对齐参考项目 cycle）：奇偶页交替
+		c.useAlternateHost = page%2 == 1
+		apiHost := c.getApiHost()
+		path := c.getBehaviorDetailPath()
+		endpoint := fmt.Sprintf("%s%s?limit=%d&offset=%d", apiHost, path, limit, offset)
 
 		body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
 		if err != nil {
-			if !c.useAlternateHost && page == 0 {
-				c.switchApiHost()
-				apiHost = c.getApiHost()
-				continue
+			// 本页请求失败：切换到另一个域名重试一次（保留原有容错，避免单页失败丢弃整批）
+			c.switchApiHost()
+			apiHost = c.getApiHost()
+			path = c.getBehaviorDetailPath()
+			endpoint = fmt.Sprintf("%s%s?limit=%d&offset=%d", apiHost, path, limit, offset)
+			body, err = c.doRequest(ctx, http.MethodGet, endpoint, "")
+			if err != nil {
+				if len(allFiltered) > 0 {
+					break // 已有数据，返回已拉取的
+				}
+				return nil, fmt.Errorf("pullEvents request: %w", err)
 			}
-			if len(allFiltered) > 0 {
-				break // 已有数据，返回已拉取的
-			}
-			return nil, fmt.Errorf("pullEvents request: %w", err)
 		}
 
 		var resp struct {
@@ -501,6 +505,43 @@ func (c *LifeClient) doRequest(ctx context.Context, method, urlStr, body string)
 	}
 
 	return respBody, nil
+}
+
+// GetPickCodeByFileID 通过 file_id 反查 pick_code
+// GET https://webapi.115.com/files/info?file_id={id}
+// 对齐参考项目 P115Client.to_pickcode(file_id)（get_pickcode_by_path 的回退链）
+// 生活事件 webapi 响应经常缺 pick_code，需要按 file_id 反查补全
+func (c *LifeClient) GetPickCodeByFileID(ctx context.Context, fileID string) (string, error) {
+	if fileID == "" || fileID == "0" {
+		return "", fmt.Errorf("file_id is empty")
+	}
+
+	endpoint := "https://webapi.115.com/files/info?file_id=" + url.QueryEscape(fileID)
+	body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
+	if err != nil {
+		return "", fmt.Errorf("files/info request: %w", err)
+	}
+
+	var resp struct {
+		State  bool   `json:"state"`
+		ErrMsg string `json:"errmsg,omitempty"`
+		Data   []struct {
+			PickCode string `json:"pc"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("parse files/info response: %w (body=%s)", err, truncateBody(body, 256))
+	}
+	if !resp.State {
+		return "", fmt.Errorf("files/info state=false (file_id=%s): %s", fileID, resp.ErrMsg)
+	}
+	if len(resp.Data) == 0 {
+		return "", fmt.Errorf("files/info empty data (file_id=%s)", fileID)
+	}
+	if resp.Data[0].PickCode == "" {
+		return "", fmt.Errorf("files/info 无 pickcode (file_id=%s)", fileID)
+	}
+	return resp.Data[0].PickCode, nil
 }
 
 // ==================== 路径解析 ====================

@@ -157,6 +157,42 @@ func (m *Monitor) createStrmForSingleFile(
 	return strmPath, nil
 }
 
+// resolveEventPickCode 解析事件的有效 pickcode；事件自带缺失/无效时按 file_id 反查
+// 回退链（对齐参考项目 get_pickcode_by_path）：
+//  1. 事件自带 pickcode（proapi/ios 响应字段完整）
+//  2. DB 按 file_id 反查（历史同步已写入，免 API 调用）
+//  3. files/info API 按 file_id 反查（webapi 响应经常缺 pick_code）
+func (m *Monitor) resolveEventPickCode(
+	ctx context.Context,
+	account string,
+	lifeClient *client115.LifeClient,
+	event client115.LifeEventItem,
+) string {
+	if isValidPickcode(event.PickCode) {
+		return event.PickCode
+	}
+	if event.FileID == "" || event.FileID == "0" {
+		return event.PickCode
+	}
+	// 2) DB 按 file_id 反查
+	if m.sqliteDB != nil {
+		if entry, err := db.GetFileOrFolderEntry(m.sqliteDB, account, event.FileID); err == nil && entry != nil && isValidPickcode(entry.PickCode) {
+			logger.S().Infof("[Monitor] 事件缺 pickcode file_id=%s → DB 反查成功 pc=%s", event.FileID, entry.PickCode)
+			return entry.PickCode
+		}
+	}
+	// 3) files/info API 按 file_id 反查
+	if lifeClient != nil {
+		if pc, err := lifeClient.GetPickCodeByFileID(ctx, event.FileID); err == nil && isValidPickcode(pc) {
+			logger.S().Infof("[Monitor] 事件缺 pickcode file_id=%s → files/info 反查成功 pc=%s", event.FileID, pc)
+			return pc
+		} else if err != nil {
+			logger.S().Warnf("[Monitor] 事件缺 pickcode file_id=%s files/info 反查失败: %v", event.FileID, err)
+		}
+	}
+	return event.PickCode
+}
+
 // handleCreateEvent 在映射的本地路径创建 STRM 文件
 // 对齐 MoviePilot MonitorLife._create：
 //   - 文件：直接生成 STRM（走 pickcode 严格校验 + .iso 命名）
@@ -216,7 +252,7 @@ func (m *Monitor) handleCreateEvent(
 	in := singleFileCreateInput{
 		CloudPath: cloudPath,
 		FileName:  event.FileName,
-		PickCode:  event.PickCode,
+		PickCode:  m.resolveEventPickCode(ctx, account, lifeClient, event),
 		FileSize:  event.FileSize,
 		FileID:    event.FileID,
 		ParentID:  event.ParentID,
