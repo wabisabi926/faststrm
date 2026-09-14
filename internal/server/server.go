@@ -192,68 +192,74 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 
 	// ==================== Telegram 开机自动轮询（AutoPolling） ====================
 	if initSettings != nil {
-		tg := initSettings.Telegram
-		if tg.Enabled && tg.AutoPolling && tg.BotToken != "" && notifyDeps.TelegramBot != nil {
-			// Webhook 与轮询互斥：有 webhook 配置但也开了 AutoPolling 时，优先按用户勾选走轮询
-			if tg.WebhookURL != "" {
-				logger.S().Infof("[Telegram] AutoPolling 已启用，忽略 WebhookURL 配置")
-			}
-			// 1) 确保删除 webhook（轮询与 webhook 互斥）
-			delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := notifyDeps.TelegramBot.DeleteWebhook(delCtx); err != nil {
-				logger.S().Warnf("[Telegram] AutoPolling deleteWebhook (may be none): %v", err)
-			}
-			delCancel()
-
-			// 2) 确保 PollingManager 已创建（启动时 tgBot != nil 时 initPhase6Deps 已创建，但兜底）
-			pollingMgr := notifyDeps.PollingManager
-			if pollingMgr == nil {
-				pollingMgr = notify.NewPollingManager(notifyDeps.TelegramBot)
-				notifyDeps.PollingManager = pollingMgr
-			}
-			// 3) 确保 CommandHandler 已创建（兜底）
-			cmdHandler := notifyDeps.CommandHandler
-			if cmdHandler == nil {
-				cmdHandler = notify.NewCommandHandler(notifyDeps.TelegramBot, settingsStore, tasksStore, accountStore)
-				notifyDeps.CommandHandler = cmdHandler
-				// 兜底新建时补上 cleanup 回调（否则 STRM 清理确认按钮无响应）
-				if ch := handler.SharedCleanupHandler(); ch != nil {
-					cmdHandler.SetCleanupCallbackHandler(ch)
+		go func() {
+			// Telegram 初始化/自动轮询放入独立 goroutine：本机/内网若连不通
+			// api.telegram.org，deleteWebhook / setMyCommands / GetUpdatesChan 的
+			// 网络拨号会拖住主流程，导致 server.Run 迟迟不执行 server.Start()，
+			// 最终 http://localhost:8090 打不开。异步化后 Web 服务立即可用。
+			tg := initSettings.Telegram
+			if tg.Enabled && tg.AutoPolling && tg.BotToken != "" && notifyDeps.TelegramBot != nil {
+				// Webhook 与轮询互斥：有 webhook 配置但也开了 AutoPolling 时，优先按用户勾选走轮询
+				if tg.WebhookURL != "" {
+					logger.S().Infof("[Telegram] AutoPolling 已启用，忽略 WebhookURL 配置")
 				}
-			}
-
-			// 3.5) 注册 Bot 命令菜单（SetMyCommands）— 让 /start /help 等出现在 Bot 菜单
-			{
-				regCtx, regCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if err := notifyDeps.TelegramBot.SetMyCommands(regCtx, cmdHandler.BotCommandList()); err != nil {
-					logger.S().Warnf("[Telegram] SetMyCommands 失败: %v", err)
-				} else {
-					logger.S().Infof("[Telegram] Bot 命令菜单已注册（%d 个命令）", len(cmdHandler.BotCommandList()))
+				// 1) 确保删除 webhook（轮询与 webhook 互斥）
+				delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := notifyDeps.TelegramBot.DeleteWebhook(delCtx); err != nil {
+					logger.S().Warnf("[Telegram] AutoPolling deleteWebhook (may be none): %v", err)
 				}
-				regCancel()
-			}
+				delCancel()
 
-			// 4) 启动轮询：将 update 分发给 CommandHandler
-			handlerFn := func(ctx context.Context, update notify.Update) error {
+				// 2) 确保 PollingManager 已创建（启动时 tgBot != nil 时 initPhase6Deps 已创建，但兜底）
+				pollingMgr := notifyDeps.PollingManager
+				if pollingMgr == nil {
+					pollingMgr = notify.NewPollingManager(notifyDeps.TelegramBot)
+					notifyDeps.PollingManager = pollingMgr
+				}
+				// 3) 确保 CommandHandler 已创建（兜底）
+				cmdHandler := notifyDeps.CommandHandler
 				if cmdHandler == nil {
+					cmdHandler = notify.NewCommandHandler(notifyDeps.TelegramBot, settingsStore, tasksStore, accountStore)
+					notifyDeps.CommandHandler = cmdHandler
+					// 兜底新建时补上 cleanup 回调（否则 STRM 清理确认按钮无响应）
+					if ch := handler.SharedCleanupHandler(); ch != nil {
+						cmdHandler.SetCleanupCallbackHandler(ch)
+					}
+				}
+
+				// 3.5) 注册 Bot 命令菜单（SetMyCommands）— 让 /start /help 等出现在 Bot 菜单
+				{
+					regCtx, regCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					if err := notifyDeps.TelegramBot.SetMyCommands(regCtx, cmdHandler.BotCommandList()); err != nil {
+						logger.S().Warnf("[Telegram] SetMyCommands 失败: %v", err)
+					} else {
+						logger.S().Infof("[Telegram] Bot 命令菜单已注册（%d 个命令）", len(cmdHandler.BotCommandList()))
+					}
+					regCancel()
+				}
+
+				// 4) 启动轮询：将 update 分发给 CommandHandler
+				handlerFn := func(ctx context.Context, update notify.Update) error {
+					if cmdHandler == nil {
+						return nil
+					}
+					if update.Message != nil {
+						return cmdHandler.HandleMessage(ctx, *update.Message)
+					}
+					if update.CallbackQuery != nil {
+						return cmdHandler.HandleCallbackQuery(ctx, *update.CallbackQuery)
+					}
 					return nil
 				}
-				if update.Message != nil {
-					return cmdHandler.HandleMessage(ctx, *update.Message)
+				if err := pollingMgr.Start(context.Background(), handlerFn); err != nil {
+					logger.S().Warnf("[Telegram] AutoPolling 启动失败: %v", err)
+				} else {
+					logger.S().Infof("[Telegram] AutoPolling 已自动启动（GetUpdatesChan: timeout=60, limit=100）")
 				}
-				if update.CallbackQuery != nil {
-					return cmdHandler.HandleCallbackQuery(ctx, *update.CallbackQuery)
-				}
-				return nil
+			} else if tg.BotToken != "" {
+				logger.S().Infof("[Telegram] Bot 已配置，但 AutoPolling 未勾选，跳过自动轮询（可在设置中开启或通过 API /api/notify/polling 手动启动）")
 			}
-			if err := pollingMgr.Start(context.Background(), handlerFn); err != nil {
-				logger.S().Warnf("[Telegram] AutoPolling 启动失败: %v", err)
-			} else {
-				logger.S().Infof("[Telegram] AutoPolling 已自动启动（GetUpdatesChan: timeout=60, limit=100）")
-			}
-		} else if tg.BotToken != "" {
-			logger.S().Infof("[Telegram] Bot 已配置，但 AutoPolling 未勾选，跳过自动轮询（可在设置中开启或通过 API /api/notify/polling 手动启动）")
-		}
+		}()
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)

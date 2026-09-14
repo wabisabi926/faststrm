@@ -5,6 +5,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -96,7 +97,15 @@ func newBotWithProxy(botToken, chatID, proxyURL string) (*TelegramBot, error) {
 		}
 		apiBot, err = tgbotapi.NewBotAPIWithClient(botToken, tgbotapi.APIEndpoint, client)
 	} else {
-		apiBot, err = tgbotapi.NewBotAPI(botToken)
+		// 直连分支：给底层拨号加短超时（8s），避免 Telegram 不可达时 getMe/setMyCommands
+		// 在主协程长时间阻塞，拖住 Web 服务启动（http://localhost:8090 迟迟打不开）。
+		// 连接一旦建立，长轮询（getUpdates timeout=60）不受 DialContext 超时影响。
+		dialer := &net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}
+		client := &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: &http.Transport{DialContext: dialer.DialContext},
+		}
+		apiBot, err = tgbotapi.NewBotAPIWithClient(botToken, tgbotapi.APIEndpoint, client)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("init telegram bot api: %w", err)
