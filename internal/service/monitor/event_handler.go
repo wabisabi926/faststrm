@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +50,14 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		logger.S().Debugf("[Monitor] 事件类型 %d (%s) 无需处理，跳过", eventType, event.BehaviorType)
 		// 仍然视为 skipped 类（不是有效副作用），但不占 error
 		pollCountsAddSkipped(ctx, "ignore_behavior_type_"+event.BehaviorType)
+		return nil
+	}
+
+	// P3-3: 跨轮询去重（第二道防线，游标之外）：去重窗口内同一 file+type+parent 已处理过则跳过
+	// 防止同一文件在 TTL 窗口内因重复事件（或 API 重放）导致 STRM 重复创建
+	if m.dedup != nil && m.dedup.IsDuplicate(event.FileID, strconv.Itoa(eventType), event.ParentID) {
+		logger.S().Debugf("[Monitor] 事件重复(去重窗口内) type=%d file=%s 跳过", eventType, event.FileName)
+		pollCountsAddSkipped(ctx, "dedup_duplicate")
 		return nil
 	}
 
@@ -288,9 +297,15 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 	return handlerErr
 }
 
-// markDedupProcessed 标记事件为已处理（游标模式下无需标记，保留为空操作兼容调用点）
-// 游标模式（from_time + from_id）天然去重，不需要 in-memory dedup
+// markDedupProcessed 标记事件为已处理（写入 in-memory 去重器）
+// 游标模式（from_time + from_id）本身能去重，但跨轮询的重复事件（如 API 重放、
+// 同一文件短时间内多次操作）仍可能重复创建 STRM，这里用 EventDeduplicator 做第二道防线
+// 仅在事件实际生效或确定不再重试时调用
 func (m *Monitor) markDedupProcessed(event client115.LifeEventItem) {
+	if m.dedup == nil {
+		return
+	}
+	m.dedup.MarkProcessed(event.FileID, strconv.Itoa(event.Type), event.ParentID)
 }
 
 // handleStallError P0-5 处理整理队列无进展超时后的行为

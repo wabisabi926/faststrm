@@ -298,6 +298,9 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 	// 对齐参考项目：首批拉 1000 条，后续也 1000 条
 	// 使用 offset 分页，但用 from_time/from_id 过滤
 	var allFiltered []LifeEventItem
+	// P3-1: 拉取层按 file_id 去重（对齐参考项目 iter_life_behavior_once 的 seen set）
+	// 同一批次（一次 PullEvents）内同一文件只保留最新一条事件
+	seenFileID := make(map[string]bool)
 	offset := 0
 	const limit = 1000
 	// P2-1: 对齐参考项目 iter_life_behavior_once：按 count 总条数终止分页
@@ -382,6 +385,16 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 			if fromTime > 0 && etime > 0 && etime < fromTime {
 				hitOld = true
 				continue
+			}
+
+			// P3-2: 同一批次内同一 file_id 只保留最新一条（对齐参考项目 seen set）
+			if item.FileID != "" {
+				if seenFileID[item.FileID] {
+					logger.S().Debugf("[LifeClient] 同一批次重复 file_id=%s name=%s 跳过，保留最新事件",
+						item.FileID, item.FileName)
+					continue
+				}
+				seenFileID[item.FileID] = true
 			}
 
 			allFiltered = append(allFiltered, item)
