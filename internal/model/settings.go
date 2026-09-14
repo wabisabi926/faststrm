@@ -308,7 +308,7 @@ func DefaultSettings() *Settings {
 				Move:   true,
 			},
 			FirstPullMode:               "latest",
-			MoveMediaMode:               "recreate",
+			MoveMediaMode:               "local_move",
 			TransferStallTimeoutMinutes: 30,     // P0-5 默认30分钟无进展超时
 			TransferWaitMode:            "skip", // P0-5 默认跳过超时事件
 			RenameAutoRelatedFiles:      true,   // P0-6 默认自动重命名关联资源

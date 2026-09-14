@@ -27,6 +27,9 @@ func TestLifeMonitorDefaultSettings(t *testing.T) {
 	}
 
 	// P0-7 默认值
+	if lm.MoveMediaMode != "local_move" {
+		t.Fatalf("MoveMediaMode default: expected local_move, got %s", lm.MoveMediaMode)
+	}
 	if lm.MoveMediaKeepOldStrm {
 		t.Fatalf("MoveMediaKeepOldStrm default should be false")
 	}
