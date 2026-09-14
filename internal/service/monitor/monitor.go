@@ -172,8 +172,8 @@ func (m *Monitor) Start(ctx context.Context, account string) error {
 		return fmt.Errorf("账号 %s 的监控已在运行中", account)
 	}
 
-	// 创建子 context 用于停止 goroutine
-	accCtx, cancel := context.WithCancel(ctx)
+	// 创建独立 context 用于停止 goroutine（不继承请求 ctx，避免 HTTP 请求结束后 context 被取消）
+	accCtx, cancel := context.WithCancel(context.Background())
 
 	// 初始化 API 限流器
 	var rateLimiter *client115.APIRateLimiter
