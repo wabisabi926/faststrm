@@ -363,8 +363,8 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 		return fmt.Errorf("生活事件未开启或 cookie 失效: %w", err)
 	}
 
-	// 测试拉取事件
-	events, err := lifeClient.PullEvents(ctx, account, 0, 0)
+	// 测试拉取事件：限制近1小时窗口，避免移除分页上限后拉取全部历史
+	events, err := lifeClient.PullEvents(ctx, account, time.Now().Unix()-3600, 0)
 	if err != nil {
 		m.markCookiePotentiallyInvalid(account, err)
 		return fmt.Errorf("拉取事件失败: %w", err)

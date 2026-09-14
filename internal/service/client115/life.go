@@ -300,7 +300,9 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 	var allFiltered []LifeEventItem
 	offset := 0
 	const limit = 1000
-	maxPages := 10 // 安全限制，避免无限拉取
+	// P2-1: 对齐参考项目 iter_life_behavior_once：按 count 总条数终止分页
+	// 仅保留软上限（maxPages=100）防止异常响应导致无限拉取，不再固定只拉 10 页
+	const maxPages = 100
 
 	for page := 0; page < maxPages; page++ {
 		endpoint := fmt.Sprintf(
@@ -390,12 +392,16 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 			break
 		}
 
+		// P2-2: 对齐参考项目 iter_life_behavior_once：offset 达到 count 总条数即终止
+		offset += len(resp.Data.List)
+		if total := parseCountInt(resp.Data.Count); total > 0 && offset >= total {
+			break
+		}
+
 		// 没有下一页，停止
 		if !parseNextPage(resp.Data.NextPage) {
 			break
 		}
-
-		offset += len(resp.Data.List)
 	}
 
 	_ = account
@@ -418,6 +424,26 @@ func parseNextPage(v any) bool {
 		return val == "1" || val == "true" || val == "True"
 	default:
 		return false
+	}
+}
+
+// parseCountInt 灵活解析 count 字段（API 可能返回 number/string）
+func parseCountInt(v any) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	case json.Number:
+		n, _ := val.Int64()
+		return int(n)
+	case string:
+		n, _ := strconv.Atoi(val)
+		return n
+	default:
+		return 0
 	}
 }
 
