@@ -66,6 +66,9 @@ Emby 服务器地址: http://192.168.1.10:8097
 |-----|------|
 | `POST /Items/{id}/PlaybackInfo` | **拦截** — STRM 源强制 DirectPlay，缓存 MediaSourceId |
 | `GET /MediaStream/{id}.{container}` | **302 重定向** — 返回 STRM 文件 URL，交由 `/api/strm` 处理 |
+| `GET /videos/{id}/stream`（Static=true） | **302 重定向** — 直链播放（MKV / MP4 等普通格式） |
+| `GET /videos/{id}/{name}`、`/items/{id}/download`、`/sync/jobitems/{id}/file` | **流拦截** — VIP 原盘 / 特殊格式 / 下载类请求走代理流 |
+| **ISO / BDMV / M2TS / TS 原盘** | **代理流播放（200/206）** — v1.3.2 起走字节 Range 代理，可正常拖动进度，不再 302 后失效 |
 | 其他所有 Emby API | **原样透传** — 登录、刮削、通知、管理等完全不受影响 |
 
 ### 日志验证
