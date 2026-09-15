@@ -22,12 +22,15 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	pathpkg "path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -85,6 +88,88 @@ var hopByHopHeaders = map[string]bool{
 	"trailers":            true,
 	"transfer-encoding":   true,
 	"upgrade":             true,
+}
+
+// ============================================================
+// crossOrigin 拦截（对齐 MoviePilot embyreverseproxy）
+// 浏览器播放器对 302 直链（跨域 CDN）默认 crossorigin="anonymous"，
+// 会触发 CORS 预检，而 115 CDN 无 CORS 响应头 → 播放失败。
+// 以下脚本/正则将 HTMLMediaElement.crossOrigin 恒置为 null，避免预检。
+// ============================================================
+
+const crossOriginInterceptMarker = "[EmbyReverseProxy] crossOrigin"
+
+// crossOriginInterceptScript 注入 Emby Web 的 HTML 拦截脚本
+const crossOriginInterceptScript = `<script>
+(function(){
+  // [EmbyReverseProxy] crossOrigin 拦截器 — 302 直链播放避免 CORS
+  try {
+    Object.defineProperty(HTMLMediaElement.prototype,'crossOrigin',{
+      get:function(){return null},
+      set:function(){},
+      configurable:true
+    });
+  } catch(e){}
+  try {
+    var ob=new MutationObserver(function(ms){
+      ms.forEach(function(m){
+        if(m.type==='attributes'&&m.attributeName==='crossorigin'){
+          m.target.removeAttribute('crossorigin');
+        }
+        if(m.type==='childList'){
+          m.addedNodes.forEach(function(n){
+            if(n.nodeType===1&&(n.tagName==='VIDEO'||n.tagName==='AUDIO')){
+              n.removeAttribute('crossorigin');
+            }
+          });
+        }
+      });
+    });
+    if(document.documentElement){
+      ob.observe(document.documentElement,{attributes:true,attributeFilter:['crossorigin'],childList:true,subtree:true});
+    } else {
+      document.addEventListener('DOMContentLoaded',function(){
+        ob.observe(document.documentElement,{attributes:true,attributeFilter:['crossorigin'],childList:true,subtree:true});
+      });
+    }
+  } catch(e){}
+})();
+</script>`
+
+// crossOriginValueRE 匹配 basehtmlplayer.js 中 getCrossOriginValue 的三元表达式：
+//   IsRemote && "DirectPlay" === ... ? null : "anonymous"
+// 命中后替换为 null（即恒不设置 crossorigin）
+var crossOriginValueRE = regexp.MustCompile(`\w+\.IsRemote\s*&&\s*"DirectPlay"\s*===\s*\w+\s*\?\s*null\s*:\s*"anonymous"`)
+
+// pluginCrossOriginRE 匹配 plugin.js 中 `&&(elem.crossOrigin=...)` 赋值，整体删除
+var pluginCrossOriginRE = regexp.MustCompile(`&&\(\w+\.crossOrigin=\w+\)`)
+
+// pluginCrossOriginPatternRE 匹配 plugin.js 中字幕流 crossOrigin 赋值，整体删除
+var pluginCrossOriginPatternRE = regexp.MustCompile(`&&\s*\(elem\.crossOrigin\s*=\s*initialSubtitleStream\)`)
+
+// ============================================================
+// 流请求拦截面（对齐 MoviePilot MEDIA_ROUTES）
+// ============================================================
+
+// nonMediaNames 与媒体流无关的 name 段，命中则不做流拦截（避免误劫持 API）
+var nonMediaNames = map[string]bool{
+	"additionalparts": true,
+	"subtitles":       true,
+	"similar":         true,
+	"thememedia":      true,
+	"themevideos":     true,
+	"themesongs":      true,
+	"specialfeatures": true,
+	"linkeditems":     true,
+}
+
+// mediaRoutePatterns MEDIA_ROUTES 的通用正则，命中返回 itemID（组 1）
+// 覆盖 /videos/{id}/{name}、/audio/{id}/{name}（含 /emby/ 前缀）、
+// /items/{id}/download|file、/sync/jobitems/{id}/file
+var mediaRoutePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^/(?:emby/)?(?:audio|videos)/([^/]+)/[^/]+$`),
+	regexp.MustCompile(`^/(?:emby/)?items/([^/]+)/(?:download|file)$`),
+	regexp.MustCompile(`^/(?:emby/)?sync/jobitems/([^/]+)/file$`),
 }
 
 // ============================================================
@@ -265,13 +350,34 @@ func (p *Proxy) Handler() http.Handler {
 	}
 
 	// 媒体流路径走 HandleMediaStream（查缓存/解析重定向链 → 302），其余透传反代
+	// 分发顺序：JS 修补（crossOrigin）→ 媒体流拦截 → HTML 注入（crossOrigin）→ 透传
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 只拦截我们生成的直链流请求（/videos/{id}/stream 或 /audio/{id}/stream 且 Static=true）。
-		// 其余 /videos、/audio 请求（非 Static 的动态转码 URL 等）透传给上游 Emby。
-		if isStaticDirectStream(r.URL.Path, r) {
+		path := r.URL.Path
+
+		// 1. htmlvideoplayer JS 修补（crossOrigin 拦截，/emby/web/ 与 /web/ 两种挂载）
+		if isPatchedJSPath(path) {
+			p.servePatchedJS(w, r)
+			return
+		}
+
+		// 2. 媒体流拦截：
+		//    a) 反代自己生成的直链流请求（/videos/{id}/stream 或 /audio/{id}/stream 且 Static=true）
+		//    b) MEDIA_ROUTES 通用格式（/videos/{id}/{name}、/items/{id}/download|file 等）
+		if isStaticDirectStream(path, r) {
 			p.HandleMediaStream(w, r)
 			return
 		}
+		if _, ok := matchMediaRoute(path); ok {
+			p.HandleMediaStream(w, r)
+			return
+		}
+
+		// 3. 可能返回 Emby Web HTML 壳的 GET 请求：整包拉取并注入 crossOrigin 拦截脚本
+		if r.Method == http.MethodGet && mayReturnEmbyHTMLShell(path) {
+			p.serveHTMLInjected(w, r)
+			return
+		}
+
 		proxy.ServeHTTP(w, r)
 	})
 }
@@ -328,7 +434,12 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 			path, _ := ms["Path"].(string)
 			if sid != "" && strings.HasPrefix(path, "http") {
 				container, _ := ms["Container"].(string)
-				name, _ := ms["Name"].(string)
+				// 文件名优先从 STRM URL 解析（对齐 STRM 层 pickOneFileName 兜底逻辑），
+				// 避免 Emby Name 字段不带扩展名导致 ISO seek 判断失效
+				name := resolveFileNameFromStrmURL(path)
+				if name == "" {
+					name, _ = ms["Name"].(string)
+				}
 				strmMap[sid] = strmSourceMeta{path: path, container: container, name: name}
 			}
 		}
@@ -349,7 +460,10 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 					continue
 				}
 				container, _ := ms["Container"].(string)
-				name, _ := ms["Name"].(string)
+				name := resolveFileNameFromStrmURL(path)
+				if name == "" {
+					name, _ = ms["Name"].(string)
+				}
 				strmMap[sid] = strmSourceMeta{path: path, container: container, name: name}
 			}
 		}
@@ -495,6 +609,256 @@ var seekRequiredExts = map[string]bool{
 	".bup":  true,
 }
 
+// resolveFileNameFromStrmURL 从 STRM URL 解析文件名，对齐 STRM 层 pickOneFileName 兜底逻辑：
+//  1. URL query 参数 file_name（最权威，115 保存时的原始文件名）
+//  2. URL path 末段（需含 "." 扩展名才返回，避免 hash 式无意义字符串）
+//
+// 用途：Emby PlaybackInfo 的 Name 字段经常不带扩展名（如 "movie"），
+// 而 ISO/原盘 seek 判断依赖扩展名，故优先从这里解析。
+func resolveFileNameFromStrmURL(strmURL string) string {
+	if strmURL == "" {
+		return ""
+	}
+	u, err := url.Parse(strmURL)
+	if err != nil {
+		return ""
+	}
+	if q := u.Query().Get("file_name"); q != "" {
+		return strm.ResolveFileName(q)
+	}
+	name := pathpkg.Base(u.Path)
+	if name == "." || name == "/" || name == "" {
+		return ""
+	}
+	if decoded, derr := url.PathUnescape(name); derr == nil && decoded != "" {
+		name = decoded
+	}
+	// 末段需含 "." 扩展名，避免 115 CDN 那种 hash 型 path 段被误当文件名
+	if idx := strings.LastIndexByte(name, '.'); idx > 0 && idx < len(name)-1 {
+		return strm.ResolveFileName(name)
+	}
+	return ""
+}
+
+// ============================================================
+// crossOrigin 拦截：HTML 注入 + htmlvideoplayer JS 修补
+// 对齐 MoviePilot embyreverseproxy _may_return_emby_html_shell /
+// _inject_scripts_into_html / _patch_basehtmlplayer_js / _patch_plugin_js
+// ============================================================
+
+// mayReturnEmbyHTMLShell 判断路径是否可能返回 Emby Web 的 HTML 壳（用于是否整包拉取并注入脚本）
+func mayReturnEmbyHTMLShell(path string) bool {
+	pl := strings.ToLower(path)
+	if strings.Contains(pl, "playbackinfo") {
+		return false
+	}
+	if path == "/" || path == "" {
+		return true
+	}
+	if strings.HasPrefix(path, "/web/") || path == "/web" {
+		return true
+	}
+	if strings.HasSuffix(path, ".html") || strings.HasSuffix(path, ".htm") {
+		return true
+	}
+	if strings.HasPrefix(path, "/emby/") || strings.HasPrefix(path, "/items/") ||
+		strings.HasPrefix(path, "/videos/") || strings.HasPrefix(path, "/audio/") ||
+		strings.HasPrefix(path, "/sync/") {
+		return false
+	}
+	last := path[strings.LastIndex(path, "/")+1:]
+	if !strings.Contains(last, ".") {
+		return true
+	}
+	return false
+}
+
+// injectScriptsIntoHTML 在 HTML 的 head 中注入 crossOrigin 拦截脚本；
+// 已注入（含 marker）则跳过；找不到 </head> 或 <head> 时返回原样。
+func injectScriptsIntoHTML(html string) string {
+	if strings.Contains(html, crossOriginInterceptMarker) {
+		return html
+	}
+	script := crossOriginInterceptScript
+	// 优先 </head>（不区分大小写）
+	lower := strings.ToLower(html)
+	if idx := strings.Index(lower, "</head>"); idx != -1 {
+		return html[:idx] + script + html[idx:]
+	}
+	// 退而找 <head...>，插入到标签结束符之后
+	if idx := strings.Index(lower, "<head"); idx != -1 {
+		if gt := strings.Index(html[idx:], ">"); gt != -1 {
+			end := idx + gt + 1
+			return html[:end] + script + html[end:]
+		}
+	}
+	return html
+}
+
+// patchBasehtmlplayerJS 修补 getCrossOriginValue 相关逻辑，使其恒返回 null（不设置 crossorigin）。
+// 精确正则未命中但含 getCrossOriginValue 时，退而将 anonymous 字符串替换为 null。
+func patchBasehtmlplayerJS(content string) string {
+	original := content
+	patched := crossOriginValueRE.ReplaceAllString(content, "null")
+	if patched != original {
+		return patched
+	}
+	if strings.Contains(original, "getCrossOriginValue") {
+		patched = strings.ReplaceAll(original, `"anonymous"`, "null")
+		patched = strings.ReplaceAll(patched, `'anonymous'`, "null")
+	}
+	return patched
+}
+
+// patchPluginJS 去除 plugin.js 中的 crossOrigin 赋值，避免 302 重定向时触发 CORS 预检
+func patchPluginJS(content string) string {
+	patched := pluginCrossOriginRE.ReplaceAllString(content, "")
+	patched = pluginCrossOriginPatternRE.ReplaceAllString(patched, "")
+	return patched
+}
+
+// isPatchedJSPath 判断是否为需要修补的 htmlvideoplayer JS 路径
+// （覆盖 /emby/web/ 与 /web/ 两种挂载的 basehtmlplayer.js / plugin.js）
+func isPatchedJSPath(path string) bool {
+	lower := strings.ToLower(path)
+	if !strings.HasSuffix(lower, "basehtmlplayer.js") && !strings.HasSuffix(lower, "plugin.js") {
+		return false
+	}
+	return strings.Contains(lower, "/htmlvideoplayer/")
+}
+
+// serveHTMLInjected 对可能返回 Emby Web HTML 壳的 GET 请求整包拉取，
+// 注入 crossOrigin 拦截脚本后再返回；body 变化时剥离校验头并禁用缓存。
+func (p *Proxy) serveHTMLInjected(w http.ResponseWriter, r *http.Request) {
+	target := p.embyHost + r.URL.Path
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	req.Header = r.Header.Clone()
+	req.Header.Del("Host")
+	// 去掉 Accept-Encoding，确保上游返回未压缩内容以便修改 body
+	req.Header.Del("Accept-Encoding")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		logger.S().Warnf("[EmbyProxy] HTML 注入: 上游请求失败: %v", err)
+		http.Error(w, fmt.Sprintf("Emby Error: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	out := body
+	injected := false
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if resp.StatusCode == http.StatusOK && strings.Contains(ct, "text/html") {
+		html := string(body)
+		if newHTML := injectScriptsIntoHTML(html); newHTML != html {
+			out = []byte(newHTML)
+			injected = true
+			logger.S().Infof("[EmbyProxy] 已在 HTML 注入 crossOrigin 脚本: path=%s", r.URL.Path)
+		}
+	}
+
+	for k, vv := range resp.Header {
+		lk := strings.ToLower(k)
+		if hopByHopHeaders[lk] || lk == "content-encoding" || lk == "content-length" {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	if injected {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		w.Header().Del("ETag")
+		w.Header().Del("Last-Modified")
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(out)
+}
+
+// servePatchedJS 拦截 htmlvideoplayer 的 basehtmlplayer.js / plugin.js 并修补后返回
+func (p *Proxy) servePatchedJS(w http.ResponseWriter, r *http.Request) {
+	target := p.embyHost + r.URL.Path
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	req.Header = r.Header.Clone()
+	req.Header.Del("Host")
+	req.Header.Del("Accept-Encoding")
+
+	resp, err := p.followRedirectClient.Do(req)
+	if err != nil {
+		logger.S().Warnf("[EmbyProxy] JS 修补: 上游请求失败: %v", err)
+		http.Error(w, fmt.Sprintf("Emby Error: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// 非 200 透传原样
+	if resp.StatusCode != http.StatusOK {
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+		return
+	}
+
+	original := string(body)
+	var patched string
+	if strings.HasSuffix(r.URL.Path, "basehtmlplayer.js") {
+		patched = patchBasehtmlplayerJS(original)
+	} else {
+		patched = patchPluginJS(original)
+	}
+
+	for k, vv := range resp.Header {
+		lk := strings.ToLower(k)
+		if hopByHopHeaders[lk] || lk == "content-encoding" || lk == "content-length" {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	if patched != original {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		logger.S().Infof("[EmbyProxy] 已修补 JS: path=%s", r.URL.Path)
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(patched))
+}
+
 // isSeekRequiredFormat 判断 STRM 源是否需要代理流（而非 302）。
 // 依据：Emby 的 Container 字段，或文件名扩展名。
 func isSeekRequiredFormat(container, name string) bool {
@@ -594,16 +958,30 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 
 	// 1b. strmSourcesCache — PlaybackInfo 阶段缓存的 STRM 源元数据
 	meta := strmSourceMeta{}
-	if itemID != "" && sourceID != "" {
+	if itemID != "" {
 		if strmEntry, ok := p.getCachedStrmSources(itemID); ok {
-			if m, ok2 := strmEntry.sources[sourceID]; ok2 {
-				meta = m
-				logger.S().Debugf("[EmbyProxy] strmSourcesCache 命中: item=%s source=%s", itemID, sourceID)
+			if sourceID != "" {
+				if m, ok2 := strmEntry.sources[sourceID]; ok2 {
+					meta = m
+					logger.S().Debugf("[EmbyProxy] strmSourcesCache 命中: item=%s source=%s", itemID, sourceID)
+				}
+			} else if len(strmEntry.sources) > 0 {
+				// sourceID 为空（如 /videos/{id}/{name} 直链请求）→ 任取一个 STRM 源
+				for _, m := range strmEntry.sources {
+					meta = m
+					break
+				}
+				logger.S().Debugf("[EmbyProxy] strmSourcesCache 命中(任选源): item=%s", itemID)
 			}
 		}
 	}
 
-	// 没拿到 STRM URL → 透传到 Emby
+	// 没拿到 STRM URL → 实时 POST PlaybackInfo 查询兜底（对齐参考项目实时查询逻辑）
+	if meta.path == "" {
+		meta = p.fetchPlaybackInfoFallback(r.Context(), r, itemID, sourceID)
+	}
+
+	// 仍拿不到 → 透传到 Emby
 	if meta.path == "" {
 		p.passthroughToEmby(w, r)
 		return
@@ -880,6 +1258,134 @@ func (p *Proxy) getUserForPlayback(r *http.Request, itemID string) string {
 // ============================================================
 // 辅助函数
 // ============================================================
+
+// matchMediaRoute 匹配 MEDIA_ROUTES 通用格式，命中返回 (itemID, true)。
+// - /stream 后缀由 isStaticDirectStream 分支管辖（需 Static=true），这里不重复拦截，
+//   避免非 Static 的转码 URL（浏览器转码等）被误劫持
+// - name 段命中 nonMediaNames（如 subtitles/similar）则视为 API 而非媒体流，不拦截
+func matchMediaRoute(path string) (string, bool) {
+	lower := strings.ToLower(path)
+	if strings.HasSuffix(lower, "/stream") {
+		return "", false
+	}
+	for _, re := range mediaRoutePatterns {
+		m := re.FindStringSubmatch(lower)
+		if m == nil {
+			continue
+		}
+		segs := strings.Split(strings.TrimRight(lower, "/"), "/")
+		last := segs[len(segs)-1]
+		if nonMediaNames[last] {
+			return "", false
+		}
+		return m[1], true
+	}
+	return "", false
+}
+
+// isHTTPPath 判断是否为 http/https 直链（STRM 源被 Emby 解析后的形态）
+func isHTTPPath(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// extractAPIKey 从请求头提取 Emby API Key：
+// 优先 X-Emby-Token，其次 Authorization: MediaBrowser Token="xxx" / Token="xxx"
+func extractAPIKey(r *http.Request) string {
+	if tk := strings.TrimSpace(r.Header.Get("X-Emby-Token")); tk != "" {
+		return tk
+	}
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return ""
+	}
+	if idx := strings.Index(auth, "Token="); idx != -1 {
+		tk := auth[idx+len("Token="):]
+		return strings.Trim(tk, `"' `)
+	}
+	return ""
+}
+
+// fetchPlaybackInfoFallback 缓存 miss 时实时 POST PlaybackInfo 查询兜底。
+// 对齐参考项目：POST {emby_host}/Items/{itemID}/PlaybackInfo?X-Emby-Token={api_key}（timeout 10s），
+// 遍历 MediaSources 优先 sid 精确匹配；sourceID 为空或未匹配时取第一个 HTTP 源。
+func (p *Proxy) fetchPlaybackInfoFallback(ctx context.Context, r *http.Request, itemID, sourceID string) strmSourceMeta {
+	if itemID == "" {
+		return strmSourceMeta{}
+	}
+	apiKey := extractAPIKey(r)
+	apiURL := fmt.Sprintf("%s/Items/%s/PlaybackInfo?X-Emby-Token=%s",
+		p.embyHost, url.PathEscape(itemID), url.QueryEscape(apiKey))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, nil)
+	if err != nil {
+		return strmSourceMeta{}
+	}
+	if apiKey != "" {
+		req.Header.Set("X-Emby-Token", apiKey)
+	}
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.S().Warnf("[EmbyProxy] 实时 PlaybackInfo 查询失败: item=%s err=%v", itemID, err)
+		return strmSourceMeta{}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return strmSourceMeta{}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return strmSourceMeta{}
+	}
+	var data struct {
+		MediaSources []struct {
+			Id        string `json:"Id"`
+			Path      string `json:"Path"`
+			Container string `json:"Container"`
+			Name      string `json:"Name"`
+		} `json:"MediaSources"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return strmSourceMeta{}
+	}
+
+	buildMeta := func(ms struct {
+		Id        string `json:"Id"`
+		Path      string `json:"Path"`
+		Container string `json:"Container"`
+		Name      string `json:"Name"`
+	}) strmSourceMeta {
+		meta := strmSourceMeta{path: ms.Path, container: ms.Container}
+		meta.name = resolveFileNameFromStrmURL(ms.Path)
+		if meta.name == "" {
+			meta.name = ms.Name
+		}
+		return meta
+	}
+
+	// 优先 sid 精确匹配
+	for _, ms := range data.MediaSources {
+		if !isHTTPPath(ms.Path) {
+			continue
+		}
+		if sourceID != "" && ms.Id != "" && ms.Id == sourceID {
+			logger.S().Infof("[EmbyProxy] 实时 PlaybackInfo 命中: item=%s source=%s", itemID, sourceID)
+			return buildMeta(ms)
+		}
+	}
+	// sourceID 为空或未精确匹配 → 取第一个 HTTP 源
+	for _, ms := range data.MediaSources {
+		if isHTTPPath(ms.Path) {
+			logger.S().Infof("[EmbyProxy] 实时 PlaybackInfo 命中(任选源): item=%s", itemID)
+			return buildMeta(ms)
+		}
+	}
+	return strmSourceMeta{}
+}
 
 // isStaticDirectStream 判断是否为反代自己生成的直链流请求（/videos/ 或 /audio/ 且 Static=true）
 func isStaticDirectStream(path string, r *http.Request) bool {

@@ -3,9 +3,12 @@ package embyproxy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -306,7 +309,7 @@ func TestPlaybackInfo_CacheThenStream(t *testing.T) {
 	strmRoot := mockStrmSrc(t, strmEdge.URL+"/edge.iso")
 	defer strmRoot.Close()
 
-	strmURL := strmRoot.URL + "/电影.iso"
+	strmURL := strmRoot.URL + "/电影.mkv"
 	expectedFinal := strmFinal.URL + "/final.iso"
 	body := buildStrmPlaybackInfoResp(strmURL, "src1")
 
@@ -358,7 +361,7 @@ func TestPlaybackInfo_NoDoubleEncoding(t *testing.T) {
 	strmSrc := mockStrmSrc(t, "")
 	defer strmSrc.Close()
 
-	strmURL := strmSrc.URL + "/api/fs/get?account=%E4%B8%BB%E5%8F%B7&pickcode=csv7hspymtny3dm22&file_name=%E6%9D%9C%E6%AF%94%E8%A7%86%E7%95%8C%20FEL.iso"
+	strmURL := strmSrc.URL + "/api/fs/get?account=%E4%B8%BB%E5%8F%B7&pickcode=csv7hspymtny3dm22&file_name=%E6%9D%9C%E6%AF%94%E8%A7%86%E7%95%8C%20FEL.mkv"
 	body := buildStrmPlaybackInfoResp(strmURL, "src1")
 
 	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1003,7 +1006,7 @@ func TestPlaybackInfo_HttpPathButNotRemote(t *testing.T) {
 func TestHandler_OnlyInterceptStaticStreams(t *testing.T) {
 	strmSrc := mockStrmSrc(t, "")
 	defer strmSrc.Close()
-	strmURL := strmSrc.URL + "/video.iso"
+	strmURL := strmSrc.URL + "/video.mkv"
 	body := buildStrmPlaybackInfoResp(strmURL, "src1")
 
 	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1092,7 +1095,7 @@ func TestResolveRedirectChain_HTTPError(t *testing.T) {
 func TestHandleMediaStream_POSTMethod(t *testing.T) {
 	strmSrc := mockStrmSrc(t, "")
 	defer strmSrc.Close()
-	strmURL := strmSrc.URL + "/video.iso"
+	strmURL := strmSrc.URL + "/video.mkv"
 	body := buildStrmPlaybackInfoResp(strmURL, "src1")
 
 	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1251,4 +1254,496 @@ func itoa(i int) string {
 		buf[pos] = '-'
 	}
 	return string(buf[pos:])
+}
+
+// ================================================================
+// 修复1：resolveFileNameFromStrmURL — seek 判断信息来源（对齐 pickOneFileName）
+// ================================================================
+
+func TestResolveFileNameFromStrmURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		strmURL string
+		want    string
+	}{
+		{"空串", "", ""},
+		{"file_name_query", "http://115/api/video?file_name=%E9%98%BF%E4%BF%AE%E7%BD%97.iso&a=1", "阿修罗.iso"},
+		{"path_with_ext", "http://host/视频/我的电影.BDMV", "我的电影.BDMV"},
+		{"path_with_iso", "http://host/foo/movie.iso", "movie.iso"},
+		{"path_no_ext_hash", "http://host/09f8a1c2be34d556", ""},
+		{"path_empty_seg", "http://host/", ""},
+	}
+	for _, c := range cases {
+		if got := resolveFileNameFromStrmURL(c.strmURL); got != c.want {
+			t.Errorf("%s: resolveFileNameFromStrmURL(%q) = %q, want %q", c.name, c.strmURL, got, c.want)
+		}
+	}
+	t.Logf("✅ resolveFileNameFromStrmURL 矩阵通过")
+}
+
+// 修复1 验收：STRM URL 的 .iso 能被解析出扩展名 → isSeekRequiredFormat=true
+func TestIsSeekRequiredFormat_StrmURL(t *testing.T) {
+	strmURL := "http://host/原盘/movie.iso"
+	name := resolveFileNameFromStrmURL(strmURL)
+	if name != "movie.iso" {
+		t.Fatalf("resolveFileNameFromStrmURL(%q) = %q, want movie.iso", strmURL, name)
+	}
+	if !isSeekRequiredFormat("", name) {
+		t.Error("name 带 .iso 应识别为 seek 格式")
+	}
+	if isSeekRequiredFormat("", "") {
+		t.Error("空 name 不应识别为 seek 格式")
+	}
+	t.Logf("✅ 修复1：ISO seek 判断来源验证通过")
+}
+
+// ================================================================
+// 修复2：crossOrigin 拦截（mayReturnEmbyHTMLShell / injectScriptsIntoHTML / JS 修补）
+// ================================================================
+
+func TestMayReturnEmbyHTMLShell(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/", true},
+		{"", true},
+		{"/web", true},
+		{"/web/index.html", true},
+		{"/index.html", true},
+		{"/some/page.htm", true},
+		{"/items/123", false},
+		{"/videos/123/x.mkv", false},
+		{"/audio/123/x.flac", false},
+		{"/emby/items", false},
+		{"/sync/movies", false},
+		{"/items/123/PlaybackInfo", false},
+		{"/api/v1/ping", true}, // 末段无 "." 视为可能 HTML 壳
+	}
+	for _, c := range cases {
+		if got := mayReturnEmbyHTMLShell(c.path); got != c.want {
+			t.Errorf("mayReturnEmbyHTMLShell(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+	t.Logf("✅ mayReturnEmbyHTMLShell 矩阵通过")
+}
+
+func TestInjectScriptsIntoHTML(t *testing.T) {
+	t.Run("注入到head结束前", func(t *testing.T) {
+		html := "<html><head><title>x</title></head><body></body></html>"
+		out := injectScriptsIntoHTML(html)
+		if !strings.Contains(out, crossOriginInterceptMarker) {
+			t.Fatal("应注入 marker 脚本")
+		}
+		if strings.Index(out, "</head>") >= 0 && !strings.Contains(out, crossOriginInterceptMarker+crossOriginInterceptMarker) {
+			// marker 应在 </head> 之前
+			if strings.Index(out, crossOriginInterceptMarker) > strings.Index(out, "</head>") {
+				t.Error("脚本应注入在 </head> 之前")
+			}
+		}
+	})
+	t.Run("只有head开标签", func(t *testing.T) {
+		html := "<html><head><title>x</title><body></body></html>"
+		out := injectScriptsIntoHTML(html)
+		if !strings.Contains(out, crossOriginInterceptMarker) {
+			t.Fatal("应在 <head...> 之后注入")
+		}
+	})
+	t.Run("无head返回原样", func(t *testing.T) {
+		html := "<html>Emby Web</html>"
+		if out := injectScriptsIntoHTML(html); out != html {
+			t.Error("无 head 应返回原样")
+		}
+	})
+	t.Run("已注入跳过", func(t *testing.T) {
+		html := crossOriginInterceptMarker
+		if out := injectScriptsIntoHTML(html); out != html {
+			t.Error("已含 marker 应跳过")
+		}
+	})
+	t.Logf("✅ injectScriptsIntoHTML 矩阵通过")
+}
+
+func TestPatchBasehtmlplayerJS(t *testing.T) {
+	t.Run("三元表达式精确命中", func(t *testing.T) {
+		src := `var v = getCrossOriginValue() || (player.IsRemote && "DirectPlay" === playMethod ? null : "anonymous");`
+		out := patchBasehtmlplayerJS(src)
+		if strings.Contains(out, `"anonymous"`) {
+			t.Error("精确命中时应整体替换为 null，不残留 anonymous")
+		}
+	})
+	t.Run("getCrossOriginValue兑底anonymous替换", func(t *testing.T) {
+		src := `var v = "anonymous";`
+		if !strings.Contains(src, "getCrossOriginValue") {
+			src = `function getCrossOriginValue(){return "anonymous";}`
+		}
+		out := patchBasehtmlplayerJS(src)
+		if strings.Contains(out, `"anonymous"`) {
+			t.Error("getCrossOriginValue 分支应替换 anonymous 为 null")
+		}
+	})
+	t.Run("无匹配原样", func(t *testing.T) {
+		src := `var a=1;`
+		if out := patchBasehtmlplayerJS(src); out != src {
+			t.Error("无匹配应返回原样")
+		}
+	})
+	t.Logf("✅ patchBasehtmlplayerJS 矩阵通过")
+}
+
+func TestPatchPluginJS(t *testing.T) {
+	t.Run("crossOrigin赋值被清除", func(t *testing.T) {
+		src := `if(a)&&(elem.crossOrigin=value);`
+		out := patchPluginJS(src)
+		if strings.Contains(out, "elem.crossOrigin=") && strings.Contains(src, "elem.crossOrigin=") {
+			if out == src {
+				t.Error("pluginCrossOriginRE 未清除 crossOrigin 赋值")
+			}
+		}
+	})
+	t.Run("字幕流crossOrigin被清除", func(t *testing.T) {
+		src := `&& (elem.crossOrigin = initialSubtitleStream)`
+		out := patchPluginJS(src)
+		if out == src {
+			t.Error("pluginCrossOriginPatternRE 未清除字幕流 crossOrigin")
+		}
+	})
+	t.Logf("✅ patchPluginJS 矩阵通过")
+}
+
+func TestIsPatchedJSPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/emby/web/modules/htmlvideoplayer/basehtmlplayer.js", true},
+		{"/web/modules/htmlvideoplayer/plugin.js", true},
+		{"/emby/web/scripts/player.js", false},
+		{"/basehtmlplayer.js", false},
+		{"/emby/web/modules/htmlvideoplayer/plugin.min.js", false},
+	}
+	for _, c := range cases {
+		if got := isPatchedJSPath(c.path); got != c.want {
+			t.Errorf("isPatchedJSPath(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+	t.Logf("✅ isPatchedJSPath 矩阵通过")
+}
+
+// ================================================================
+// 修复4：matchMediaRoute — MEDIA_ROUTES 通用拦截面
+// ================================================================
+
+func TestMatchMediaRoute(t *testing.T) {
+	cases := []struct {
+		path   string
+		want   string
+		ok     bool
+	}{
+		{"/videos/123/movie.mkv", "123", true},
+		{"/video", "", false},
+		{"/emby/videos/123/movie.mkv", "123", true},
+		{"/audio/456/song.flac", "456", true},
+		{"/emby/items/789/download", "789", true},
+		{"/items/789/file", "789", true},
+		{"/sync/jobitems/111/file", "111", true},
+		{"/emby/sync/jobitems/222/file", "222", true},
+		{"/videos/123/subtitles", "", false}, // nonMediaNames
+		{"/videos/123/stream", "", false},    // /stream 由 isStaticDirectStream 管辖
+	}
+	for _, c := range cases {
+		id, ok := matchMediaRoute(c.path)
+		if ok != c.ok || id != c.want {
+			t.Errorf("matchMediaRoute(%q) = (%q,%v), want (%q,%v)", c.path, id, ok, c.want, c.ok)
+		}
+	}
+	t.Logf("✅ matchMediaRoute 矩阵通过")
+}
+
+func TestExtractAPIKey(t *testing.T) {
+	cases := []struct {
+		name string
+		auth string
+		tok  string
+		want string
+	}{
+		{"X-Emby-Token优先", "", "abc123", "abc123"},
+		{"Authorization带引号", `MediaBrowser Token="key-123"`, "", "key-123"},
+		{"Authorization无引号", `MediaBrowser Token=key-456`, "", "key-456"},
+		{"空缺省", "", "", ""},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest("GET", "http://x/", nil)
+		if c.tok != "" {
+			req.Header.Set("X-Emby-Token", c.tok)
+		}
+		if c.auth != "" {
+			req.Header.Set("Authorization", c.auth)
+		}
+		if got := extractAPIKey(req); got != c.want {
+			t.Errorf("%s: extractAPIKey = %q, want %q", c.name, got, c.want)
+		}
+	}
+	t.Logf("✅ extractAPIKey 矩阵通过")
+}
+
+// ================================================================
+// 修复2/3/4 端到端：Handler 分支（HTML 注入 / JS 修补 / MEDIA_ROUTES 拦截 / 实时兜底）
+// ================================================================
+
+// customEmby 返回带 </head> 的 HTML 壳 + htmlvideoplayer JS + 可搜索媒体
+func customEmby(t *testing.T, htmlBody, baseJS, pluginJS string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "basehtmlplayer.js"):
+			w.Header().Set("Content-Type", "application/javascript")
+			_, _ = w.Write([]byte(baseJS))
+		case strings.HasSuffix(r.URL.Path, "plugin.js"):
+			w.Header().Set("Content-Type", "application/javascript")
+			_, _ = w.Write([]byte(pluginJS))
+		case strings.HasSuffix(r.URL.Path, "/stream"):
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("stream-video"))
+		case r.URL.Path == "/Items/999/PlaybackInfo":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"MediaSources":[{"Id":"ms-1","Path":"` + htmlBody + `","Container":"mkv","Name":"real.mkv"}]}`))
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<html><head><title>t</title>` + `</head><body>` + htmlBody + `</body></html>`))
+		}
+	})
+	return httptest.NewServer(mux)
+}
+
+func TestHandler_EndToEnd(t *testing.T) {
+	t.Run("html_injection", func(t *testing.T) {
+		emby := customEmby(t, "Emby Web Body", "//basejs", "//pluginjs")
+		defer emby.Close()
+
+		proxy, _ := New(emby.URL)
+		req := httptest.NewRequest("GET", emby.URL+"/web/index.html", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+
+		body := rr.Body.String()
+		if !strings.Contains(body, crossOriginInterceptMarker) {
+			t.Error("HTML 响应应注入 crossOrigin 脚本")
+		}
+		if !strings.Contains(body, "Emby Web Body") {
+			t.Error("应保留原页面内容")
+		}
+		if cc := rr.Header().Get("Cache-Control"); !strings.Contains(cc, "no-cache") {
+			t.Error("注入后应禁用缓存，got Cache-Control =", cc)
+		}
+	})
+
+	t.Run("basehtmlplayer_js_patch", func(t *testing.T) {
+		baseJS := `var v = (player.IsRemote && "DirectPlay" === playMethod ? null : "anonymous");`
+		emby := customEmby(t, "Emby Web Body", baseJS, "//pluginjs")
+		defer emby.Close()
+
+		proxy, _ := New(emby.URL)
+		req := httptest.NewRequest("GET", emby.URL+"/emby/web/modules/htmlvideoplayer/basehtmlplayer.js", nil)
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+
+		body := rr.Body.String()
+		if strings.Contains(body, `"anonymous"`) {
+			t.Error("basehtmlplayer.js 中 anonymous 应被替换为 null")
+		}
+	})
+
+	t.Run("plugin_js_patch", func(t *testing.T) {
+		pluginJS := `if(a)&&(elem.crossOrigin=value);&& (elem.crossOrigin = initialSubtitleStream)`
+		emby := customEmby(t, "Emby Web Body", "//basejs", pluginJS)
+		defer emby.Close()
+
+		proxy, _ := New(emby.URL)
+		req := httptest.NewRequest("GET", emby.URL+"/web/modules/htmlvideoplayer/plugin.js", nil)
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+
+		body := rr.Body.String()
+		if strings.Contains(body, "elem.crossOrigin=") {
+			t.Error("plugin.js 中 crossOrigin 赋值应被清除")
+		}
+	})
+
+	t.Run("media_route_intercept", func(t *testing.T) {
+		emby := customEmby(t, "http://strm.internal/movie.mkv", "//basejs", "//pluginjs")
+		defer emby.Close()
+		_ = emby.URL
+
+		// 用 mockStrmSrc 作为 STRM 源，确保 302 链路走通
+		strmSrc := mockStrmSrc(t, "")
+		defer strmSrc.Close()
+		strmURL := strmSrc.URL + "/原盘/movie.iso"
+
+		videoEmby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(buildStrmPlaybackInfoResp(strmURL, "src1"))
+		})
+		defer videoEmby.Close()
+
+		proxy, _ := New(videoEmby.URL)
+		// 先 POST PlaybackInfo 填充缓存
+		pireq := httptest.NewRequest("POST", videoEmby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
+		pirr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(pirr, pireq)
+
+		// /videos/{id}/{name} 应走 HandleMediaStream（302 到 STRM，而非 302 到 Emby）
+		req := httptest.NewRequest("GET", videoEmby.URL+"/videos/123/movie.mkv", nil)
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+
+		// STRM URL 带 .iso，修复1 后应被 seek 代理流识别 → 返回 200 且内容来自 strmSrc
+		if rr.Code != http.StatusOK {
+			t.Fatalf("media route 应被流拦截，code=%d", rr.Code)
+		}
+	})
+}
+
+// ================================================================
+// ISO 播放链路端到端验证（修复1）：ISO 必须走 seek 代理流（200/206）
+// 而非 302，且 Range 请求透传到 STRM 端点、内容正确
+// ================================================================
+
+// isoStrmSrc 模拟 115 ISO STRM 端点：返回固定流数据，并支持 Range（206）
+func isoStrmSrc(t *testing.T, content []byte) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/iso")
+		rng := r.Header.Get("Range")
+		if rng == "" {
+			w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(content)
+			return
+		}
+		// 解析 bytes=start- 或 bytes=start-end
+		if !strings.HasPrefix(rng, "bytes=") {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		spec := strings.TrimPrefix(rng, "bytes=")
+		parts := strings.SplitN(spec, "-", 2)
+		start, err := strconv.Atoi(parts[0])
+		if err != nil || start < 0 || start >= len(content) {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		end := len(content) - 1
+		if len(parts) == 2 && parts[1] != "" {
+			if e, eerr := strconv.Atoi(parts[1]); eerr == nil && e < len(content) {
+				end = e
+			}
+		}
+		if start > end {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		chunk := content[start : end+1]
+		w.Header().Set("Content-Length", strconv.Itoa(len(chunk)))
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(content)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(chunk)
+	})
+	return httptest.NewServer(mux)
+}
+
+func TestISOPlayback_EndToEnd(t *testing.T) {
+	content := []byte("ISO-BASE-STREAM-DATA-0123456789ABCDEF")
+	isoSrc := isoStrmSrc(t, content)
+	defer isoSrc.Close()
+
+	// STRM 源 URL 带 .iso 扩展名（115 ISO 保存名）
+	strmURL := isoSrc.URL + "/原盘/阿凡达双碟.iso"
+	body := buildStrmPlaybackInfoResp(strmURL, "iso-src-1")
+
+	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+	defer emby.Close()
+
+	proxy, _ := New(emby.URL)
+
+	// 1. POST PlaybackInfo → 缓存 STRM 源元数据（meta.name 由修复1 从 STRM URL 解析出 .iso）
+	piReq := httptest.NewRequest("POST", emby.URL+"/Items/888/PlaybackInfo", strings.NewReader("{}"))
+	piRR := httptest.NewRecorder()
+	proxy.Handler().ServeHTTP(piRR, piReq)
+	if piRR.Code != http.StatusOK {
+		t.Fatalf("PlaybackInfo 应 200，got %d", piRR.Code)
+	}
+
+	// 2. 无 Range 完整请求：ISO 走 seek 代理流 → 200 + 内容来自 STRM 端点（而非 302）
+	t.Run("no_range_proxy_stream", func(t *testing.T) {
+		req := httptest.NewRequest("GET", emby.URL+"/videos/888/movie.iso", nil)
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("ISO 应走 seek 代理流返回 200，got %d (若是 302 说明修复1 未生效)", rr.Code)
+		}
+		if rr.Body.String() != string(content) {
+			t.Errorf("ISO 代理流内容应等于 STRM 源内容，got %q", rr.Body.String())
+		}
+	})
+
+	// 3. 带 Range 的 seek 请求：ISO 应透传 Range 给 STRM 端点 → 206 + 局部内容
+	t.Run("range_seek_proxy_stream", func(t *testing.T) {
+		req := httptest.NewRequest("GET", emby.URL+"/videos/888/movie.iso", nil)
+		req.Header.Set("Range", "bytes=5-14")
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusPartialContent {
+			t.Fatalf("Range 请求应返回 206，got %d", rr.Code)
+		}
+		want := string(content[5:15])
+		if got := rr.Body.String(); got != want {
+			t.Errorf("206 内容应等于 STRM 局部数据 %q，got %q", want, got)
+		}
+		if cr := rr.Header().Get("Content-Range"); cr == "" {
+			t.Error("206 响应应透传 Content-Range")
+		}
+	})
+
+	// 4. 对比：.mkv（非 seek 格式）仍走 302 重定向链
+	t.Run("mkv_stays_302", func(t *testing.T) {
+		strmMkv := isoSrc.URL + "/电影/普通.mkv"
+		mkvBody := buildStrmPlaybackInfoResp(strmMkv, "mkv-src-1")
+		embyMkv := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(mkvBody)
+		})
+		defer embyMkv.Close()
+
+		proxyMkv, _ := New(embyMkv.URL)
+		piReq := httptest.NewRequest("POST", embyMkv.URL+"/Items/999/PlaybackInfo", strings.NewReader("{}"))
+		piRR := httptest.NewRecorder()
+		proxyMkv.Handler().ServeHTTP(piRR, piReq)
+
+		req := httptest.NewRequest("GET", embyMkv.URL+"/videos/999/movie.mkv", nil)
+		rr := httptest.NewRecorder()
+		proxyMkv.Handler().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusFound {
+			t.Fatalf("mkv 应走 302 重定向，got %d", rr.Code)
+		}
+		// Location 头对中文路径会做 percent 编码，这里解码后比较
+		loc := rr.Header().Get("Location")
+		if unescaped, uerr := url.QueryUnescape(loc); uerr == nil {
+			loc = unescaped
+		}
+		if loc != strmMkv {
+			t.Errorf("302 Location 应等于 STRM 源 %q，got %q", strmMkv, loc)
+		}
+	})
+
+	t.Logf("✅ ISO 播放链路端到端验证通过：ISO 走 seek 代理流(200/206)且 Range 透传，mkv 仍走 302")
 }
