@@ -137,7 +137,9 @@ const crossOriginInterceptScript = `<script>
 </script>`
 
 // crossOriginValueRE 匹配 basehtmlplayer.js 中 getCrossOriginValue 的三元表达式：
-//   IsRemote && "DirectPlay" === ... ? null : "anonymous"
+//
+//	IsRemote && "DirectPlay" === ... ? null : "anonymous"
+//
 // 命中后替换为 null（即恒不设置 crossorigin）
 var crossOriginValueRE = regexp.MustCompile(`\w+\.IsRemote\s*&&\s*"DirectPlay"\s*===\s*\w+\s*\?\s*null\s*:\s*"anonymous"`)
 
@@ -1260,9 +1262,9 @@ func (p *Proxy) getUserForPlayback(r *http.Request, itemID string) string {
 // ============================================================
 
 // matchMediaRoute 匹配 MEDIA_ROUTES 通用格式，命中返回 (itemID, true)。
-// - /stream 后缀由 isStaticDirectStream 分支管辖（需 Static=true），这里不重复拦截，
-//   避免非 Static 的转码 URL（浏览器转码等）被误劫持
-// - name 段命中 nonMediaNames（如 subtitles/similar）则视为 API 而非媒体流，不拦截
+//   - /stream 后缀由 isStaticDirectStream 分支管辖（需 Static=true），这里不重复拦截，
+//     避免非 Static 的转码 URL（浏览器转码等）被误劫持
+//   - name 段命中 nonMediaNames（如 subtitles/similar）则视为 API 而非媒体流，不拦截
 func matchMediaRoute(path string) (string, bool) {
 	lower := strings.ToLower(path)
 	if strings.HasSuffix(lower, "/stream") {

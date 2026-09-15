@@ -1436,9 +1436,9 @@ func TestIsPatchedJSPath(t *testing.T) {
 
 func TestMatchMediaRoute(t *testing.T) {
 	cases := []struct {
-		path   string
-		want   string
-		ok     bool
+		path string
+		want string
+		ok   bool
 	}{
 		{"/videos/123/movie.mkv", "123", true},
 		{"/video", "", false},
