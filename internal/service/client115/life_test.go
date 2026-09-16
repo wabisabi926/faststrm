@@ -148,6 +148,60 @@ func TestGetPickCodeByFileID_HTTPError(t *testing.T) {
 	}
 }
 
+// ==================== ResolvePath（对齐参考项目：按 file_category 分流） ====================
+
+// 文件事件(parent_id=0 + file_category!=0)：绝不把 file_id 当文件夹 cid 调 medialist，
+// 直接兜底返回裸文件名。empty trips 意味着任何请求都会 t.Errorf。
+func TestResolvePath_FileEvent_NoMedialist(t *testing.T) {
+	lc := newLifeClientWithTrips(t, nil) // 不允许任何网络请求
+	got := lc.ResolvePath(context.Background(), "0", "100001", "movie.mkv", 1)
+	if got != "/movie.mkv" {
+		t.Fatalf("want /movie.mkv, got %q", got)
+	}
+}
+
+// 文件夹事件(parent_id=0 + file_category==0)：file_id 是合法文件夹 cid，可用它反查祖先链。
+func TestResolvePath_FolderEvent_UsesFileIDAsCid(t *testing.T) {
+	var medialistCalled bool
+	lc := newLifeClientWithTrips(t, []*mockTrip{{
+		Path:       "/files/medialist",
+		Query:      map[string]string{"cid": "888"},
+		BodyString: `{"state":true,"ancestors":[{"id":1,"name":"根目录","parent_id":0},{"id":777,"name":"电影","parent_id":1}]}`,
+		called:     &medialistCalled,
+	}})
+	got := lc.ResolvePath(context.Background(), "0", "888", "新文件夹", 0)
+	if !medialistCalled {
+		t.Fatal("medialist should be called for folder event file_id-as-cid")
+	}
+	if got != "电影/新文件夹" {
+		t.Fatalf("want 电影/新文件夹, got %q", got)
+	}
+}
+
+// 文件事件(parent_id 合法)：与参考项目一致走 parentID 反查父目录，不触发 file_id 反查。
+func TestResolvePath_FileEvent_WithParentID(t *testing.T) {
+	var medialistCalled bool
+	lc := newLifeClientWithTrips(t, []*mockTrip{{
+		Path:       "/files/medialist",
+		Query:      map[string]string{"cid": "555"},
+		BodyString: `{"state":true,"ancestors":[{"id":1,"name":"根目录","parent_id":0},{"id":777,"name":"电影","parent_id":1}]}`,
+		called:     &medialistCalled,
+	}})
+	// fsClient 用于 ResolveDirPath 在父目录(777)中列目录取文件夹 555 的自身名
+	lc.fsClient = newMockClient(t, []*mockTrip{{
+		Path:       "/files",
+		Query:      map[string]string{"cid": "777"},
+		BodyString: `{"state":true,"data":[{"fid":0,"cid":555,"n":"动作片","fc":0}]}`,
+	}})
+	got := lc.ResolvePath(context.Background(), "555", "100001", "movie.mkv", 1)
+	if !medialistCalled {
+		t.Fatal("medialist should be called for parentID resolution")
+	}
+	if got != "电影/动作片/movie.mkv" {
+		t.Fatalf("want 电影/动作片/movie.mkv, got %q", got)
+	}
+}
+
 // ==================== PullEvents ====================
 
 func TestPullEvents_EmptyCookie(t *testing.T) {

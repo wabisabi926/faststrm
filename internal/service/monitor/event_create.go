@@ -399,6 +399,11 @@ func (m *Monitor) handleCreateFolderRecursive(
 			}
 			if strmPath != "" {
 				totalCreated++
+				// P3-4: 该内部文件已由文件夹递归生成 STRM，注入意图抑制标记，
+				// 抑制后续到达的同文件独立 create 事件（防同一文件 STRM 重复生成）
+				if m.intent != nil {
+					m.intent.Mark(fmt.Sprintf("%v", entry.FID))
+				}
 			}
 		}
 		if len(resp.Data) < pageLimit {

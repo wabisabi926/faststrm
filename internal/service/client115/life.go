@@ -847,14 +847,15 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 
 // ResolvePath 通过 parent_id + file_name 解析文件/文件夹在云端的完整路径
 //
-// 修复点（关键）：115 生活事件 parent_id 字段经常不可靠（几乎全部为 0），
-// 之前 parentID=0 时直接 return "/fileName" 导致路径缺少「电影/」等父级前缀。
-// 现改为多级回退：
+// 对齐参考项目（MoviePilot-Plugins/p115strmhelper）：严格按 file_category 分流，
+// 绝不在文件事件中用 file_id 当文件夹 cid 去反查祖先链（medialist 只认文件夹 cid）：
 //
-//  1. parentID 合法（非空非0）→ 走 ResolveDirPath(parentID) + "/" + fileName（原有逻辑）
-//  2. parentID 无效但 fileID 有值 → 调 ResolvePathByFileID(fileID, fileName) 用 file_id 自身查祖先链
+//  1. parentID 合法（非空非0）→ 走 ResolveDirPath(parentID) + "/" + fileName（文件/文件夹通用）
+//  2. 仅「文件夹事件」（fileCategory==0，此时 file_id 才是合法的文件夹 cid）
+//     才允许用 ResolvePathByFileID(fileID, fileName) 反查祖先链；
+//     文件事件（file_category!=0）绝不把 file_id 当 cid，跳到兜底
 //  3. 全部失败 → 返回裸文件名 "/" + fileName（保留最后一个可选项，由调用方根据 mapping 判断是否有效）
-func (c *LifeClient) ResolvePath(ctx context.Context, parentID, fileID, fileName string) string {
+func (c *LifeClient) ResolvePath(ctx context.Context, parentID, fileID, fileName string, fileCategory int) string {
 	fileName = strings.TrimSpace(fileName)
 	if fileName == "" {
 		return ""
@@ -862,6 +863,7 @@ func (c *LifeClient) ResolvePath(ctx context.Context, parentID, fileID, fileName
 
 	parentID = strings.TrimSpace(parentID)
 	fileID = strings.TrimSpace(fileID)
+	isFolder := (fileCategory == 0) // 对齐参考项目：file_category==0 才是文件夹
 
 	// 情况 1：parentID 看起来合法，走原 ResolveDirPath(parentID)
 	if parentID != "" && parentID != "0" {
@@ -873,11 +875,11 @@ func (c *LifeClient) ResolvePath(ctx context.Context, parentID, fileID, fileName
 			logger.S().Warnf("[LifeClient] ResolvePath via parentID 降级: parentID=%s fid=%s name=%s: %v",
 				parentID, fileID, fileName, err)
 		}
-		// 失败时 fallback 到 file_id 祖先链（继续往下）
+		// 失败时继续往下
 	}
 
-	// 情况 2：parentID=0/无效 或上面失败 → 用 file_id 自身查祖先链
-	if fileID != "" && fileID != "0" {
+	// 情况 2：仅文件夹事件才允许用 file_id 当文件夹 cid 反查祖先链
+	if isFolder && fileID != "" && fileID != "0" {
 		if byFid := c.ResolvePathByFileID(ctx, fileID, fileName); byFid != "" {
 			return byFid
 		}

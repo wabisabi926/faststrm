@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -22,6 +23,14 @@ const (
 	MaxRecursionDepth = 10
 	// MaxFolderFiles 单个文件夹处理的最大文件数
 	MaxFolderFiles = 1000
+	// 云路径来源标记（供日志/决策可读性）
+	srcEventRaw   = "EVENT_RAW"
+	srcDB         = "DB"
+	srcDBRejected = "DB_SINGLE_REJECTED" // DB 有记录但仅单段+未命中根映射，强制丢弃重查
+	srcAPIPID     = "API_PARENT_ID"
+	srcAPIFID     = "API_FILE_ID"
+	srcAPIRootLs  = "API_ROOT_FSLIST"
+	srcFallback   = "BARE_FILENAME"
 )
 
 // ==================== pathMapping ====================
@@ -61,26 +70,22 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		return nil
 	}
 
+	// P3-4: 文件夹递归意图互斥（对齐参考项目 creata_pan_transfer_list）：
+	// 该 fileID 刚由 handleCreateFolderRecursive 递归生成过 STRM，命中则跳过同批重复的文件级 create 事件。
+	// 一次性消费：命中即移除，避免长期抑制后续真实发生的新 create。
+	if client115.CreateEventTypes[eventType] && m.intent != nil && m.intent.Consume(event.FileID) {
+		logger.S().Debugf("[Monitor] file 已由文件夹递归处理，跳过重复 create type=%d file=%s", eventType, event.FileName)
+		pollCountsAddSkipped(ctx, "suppress_foldered_create")
+		m.markDedupProcessed(event)
+		return nil
+	}
+
 	// 解析云端路径（四级回退，对齐参考项目策略）
 	//  0) event.FilePath（极少由 API 直接填充）
 	//  1) DB getByID(file_id) → path（参考项目首选，避免对每个事件打祖先链 API）
 	//     - 但 DB path 如果是 SINGLE_SEG（不含"/"）且非根目录级映射命中，视为历史脏数据（旧错误写入），丢弃
 	//  2) lifeClient.ResolvePath：parentID 合法→ResolveDirPath(parentID)；否则用 file_id 自身查祖先链
 	//     - ResolvePath 内部仍有 祖先链→根目录列目录→二级目录列目录→ResolveDirPath 四级降级
-	const (
-		srcEventRaw   = "EVENT_RAW"
-		srcDB         = "DB"
-		srcDBRejected = "DB_SINGLE_REJECTED" // DB 有记录但仅单段+未命中根映射，强制丢弃重查
-		srcAPIPID     = "API_PARENT_ID"
-		srcAPIFID     = "API_FILE_ID"
-		srcAPIRootLs  = "API_ROOT_FSLIST"
-		srcFallback   = "BARE_FILENAME"
-	)
-	_ = srcAPIPID
-	_ = srcAPIFID
-	_ = srcAPIRootLs
-	_ = srcFallback
-
 	rawCloudPath := event.FilePath
 	source := srcEventRaw
 
@@ -91,42 +96,20 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 	isRenameOrMove := client115.RenameEventTypes[eventType] || client115.MoveEventTypes[eventType]
 
 	if !isRenameOrMove && strings.TrimSpace(rawCloudPath) == "" && m.sqliteDB != nil && strings.TrimSpace(event.FileID) != "" {
-		// P0-2: 同时查 files 和 folders 表（对齐参考项目 get_by_id 统一查询）
-		if entry, err := db.GetFileOrFolderEntry(m.sqliteDB, account, event.FileID); err == nil && entry != nil && entry.Path != "" {
-			// 判断 DB 路径可信度：
-			//   - MULTI_SEG（含"/"）→ 信任
-			//   - SINGLE_SEG 但 mapping 中存在 "该路径本身即为 CloudPrefix"（如 "电影"）→ 信任（new_folder type=17 常见）
-			//   - 否则 → 历史脏数据（旧版 parent_id=0 直写），丢弃后强制走 API
-			np := normalizeCloudPath(entry.Path)
-			trustDB := strings.Contains(np, "/")
-			if !trustDB {
-				// 检查该单段是否就是映射前缀（即确为根目录下一级文件夹）
-				for _, mm := range config.PathMappings {
-					mp := normalizeCloudPath(mm.CloudPath)
-					if mm.Account != "" && !strings.EqualFold(strings.TrimSpace(mm.Account), strings.TrimSpace(account)) {
-						continue
-					}
-					if mp == np && mp != "" {
-						trustDB = true
-						break
-					}
-				}
-			}
-			if trustDB {
-				rawCloudPath = entry.Path
-				source = srcDB
-				logger.S().Debugf("[Monitor] 路径DB反查: fileID=%s name=%s → %s (src=DB_TRUSTED)",
-					event.FileID, event.FileName, rawCloudPath)
-			} else {
-				source = srcDBRejected
-				logger.S().Infof("[Monitor] 路径DB反查拒绝(单段脏数据): fileID=%s name=%s dbPath=%s → 将强制走API解析",
-					event.FileID, event.FileName, entry.Path)
+		// P0-2: 按 fileID 反查 DB 缓存路径（方案 B / 对齐参考 `_get_path_by_cid` 的 FileDbHelper 缓存）。
+		// 文件事件 parent_id=0 时，只要该文件之前经文件夹递归/事件落盘，即可从 files 表取回完整云路径，
+		// 避免退化成裸文件名导致 no_path_mapping 跳过。
+		if path, src := m.resolveCloudPathFromDB(account, event, config); src != "" {
+			source = src
+			if src == srcDB {
+				rawCloudPath = path
 			}
 		}
 	}
 	if strings.TrimSpace(rawCloudPath) == "" && lifeClient != nil {
-		// 走 API：ResolvePath(parentID, fileID, fileName)，内部对 parent_id=0 会用 file_id 祖先链降级
-		rawCloudPath = lifeClient.ResolvePath(ctx, event.ParentID, event.FileID, event.FileName)
+		// 走 API：ResolvePath(parentID, fileID, fileName, fileCategory)
+		// 仅文件夹事件(file_category==0)才对 file_id=0 用 file_id 祖先链降级；文件事件只认 parent_id
+		rawCloudPath = lifeClient.ResolvePath(ctx, event.ParentID, event.FileID, event.FileName, event.FileCategory)
 		// 根据结果进一步推断来源（为了 EVENT_DECIDE 可读）
 		if rawCloudPath != "" {
 			np := normalizeCloudPath(rawCloudPath)
@@ -306,6 +289,49 @@ func (m *Monitor) markDedupProcessed(event client115.LifeEventItem) {
 		return
 	}
 	m.dedup.MarkProcessed(event.FileID, strconv.Itoa(event.Type), event.ParentID)
+}
+
+// resolveCloudPathFromDB 按 fileID 反查 DB 缓存路径（方案 B）。
+// 对齐参考项目 `_get_path_by_cid` 的 FileDbHelper 缓存：文件事件 parent_id=0 时，
+// 只要该文件之前经文件夹递归/事件落盘，就能从 files/folders 表取回完整云路径，
+// 避免退化成裸文件名导致 no_path_mapping 跳过。
+//
+// 返回 (路径, source)：
+//   - DB 未命中                        → ("", "")            （保持源来源不变，转 API）
+//   - 命中且路径可信（多段 / 或等于映射前缀）→ (path, srcDB)    （直接使用缓存路径）
+//   - 命中但属单段脏数据（非映射前缀）    → ("", srcDBRejected)  （丢弃，强制走 API）
+func (m *Monitor) resolveCloudPathFromDB(account string, event client115.LifeEventItem, config model.LifeMonitorSettings) (string, string) {
+	// 同时查 files 和 folders 表（对齐参考项目 get_by_id 统一查询）
+	entry, err := db.GetFileOrFolderEntry(m.sqliteDB, account, event.FileID)
+	if err != nil || entry == nil || entry.Path == "" {
+		return "", ""
+	}
+	// 判断 DB 路径可信度：
+	//   - MULTI_SEG（含"/"）→ 信任
+	//   - SINGLE_SEG 但 mapping 中存在 "该路径本身即为 CloudPrefix"（如 "电影"）→ 信任（new_folder type=17 常见）
+	//   - 否则 → 历史脏数据（旧版 parent_id=0 直写），丢弃后强制走 API
+	np := normalizeCloudPath(entry.Path)
+	trustDB := strings.Contains(np, "/")
+	if !trustDB {
+		for _, mm := range config.PathMappings {
+			mp := normalizeCloudPath(mm.CloudPath)
+			if mm.Account != "" && !strings.EqualFold(strings.TrimSpace(mm.Account), strings.TrimSpace(account)) {
+				continue
+			}
+			if mp == np && mp != "" {
+				trustDB = true
+				break
+			}
+		}
+	}
+	if trustDB {
+		logger.S().Debugf("[Monitor] 路径DB反查: fileID=%s name=%s → %s (src=DB_TRUSTED)",
+			event.FileID, event.FileName, entry.Path)
+		return entry.Path, srcDB
+	}
+	logger.S().Infof("[Monitor] 路径DB反查拒绝(单段脏数据): fileID=%s name=%s dbPath=%s → 将强制走API解析",
+		event.FileID, event.FileName, entry.Path)
+	return "", srcDBRejected
 }
 
 // handleStallError P0-5 处理整理队列无进展超时后的行为

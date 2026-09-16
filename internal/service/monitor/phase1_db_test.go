@@ -128,7 +128,7 @@ func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 
 	// 构造一个最小可工作的 假 LifeClient（ResolvePath 返回已知路径）
 	lifeClient := &stubLifeResolver{
-		resolveFn: func(parentID, fileID, fileName string) string {
+		resolveFn: func(parentID, fileID, fileName string, fileCategory int) string {
 			// type=17：父目录为根 parent_id=0，新建目录名 "新文件夹"
 			return "电影/新文件夹"
 		},
@@ -147,7 +147,7 @@ func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 		PickCode:     "",
 	}
 	// 模拟 processEvent 内部的 Write-Ahead + type=17 分支：
-	cloudPath := lifeClient.ResolvePath(context.TODO(), event.ParentID, event.FileID, event.FileName)
+	cloudPath := lifeClient.ResolvePath(context.TODO(), event.ParentID, event.FileID, event.FileName, event.FileCategory)
 	decision, _ := mon.makeWriteAheadDecision_ForTest(ctx, "acc1", event, cloudPath, cfg)
 	_ = decision
 	// 必须是 new_folder 类型
@@ -217,12 +217,12 @@ func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 // ======================================================================
 
 type stubLifeResolver struct {
-	resolveFn func(parentID, fileID, fileName string) string
+	resolveFn func(parentID, fileID, fileName string, fileCategory int) string
 }
 
-func (s *stubLifeResolver) ResolvePath(_ context.Context, parentID, fileID, fileName string) string {
+func (s *stubLifeResolver) ResolvePath(_ context.Context, parentID, fileID, fileName string, fileCategory int) string {
 	if s.resolveFn != nil {
-		return s.resolveFn(parentID, fileID, fileName)
+		return s.resolveFn(parentID, fileID, fileName, fileCategory)
 	}
 	return ""
 }

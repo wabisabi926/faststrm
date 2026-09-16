@@ -91,6 +91,7 @@ type Monitor struct {
 	notifier         Notifier
 	accountReader    AccountReader
 	dedup            *EventDeduplicator       // 事件去重器
+	intent           *intentSuppressor        // P3-4 文件夹递归意图互斥（防重复 create）
 	embyRefresh      *emby.MediaServerRefresh // Emby 媒体库刷库服务
 	notifyMerger     *NotifyMerger            // P2-8 通知合并器
 	mu               sync.RWMutex
@@ -140,6 +141,7 @@ func NewMonitor(
 		notifier:         notifier,
 		accountReader:    accountReader,
 		dedup:            dedup,
+		intent:           newIntentSuppressor(6 * time.Hour),
 		embyRefresh:      embyRefresh,
 		notifyMerger:     NewNotifyMerger(notifier),
 	}
