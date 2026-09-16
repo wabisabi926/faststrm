@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"gopkg.in/natefinch/lumberjack.v2"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -13,7 +14,17 @@ var (
 	sugar  *zap.SugaredLogger
 )
 
-// InitLogger 初始化 zap 日志
+// 滚动参数
+const (
+	// RollMaxSizeMB 单个日志文件达到该大小(MB)则触发滚动
+	RollMaxSizeMB = 50
+	// RollMaxBackups 保留的滚动备份文件数（超出则删除最旧）
+	RollMaxBackups = 5
+	// RollMaxAgeDays 滚动文件保留天数（超出则删除）
+	RollMaxAgeDays = 7
+)
+
+// InitLogger 初始化 zap 日志（文件输出接入 lumberjack 滚动，磁盘有界）
 // logDir: 日志文件目录，为空则只输出到 stdout
 func InitLogger(logDir string, level zapcore.Level) {
 	var cores []zapcore.Core
@@ -23,16 +34,20 @@ func InitLogger(logDir string, level zapcore.Level) {
 	consoleCore := zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), level)
 	cores = append(cores, consoleCore)
 
-	// 文件输出（如果指定了目录）
+	// 文件输出（如果指定了目录）：lumberjack 按大小/天数滚动并压缩，避免 app.log 无限增长
 	if logDir != "" {
 		if err := os.MkdirAll(logDir, 0755); err == nil {
 			logFile := filepath.Join(logDir, "app.log")
-			f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err == nil {
-				fileEncoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
-				fileCore := zapcore.NewCore(fileEncoder, zapcore.AddSync(f), level)
-				cores = append(cores, fileCore)
+			rotator := &lumberjack.Logger{
+				Filename:   logFile,
+				MaxSize:    RollMaxSizeMB, // MB
+				MaxBackups: RollMaxBackups,
+				MaxAge:     RollMaxAgeDays, // 天
+				Compress:   true,           // 滚动后 gzip 压缩
 			}
+			fileEncoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+			fileCore := zapcore.NewCore(fileEncoder, zapcore.AddSync(rotator), level)
+			cores = append(cores, fileCore)
 		}
 	}
 

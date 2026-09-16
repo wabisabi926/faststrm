@@ -26,6 +26,8 @@ func TestInitLogger_WithFileDir(t *testing.T) {
 	if logger == nil {
 		t.Error("logger should not be nil")
 	}
+	// lumberjack 懒创建：写入一行后才生成文件
+	L().Info("rotation smoke-test")
 	Sync()
 	// 验证日志文件已创建
 	if _, err := os.Stat(filepath.Join(dir, "app.log")); err != nil {
