@@ -73,7 +73,7 @@ func TestIntentSuppressor_StatsExcludesExpired(t *testing.T) {
 // TestIntentSuppressor_NilReceiver nil 接收者安全返回
 func TestIntentSuppressor_NilReceiver(t *testing.T) {
 	var s *intentSuppressor
-	s.Mark("1")      // 不应 panic
+	s.Mark("1") // 不应 panic
 	if s.Consume("1") {
 		t.Fatal("nil 接收者 Consume 应返回 false")
 	}
