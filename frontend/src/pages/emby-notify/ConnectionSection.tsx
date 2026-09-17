@@ -82,7 +82,7 @@ export function ConnectionSection({
             <span className="min-w-0 flex-1">
               <span className="text-sm font-medium">Emby 反向代理</span>
               <span className="block text-xs text-muted-foreground mt-0.5">
-                拦截 PlaybackInfo，强制 STRM 直接播放（ISO 原盘必须启用）
+                开启后 Emby 网页端播放 STRM 会重定向到网盘直链：禁转码、流量不走 NAS。Kodi/next-gen 直接读 STRM，无需开启
               </span>
             </span>
           </label>
