@@ -160,7 +160,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 
 		// 规则引擎：三档 finalName — URL file_name(前端最权威) > 115 API 返回的 fileName > CDN URL path
 		finalName := pickOneFileName(fileName, meta.FileName, cdnURL)
-		dr := strm.DecideRoute(r, explicitMode, routeCfg.ForceProxyUaTokens, finalName)
+		dr := strm.DecideRoute(r, explicitMode, routeCfg.ForceProxyUaTokens)
 		finalDecision := dr.Decision
 		finalReason := dr.Reason
 		var redirectCheckStatus *int

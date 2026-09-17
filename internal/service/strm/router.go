@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -383,28 +382,12 @@ func hexDigit(b byte) (int, bool) {
 
 // ==================== 路由策略：decideRoute ====================
 
-// SeekRequiredExtensions 需要 HTTP Range/Seek 的容器格式
-// 这些格式通过 302 redirect 后，客户端 Range 请求可能因 CDN UA 绑定/签名过期而失败
-// 必须走 proxy 模式保证 Range 透传
-var SeekRequiredExtensions = map[string]bool{
-	".iso":  true, // DVD/BD 原盘，Libdvd 大量 seek
-	".bdmv": true, // 蓝光原盘目录（STRM 指向 BDMV 入口）
-	".bdav": true, // 蓝光原盘（alternative）
-	".ts":   true, // MPEG-TS 直播流，Range 不稳定
-	".m2ts": true, // Blu-ray M2TS，需要 seek
-	".vob":  true, // DVD VOB
-	".ifo":  true, // DVD IFO 导航
-	".bup":  true, // DVD BUP 备份
-}
-
 // DecideRoute 根据请求上下文决策 proxy vs redirect
 // explicitMode: 仅私网生效。forceProxyUaTokens: UA 包含这些 token 时强制代理
-// fileName: 文件名，用于识别需要 seek 的格式强制 proxy
 func DecideRoute(
 	r *http.Request,
 	explicitMode string,
 	forceProxyUaTokens []string,
-	fileName string,
 ) DecisionResult {
 	// 1) 手动指定优先级最高
 	switch explicitMode {
@@ -416,24 +399,15 @@ func DecideRoute(
 
 	ua := r.Header.Get("user-agent")
 
-	// 2) seek 坑客户端 → 强制代理（Infuse/VidHub/SenPlayer…）
+	// 2) 坑客户端（Infuse/VidHub/SenPlayer…）→ 强制代理
 	for _, tok := range forceProxyUaTokens {
 		if tok != "" && strings.Contains(ua, tok) {
 			return DecisionResult{Decision: DecisionProxy, Reason: "force_proxy_ua:" + tok}
 		}
 	}
 
-	// 3) 文件格式需要 Range/Seek → 强制 proxy
-	// ISO 原盘 + BDMV + M2TS + TS 等格式，Libdvd/播放器需要精确 seek
-	// 302 redirect 后客户端 Range 请求可能因 CDN UA 绑定/签名过期而被拒
-	if fileName != "" {
-		ext := strings.ToLower(filepath.Ext(fileName))
-		if SeekRequiredExtensions[ext] {
-			return DecisionResult{Decision: DecisionProxy, Reason: "seek_required:" + ext}
-		}
-	}
-
-	// 4) 默认 redirect
+	// 3) 默认 redirect（含 ISO/BDMV/M2TS/TS 等原盘格式：服务端登录态现取 → 客户端直连 115 CDN）
+	//    P3-ISO：对齐 p115strmhelper，原盘同样走 302/原生 Range，不经过自研 proxy，避免 UA/签名绑定导致 seek 失败
 	return DecisionResult{Decision: DecisionRedirect, Reason: "default_redirect"}
 }
 

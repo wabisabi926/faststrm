@@ -336,6 +336,58 @@ func TestSimpleLRU(t *testing.T) {
 	})
 }
 
+// === DecideRoute ===
+
+func TestDecideRouteP3ISO(t *testing.T) {
+	// P3-ISO：对齐 p115strmhelper，ISO/BDMV/M2TS/TS 等原盘格式默认走 redirect(302) 现取直链，
+	// 不因扩展名强制 proxy。客户端直连 115 CDN 原生 Range。
+	for _, name := range []string{"movie.iso", "BLURAY/BDMV/index.bdmv", "main.m2ts", "x.vob", "y.ts", "z.ifo"} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			res := DecideRoute(req, "", nil)
+			if res.Decision != DecisionRedirect {
+				t.Fatalf("DecideRoute(%s) = %s(%s), want redirect", name, res.Decision, res.Reason)
+			}
+		})
+	}
+}
+
+func TestDecideRouteExplicitMode(t *testing.T) {
+	t.Run("explicit proxy wins even for mkv", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		res := DecideRoute(req, "proxy", nil)
+		if res.Decision != DecisionProxy {
+			t.Fatalf("want proxy, got %s(%s)", res.Decision, res.Reason)
+		}
+	})
+
+	t.Run("explicit redirect wins even for seek UA", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		res := DecideRoute(req, "redirect", []string{"Infuse"})
+		if res.Decision != DecisionRedirect {
+			t.Fatalf("want redirect, got %s(%s)", res.Decision, res.Reason)
+		}
+	})
+}
+
+func TestDecideRouteForceProxyUA(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("user-agent", "Infuse/7.0")
+	res := DecideRoute(req, "", []string{"Infuse", "VidHub"})
+	if res.Decision != DecisionProxy {
+		t.Fatalf("want proxy for Infuse UA, got %s(%s)", res.Decision, res.Reason)
+	}
+}
+
+func TestDecideRouteDefaultRedirect(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("user-agent", "LibVLC")
+	res := DecideRoute(req, "", nil)
+	if res.Decision != DecisionRedirect {
+		t.Fatalf("want redirect, got %s(%s)", res.Decision, res.Reason)
+	}
+}
+
 // === helper ===
 
 func contains(s, substr string) bool {
