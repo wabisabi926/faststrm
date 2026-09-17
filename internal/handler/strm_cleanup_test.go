@@ -334,3 +334,23 @@ func TestCacheTTLOverride_P3(t *testing.T) {
 		t.Errorf("自定义 TTL 应小于默认 1h（语义校验）")
 	}
 }
+
+// TestCleanupStrmFileName 覆盖 cleanupStrmFileName 的换算规则（与生成侧 getStrmFileName 一致）
+func TestCleanupStrmFileName(t *testing.T) {
+	cases := []struct {
+		fileName string
+		want     string
+	}{
+		{"movie.mkv", "movie.strm"},
+		{"movie.mp4", "movie.strm"},
+		{"game.iso", "game.iso.strm"},   // ISO 保留双扩展名
+		{"big.NFO", "big.strm"},         // 大写扩展名归一化
+		{"noext", "noext.strm"},         // 无扩展名
+		{"sub/dir/movie.mkv", "sub/dir/movie.strm"},
+	}
+	for _, c := range cases {
+		if got := cleanupStrmFileName(c.fileName); got != c.want {
+			t.Errorf("cleanupStrmFileName(%q)=%q, want %q", c.fileName, got, c.want)
+		}
+	}
+}

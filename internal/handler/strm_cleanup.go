@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -362,16 +363,24 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 		return result
 	}
 
-	cloudFiles, err := listAllCloudFiles(ctx, client, cookie, cid)
-	if err != nil {
+	// 网络扫描：递归抓取云端子树，构造与本地一致的带目录相对路径后再比对，
+	// 否则带子目录的本地 strm（如 片名/电影.strm）会与扁平的云端列表对不上而被误判全部失效
+	cloudItems := make([]cloudWalkItem, 0, 32)
+	if err := walkCloudTree(ctx, client, cookie, cid, "", &cloudItems); err != nil {
 		result.Error = fmt.Sprintf("list cloud files: %v", err)
 		return result
 	}
-	result.RemoteFileCount = len(cloudFiles)
+	result.RemoteFileCount = len(cloudItems)
 
-	cloudSet := make(map[string]client115.FsFileEntry)
-	for _, f := range cloudFiles {
-		cloudSet[f.Name] = f
+	// cloudStrmSet：云端文件对应的 .strm 名集合
+	// 云端相对路径（/ 分隔）→ 按生成侧规则换 .strm → 统一为本地 OS 分隔符，
+	// 与 listLocalStrmFiles 返回的本地相对路径逐字节对齐，避免扩展名与分隔符导致误判失效
+	cloudStrmSet := make(map[string]struct{}, len(cloudItems))
+	for _, it := range cloudItems {
+		if it.IsDir {
+			continue
+		}
+		cloudStrmSet[filepath.FromSlash(cleanupStrmFileName(it.RelPath))] = struct{}{}
 	}
 
 	localSet := make(map[string]os.FileInfo)
@@ -380,7 +389,7 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 	}
 
 	for name, info := range localStrmFiles {
-		if _, exists := cloudSet[name]; !exists {
+		if _, exists := cloudStrmSet[name]; !exists {
 			content, truncated := readStrmHead(filepath.Join(m.LocalPath, name), 512)
 			result.StaleStrms = append(result.StaleStrms, StaleStrm{
 				RelPath:   name,
@@ -391,12 +400,16 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 		}
 	}
 
-	for _, cloudFile := range cloudFiles {
-		if _, exists := localSet[cloudFile.Name]; !exists && !cloudFile.IsDir {
+	for _, it := range cloudItems {
+		if it.IsDir {
+			continue
+		}
+		strmRel := filepath.FromSlash(cleanupStrmFileName(it.RelPath))
+		if _, exists := localSet[strmRel]; !exists {
 			result.MissingStrms = append(result.MissingStrms, MissingStrm{
-				RelPath:  cloudFile.Name,
-				PickCode: cloudFile.PickCode,
-				Size:     cloudFile.Size,
+				RelPath:  strmRel,
+				PickCode: it.PickCode,
+				Size:     it.Size,
 			})
 		}
 	}
@@ -598,15 +611,47 @@ func HandleStrmCleanupPreviewPOST(deps StrmCleanupDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
-func listAllCloudFiles(ctx context.Context, client *client115.Client, cookie string, cid int64) ([]client115.FsFileEntry, error) {
-	var allFiles []client115.FsFileEntry
+// cloudWalkItem 递归列云端时记录的扁平条目，带相对路径（/ 分隔）
+type cloudWalkItem struct {
+	Name     string
+	RelPath  string
+	IsDir    bool
+	PickCode string
+	Size     int64
+}
+
+// walkCloudTree 递归列出云端目录子树（从 cid 根出发），返回带目录相对路径的扁平条目。
+// 目录下钻用目录自身的 CID；相对路径统一用 / 分隔，后续比对时再转回本地 OS 分隔符。
+func walkCloudTree(ctx context.Context, client *client115.Client, cookie string, cid int64, relBase string, out *[]cloudWalkItem) error {
 	offset := 0
 	for {
-		resp, err := client.FsFiles(ctx, fmt.Sprintf("%d", cid), 1000, offset, cookie)
+		resp, err := client.FsFiles(ctx, strconv.FormatInt(cid, 10), 1000, offset, cookie)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("walk cloud dir cid=%d: %w", cid, err)
 		}
-		allFiles = append(allFiles, resp.Data...)
+		for i := range resp.Data {
+			f := resp.Data[i]
+			rel := f.Name
+			if relBase != "" {
+				rel = relBase + "/" + f.Name
+			}
+			*out = append(*out, cloudWalkItem{
+				Name:     f.Name,
+				RelPath:  rel,
+				IsDir:    f.IsDir,
+				PickCode: f.PickCode,
+				Size:     f.Size,
+			})
+			if f.IsDir {
+				subCID, ok := anyInt64(f.CID)
+				if !ok || subCID <= 0 {
+					continue
+				}
+				if err := walkCloudTree(ctx, client, cookie, subCID, rel, out); err != nil {
+					return err
+				}
+			}
+		}
 		if len(resp.Data) < 1000 {
 			break
 		}
@@ -615,7 +660,25 @@ func listAllCloudFiles(ctx context.Context, client *client115.Client, cookie str
 			break
 		}
 	}
-	return allFiles, nil
+	return nil
+}
+
+// anyInt64 将 JSON 里任意类型的 id/数字转为 int64
+func anyInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int32:
+		return int64(n), true
+	case float64:
+		return int64(n), true
+	case string:
+		i, err := strconv.ParseInt(n, 10, 64)
+		return i, err == nil
+	}
+	return 0, false
 }
 
 // relatedMediaExts P2：与 STRM 同目录的媒体关联文件扩展名集合（对齐 deleteRelatedFilesByStem 列表，额外加 .vtt）
@@ -627,6 +690,21 @@ var relatedMediaExts = map[string]bool{
 // isRelatedMediaFile 判断文件是否为关联媒体信息文件
 func isRelatedMediaFile(name string) bool {
 	return relatedMediaExts[strings.ToLower(filepath.Ext(name))]
+}
+
+// cleanupStrmFileName 将云端源文件名换算为对应的 .strm 文件名
+// 与生成侧 task.getStrmFileName 保持同一规则（.iso 保留双扩展名），
+// 保证网络扫描时"本地 .strm 是否存在对应云端文件"能正确匹配，避免误判全部失效
+func cleanupStrmFileName(fileName string) string {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if ext == "" {
+		return fileName + ".strm"
+	}
+	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	if ext == ".iso" {
+		return stem + ".iso.strm"
+	}
+	return stem + ".strm"
 }
 
 // listLocalStrmFiles 返回本地 .strm 相对路径→文件信息（保持签名不变，避免 StaleStrm/MissingStrm 匹配逻辑改动）
