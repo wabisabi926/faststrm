@@ -611,6 +611,7 @@ func HandleStrmCleanupPreviewPOST(deps StrmCleanupDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
+
 // cloudWalkItem 递归列云端时记录的扁平条目，带相对路径（/ 分隔）
 type cloudWalkItem struct {
 	Name     string

@@ -343,9 +343,9 @@ func TestCleanupStrmFileName(t *testing.T) {
 	}{
 		{"movie.mkv", "movie.strm"},
 		{"movie.mp4", "movie.strm"},
-		{"game.iso", "game.iso.strm"},   // ISO 保留双扩展名
-		{"big.NFO", "big.strm"},         // 大写扩展名归一化
-		{"noext", "noext.strm"},         // 无扩展名
+		{"game.iso", "game.iso.strm"}, // ISO 保留双扩展名
+		{"big.NFO", "big.strm"},       // 大写扩展名归一化
+		{"noext", "noext.strm"},       // 无扩展名
 		{"sub/dir/movie.mkv", "sub/dir/movie.strm"},
 	}
 	for _, c := range cases {
