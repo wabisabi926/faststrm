@@ -135,17 +135,6 @@ func (m *Monitor) createStrmForSingleFile(
 		}
 	}
 
-	// 8.5 P1-2 AutoDownloadMetadata：创建同名关联资源占位文件（.nfo/.jpg/.png/.srt 等）
-	// 占位空文件先建好目录结构/文件名对应关系，真实内容由全量扫描 runDownloads 或用户触发补齐
-	// 对齐 MoviePilot auto_download_metadata 的 create-only 模式
-	if config.AutoDownloadMetadata {
-		placeholders := createRelatedAssetPlaceholders(strmPath, in.FileName, config.DownloadExtensions)
-		if placeholders > 0 {
-			logger.S().Debugf("[Monitor] STRM 关联资源占位 %d 个 (stem=%s)", placeholders,
-				strings.TrimSuffix(filepath.Base(strmPath), ".strm"))
-		}
-	}
-
 	// 9. Emby 刷库
 	if m.embyRefresh != nil {
 		if err := m.embyRefresh.RefreshOnCreate(ctx, strmPath); err != nil {
@@ -327,6 +316,10 @@ func (m *Monitor) handleCreateFolderRecursive(
 		matcher = concurrency.NewStringMatcher(config.StrmGenerateBlacklist)
 	}
 	pageLimit := 1000
+	// 关联资源扩展名集合（生活监控 DownloadExtensions，空则继承全局默认）
+	// 对齐全量生成：视频生成 STRM，关联资源扩展名匹配则真实下载
+	downloadExts := buildDownloadExtSet(config.DownloadExtensions)
+	autoDownload := config.AutoDownloadMetadata
 
 	for offset := 0; ; offset += pageLimit {
 		select {
@@ -379,30 +372,42 @@ func (m *Monitor) handleCreateFolderRecursive(
 				}
 				continue
 			}
-			// 媒体文件：计算本地父目录并生成
+			// 非目录：计算本地相对路径，按扩展名分类处理
+			// 对齐全量生成 listAllFilesRecursive：媒体→生成 STRM；关联资源→真实下载；其它→忽略
 			relFromRoot := strings.TrimPrefix(
 				strings.TrimPrefix(entryCloudPath, rootMapping.cloudPath), "/")
 			relLocal := sanitizePathParts(relFromRoot)
 			localParentDir := filepath.Join(rootLocalPath, filepath.Dir(relLocal))
-			in := singleFileCreateInput{
-				CloudPath: entryCloudPath,
-				FileName:  entry.Name,
-				PickCode:  entry.PickCode,
-				FileSize:  entry.Size,
-				FileID:    fmt.Sprintf("%v", entry.FID),
-				ParentID:  folderID,
-			}
-			strmPath, serr := m.createStrmForSingleFile(ctx, account, in, localParentDir, "", matcher)
-			if serr != nil {
-				logger.S().Warnf("[Monitor] 文件夹内子文件生成失败 cloud=%s: %v", entryCloudPath, serr)
-				continue
-			}
-			if strmPath != "" {
-				totalCreated++
-				// P3-4: 该内部文件已由文件夹递归生成 STRM，注入意图抑制标记，
-				// 抑制后续到达的同文件独立 create 事件（防同一文件 STRM 重复生成）
-				if m.intent != nil {
-					m.intent.Mark(fmt.Sprintf("%v", entry.FID))
+
+			if isMediaFile(entry.Name, model.DefaultStrmExtensions) {
+				in := singleFileCreateInput{
+					CloudPath: entryCloudPath,
+					FileName:  entry.Name,
+					PickCode:  entry.PickCode,
+					FileSize:  entry.Size,
+					FileID:    fmt.Sprintf("%v", entry.FID),
+					ParentID:  folderID,
+				}
+				strmPath, serr := m.createStrmForSingleFile(ctx, account, in, localParentDir, "", matcher)
+				if serr != nil {
+					logger.S().Warnf("[Monitor] 文件夹内子文件生成失败 cloud=%s: %v", entryCloudPath, serr)
+					continue
+				}
+				if strmPath != "" {
+					totalCreated++
+					// P3-4: 该内部文件已由文件夹递归生成 STRM，注入意图抑制标记，
+					// 抑制后续到达的同文件独立 create 事件（防同一文件 STRM 重复生成）
+					if m.intent != nil {
+						m.intent.Mark(fmt.Sprintf("%v", entry.FID))
+					}
+				}
+			} else if autoDownload && isDownloadRelatedFile(entry.Name, downloadExts) {
+				// 关联资源（.srt/.ass/.nfo/.jpg/.png 等）：真实下载云端内容，不再创建空占位符
+				savePath := filepath.Join(rootLocalPath, relLocal)
+				if err := m.downloadRelatedFile(ctx, lifeClient, entry.PickCode, entryCloudPath, savePath); err != nil {
+					logger.S().Warnf("[Monitor] 关联资源下载失败 cloud=%s: %v", entryCloudPath, err)
+				} else {
+					logger.S().Debugf("[Monitor] 关联资源已下载: %s", savePath)
 				}
 			}
 		}

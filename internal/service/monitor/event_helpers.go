@@ -3,6 +3,8 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -492,33 +494,14 @@ func getRootDirs(mappings []model.MonitorPathMapping) map[string]bool {
 	return roots
 }
 
-// createRelatedAssetPlaceholders 在 STRM 同目录创建同名关联资源的空占位文件
-// 对齐 MoviePilot auto_download_metadata 的轻量模式：先建好 nfo/jpg/png/srt/ass/sub 空文件，
-// Emby/Jellyfin 识别为有刮削关联，真实内容由全量扫描 runDownloads 触发覆盖下载。
-// strmPath: 刚写入的 STRM 路径；originalFileName: 原始媒体文件名（用于 .iso 双扩展名判断）
-// extensions: 目标扩展名列表（带或不带 .），空则使用 model.DefaultDownloadExtensions
-// 返回：实际创建的占位文件数量
-func createRelatedAssetPlaceholders(strmPath, originalFileName string, extensions []string) int {
-	dir := filepath.Dir(strmPath)
-	base := filepath.Base(strmPath)
-	// stem: STRM 文件名去掉 .strm（例如 movie.strm -> movie, game.iso.strm -> game.iso）
-	stem := strings.TrimSuffix(base, ".strm")
-	if stem == "" {
-		return 0
-	}
-	// 媒体文件名 stem（movie.mkv -> movie），与 STRM stem 不同时（如 .iso）也作为额外匹配名
-	mediaExt := strings.ToLower(filepath.Ext(originalFileName))
-	mediaStem := strings.TrimSuffix(originalFileName, mediaExt)
-	if strings.EqualFold(mediaExt, ".iso") {
-		mediaStem = mediaStem + ".iso" // .iso 文件 mediaStem 与 STRM stem 对齐
-	}
-	// 扩展名集合（空则默认）
+// buildDownloadExtSet 规范化 DownloadExtensions 为带 "." 前缀、小写的扩展名集合
+// 空列表时回退到 model.DefaultDownloadExtensions
+func buildDownloadExtSet(extensions []string) map[string]struct{} {
 	exts := extensions
 	if len(exts) == 0 {
 		exts = model.DefaultDownloadExtensions
 	}
-	// 规范化：每个扩展名加 "." 前缀
-	normExts := make([]string, 0, len(exts))
+	set := make(map[string]struct{}, len(exts))
 	for _, e := range exts {
 		if e == "" {
 			continue
@@ -527,31 +510,84 @@ func createRelatedAssetPlaceholders(strmPath, originalFileName string, extension
 		if !strings.HasPrefix(e, ".") {
 			e = "." + e
 		}
-		normExts = append(normExts, e)
+		set[e] = struct{}{}
 	}
-	if len(normExts) == 0 {
-		return 0
+	return set
+}
+
+// isDownloadRelatedFile 判断扩展名是否属于关联资源扩展名集合
+// 对齐全量生成 listAllFilesRecursive：仅视频生成 STRM，DownloadExtensions 匹配的关联文件真实下载
+func isDownloadRelatedFile(fileName string, downloadExts map[string]struct{}) bool {
+	if len(downloadExts) == 0 {
+		return false
 	}
-	created := 0
-	// 候选 stem 去重
-	candidates := make(map[string]struct{})
-	candidates[stem] = struct{}{}
-	if mediaStem != "" && mediaStem != stem {
-		candidates[mediaStem] = struct{}{}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if ext == "" {
+		return false
 	}
-	for s := range candidates {
-		for _, ext := range normExts {
-			target := filepath.Join(dir, s+ext)
-			if _, stErr := os.Stat(target); stErr == nil {
-				continue // 已存在不覆盖（真实内容不丢失）
-			}
-			if f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644); err == nil {
-				_ = f.Close()
-				created++
-			}
-		}
+	_, ok := downloadExts[ext]
+	return ok
+}
+
+// downloadRelatedFile 真实下载 115 云端关联资源文件（.srt/.ass/.nfo/.jpg/.png 等）到 savePath
+// 对齐全量生成 runDownloads：只下载云端真实存在的文件，不再创建空占位符。
+// 先写 .tmp 再原子 rename，保证不残留半截文件；已存在的文件会被覆盖为真实内容。
+func (m *Monitor) downloadRelatedFile(
+	ctx context.Context,
+	lifeClient *client115.LifeClient,
+	pickcode, cloudPath, savePath string,
+) error {
+	if !isValidPickcode(pickcode) {
+		return fmt.Errorf("关联资源 pickcode 无效(需17位字母数字): %q cloud=%s", pickcode, cloudPath)
 	}
-	return created
+	fs := lifeClient.FsClient()
+	if fs == nil {
+		return fmt.Errorf("fsClient 未初始化")
+	}
+	meta, err := fs.GetDownloadUrlWebFull(ctx, pickcode, lifeClient.Cookie(), client115.DefaultUA)
+	if err != nil {
+		return fmt.Errorf("解析直链失败 %s: %w", cloudPath, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, meta.URL, nil)
+	if err != nil {
+		return fmt.Errorf("构造下载请求失败 %s: %w", cloudPath, err)
+	}
+	req.Header.Set("User-Agent", client115.DefaultUA)
+	req.Header.Set("Referer", "https://115.com/")
+	req.Header.Set("Origin", "https://115.com")
+	if cookie := lifeClient.Cookie(); cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("下载失败 %s: %w", cloudPath, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("下载失败 %s: http status %d", cloudPath, resp.StatusCode)
+	}
+	if err := os.MkdirAll(filepath.Dir(savePath), 0o755); err != nil {
+		return fmt.Errorf("创建目录失败 %s: %w", filepath.Dir(savePath), err)
+	}
+	tmpPath := savePath + ".tmp"
+	fp, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败 %s: %w", tmpPath, err)
+	}
+	defer func() {
+		fp.Close()
+		_ = os.Remove(tmpPath)
+	}()
+	if _, err := io.Copy(fp, resp.Body); err != nil {
+		return fmt.Errorf("写入失败 %s: %w", tmpPath, err)
+	}
+	if err := fp.Close(); err != nil {
+		return fmt.Errorf("关闭临时文件失败: %w", err)
+	}
+	if err := os.Rename(tmpPath, savePath); err != nil {
+		return fmt.Errorf("落盘失败 %s: %w", savePath, err)
+	}
+	return nil
 }
 
 // deleteRelatedFiles 删除与 STRM 同名的相关文件（.nfo/.jpg/.srt 等）

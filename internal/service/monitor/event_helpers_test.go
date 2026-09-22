@@ -136,3 +136,55 @@ func TestGenerateStrmContent_NoEnable302_Remnant(t *testing.T) {
 		t.Errorf("old non-302 path-append style detected: %s", out)
 	}
 }
+
+// ================================================================
+// 关联资源下载辅助 —— 对齐全量生成（DownloadExtensions 真实下载，不做占位符）
+// ================================================================
+
+func TestBuildDownloadExtSet(t *testing.T) {
+	// 空列表回退默认（含 .srt/.ass/.sub/.nfo/.jpg/.png）
+	set := buildDownloadExtSet(nil)
+	for _, want := range []string{".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"} {
+		if _, ok := set[want]; !ok {
+			t.Errorf("default set missing %q", want)
+		}
+	}
+	// 非空：规范化加 "." 且转小写
+	set = buildDownloadExtSet([]string{"SRT", ".ass", "nfo", ""})
+	for _, want := range []string{".srt", ".ass", ".nfo"} {
+		if _, ok := set[want]; !ok {
+			t.Errorf("custom set missing %q", want)
+		}
+	}
+	if _, ok := set["srt"]; ok {
+		t.Error("expected normalized key .srt, got bare srt")
+	}
+}
+
+func TestIsDownloadRelatedFile(t *testing.T) {
+	set := buildDownloadExtSet([]string{"srt", ".nfo", "jpg"})
+	cases := []struct {
+		name string
+		file string
+		want bool
+	}{
+		{"subtitle srt", "movie.SRT", true},
+		{"subtitle ass not in set", "movie.ass", false},
+		{"nfo", "movie.nfo", true},
+		{"jpg", "Movie.JPG", true},
+		{"video mkv not related", "movie.mkv", false},
+		{"no extension", "movie", false},
+		{"empty set returns false", "movie.srt", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			exts := set
+			if c.name == "empty set returns false" {
+				exts = map[string]struct{}{}
+			}
+			if got := isDownloadRelatedFile(c.file, exts); got != c.want {
+				t.Errorf("isDownloadRelatedFile(%q) = %v, want %v", c.file, got, c.want)
+			}
+		})
+	}
+}
