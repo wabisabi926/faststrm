@@ -160,10 +160,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </div>
           <p className="text-xs text-muted-foreground">
             仅作用于 STRM 端点层（直接打开 .strm 文件的场景）。默认 302 redirect 直连 CDN（不走本机带宽），
-            以下两种情况强制走 proxy：
-            <span className="ml-1">
-              ① UA 匹配下方标识 &nbsp; ② <b>.iso / .bdmv / .m2ts / .ts / .vob</b> 等需要精确 seek 的原盘格式
-            </span>
+            仅当下方「强制代理 UA 标识」匹配时才强制走 proxy，其余（含原盘格式）均直连。
           </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="space-y-3">
