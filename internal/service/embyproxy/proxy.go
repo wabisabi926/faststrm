@@ -227,6 +227,14 @@ type Proxy struct {
 	embyHost           string
 	forceProxyUaTokens []string
 
+	// ===== WebSocket 代理超时（零值表示用默认值，见 wsTimeouts）=====
+	// wsHandshakeTimeout 等待上游返回 101 握手响应的超时
+	wsHandshakeTimeout time.Duration
+	// wsIdleTimeout 双向均无数据流动超过该时长即判定连接已死
+	wsIdleTimeout time.Duration
+	// wsWatchdogInterval 空闲看门狗的检查周期
+	wsWatchdogInterval time.Duration
+
 	// httpClient 透传给 Emby 的客户端（不跟随重定向）
 	httpClient *http.Client
 	// followRedirectClient 用于解析重定向链拿最终 CDN URL（跟随所有重定向）

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -24,6 +25,34 @@ import (
 
 // wsDialTimeout WebSocket 上游建连超时
 const wsDialTimeout = 10 * time.Second
+
+// WebSocket 代理超时默认值（可被 Proxy 上的同名字段覆盖，见 wsTimeouts）
+const (
+	// defaultWSHandshakeTimeout 等待上游返回 101 握手响应的超时。
+	// 上游 TCP 通但不回任何数据时会永久阻塞在 ReadResponse，必须设期限兜底。
+	defaultWSHandshakeTimeout = 10 * time.Second
+	// defaultWSIdleTimeout 双向均无数据流动达到该时长即判定连接已死。
+	// 半开连接（客户端切网/掉线但无 FIN）不会触发 io.Copy 返回，只能靠空闲回收。
+	defaultWSIdleTimeout = 5 * time.Minute
+	// defaultWSWatchdogInterval 空闲看门狗的检查周期
+	defaultWSWatchdogInterval = 30 * time.Second
+)
+
+// wsTimeouts 返回本次连接生效的超时参数：Proxy 字段为零值时回落到默认值。
+// 在启动看门狗 goroutine 前取好局部变量，避免 goroutine 与字段写入并发。
+func (p *Proxy) wsTimeouts() (handshake, idle, interval time.Duration) {
+	handshake, idle, interval = p.wsHandshakeTimeout, p.wsIdleTimeout, p.wsWatchdogInterval
+	if handshake <= 0 {
+		handshake = defaultWSHandshakeTimeout
+	}
+	if idle <= 0 {
+		idle = defaultWSIdleTimeout
+	}
+	if interval <= 0 {
+		interval = defaultWSWatchdogInterval
+	}
+	return
+}
 
 // isWebSocketUpgrade 判断请求是否为 WebSocket 升级请求。
 // 需同时满足 Upgrade: websocket 且 Connection 的 token 列表含 upgrade（均大小写不敏感）。
@@ -72,8 +101,14 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	handshakeTimeout, idleTimeout, watchdogInterval := p.wsTimeouts()
+	if handshakeTimeout > 0 {
+		_ = backendConn.SetReadDeadline(time.Now().Add(handshakeTimeout))
+	}
 	backendBuf := bufio.NewReader(backendConn)
 	resp, err := http.ReadResponse(backendBuf, fwd)
+	// 无论成败都清除期限，避免残留期限影响后续 relay
+	_ = backendConn.SetReadDeadline(time.Time{})
 	if err != nil {
 		_ = backendConn.Close()
 		logger.S().Warnf("[EmbyProxy][ws] 读取上游握手响应失败: %v", err)
@@ -124,20 +159,46 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	logger.S().Infof("[EmbyProxy][ws] 升级成功 path=%s client=%s", r.URL.Path, r.RemoteAddr)
 
+	// 双向活动共享一个时间戳；任一方向读到数据即刷新。
+	// 半开连接（对端已消失但无 FIN/RST）不会让 io.Copy 返回，只能靠看门狗回收，
+	// 否则每个死连接会长期占住 2 个 goroutine + 2 个 socket。
+	tracker := newIdleTracker()
+	stopWatchdog := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(watchdogInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopWatchdog:
+				return
+			case <-ticker.C:
+				if idle := tracker.idleFor(); idle >= idleTimeout {
+					logger.S().Infof("[EmbyProxy][ws] 空闲超时，关闭连接 path=%s client=%s idle=%s",
+						r.URL.Path, r.RemoteAddr, idle.Round(time.Millisecond))
+					_ = clientConn.Close()
+					_ = backendConn.Close()
+					return
+				}
+			}
+		}
+	}()
+
 	done := make(chan struct{}, 2)
 	// client → backend：从 bufio.Reader 读，避免丢失 hijack 前已缓冲的数据
 	go func() {
-		_, _ = io.Copy(backendConn, clientBuf.Reader)
+		_, _ = io.Copy(backendConn, activityReader{r: clientBuf.Reader, tracker: tracker})
 		done <- struct{}{}
 	}()
-	// backend → client：直接写裸连接（握手已 Flush，字节顺序一致），
-	// 避免 bufio.Writer 未 flush 导致数据滞留
+	// backend → client：必须从 backendBuf 读 —— http.ReadResponse 会一次性多读，
+	// 把 101 之后上游已推送的字节缓冲进 bufio.Reader；直接读裸 backendConn 会跳过
+	// 这些字节。写侧用裸 clientConn，因为握手已 Flush，字节顺序一致。
 	go func() {
-		_, _ = io.Copy(clientConn, backendConn)
+		_, _ = io.Copy(clientConn, activityReader{r: backendBuf, tracker: tracker})
 		done <- struct{}{}
 	}()
 
 	<-done
+	close(stopWatchdog)
 	_ = clientConn.Close()
 	_ = backendConn.Close()
 	<-done
@@ -175,4 +236,35 @@ func wsUpstreamHost(embyHost string) string {
 		return embyHost
 	}
 	return u.Host
+}
+
+// idleTracker 记录双向最近一次数据活动时间（纳秒时间戳），供空闲看门狗判断。
+// 两个 relay goroutine 与看门狗并发读写，故用原子操作。
+type idleTracker struct{ last atomic.Int64 }
+
+func newIdleTracker() *idleTracker {
+	t := &idleTracker{}
+	t.touch()
+	return t
+}
+
+func (t *idleTracker) touch() { t.last.Store(time.Now().UnixNano()) }
+
+func (t *idleTracker) idleFor() time.Duration {
+	return time.Since(time.Unix(0, t.last.Load()))
+}
+
+// activityReader 包装 relay 的读端：读到数据即刷新活动时间。
+// 只包读侧即可 —— 双向各有一个读端，合起来覆盖两个方向的流量。
+type activityReader struct {
+	r       io.Reader
+	tracker *idleTracker
+}
+
+func (a activityReader) Read(p []byte) (int, error) {
+	n, err := a.r.Read(p)
+	if n > 0 {
+		a.tracker.touch()
+	}
+	return n, err
 }

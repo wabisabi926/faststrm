@@ -196,3 +196,322 @@ func TestWebSocketProxy_UpstreamNotUpgraded(t *testing.T) {
 		t.Fatalf("期望透传 401，实际状态行: %q", statusLine)
 	}
 }
+
+// TestWebSocketProxy_UpstreamPushAfterHandshake 回归：上游在 101 之后紧接着推送数据。
+//
+// 这些字节与响应头同一次写、落在同一个 TCP 段，会被 http.ReadResponse 缓冲进
+// bufio.Reader；若 relay 直接读裸连接，这部分数据就会被静默跳过。
+// 断言：升级后客户端什么都不发，也应立刻收到上游推送。
+func TestWebSocketProxy_UpstreamPushAfterHandshake(t *testing.T) {
+	const pushed = "server-initiated-frame"
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("backend: ResponseWriter 不支持 hijack")
+			return
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("backend hijack: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		// 响应头与推送数据写进同一个 bufio.Writer、只 Flush 一次，
+		// 确保二者落在同一个 TCP 段里，复现「数据被缓冲」的场景
+		fmt.Fprint(buf, "HTTP/1.1 101 Switching Protocols\r\n"+
+			"Upgrade: websocket\r\n"+
+			"Connection: Upgrade\r\n"+
+			"Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n")
+		fmt.Fprint(buf, pushed)
+		if err := buf.Flush(); err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, buf.Reader) // 保持连接直到客户端断开
+	}))
+	defer backend.Close()
+
+	proxy, err := New(backend.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	pServer := httptest.NewServer(proxy.Handler())
+	defer pServer.Close()
+
+	addr := strings.TrimPrefix(pServer.URL, "http://")
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	req := "GET /embywebsocket HTTP/1.1\r\n" +
+		"Host: " + addr + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write handshake: %v", err)
+	}
+
+	br := bufio.NewReader(conn)
+	if statusLine := readWSHandshake(t, br); !strings.Contains(statusLine, "101") {
+		t.Fatalf("期望 101 Switching Protocols，实际状态行: %q", statusLine)
+	}
+
+	// 客户端不发任何数据，直接等上游推送
+	got := make([]byte, len(pushed))
+	if _, err := io.ReadFull(br, got); err != nil {
+		t.Fatalf("未收到上游握手后的推送数据（疑被 bufio 缓冲吞掉）: %v", err)
+	}
+	if string(got) != pushed {
+		t.Fatalf("推送数据不一致: got %q, want %q", got, pushed)
+	}
+	t.Logf("✅ 上游握手后立即推送的数据完整到达客户端")
+}
+
+// TestWebSocketProxy_SurvivesServerTimeout 锁定：升级后的 WS 连接不受
+// http.Server 的 ReadTimeout/WriteTimeout 影响。
+//
+// net/http 在 hijackLocked() 里会显式 SetDeadline(time.Time{}) 清除继承的绝对
+// 期限，本用例把该行为固化成契约 —— 若将来换成别的升级方式或自行设置了期限，
+// 会导致 WS 在超出服务端超时后被静默掐断，这里会先失败。
+func TestWebSocketProxy_SurvivesServerTimeout(t *testing.T) {
+	var gotPath atomic.Value
+	backend := wsEchoBackend(t, &gotPath)
+	defer backend.Close()
+
+	proxy, err := New(backend.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// httptest.NewServer 无法设置超时，这里手动起一个带短超时的 http.Server
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{
+		Handler:      proxy.Handler(),
+		ReadTimeout:  300 * time.Millisecond,
+		WriteTimeout: 300 * time.Millisecond,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	addr := ln.Addr().String()
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	req := "GET /embywebsocket HTTP/1.1\r\n" +
+		"Host: " + addr + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write handshake: %v", err)
+	}
+
+	br := bufio.NewReader(conn)
+	if statusLine := readWSHandshake(t, br); !strings.Contains(statusLine, "101") {
+		t.Fatalf("期望 101 Switching Protocols，实际状态行: %q", statusLine)
+	}
+
+	// 越过 ReadTimeout / WriteTimeout（300ms）后再收发，连接应仍然可用
+	time.Sleep(700 * time.Millisecond)
+
+	payload := "after-server-timeout"
+	if _, err := conn.Write([]byte(payload)); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	got := make([]byte, len(payload))
+	if _, err := io.ReadFull(br, got); err != nil {
+		t.Fatalf("超过服务端超时后连接被掐断（Hijack 继承的 deadline 未清除）: %v", err)
+	}
+	if string(got) != payload {
+		t.Fatalf("回显不一致: got %q, want %q", got, payload)
+	}
+	t.Logf("✅ 越过服务端 Read/WriteTimeout 后 WS 转发依然可用")
+}
+
+// ================================================================
+// P1：握手超时 与 空闲看门狗
+// ================================================================
+
+// TestWebSocketProxy_UpstreamHandshakeTimeout 上游 TCP 可达但迟迟不回握手响应时，
+// 代理必须在超时后返回 502，而不是永久阻塞在 http.ReadResponse（泄漏 goroutine + FD）。
+func TestWebSocketProxy_UpstreamHandshakeTimeout(t *testing.T) {
+	// 裸 TCP 上游：收下连接，但一个字节都不回
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen backend: %v", err)
+	}
+	defer ln.Close()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, aerr := ln.Accept()
+		if aerr != nil {
+			return
+		}
+		accepted <- c
+	}()
+	t.Cleanup(func() {
+		select {
+		case c := <-accepted:
+			_ = c.Close()
+		default:
+		}
+	})
+
+	proxy, err := New("http://" + ln.Addr().String())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	proxy.wsHandshakeTimeout = 200 * time.Millisecond
+
+	pServer := httptest.NewServer(proxy.Handler())
+	defer pServer.Close()
+
+	addr := strings.TrimPrefix(pServer.URL, "http://")
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	req := "GET /embywebsocket HTTP/1.1\r\n" +
+		"Host: " + addr + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write handshake: %v", err)
+	}
+
+	br := bufio.NewReader(conn)
+	statusLine := readWSHandshake(t, br)
+	if !strings.Contains(statusLine, "502") {
+		t.Fatalf("期望握手超时后返回 502，实际状态行: %q", statusLine)
+	}
+	t.Logf("✅ 上游不回握手响应时按超时返回 502: %s", strings.TrimSpace(statusLine))
+}
+
+// TestWebSocketProxy_IdleWatchdog 半开连接：升级成功后双向都无数据流动，
+// 看门狗应在空闲超时后主动关闭两端，客户端读到 EOF 而不是一直挂着占用资源。
+func TestWebSocketProxy_IdleWatchdog(t *testing.T) {
+	var gotPath atomic.Value
+	backend := wsEchoBackend(t, &gotPath)
+	defer backend.Close()
+
+	proxy, err := New(backend.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	proxy.wsIdleTimeout = 300 * time.Millisecond
+	proxy.wsWatchdogInterval = 50 * time.Millisecond
+
+	pServer := httptest.NewServer(proxy.Handler())
+	defer pServer.Close()
+
+	addr := strings.TrimPrefix(pServer.URL, "http://")
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	req := "GET /embywebsocket HTTP/1.1\r\n" +
+		"Host: " + addr + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write handshake: %v", err)
+	}
+
+	br := bufio.NewReader(conn)
+	if statusLine := readWSHandshake(t, br); !strings.Contains(statusLine, "101") {
+		t.Fatalf("期望 101 Switching Protocols，实际状态行: %q", statusLine)
+	}
+
+	// 升级后双方都不发数据，等待看门狗回收
+	start := time.Now()
+	_, err = br.Read(make([]byte, 1))
+	if err == nil {
+		t.Fatal("期望连接被看门狗关闭，却读到了数据")
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatalf("连接未被看门狗回收（客户端 deadline 先触发）: %v", err)
+	}
+	t.Logf("✅ 空闲 %s 后连接被回收: %v", time.Since(start).Truncate(10*time.Millisecond), err)
+}
+
+// TestWebSocketProxy_IdleWatchdogKeepsActiveConn 持续有流量时不能被空闲看门狗误杀
+func TestWebSocketProxy_IdleWatchdogKeepsActiveConn(t *testing.T) {
+	var gotPath atomic.Value
+	backend := wsEchoBackend(t, &gotPath)
+	defer backend.Close()
+
+	proxy, err := New(backend.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	proxy.wsIdleTimeout = 300 * time.Millisecond
+	proxy.wsWatchdogInterval = 50 * time.Millisecond
+
+	pServer := httptest.NewServer(proxy.Handler())
+	defer pServer.Close()
+
+	addr := strings.TrimPrefix(pServer.URL, "http://")
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	req := "GET /embywebsocket HTTP/1.1\r\n" +
+		"Host: " + addr + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write handshake: %v", err)
+	}
+
+	br := bufio.NewReader(conn)
+	if statusLine := readWSHandshake(t, br); !strings.Contains(statusLine, "101") {
+		t.Fatalf("期望 101 Switching Protocols，实际状态行: %q", statusLine)
+	}
+
+	// 每 100ms 收发一次，总时长跨过空闲阈值（300ms）——连接必须始终保持可用
+	for i := 0; i < 8; i++ {
+		payload := fmt.Sprintf("ping-%d", i)
+		if _, err := conn.Write([]byte(payload)); err != nil {
+			t.Fatalf("第 %d 次写入失败，连接疑似被误杀: %v", i, err)
+		}
+		got := make([]byte, len(payload))
+		if _, err := io.ReadFull(br, got); err != nil {
+			t.Fatalf("第 %d 次读取失败，连接疑似被误杀: %v", i, err)
+		}
+		if string(got) != payload {
+			t.Fatalf("第 %d 次回显不一致: got %q, want %q", i, got, payload)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("✅ 持续流量下连接未被空闲看门狗误杀（跨过 %s 空闲阈值）", proxy.wsIdleTimeout)
+}
