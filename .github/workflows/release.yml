@@ -43,7 +43,8 @@ jobs:
         if [ $EXIT -ne 0 ]; then
           echo ""
           echo "=== Fail Summary (FAIL / DATA RACE / PANIC lines from merged output) ==="
-          (grep -nE '^(--- FAIL:|FAIL |fatal error:|panic:|goroutine [0-9]+|== Failed)' test_output.txt || true) | head -120 || true
+          # 包级失败行是 "FAIL\t<pkg>"（制表符），不能用 'FAIL '（空格）匹配
+          (grep -nE '^(--- FAIL:|FAIL[[:space:]]|fatal error:|panic:|goroutine [0-9]+|== Failed)' test_output.txt || true) | head -120 || true
           echo "--- (DATA RACE blocks with surrounding context) ---"
           (grep -nE 'WARNING: DATA RACE|DATA RACE' -B 2 -A 20 test_output.txt || true) | head -240 || true
           echo ""

@@ -61,7 +61,42 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 		}
 	}
 	// 填充默认值（策略：空则覆盖，非空则对明确新增的默认元素做追加，不破坏用户自定义）
-	def := model.DefaultSettings()
+	changed := applyDefaults(&out, model.DefaultSettings(), eventTypesMissing)
+
+	// 迁移后如果有变更，回写 settings.json（保持幂等，下次启动不会重复触发）
+	if changed {
+		logger.S().Infof("[SettingsStore] 迁移: 合并新默认值到 settings.json 并回写")
+		if err := s.SaveSettings(&out); err != nil {
+			logger.S().Warnf("[SettingsStore] 迁移回写 settings.json 失败: %v", err)
+		}
+	}
+	// T9 迁移：开关打开后若 secret 未生成或长度异常则自动生成并回写 settings.json
+	// 兜底场景：settings.json 损坏、被截断、或老版本写入了非法值
+	if out.Strm.EnableTokenSigning {
+		const expectedSecretLen = 64 // 32 字节 hex 编码
+		regenerate := false
+		switch {
+		case out.Strm.TokenSecret == "":
+			logger.S().Infof("[SettingsStore] EnableTokenSigning=true, 生成 Strm.TokenSecret, 回写 settings.json")
+			regenerate = true
+		case len(out.Strm.TokenSecret) != expectedSecretLen:
+			logger.S().Warnf("[SettingsStore] TokenSecret 长度异常 (len=%d, 期望 %d), 重新生成以保证签名一致性",
+				len(out.Strm.TokenSecret), expectedSecretLen)
+			regenerate = true
+		}
+		if regenerate {
+			out.Strm.TokenSecret = strm.GenerateTokenSecret()
+			if err := s.SaveSettings(&out); err != nil {
+				logger.S().Warnf("[SettingsStore] 回写 tokenSecret 失败: %v", err)
+			}
+		}
+	}
+	return &out, nil
+}
+
+// applyDefaults 为缺失字段填充默认值，返回是否发生变更（changed）。
+// 独立成函数以控制 ReadSettings 的圈复杂度（cyclop 上限 25）。
+func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 	changed := false
 
 	// P0-2：旧配置缺 lifeMonitor.eventTypes → 补默认（全开）。字段存在时尊重用户值（含全关）。
@@ -103,36 +138,7 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 		out.Strm.RedirectCheckTimeoutMs = def.Strm.RedirectCheckTimeoutMs
 		changed = true
 	}
-
-	// 迁移后如果有变更，回写 settings.json（保持幂等，下次启动不会重复触发）
-	if changed {
-		logger.S().Infof("[SettingsStore] 迁移: 合并新默认值到 settings.json 并回写")
-		if err := s.SaveSettings(&out); err != nil {
-			logger.S().Warnf("[SettingsStore] 迁移回写 settings.json 失败: %v", err)
-		}
-	}
-	// T9 迁移：开关打开后若 secret 未生成或长度异常则自动生成并回写 settings.json
-	// 兜底场景：settings.json 损坏、被截断、或老版本写入了非法值
-	if out.Strm.EnableTokenSigning {
-		const expectedSecretLen = 64 // 32 字节 hex 编码
-		regenerate := false
-		switch {
-		case out.Strm.TokenSecret == "":
-			logger.S().Infof("[SettingsStore] EnableTokenSigning=true, 生成 Strm.TokenSecret, 回写 settings.json")
-			regenerate = true
-		case len(out.Strm.TokenSecret) != expectedSecretLen:
-			logger.S().Warnf("[SettingsStore] TokenSecret 长度异常 (len=%d, 期望 %d), 重新生成以保证签名一致性",
-				len(out.Strm.TokenSecret), expectedSecretLen)
-			regenerate = true
-		}
-		if regenerate {
-			out.Strm.TokenSecret = strm.GenerateTokenSecret()
-			if err := s.SaveSettings(&out); err != nil {
-				logger.S().Warnf("[SettingsStore] 回写 tokenSecret 失败: %v", err)
-			}
-		}
-	}
-	return &out, nil
+	return changed
 }
 
 // SaveSettings 保存 Settings

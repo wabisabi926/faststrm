@@ -674,7 +674,7 @@ func TestHandleCreateEvent_MislabeledFolder_FallsBackToSingleFile(t *testing.T) 
 		FileID:       "555",
 		FileName:     "Movie.2024.mkv",
 		ParentID:     "1",
-		FileCategory: 0, // 被 115 误标为目录
+		FileCategory: 0,                   // 被 115 误标为目录
 		PickCode:     "abcdefghij1234567", // 17 位合法 pickcode
 		FileSize:     1024 * 1024 * 100,
 	}

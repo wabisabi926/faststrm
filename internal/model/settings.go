@@ -454,6 +454,8 @@ func IsBdmvStreamPath(p string) bool {
 	if p == "" {
 		return false
 	}
-	s := "/" + strings.Trim(strings.ToLower(filepath.ToSlash(p)), "/") + "/"
+	// 用 ReplaceAll 而非 filepath.ToSlash：后者只替换当前系统的分隔符，
+	// 在 Linux 上不会把 "\" 转成 "/"，导致跨平台的判定结果不一致。
+	s := "/" + strings.Trim(strings.ToLower(strings.ReplaceAll(p, `\`, "/")), "/") + "/"
 	return strings.Contains(s, "/bdmv/stream/")
 }

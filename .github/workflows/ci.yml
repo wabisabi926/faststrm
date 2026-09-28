@@ -70,7 +70,8 @@ jobs:
           echo ""
           echo "=== Fail Summary (FAIL / DATA RACE / PANIC lines from merged output) ==="
           # go test -v 里的 FAIL 行 + Go 1.25 race detector 的 WARNING: DATA RACE 块（含前后围栏 ======= 行）+ panic / fatal / goroutine 堆栈
-          (grep -nE '^(--- FAIL:|FAIL |fatal error:|panic:|goroutine [0-9]+|== Failed)' test_output.txt || true) | head -120 || true
+          # 注意：包级失败行是 "FAIL\t<pkg>"（制表符），不能用 'FAIL '（空格）匹配，否则摘要里永远不出现出错包名
+          (grep -nE '^(--- FAIL:|FAIL[[:space:]]|fatal error:|panic:|goroutine [0-9]+|== Failed)' test_output.txt || true) | head -120 || true
           echo "--- (DATA RACE blocks with surrounding context) ---"
           (grep -nE 'WARNING: DATA RACE|DATA RACE' -B 2 -A 20 test_output.txt || true) | head -240 || true
           echo ""

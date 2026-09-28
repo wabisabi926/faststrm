@@ -160,7 +160,10 @@ func dialEmbyWS(embyHost string) (net.Conn, error) {
 
 	d := &net.Dialer{Timeout: wsDialTimeout}
 	if u.Scheme == "https" {
-		return tls.DialWithDialer(d, "tcp", host, &tls.Config{ServerName: u.Hostname()})
+		return tls.DialWithDialer(d, "tcp", host, &tls.Config{
+			ServerName: u.Hostname(),
+			MinVersion: tls.VersionTLS12,
+		})
 	}
 	return d.Dial("tcp", host)
 }
