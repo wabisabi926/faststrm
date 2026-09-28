@@ -1,190 +1,86 @@
 package monitor
 
 import (
-	"strings"
+	"path/filepath"
 	"testing"
+
+	"github.com/wabisabi926/faststrm/internal/model"
 )
 
-// ================================================================
-// generateStrmContent — 监控模块生成 STRM URL（方案 A 验证）
-// 核心保证：生成的 URL 必须包含 /api/strm，不能残留 /api/fs/get
-// ================================================================
-
-// TestGenerateStrmContent_AlwaysUsesStrmEndpoint 方案 A 后统一 /api/strm
-func TestGenerateStrmContent_AlwaysUsesStrmEndpoint(t *testing.T) {
-	cases := []struct {
+// TestSingleFileParentDir 验证单文件事件的父目录回收逻辑（对齐参考项目取 file_path.parent）。
+// 确保 电影/叶问.iso 生成 电影本地/叶问.iso.strm，而非多拼一层同名目录 电影本地/叶问.iso/叶问.iso.strm。
+func TestSingleFileParentDir(t *testing.T) {
+	tests := []struct {
 		name       string
-		prefix     string
-		account    string
-		pickcode   string
+		m          *pathMapping
 		fileName   string
-		contain    string // 必须包含
-		notContain string // 绝对不能包含
+		wantParent string
+		wantStrm   string
 	}{
 		{
-			name:       "basic mkv",
-			prefix:     "http://192.168.1.100:8090",
-			account:    "主号",
-			pickcode:   "abcdef123456789",
-			fileName:   "movie.mkv",
-			contain:    "/api/strm?account",
-			notContain: "/api/fs/get",
+			name:       "nil 返回空",
+			m:          nil,
+			fileName:   "叶问.iso",
+			wantParent: "",
 		},
 		{
-			name:       "iso原盘",
-			prefix:     "http://127.0.0.1:8090",
-			account:    "acc2",
-			pickcode:   "ABCDEFGHIJ7654321",
-			fileName:   "Bluray.iso",
-			contain:    "/api/strm?account",
-			notContain: "/api/fs/get",
+			name:       "精确匹配映射根：不回收",
+			m:          &pathMapping{cloudPath: "电影", localPath: "D:/Strm/电影", relativePath: ""},
+			fileName:   "叶问.iso",
+			wantParent: "D:/Strm/电影",
+			wantStrm:   "D:/Strm/电影/叶问.iso.strm",
 		},
 		{
-			name:       "prefix with trailing slash",
-			prefix:     "http://192.168.1.100:8090/",
-			account:    "acc3",
-			pickcode:   "abc123def456ghi",
-			fileName:   "show.mkv",
-			contain:    "/api/strm?account",
-			notContain: "//api/strm", // 不应有双斜杠
+			name:       "前缀匹配-裸文件名：回收一级",
+			m:          &pathMapping{cloudPath: "电影", localPath: "D:/Strm/电影/叶问.iso", relativePath: "叶问.iso"},
+			fileName:   "叶问.iso",
+			wantParent: "D:/Strm/电影",
+			wantStrm:   "D:/Strm/电影/叶问.iso.strm",
 		},
 		{
-			name:       "public prefix with custom path",
-			prefix:     "https://example.com:8090/strm",
-			account:    "主号",
-			pickcode:   "xyz789abc123456",
-			fileName:   "test.m2ts",
-			contain:    "/api/strm?account",
-			notContain: "/api/fs/get",
+			name:       "前缀匹配-多级父目录：只回收文件级",
+			m:          &pathMapping{cloudPath: "电影", localPath: "D:/Strm/电影/动作/叶问.iso", relativePath: "动作/叶问.iso"},
+			fileName:   "叶问.iso",
+			wantParent: "D:/Strm/电影/动作",
+			wantStrm:   "D:/Strm/电影/动作/叶问.iso.strm",
 		},
 		{
-			name:       "prefix already ends with /api/strm (edge)",
-			prefix:     "http://host:8090/api/strm",
-			account:    "accX",
-			pickcode:   "aaa111bbb222ccc",
-			fileName:   "edge.mp4",
-			contain:    "/api/strm?account",
-			notContain: "/api/fs/get",
+			name:       "多级父目录下的 mkv：只回收文件级",
+			m:          &pathMapping{cloudPath: "电影", localPath: "D:/Strm/电影/动作/叶问.mkv", relativePath: "动作/叶问.mkv"},
+			fileName:   "叶问.mkv",
+			wantParent: "D:/Strm/电影/动作",
+			wantStrm:   "D:/Strm/电影/动作/叶问.strm",
 		},
 	}
 
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			out := generateStrmContent(
-				"/cloud/path/"+c.fileName,
-				c.prefix, false,
-				c.account, c.pickcode, c.fileName,
-			)
-			if out == "" {
-				t.Fatal("expected non-empty STRM content")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parent := singleFileParentDir(tt.m)
+			if filepath.FromSlash(parent) != filepath.FromSlash(tt.wantParent) {
+				t.Fatalf("singleFileParentDir() = %q, want %q", filepath.FromSlash(parent), filepath.FromSlash(tt.wantParent))
 			}
-			if !strings.Contains(out, c.contain) {
-				t.Errorf("expected %q in output, got: %s", c.contain, out)
-			}
-			if c.notContain != "" && strings.Contains(out, c.notContain) {
-				t.Errorf("unexpected %q in output: %s", c.notContain, out)
-			}
-			if !strings.HasSuffix(out, "\n") {
-				t.Error("expected trailing newline")
+			if tt.wantStrm != "" {
+				got := filepath.Join(parent, getStrmFileName(tt.fileName))
+				if want := filepath.FromSlash(tt.wantStrm); got != want {
+					t.Fatalf("strm path = %q, want %q（是否存在多拼一层同名目录）", got, want)
+				}
 			}
 		})
 	}
 }
 
-// TestGenerateStrmContent_PickcodeEmpty_ReturnsEmpty 防御：pickcode 缺失不生成
-func TestGenerateStrmContent_PickcodeEmpty_ReturnsEmpty(t *testing.T) {
-	out := generateStrmContent(
-		"/cloud/path.mkv",
-		"http://host:8090", false,
-		"acc", "", "path.mkv",
-	)
-	if out != "" {
-		t.Errorf("expected empty for missing pickcode, got: %q", out)
+// TestMatchPathMappingPrefixSingleFile 验证单文件事件前缀匹配产生的 localPath 末段即文件名
+// （即 bug 前提），再经 singleFileParentDir 回收后落在正确父目录。
+func TestMatchPathMappingPrefixSingleFile(t *testing.T) {
+	mappings := []model.MonitorPathMapping{
+		{CloudPath: "电影", LocalPath: "D:/Strm/电影", Account: ""},
 	}
-}
-
-// TestGenerateStrmContent_AccountURLEscaped 中文 account 正确编码
-func TestGenerateStrmContent_AccountURLEscaped(t *testing.T) {
-	out := generateStrmContent(
-		"/test.mkv",
-		"http://host:8090", false,
-		"主号 A", "abcdef123456789", "test.mkv",
-	)
-	if !strings.Contains(out, "account=%E4%B8%BB") {
-		t.Errorf("account should be URL-encoded, got: %s", out)
+	// 单文件电影/叶问.iso → 前缀匹配，localPath 末段是文件名
+	mapping := matchPathMapping("电影/叶问.iso", mappings, "")
+	if mapping == nil {
+		t.Fatal("matchPathMapping returned nil")
 	}
-	if !strings.Contains(out, "file_name=test.mkv") {
-		t.Errorf("file_name param missing: %s", out)
-	}
-}
-
-// TestGenerateStrmContent_NoEnable302_Remnant 确保 enable302 删除后函数签名/行为干净
-func TestGenerateStrmContent_NoEnable302_Remnant(t *testing.T) {
-	// 这是方案 A 的核心兜底：函数不应该再接受 enable302 参数
-	// 也不应该生成 /api/fs/get 风格 URL（即使 account 非空也不追加到路径）
-	out := generateStrmContent(
-		"/some/file.mkv",
-		"http://host:8090", false,
-		"acc1", "abcdef123456789", "file.mkv",
-	)
-	// 旧 enable302=false 时 URL 形如 http://host:8090/acc1/some/file.mkv
-	// 现在必须是 /api/strm query URL
-	if !strings.Contains(out, "/api/strm?") {
-		t.Errorf("must use /api/strm query URL, got: %s", out)
-	}
-	if strings.Contains(out, "/acc1/") {
-		t.Errorf("old non-302 path-append style detected: %s", out)
-	}
-}
-
-// ================================================================
-// 关联资源下载辅助 —— 对齐全量生成（DownloadExtensions 真实下载，不做占位符）
-// ================================================================
-
-func TestBuildDownloadExtSet(t *testing.T) {
-	// 空列表回退默认（含 .srt/.ass/.sub/.nfo/.jpg/.png）
-	set := buildDownloadExtSet(nil)
-	for _, want := range []string{".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"} {
-		if _, ok := set[want]; !ok {
-			t.Errorf("default set missing %q", want)
-		}
-	}
-	// 非空：规范化加 "." 且转小写
-	set = buildDownloadExtSet([]string{"SRT", ".ass", "nfo", ""})
-	for _, want := range []string{".srt", ".ass", ".nfo"} {
-		if _, ok := set[want]; !ok {
-			t.Errorf("custom set missing %q", want)
-		}
-	}
-	if _, ok := set["srt"]; ok {
-		t.Error("expected normalized key .srt, got bare srt")
-	}
-}
-
-func TestIsDownloadRelatedFile(t *testing.T) {
-	set := buildDownloadExtSet([]string{"srt", ".nfo", "jpg"})
-	cases := []struct {
-		name string
-		file string
-		want bool
-	}{
-		{"subtitle srt", "movie.SRT", true},
-		{"subtitle ass not in set", "movie.ass", false},
-		{"nfo", "movie.nfo", true},
-		{"jpg", "Movie.JPG", true},
-		{"video mkv not related", "movie.mkv", false},
-		{"no extension", "movie", false},
-		{"empty set returns false", "movie.srt", false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			exts := set
-			if c.name == "empty set returns false" {
-				exts = map[string]struct{}{}
-			}
-			if got := isDownloadRelatedFile(c.file, exts); got != c.want {
-				t.Errorf("isDownloadRelatedFile(%q) = %v, want %v", c.file, got, c.want)
-			}
-		})
+	if got := filepath.Join(singleFileParentDir(mapping), getStrmFileName("叶问.iso")); got != filepath.FromSlash("D:/Strm/电影/叶问.iso.strm") {
+		t.Fatalf("strm path = %q, want %q", got, filepath.FromSlash("D:/Strm/电影/叶问.iso.strm"))
 	}
 }

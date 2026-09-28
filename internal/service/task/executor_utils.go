@@ -379,6 +379,8 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 					Size:      e.Size,
 					Ext:       ext,
 					Kind:      kind,
+					FID:       fmt.Sprintf("%v", e.FID),
+					ParentID:  strconv.FormatInt(top.cid, 10),
 				})
 			}
 			// 翻页

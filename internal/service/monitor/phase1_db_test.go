@@ -93,8 +93,9 @@ func TestWriteAheadFilePath_WritesIntoDB(t *testing.T) {
 
 // TestProcessEvent_NewFolder_WritesDB_NoLocalStrm 模拟 type=17 new_folder：
 //
-//	预期：1) files 表写入 1 条（反查前置）；2) 本地目标目录下**不**产生任何 .strm 文件（new_folder 本身不生成）
-//	3) life_event_logs 表也必须有 1 条 success=true 记录（观测性闭环）
+//	P0-1 后预期：1) files 表写入 1 条、folders 表写入目录记录（反查前置）；
+//	2) handled=false（不再"消化"事件，交给 handleCreateEvent 递归生成 STRM）；
+//	3) preProcessEvent 阶段自身不落任何 .strm 与日志（日志/STRM 由后续 handler 负责）
 func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 	dir := t.TempDir()
 	// 初始化 SQLite（包含 files + life_event_logs 两张表）
@@ -148,8 +149,7 @@ func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 	}
 	// 模拟 processEvent 内部的 Write-Ahead + type=17 分支：
 	cloudPath := lifeClient.ResolvePath(context.TODO(), event.ParentID, event.FileID, event.FileName, event.FileCategory)
-	decision, _ := mon.makeWriteAheadDecision_ForTest(ctx, "acc1", event, cloudPath, cfg)
-	_ = decision
+	decision, handled := mon.makeWriteAheadDecision_ForTest(ctx, "acc1", event, cloudPath, cfg)
 	// 必须是 new_folder 类型
 	if decision.EventKind != "new_folder" {
 		t.Fatalf("EventKind want new_folder got %s", decision.EventKind)
@@ -158,15 +158,28 @@ func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 	if decision.MappingType != MappingTypeMedia {
 		t.Fatalf("want MEDIA mapping, got %s", decision.MappingType)
 	}
-	// 写 DB 之后 files count=1
+	// P0-1：type=17 命中 MEDIA 时不得再被"消化"（handled 必须 false），
+	// 否则 caller 永远走不到 handleCreateEvent 的文件夹递归 → 文件夹内 STRM 全部不生成。
+	if handled {
+		t.Fatalf("type=17 MEDIA 必须 handled=false（交给 handleCreateEvent 递归生成 STRM）")
+	}
+	// Write-Ahead 之后 files 表 count=1（反查前置）
 	cnt, err := db.GetEntryCount(sqldb, "acc1")
 	if err != nil {
 		t.Fatalf("GetEntryCount: %v", err)
 	}
 	if cnt != 1 {
-		t.Fatalf("type=17 new_folder 必须且仅写入 1 条 DB: count=%d", cnt)
+		t.Fatalf("type=17 new_folder 必须且仅写入 1 条 files 记录: count=%d", cnt)
 	}
-	// 本地不应有任何 strm 文件生成
+	// folders 表必须有该目录记录（对齐参考项目 process_life_dir_item / UpsertFolderEntry）
+	folderEntry, ferr := db.GetFolderEntry(sqldb, "acc1", "40001")
+	if ferr != nil {
+		t.Fatalf("GetFolderEntry: %v", ferr)
+	}
+	if folderEntry == nil || folderEntry.Path != "电影/新文件夹" {
+		t.Fatalf("folders 表应写入目录记录 path=电影/新文件夹, got %+v", folderEntry)
+	}
+	// preProcessEvent 自身不应落任何 .strm（STRM 生成由后续 handleCreateEvent 负责）
 	var strmFound []string
 	_ = filepath.Walk(localMediaRoot, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -178,36 +191,16 @@ func TestProcessEvent_NewFolder_WritesDB_NoLocalStrm(t *testing.T) {
 		return nil
 	})
 	if len(strmFound) > 0 {
-		t.Fatalf("new_folder 不应生成 .strm 文件, 但生成了 %v", strmFound)
+		t.Fatalf("preProcessEvent 不应直接生成 .strm 文件, 但生成了 %v", strmFound)
 	}
-	// life_event_logs 应有 1 条 success=true, type=new_folder-create/
+	// P0-1：type=17 MEDIA 的日志改由 handleCreateEvent 落（"文件夹已创建，内部生成 STRM N 个"），
+	// preProcessEvent 阶段不再写 new_folder 成功日志。
 	logs, qerr := logRepo.Query(ctx, db.LifeEventLogQuery{Account: "acc1", Limit: 10})
 	if qerr != nil {
 		t.Fatalf("Query life logs: %v", qerr)
 	}
-	if len(logs) == 0 {
-		t.Fatalf("life_event_logs 必须至少 1 条（观测性闭环）")
-	}
-	// 找一条 new_folder 相关的成功日志
-	found := false
-	for _, l := range logs {
-		if l.Success &&
-			(l.EventType == "new_folder" || l.EventType == "create" || strings.Contains(l.Message, "new_folder") || strings.Contains(l.Message, "新建目录")) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		// 容忍 message 中包含 "Write-Ahead" 之类字眼，但必须有 success=true
-		for _, l := range logs {
-			if l.Success {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("new_folder 处理后缺少 success=true 的 life_event_logs: %+v", logs)
-		}
+	if len(logs) != 0 {
+		t.Fatalf("preProcessEvent 阶段不应写 life_event_logs, got %+v", logs)
 	}
 }
 

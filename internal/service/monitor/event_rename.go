@@ -187,7 +187,8 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 	//   ⑤ 媒体 + 本地无旧 STRM → new 不存在才 create
 	//   ⑥ 媒体 + new 已存在且非同文件 → 合并 (同步内容 + 删旧 + 关联 rename)
 	//   ⑦ 媒体 + 正常 rename → shutil_move + 内容重同步 + 关联 rename（失败直接返回，不 fallback）
-	newLocalDir := mapping.localPath
+	// 单文件事件下 mapping.localPath 末段是文件名，需回收一级到父目录（对齐参考项目）
+	newLocalDir := singleFileParentDir(mapping)
 	newStrmPath := filepath.Join(newLocalDir, getStrmFileName(event.FileName))
 
 	// ===== 非媒体扩展名分支（对齐 L1220-1241）=====

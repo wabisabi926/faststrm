@@ -123,7 +123,9 @@ func UpsertFilePathEntryBatch(db *sql.DB, account string, entries []FilePathEntr
 	for _, e := range entries {
 		fileID, path, fileName, parentID, pickCode, updateTime, berr := normalizeEntry(&e)
 		if berr != nil {
-			return fmt.Errorf("batch entry %q: %w", e.FileID, berr)
+			// P0-3：单条无效（典型：缺 file_id）跳过该条，不再让整批回滚，
+			// 避免全量任务因个别条目缺 id 导致 files 表整体为空。
+			continue
 		}
 		if _, err := stmt.Exec(
 			account, fileID, path, fileName, parentID, pickCode, updateTime,

@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -27,39 +28,71 @@ func (m *Monitor) handleDeleteEvent(
 ) error {
 	config := m.settingsFn()
 
-	// 对齐参考项目 remove() L1439-1443: DB无路径记录时不删除，"防止误删不处理"
+	// P0-4: DB 记录仅用于辅助定位，不再作为硬性前置条件。
+	// 原因：全量任务历史上未把 file_id 写入 files 表，若仍"DB 无记录即跳过"，
+	// 会导致大量删除被挡（用户反馈的"删除有日志但 STRM 没删"）。
 	if m.sqliteDB != nil && event.FileID != "" && event.FileID != "0" {
-		entry, err := db.GetFileOrFolderEntry(m.sqliteDB, account, event.FileID)
-		if err != nil || entry == nil || entry.Path == "" {
-			logger.S().Infof("[Monitor] delete: DB无路径记录，跳过防止误删 fid=%s name=%s（对齐参考项目 L1439-1443）",
+		if entry, err := db.GetFileOrFolderEntry(m.sqliteDB, account, event.FileID); err == nil && entry != nil && entry.Path != "" {
+			logger.S().Infof("[Monitor] delete: DB命中 fid=%s dbPath=%s", event.FileID, entry.Path)
+		} else {
+			logger.S().Infof("[Monitor] delete: DB无路径记录 fid=%s name=%s（继续本地定位+兜底，不再直接跳过）",
 				event.FileID, event.FileName)
-			m.appendLog(ctx, account, "delete", false, cloudPath, mapping.localPath,
-				"跳过: DB无路径记录，防止误删")
-			return nil
 		}
 	}
 
-	// 文件夹事件：递归删除目录（P1-5 Delete 安全兜底）
+	// 文件夹事件：递归删除目录
 	if event.FileCategory == 0 {
-		if err := strmutil.DeletePath(mapping.localPath); err != nil {
-			m.appendLog(ctx, account, "delete", false, cloudPath, mapping.localPath,
+		targetDir := mapping.localPath
+		if info, err := os.Stat(targetDir); err != nil || !info.IsDir() {
+			// 兜底：用文件夹名在映射目录中找同名目录
+			if found := m.findLocalStrmByFileName(account, event.FileName, 0, config.PathMappings, config.MediaMountPath...); found != "" {
+				logger.S().Infof("[Monitor] delete: 目录主路径不存在，文件名兜底命中 %s → %s", targetDir, found)
+				targetDir = found
+			}
+		}
+		if info, err := os.Stat(targetDir); err != nil || !info.IsDir() {
+			m.appendLog(ctx, account, "delete", false, cloudPath, targetDir,
+				"未找到对应本地目录（可能已删除或路径已变化）")
+			logger.S().Warnf("[Monitor] delete: 本地目录不存在，跳过 target=%s file=%s", targetDir, event.FileName)
+			pollCountsAddSkipped(ctx, "delete_local_dir_not_found")
+			return nil
+		}
+		if err := strmutil.DeletePath(targetDir); err != nil {
+			m.appendLog(ctx, account, "delete", false, cloudPath, targetDir,
 				fmt.Sprintf("删除目录失败: %v", err))
 			return fmt.Errorf("删除目录失败: %w", err)
 		}
 		// 清理空父目录
 		if config.RemoveEmptyDirs {
-			removeEmptyParents(filepath.Dir(mapping.localPath), config.PathMappings)
+			removeEmptyParents(filepath.Dir(targetDir), config.PathMappings)
 		}
-		m.appendLog(ctx, account, "delete", true, cloudPath, mapping.localPath, "文件夹已删除")
-		m.notifyDelete(ctx, account, cloudPath, "目录", mapping.localPath)
-		logger.S().Infof("[Monitor] 文件夹已删除: %s", mapping.localPath)
+		m.appendLog(ctx, account, "delete", true, cloudPath, targetDir, "文件夹已删除")
+		m.notifyDelete(ctx, account, cloudPath, "目录", targetDir)
+		logger.S().Infof("[Monitor] 文件夹已删除: %s", targetDir)
 		return nil
 	}
 
-	// 文件事件：删除 STRM + 相关文件（P1-5 Delete 安全兜底）
+	// 文件事件：定位 STRM（主路径 → 文件名兜底），再删除
 	strmFileName := getStrmFileName(event.FileName)
-	// 关键：mapping.localPath 已包含相对路径（如 dist\Strm\小王子），直接拼接文件名
-	strmPath := filepath.Join(mapping.localPath, strmFileName)
+	// 关键：单文件事件下 mapping.localPath 末段是文件名，需回收一级到父目录（对齐参考项目）
+	strmPath := filepath.Join(singleFileParentDir(mapping), strmFileName)
+
+	// 主路径不存在 → 用文件名在映射目录中兜底（复用 move/rename 的 findLocalStrmByFileName）
+	if _, err := os.Stat(strmPath); os.IsNotExist(err) {
+		if found := m.findLocalStrmByFileName(account, event.FileName, 1, config.PathMappings, config.MediaMountPath...); found != "" {
+			logger.S().Infof("[Monitor] delete: STRM 主路径不存在，文件名兜底命中 %s → %s", strmPath, found)
+			strmPath = found
+		}
+	}
+
+	// 如实报告：本地确实不存在时不谎报成功（对齐参考项目"本地不存在仅 warn"）
+	if _, err := os.Stat(strmPath); err != nil {
+		m.appendLog(ctx, account, "delete", false, cloudPath, strmPath,
+			"未找到对应 STRM（可能已删除或路径已变化）")
+		logger.S().Warnf("[Monitor] delete: 未找到 STRM，跳过 path=%s file=%s", strmPath, event.FileName)
+		pollCountsAddSkipped(ctx, "delete_strm_not_found")
+		return nil
+	}
 
 	// 删除 STRM 文件
 	if err := strmutil.DeleteStrmFile(strmPath); err != nil {

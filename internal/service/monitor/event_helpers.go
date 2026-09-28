@@ -63,6 +63,21 @@ func matchPathMapping(cloudPath string, mappings []model.MonitorPathMapping, acc
 	return nil
 }
 
+// singleFileParentDir 单文件事件下，把匹配到的本地路径回收一级到父目录。
+// 对齐参考项目 p115strmhelper client.py：先拼完整相对路径再取 file_path.parent。
+// 前缀匹配时 relativePath 末段就是文件名（如 "叶问.iso"），会被当成目录多拼一层，
+// 这里截去最后一级，STRM 才落在正确父目录（电影本地/叶问.iso.strm，
+// 而非 电影本地/叶问.iso/叶问.iso.strm）。精确匹配（relativePath==""）返回映射根 localPath。
+func singleFileParentDir(m *pathMapping) string {
+	if m == nil {
+		return ""
+	}
+	if m.relativePath == "" {
+		return m.localPath
+	}
+	return filepath.Dir(m.localPath)
+}
+
 // cleanupOldStrmForOtherToMedia 在 OTHER_TO_MEDIA 象限清理旧 STRM
 // 场景：文件从非媒体目录移动/重命名到媒体目录
 // 旧 STRM 可能存在于以下位置：

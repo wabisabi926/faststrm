@@ -634,10 +634,13 @@ func (m *Monitor) preProcessEventWithSource( //nolint:cyclop // complexity: 34
 		m.writeAheadFilePath(ctx, account, entry)
 	}
 
-	// —— new_folder type=17 专用分支：命中 MEDIA → 写 folders 表 + 记一条 success=true 的 lifeLog，然后"消化掉"
+	// —— new_folder type=17 专用分支：命中 MEDIA → 写 folders 表，但**不再"消化"事件**
+	//     （P0-1：115 上传整个文件夹主要只发 type=17，若在此 return handled=true 就永远到不了
+	//     handleCreateEvent 的文件夹递归分支，导致文件夹内 STRM 全部不生成。
+	//     对齐参考项目 _create：文件夹事件必须递归遍历内部媒体文件逐个生成 STRM。）
 	if isNewFolderOnly(event.Type) {
 		if mr.MappingType == MappingTypeMedia && cloudPath != "" {
-			// P0-2: 文件夹路径写入 folders 表（对齐参考项目 process_life_dir_item）
+			// 文件夹路径写入 folders 表（对齐参考项目 process_life_dir_item）
 			if m.sqliteDB != nil && event.FileID != "" {
 				fid := event.FileID
 				pid := event.ParentID
@@ -654,9 +657,8 @@ func (m *Monitor) preProcessEventWithSource( //nolint:cyclop // complexity: 34
 					logger.S().Warnf("[Monitor] type=17 folders 表写入失败 fid=%s: %v", fid, err)
 				}
 			}
-			m.appendLog(ctx, account, "new_folder", true, cloudPath, mr.LocalPath,
-				"folders 表已写入 (type=17 new_folder，不生成 STRM)")
-			return decision, true // handled=true，caller 直接视为 effective
+			// handled=false → caller 继续走 create 分支 → handleCreateEvent(FileCategory==0) 递归生成 STRM
+			return decision, false
 		}
 		// 未命中 MEDIA：依然视为"已处理"（但作为 skipped 处理，caller 负责 AddSkipped）
 		if skipReason == "" {

@@ -204,7 +204,7 @@ func (m *Monitor) recreateStrmInDirectory(
 			FileID:    event.FileID,
 			ParentID:  event.ParentID,
 		}
-		localParentDir := mapping.localPath
+		localParentDir := singleFileParentDir(mapping)
 		strmPath, err := m.createStrmForSingleFile(ctx, account, in, localParentDir, "文件")
 		if err != nil {
 			m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath, err.Error())
@@ -528,8 +528,8 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 	}
 
 	// —— 文件移动（对齐参考项目 _move_local_media_assets L1790-1913）——
-	// 关键：mapping.localPath 已包含相对路径（如 dist\Strm\小王子），直接作为 STRM 目录
-	newLocalDir := mapping.localPath
+	// 关键：单文件事件下 mapping.localPath 末段是文件名，需回收一级到父目录（对齐参考项目）
+	newLocalDir := singleFileParentDir(mapping)
 	newStrmPath := filepath.Join(newLocalDir, getStrmFileName(event.FileName))
 
 	// recreate 模式：前面已 cleanupOldStrmAssets 删旧，此处直接走建新（对应参考项目 recreate 流程 L1006-1012）

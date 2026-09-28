@@ -417,6 +417,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				continue
 			}
 			entries = append(entries, db.FilePathEntry{
+				FileID:     f.FID,      // P0-3：补 file_id，删除/移动才能按 id 反查
+				ParentID:   f.ParentID, // P0-3：补 parent_id
 				Path:       f.CloudPath,
 				FileName:   f.Name,
 				PickCode:   f.PickCode,
@@ -808,6 +810,8 @@ type fileItem struct {
 	Size      int64
 	Ext       string
 	Kind      fileKind
+	FID       string // 115 文件 ID（P0-3：写入监控 DB 供删除/移动按 file_id 反查）
+	ParentID  string // 父目录 cid（P0-3：同上）
 }
 
 func countKind(items []*fileItem, k fileKind) int {

@@ -35,6 +35,9 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 		return model.DefaultSettings(), nil
 	}
 	var out model.Settings
+	// P0-2：判定 lifeMonitor.eventTypes 是否缺失（旧配置/空配置反序列化后 4 个 bool 全为 false，
+	// 会让所有生活事件按 event_type_disabled_* 静默跳过）。只有确认字段存在才视为已配置。
+	eventTypesMissing := true
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &out); err != nil {
 			logger.S().Warnf("[SettingsStore] ReadSettings json unmarshal failed: %v, returning defaults", err)
@@ -50,6 +53,9 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 						out.LifeMonitor.NotifyOnlyOnError = false
 						logger.S().Infof("[SettingsStore] 迁移: 旧配置无 notifyOnlyOnError 字段，设为默认 false")
 					}
+					if _, hasET := lmCheck["eventTypes"]; hasET {
+						eventTypesMissing = false
+					}
 				}
 			}
 		}
@@ -57,6 +63,15 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	// 填充默认值（策略：空则覆盖，非空则对明确新增的默认元素做追加，不破坏用户自定义）
 	def := model.DefaultSettings()
 	changed := false
+
+	// P0-2：旧配置缺 lifeMonitor.eventTypes → 补默认（全开）。字段存在时尊重用户值（含全关）。
+	if eventTypesMissing {
+		out.LifeMonitor.EventTypes = def.LifeMonitor.EventTypes
+		changed = true
+		logger.S().Infof("[SettingsStore] 迁移: 旧配置缺 lifeMonitor.eventTypes，补默认 create=%v remove=%v rename=%v move=%v",
+			out.LifeMonitor.EventTypes.Create, out.LifeMonitor.EventTypes.Remove,
+			out.LifeMonitor.EventTypes.Rename, out.LifeMonitor.EventTypes.Move)
+	}
 
 	if len(out.StrmExtensions) == 0 {
 		out.StrmExtensions = def.StrmExtensions

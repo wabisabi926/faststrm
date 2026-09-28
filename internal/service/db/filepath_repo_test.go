@@ -95,6 +95,37 @@ func TestBatchUpsert(t *testing.T) {
 	}
 }
 
+func TestBatchUpsert_SkipsInvalidFileID(t *testing.T) {
+	db, cleanup := setupTmpDB(t)
+	defer cleanup()
+
+	// 混合条目：2 条有效 + 1 条缺 file_id + 1 条非数字 file_id
+	entries := []FilePathEntry{
+		{FileID: "1", Path: "/电影/a.mkv", FileName: "a.mkv", PickCode: "p1"},
+		{FileID: "", Path: "/电影/缺id.mkv", FileName: "缺id.mkv"},      // 无效：空 file_id
+		{FileID: "2", Path: "/电影/b.mkv", FileName: "b.mkv", PickCode: "p2"},
+		{FileID: "abc", Path: "/电影/非数字.mkv", FileName: "非数字.mkv"}, // 无效：非数字
+	}
+	// P0-3：单条无效不得让整批回滚，方法应返回 nil
+	if err := UpsertFilePathEntryBatch(db, "acc1", entries); err != nil {
+		t.Fatalf("batch upsert 不应因个别无效条目整批失败: %v", err)
+	}
+	n, err := GetEntryCount(db, "acc1")
+	if err != nil {
+		t.Fatalf("GetEntryCount: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("仅 2 条有效条目应写入, got %d", n)
+	}
+	// 有效条目可正常反查
+	if got, err := GetFilePathEntry(db, "acc1", "1"); err != nil || got == nil {
+		t.Fatalf("有效条目 1 未写入: err=%v got=%v", err, got)
+	}
+	if got, err := GetFilePathEntry(db, "acc1", "2"); err != nil || got == nil {
+		t.Fatalf("有效条目 2 未写入: err=%v got=%v", err, got)
+	}
+}
+
 func TestUpdatePathPrefixBatch(t *testing.T) {
 	db, cleanup := setupTmpDB(t)
 	defer cleanup()
