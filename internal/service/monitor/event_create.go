@@ -195,6 +195,16 @@ func (m *Monitor) handleCreateEvent(
 	lifeClient *client115.LifeClient,
 	notify bool,
 ) error {
+	// BDMV 原盘：位于 BDMV/STREAM 内的视频流不生成 STRM
+	// （一个蓝光原盘会变成上百个 m2ts 碎片，对齐参考项目 directory_upload_skip_bdmv_stream）
+	if model.IsBdmvStreamPath(cloudPath) {
+		logger.S().Infof("[Monitor] 跳过 BDMV/STREAM 原盘视频流: %s", cloudPath)
+		m.appendLog(ctx, account, "create", false, cloudPath, "",
+			"跳过: BDMV/STREAM 原盘视频流")
+		pollCountsAddSkipped(ctx, "bdmv_stream_skipped")
+		return nil
+	}
+
 	// 文件夹事件：先 mkdir，写根文件夹到 DB，然后递归遍历内部媒体文件生成 STRM
 	// P1-2 防线：115 偶发把单文件误标为目录（FileCategory==0），此时按文件夹处理会 mkdir 出
 	// 同名空目录、且 FsFiles(文件ID) 返回空 → 一个 STRM 都生成不了且无日志报错。
@@ -370,6 +380,12 @@ func (m *Monitor) handleCreateFolderRecursive(
 				return totalCreated, nil
 			}
 			entryCloudPath := folderCloudPath + "/" + entry.Name
+			// BDMV 原盘：跳过 BDMV/STREAM 层级（含其目录本身，不再向下递归），
+			// 避免一个蓝光原盘被拆成上百个 m2ts STRM。ISO 原盘不受影响。
+			if model.IsBdmvStreamPath(entryCloudPath) {
+				logger.S().Infof("[Monitor] 跳过 BDMV/STREAM 原盘视频流: %s", entryCloudPath)
+				continue
+			}
 			if entry.IsDir {
 				// P1-5: 子目录写入 folders 表（对齐参考项目 process_life_dir_item upsert_batch）
 				if m.sqliteDB != nil {

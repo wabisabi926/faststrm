@@ -1,10 +1,15 @@
 package task
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/wabisabi926/faststrm/internal/model"
+	"github.com/wabisabi926/faststrm/internal/service/client115"
 )
 
 func TestResolveStrmSettings_Default(t *testing.T) {
@@ -279,5 +284,131 @@ func TestShouldGenerateStrm_Combined(t *testing.T) {
 	// 两者都满足 → 通过
 	if reason, pass := shouldGenerateStrm("final.mkv", 2<<20, minSize, blacklist); !pass {
 		t.Fatalf("both conditions ok should pass, reason=%s", reason)
+	}
+}
+
+// ======================================================================
+// BDMV 原盘过滤（全量生成）：BDMV/STREAM 子树不遍历，其 m2ts 不生成 STRM
+// ======================================================================
+
+// bdmvRT 按 URL 的 cid 参数返回固定 FsFiles 响应，并记录被请求过的 cid
+type bdmvRT struct {
+	fixtures map[string]string // cid → JSON body
+	mu       sync.Mutex
+	seen     []string
+}
+
+func (r *bdmvRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	cid := req.URL.Query().Get("cid")
+	r.mu.Lock()
+	r.seen = append(r.seen, cid)
+	r.mu.Unlock()
+	body := r.fixtures[cid]
+	if body == "" {
+		body = `{"state":true,"data":[]}`
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+func (r *bdmvRT) requested(cid string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.seen {
+		if c == cid {
+			return true
+		}
+	}
+	return false
+}
+
+func newMockClient(rt http.RoundTripper) *client115.Client {
+	c := client115.NewClient("test-ua")
+	c.HTTP = &http.Client{Transport: rt}
+	return c
+}
+
+// TestListAllFilesRecursive_SkipsBdmvStream 全量遍历遇到 BDMV/STREAM：
+// 子树不得被遍历（其 cid 不应被请求），同级的普通媒体照常命中。
+func TestListAllFilesRecursive_SkipsBdmvStream(t *testing.T) {
+	rt := &bdmvRT{fixtures: map[string]string{
+		// 根目录：BDMV 子目录 + 一个普通媒体文件
+		"100": `{"state":true,"data":[` +
+			`{"n":"BDMV","cid":200,"fc":2},` +
+			`{"n":"movie.mkv","fid":11,"pc":"abcdefghij1234567","s":100000,"cid":100}]}`,
+		// BDMV 目录：STREAM 子目录 + 一个非媒体文件
+		"200": `{"state":true,"data":[` +
+			`{"n":"STREAM","cid":300,"fc":2},` +
+			`{"n":"index.bdmv","fid":22,"s":10,"cid":200}]}`,
+		// STREAM 目录：内部全是原盘视频流（不应被请求）
+		"300": `{"state":true,"data":[` +
+			`{"n":"00000.m2ts","fid":33,"pc":"abcdefghij1234567","s":30000000000,"cid":300}]}`,
+	}}
+
+	out, err := listAllFilesRecursive(
+		context.Background(), newMockClient(rt), "cookie", 100, "电影/沙丘",
+		map[string]struct{}{".mkv": {}, ".m2ts": {}}, map[string]struct{}{},
+		0, nil, "", nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("listAllFilesRecursive: %v", err)
+	}
+	if rt.requested("300") {
+		t.Fatalf("BDMV/STREAM 子树不应被遍历（cid=300 被请求了），请求记录=%v", rt.seen)
+	}
+	if len(out) != 1 || out[0].Name != "movie.mkv" {
+		var names []string
+		for _, f := range out {
+			names = append(names, f.Name)
+		}
+		t.Fatalf("应只命中 movie.mkv, got %v", names)
+	}
+	if out[0].CloudPath != "电影/沙丘/movie.mkv" {
+		t.Fatalf("CloudPath = %q, want 电影/沙丘/movie.mkv", out[0].CloudPath)
+	}
+}
+
+// TestListAllFilesRecursive_TargetInsideBdmvStream 任务目标路径本身位于 BDMV/STREAM 内：
+// 即使条目名字不含 BDMV 前缀，也必须按完整云路径判定并全部跳过。
+func TestListAllFilesRecursive_TargetInsideBdmvStream(t *testing.T) {
+	rt := &bdmvRT{fixtures: map[string]string{
+		"300": `{"state":true,"data":[` +
+			`{"n":"00000.m2ts","fid":33,"pc":"abcdefghij1234567","s":30000000000,"cid":300}]}`,
+	}}
+
+	out, err := listAllFilesRecursive(
+		context.Background(), newMockClient(rt), "cookie", 300, "电影/沙丘/BDMV/STREAM",
+		map[string]struct{}{".m2ts": {}}, map[string]struct{}{},
+		0, nil, "", nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("listAllFilesRecursive: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("任务目标本身位于 BDMV/STREAM 时不应产出任何条目, got %d", len(out))
+	}
+}
+
+// TestListAllFilesRecursive_StandaloneM2tsKept 独立的 m2ts（不在 BDMV/STREAM 结构内）不受影响
+func TestListAllFilesRecursive_StandaloneM2tsKept(t *testing.T) {
+	rt := &bdmvRT{fixtures: map[string]string{
+		"100": `{"state":true,"data":[` +
+			`{"n":"录制.m2ts","fid":44,"pc":"abcdefghij1234567","s":100000,"cid":100}]}`,
+	}}
+
+	out, err := listAllFilesRecursive(
+		context.Background(), newMockClient(rt), "cookie", 100, "电影",
+		map[string]struct{}{".m2ts": {}}, map[string]struct{}{},
+		0, nil, "", nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("listAllFilesRecursive: %v", err)
+	}
+	if len(out) != 1 || out[0].Name != "录制.m2ts" {
+		t.Fatalf("独立 m2ts 应照常命中, got %d", len(out))
 	}
 }

@@ -133,3 +133,39 @@ func TestLifeMonitorJSONMissingFieldsDefaults(t *testing.T) {
 		t.Fatalf("MoveOutRemoveLocalStrm should retain default true")
 	}
 }
+
+// TestIsBdmvStreamPath 校验 BDMV/STREAM 原盘路径判定：
+// 命中则跳过（避免一个原盘被拆成上百个 m2ts STRM），但独立的 .m2ts/.ts 不受影响。
+func TestIsBdmvStreamPath(t *testing.T) {
+	hit := []string{
+		"电影/沙丘/BDMV/STREAM/00000.m2ts",
+		"/电影/沙丘/BDMV/STREAM/00000.m2ts",
+		"电影/沙丘/bdmv/stream/00000.m2ts", // 小写
+		`电影\沙丘\BDMV\STREAM\00000.m2ts`,   // 反斜杠
+		"电影/沙丘/BDMV/STREAM",             // STREAM 目录本身（需整目录跳过）
+		"BDMV/STREAM/a.m2ts",               // 根层级
+	}
+	for _, p := range hit {
+		if !IsBdmvStreamPath(p) {
+			t.Errorf("IsBdmvStreamPath(%q) = false, want true", p)
+		}
+	}
+
+	miss := []string{
+		"",                                    // 空
+		"电影/沙丘/沙丘.mkv",                     // 普通媒体
+		"电影/沙丘/沙丘.iso",                     // ISO 原盘：不受影响
+		"电影/沙丘.iso.strm",                    // ISO 的 STRM
+		"电影/沙丘/BDMV/index.bdmv",             // BDMV 根下但不在 STREAM 内
+		"电影/沙丘/BDMV/PLAYLIST/00001.mpls",    // 播放列表
+		"电影/沙丘/CERTIFICATE/id.bdmv",          // 证书目录
+		"电影/m2ts/单文件.m2ts",                  // 独立 m2ts，路径里无 BDMV/STREAM
+		"电影/BDMVX/STREAM/a.m2ts",              // 段名不是 BDMV（防止子串误判）
+		"电影/BDMV/STREAMX/a.m2ts",              // 段名不是 STREAM（防止子串误判）
+	}
+	for _, p := range miss {
+		if IsBdmvStreamPath(p) {
+			t.Errorf("IsBdmvStreamPath(%q) = true, want false", p)
+		}
+	}
+}

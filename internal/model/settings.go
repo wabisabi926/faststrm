@@ -442,3 +442,18 @@ func RenderStrmFilenameTemplate(template, fileName, ext, stem, account string) s
 	}
 	return name
 }
+
+// ==================== BDMV 原盘过滤 ====================
+
+// IsBdmvStreamPath 判断路径是否位于蓝光原盘的 BDMV/STREAM 视频流目录内。
+// 用途：跳过 BDMV 原盘的 m2ts 视频流，避免一个原盘被拆成上百个 STRM（对齐参考项目
+// p115strmhelper directory_upload_skip_bdmv_stream）。只按路径判定、不按扩展名，
+// 因此独立的 .m2ts / .ts 文件（不在 BDMV/STREAM 结构内）仍照常生成。
+// 大小写不敏感，同时兼容 "/" 与 "\"。
+func IsBdmvStreamPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	s := "/" + strings.Trim(strings.ToLower(filepath.ToSlash(p)), "/") + "/"
+	return strings.Contains(s, "/bdmv/stream/")
+}

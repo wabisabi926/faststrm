@@ -688,3 +688,168 @@ func TestHandleCreateEvent_MislabeledFolder_FallsBackToSingleFile(t *testing.T) 
 		t.Fatalf("P1-2 回退失败：应按单文件生成 %s, stat err=%v", strmPath, err)
 	}
 }
+
+// ======================================================================
+// BDMV 原盘过滤：BDMV/STREAM 内的 m2ts 不生成 STRM（一个原盘会变成上百个碎片）
+// ======================================================================
+
+// cidRoutingRT 按 URL 的 cid 参数返回不同 FsFiles 响应，并记录被请求过的 cid
+type cidRoutingRT struct {
+	fixtures map[string]string // cid → JSON body
+	mu       sync.Mutex
+	seen     []string
+}
+
+func (r *cidRoutingRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	cid := req.URL.Query().Get("cid")
+	r.mu.Lock()
+	r.seen = append(r.seen, cid)
+	r.mu.Unlock()
+	body := r.fixtures[cid]
+	if body == "" {
+		body = `{"state":true,"data":[]}`
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+func (r *cidRoutingRT) requested(cid string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.seen {
+		if c == cid {
+			return true
+		}
+	}
+	return false
+}
+
+// walkStrmFiles 收集目录下所有 .strm 文件
+func walkStrmFiles(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() && strings.HasSuffix(p, ".strm") {
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
+}
+
+// TestHandleCreateEvent_BdmvStreamFile_Skipped 单文件事件位于 BDMV/STREAM 内 → 不生成 STRM，
+// 且必须留下可见的跳过日志（避免"没反应没日志"）。
+func TestHandleCreateEvent_BdmvStreamFile_Skipped(t *testing.T) {
+	dir := t.TempDir()
+	localRoot := filepath.Join(dir, "Videos")
+	if err := os.MkdirAll(localRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	sqldb, err := db.OpenNew(dir)
+	if err != nil {
+		t.Fatalf("Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqldb.Close() })
+	logRepo, err := db.NewLifeEventLogRepo(sqldb)
+	if err != nil {
+		t.Fatalf("NewLifeEventLogRepo: %v", err)
+	}
+
+	m := &Monitor{
+		settingsFn: func() model.LifeMonitorSettings {
+			return model.LifeMonitorSettings{OverwriteMode: "always"}
+		},
+		sqliteDB:         sqldb,
+		lifeEventLogRepo: logRepo,
+	}
+	mapping := &pathMapping{
+		cloudPath:    "电影/沙丘/BDMV/STREAM",
+		localPath:    filepath.Join(localRoot, "BDMV", "STREAM"),
+		relativePath: "BDMV/STREAM",
+	}
+	cloudPath := "电影/沙丘/BDMV/STREAM/00000.m2ts"
+	event := client115.LifeEventItem{
+		FileID:       "999",
+		FileName:     "00000.m2ts",
+		ParentID:     "400",
+		FileCategory: 1,
+		PickCode:     "abcdefghij1234567",
+		FileSize:     30 * 1024 * 1024 * 1024,
+	}
+
+	ctx := context.Background()
+	if err := m.handleCreateEvent(ctx, "acc1", event, mapping, cloudPath, nil, false); err != nil {
+		t.Fatalf("handleCreateEvent: %v", err)
+	}
+	if got := walkStrmFiles(t, localRoot); len(got) != 0 {
+		t.Fatalf("BDMV/STREAM 不应生成任何 STRM, got %v", got)
+	}
+
+	logs, err := logRepo.Query(ctx, db.LifeEventLogQuery{Account: "acc1", Limit: 10})
+	if err != nil {
+		t.Fatalf("Query life logs: %v", err)
+	}
+	if len(logs) != 1 || logs[0].Success {
+		t.Fatalf("应记录 1 条 success=false 的跳过日志, got %+v", logs)
+	}
+	if !strings.Contains(logs[0].Message, "BDMV") {
+		t.Fatalf("日志应说明 BDMV 跳过原因, got %q", logs[0].Message)
+	}
+}
+
+// TestHandleCreateEvent_BdmvFolder_SkipsStreamSubtree 文件夹事件内含 BDMV/STREAM：
+// 普通媒体照常生成 STRM；STREAM 子树不得被遍历（其 cid 不应被请求），m2ts 不生成 STRM。
+func TestHandleCreateEvent_BdmvFolder_SkipsStreamSubtree(t *testing.T) {
+	dir := t.TempDir()
+	localRoot := filepath.Join(dir, "Videos")
+	if err := os.MkdirAll(localRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	rt := &cidRoutingRT{fixtures: map[string]string{
+		// 根目录：BDMV 子目录 + 一个普通媒体文件
+		"200": `{"state":true,"data":[` +
+			`{"n":"BDMV","cid":300,"fc":2},` +
+			`{"n":"movie.mkv","fid":11,"pc":"abcdefghij1234567","s":100000,"cid":200}]}`,
+		// BDMV 目录：STREAM 子目录 + 一个非媒体文件
+		"300": `{"state":true,"data":[` +
+			`{"n":"STREAM","cid":400,"fc":2},` +
+			`{"n":"index.bdmv","fid":22,"s":10,"cid":300}]}`,
+		// STREAM 目录：内部全是原盘视频流（不应被请求）
+		"400": `{"state":true,"data":[` +
+			`{"n":"00000.m2ts","fid":33,"pc":"abcdefghij1234567","s":30000000000,"cid":400}]}`,
+	}}
+	lifeClient := client115.NewLifeClient("test-cookie")
+	lifeClient.FsClient().HTTP = &http.Client{Transport: rt}
+
+	m := &Monitor{settingsFn: func() model.LifeMonitorSettings {
+		return model.LifeMonitorSettings{OverwriteMode: "always"}
+	}}
+	mapping := &pathMapping{cloudPath: "电影/沙丘", localPath: localRoot, relativePath: ""}
+	event := client115.LifeEventItem{
+		FileID: "200", FileName: "沙丘", ParentID: "1", FileCategory: 0,
+	}
+
+	ctx := context.Background()
+	if err := m.handleCreateEvent(ctx, "acc1", event, mapping, "电影/沙丘", lifeClient, false); err != nil {
+		t.Fatalf("handleCreateEvent: %v", err)
+	}
+
+	// 普通媒体照常生成
+	if _, err := os.Stat(filepath.Join(localRoot, "movie.strm")); err != nil {
+		t.Fatalf("普通媒体应生成 movie.strm, stat err=%v", err)
+	}
+	// STREAM 子树不得被遍历
+	if rt.requested("400") {
+		t.Fatalf("BDMV/STREAM 子树不应被遍历（cid=400 被请求了），请求记录=%v", rt.seen)
+	}
+	// 除 movie.strm 外不得有其它 STRM
+	if got := walkStrmFiles(t, localRoot); len(got) != 1 || !strings.HasSuffix(got[0], "movie.strm") {
+		t.Fatalf("应只生成 movie.strm, got %v", got)
+	}
+}
