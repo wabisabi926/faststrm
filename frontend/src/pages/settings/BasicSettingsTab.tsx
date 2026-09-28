@@ -85,7 +85,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               placeholder=".mkv, .mp4, .mp3"
             />
             <p className="text-xs text-muted-foreground">
-              用逗号分隔，自动添加点号前缀
+              用逗号分隔，自动添加点号前缀；BDMV/STREAM 目录内的视频流不生成 STRM
             </p>
           </div>
           <div className="space-y-3 md:col-span-2">
@@ -160,7 +160,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </div>
           <p className="text-xs text-muted-foreground">
             仅作用于 STRM 端点层（直接打开 .strm 文件的场景）。默认 302 redirect 直连 CDN（不走本机带宽），
-            仅当下方「强制代理 UA 标识」匹配时才强制走 proxy，其余（含原盘格式）均直连。
+            仅当下方「强制代理 UA 标识」匹配时才强制走 proxy，其余（含 ISO 原盘）均直连。
           </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="space-y-3">
