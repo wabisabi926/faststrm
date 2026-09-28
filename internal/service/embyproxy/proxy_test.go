@@ -1127,45 +1127,8 @@ func TestHandleMediaStream_POSTMethod(t *testing.T) {
 }
 
 // ================================================================
-// isBrowserClient — 浏览器/强播放器识别（反代层 DirectPlay 决策）
+// PlaybackInfo 强制 DirectPlay（与客户端类型无关）
 // ================================================================
-
-func TestIsBrowserClient(t *testing.T) {
-	proxy, _ := New("http://emby.local:8096")
-
-	cases := []struct {
-		name   string
-		client string
-		ua     string
-		want   bool
-	}{
-		{"emby_web", "Emby Web", "Mozilla/5.0 (Macintosh)", true},
-		{"jellyfin_web", "Jellyfin Web", "Mozilla/5.0", true},
-		{"browser", "Browser", "Mozilla/5.0", true},
-		{"empty_both_is_player", "", "", false},
-		{"infuse", "Infuse", "", false},
-		{"vidhub", "VidHub", "", false},
-		{"senplayer", "SenPlayer", "", false},
-		{"kodi", "Kodi", "", false},
-		{"emby_theater", "Emby Theater", "", false},
-		{"empty_client_mozilla_ua", "", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", true},
-		{"empty_client_infuse_ua", "", "Infuse/7.6", false},
-	}
-
-	for _, c := range cases {
-		req := httptest.NewRequest("GET", "http://x/", nil)
-		if c.client != "" {
-			req.Header.Set("X-Emby-Client", c.client)
-		}
-		if c.ua != "" {
-			req.Header.Set("User-Agent", c.ua)
-		}
-		if got := proxy.isBrowserClient(req); got != c.want {
-			t.Errorf("%s: isBrowserClient = %v, want %v", c.name, got, c.want)
-		}
-	}
-	t.Logf("✅ isBrowserClient 识别矩阵通过")
-}
 
 // TestPlaybackInfo_BrowserVsPlayer 验证反代层核心行为：
 // STRM 源一律强制 DirectPlay（强播放器与浏览器行为一致），禁止转码。

@@ -352,9 +352,21 @@ func (p *Proxy) Handler() http.Handler {
 	}
 
 	// 媒体流路径走 HandleMediaStream（查缓存/解析重定向链 → 302），其余透传反代
-	// 分发顺序：JS 修补（crossOrigin）→ 媒体流拦截 → HTML 注入（crossOrigin）→ 透传
+	// 分发顺序：WS 升级 → system/info 端口改写 → JS 修补（crossOrigin）→ 媒体流拦截 → HTML 注入 → 透传
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+
+		// 0. WebSocket 升级请求：透明双向转发（Emby 实时通知/进度同步/远程控制依赖此链路）
+		if isWebSocketUpgrade(r) {
+			p.handleWebSocket(w, r)
+			return
+		}
+
+		// 0.5 system/info：改写端口为代理自身端口，否则客户端会绕过代理直连 Emby 原端口
+		if isSystemInfoPath(path) {
+			p.serveSystemInfo(w, r)
+			return
+		}
 
 		// 1. htmlvideoplayer JS 修补（crossOrigin 拦截，/emby/web/ 与 /web/ 两种挂载）
 		if isPatchedJSPath(path) {
@@ -549,41 +561,8 @@ func (p *Proxy) forceDirectPlay(data map[string]interface{}, req *http.Request) 
 }
 
 // ============================================================
-// 客户端浏览器识别 + ISO/原盘 seek 格式识别
+// ISO/原盘 seek 格式识别
 // ============================================================
-
-// isBrowserClient 判断请求是否来自浏览器/Web 客户端。
-// 注意：v1.2.8 起该函数已不再参与 PlaybackInfo 的 DirectPlay 决策——STRM 源一律
-// 强制 DirectPlay（含浏览器）。此函数仅保留用于诊断/日志或未来的差异化策略。
-func (p *Proxy) isBrowserClient(req *http.Request) bool {
-	client := strings.ToLower(strings.TrimSpace(req.Header.Get("X-Emby-Client")))
-	ua := strings.ToLower(strings.TrimSpace(req.Header.Get("User-Agent")))
-
-	// 1) 明确的 Web 客户端
-	if strings.Contains(client, "web") || strings.Contains(client, "browser") {
-		return true
-	}
-
-	// 1.5) 没有任何客户端信息时，无法判定为浏览器，按强播放器处理（默认直连）
-	if client == "" && ua == "" {
-		return false
-	}
-
-	// 2) 明确的非 Web 客户端（Infuse/VidHub/SenPlayer/Kodi/Emby 等）
-	nonWebClients := []string{"infuse", "vidhub", "senplayer", "senplayerhd", "emby", "kodi", "fileball", "vlc", "mxplayer", "nplayer", "ddplay", "potplayer", "omniplayer", "figplayer", "mpv"}
-	for _, c := range nonWebClients {
-		if strings.Contains(client, c) {
-			return false
-		}
-	}
-
-	// 3) 兜底：常见浏览器 UA 且没有播放器标识
-	if strings.Contains(ua, "mozilla/5.0") {
-		return true
-	}
-
-	return false
-}
 
 // seekRequiredContainers Emby Container 字段中需要 byte-range seek 的容器（原盘/直播流）
 var seekRequiredContainers = map[string]bool{
@@ -1055,7 +1034,7 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 	}
 
 	for attempt, to := range redirectResolveTimeouts {
-		reqCtx, cancel := context.WithTimeout(ctx, to.read)
+		reqCtx, cancel := context.WithTimeout(ctx, to.connect+to.read)
 
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, startURL, nil)
 		if err != nil {
@@ -1067,17 +1046,8 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 			req.Header.Set(k, v)
 		}
 
-		client := &http.Client{
-			Timeout: to.connect + to.read,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
-					return fmt.Errorf("too many redirects: %d", len(via))
-				}
-				return nil
-			},
-		}
-
-		resp, err := client.Do(req)
+		// 复用共享客户端（连接池复用），分级超时由上面的 reqCtx 控制
+		resp, err := p.followRedirectClient.Do(req)
 		if err != nil {
 			cancel()
 			// 超时 → 重试（最后一次超时则放弃）
@@ -1314,6 +1284,9 @@ func (p *Proxy) fetchPlaybackInfoFallback(ctx context.Context, r *http.Request, 
 	if itemID == "" {
 		return strmSourceMeta{}
 	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	apiKey := extractAPIKey(r)
 	apiURL := fmt.Sprintf("%s/Items/%s/PlaybackInfo?X-Emby-Token=%s",
 		p.embyHost, url.PathEscape(itemID), url.QueryEscape(apiKey))
@@ -1328,8 +1301,8 @@ func (p *Proxy) fetchPlaybackInfoFallback(ctx context.Context, r *http.Request, 
 		req.Header.Set("User-Agent", ua)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	// 复用共享客户端（连接池复用），超时由上面的 ctx 控制
+	resp, err := p.followRedirectClient.Do(req)
 	if err != nil {
 		logger.S().Warnf("[EmbyProxy] 实时 PlaybackInfo 查询失败: item=%s err=%v", itemID, err)
 		return strmSourceMeta{}
