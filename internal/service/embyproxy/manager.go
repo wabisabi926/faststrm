@@ -75,6 +75,7 @@ func (m *Manager) Start(host string, port int, embyURL string, forceProxyUaToken
 	if err != nil {
 		return fmt.Errorf("embyproxy.New(%q): %w", embyURL, err)
 	}
+	proxy.SetProxyPort(port)
 
 	// 同步预检测端口是否可用（避免异步 ListenAndServe 失败但 Start 已返回 nil）
 	ln, err := net.Listen("tcp", wantAddr)

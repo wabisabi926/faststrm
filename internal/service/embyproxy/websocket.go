@@ -93,6 +93,9 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	fwd.URL.Host = ""
 	fwd.Host = wsUpstreamHost(p.embyHost)
 	fwd.Header.Del("Host")
+	// 去掉 Accept-Encoding：上游拒绝升级时（401/404）其错误响应体会被下面按 64KB
+	// 截断回传，压缩过的响应体截断后无法解码；请求明文后截断只是内容变短，仍可读。
+	fwd.Header.Del("Accept-Encoding")
 
 	if err := fwd.Write(backendConn); err != nil {
 		_ = backendConn.Close()
@@ -118,17 +121,33 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// 上游未升级（401/404 等）：按普通响应回传，让客户端看到真实错误
 	if resp.StatusCode != http.StatusSwitchingProtocols {
-		_ = backendConn.Close()
+		// 先读完 body 再关连接；若先关连接，body 会被截断成「已缓冲的那一小段」
+		defer backendConn.Close()
 		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		// 读期内设期限：上游声明了长度却中途不再发数据时不会永久阻塞
+		_ = backendConn.SetReadDeadline(time.Now().Add(handshakeTimeout))
+		const bodyLimit = 64 * 1024
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 		for k, vv := range resp.Header {
+			lk := strings.ToLower(k)
+			// 跳过 hop-by-hop 与 body 分帧头：body 可能被截断，若原样回写上游的
+			// Content-Length，客户端会按完整长度读取而遇到连接提前关闭（截断报错）。
+			// 交由 net/http 重新决定长度（通常 chunked）。
+			if hopByHopHeaders[lk] || lk == "content-length" {
+				continue
+			}
 			for _, v := range vv {
 				w.Header().Add(k, v)
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(body)
-		logger.S().Warnf("[EmbyProxy][ws] 上游未升级 status=%d path=%s", resp.StatusCode, r.URL.Path)
+		if resp.ContentLength > bodyLimit {
+			logger.S().Warnf("[EmbyProxy][ws] 上游未升级 status=%d path=%s，错误响应体 %d 字节已截断为 %d",
+				resp.StatusCode, r.URL.Path, resp.ContentLength, bodyLimit)
+		} else {
+			logger.S().Warnf("[EmbyProxy][ws] 上游未升级 status=%d path=%s", resp.StatusCode, r.URL.Path)
+		}
 		return
 	}
 
@@ -136,16 +155,22 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_ = backendConn.Close()
 		logger.S().Warnf("[EmbyProxy][ws] hijack 客户端连接失败: %v", err)
+		http.Error(w, "WebSocket client hijack failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 回写 101（头部原样，不可改动 Sec-WebSocket-Accept）
+	// 回写 101（头部原样，不可改动 Sec-WebSocket-Accept）。
+	// 跳过 Content-Length / Transfer-Encoding：升级后是裸双向流，没有消息边界，
+	// 带上这两个头会让客户端按「有长度/有分块」解析而错乱。
 	if _, werr := fmt.Fprintf(clientBuf, "HTTP/1.1 101 Switching Protocols\r\n"); werr != nil {
 		_ = clientConn.Close()
 		_ = backendConn.Close()
 		return
 	}
 	for k, vv := range resp.Header {
+		if lk := strings.ToLower(k); lk == "content-length" || lk == "transfer-encoding" {
+			continue
+		}
 		for _, v := range vv {
 			fmt.Fprintf(clientBuf, "%s: %s\r\n", k, v)
 		}

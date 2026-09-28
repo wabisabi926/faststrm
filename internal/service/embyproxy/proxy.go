@@ -235,6 +235,11 @@ type Proxy struct {
 	// wsWatchdogInterval 空闲看门狗的检查周期
 	wsWatchdogInterval time.Duration
 
+	// proxyPort 反代自身监听端口，由 Manager.Start 注入。
+	// 仅在 system/info 端口改写时既无 X-Forwarded-Port、r.Host 也不含端口的情况下兜底，
+	// 避免回落到与实际监听不一致的硬编码 80。
+	proxyPort int
+
 	// httpClient 透传给 Emby 的客户端（不跟随重定向）
 	httpClient *http.Client
 	// followRedirectClient 用于解析重定向链拿最终 CDN URL（跟随所有重定向）
@@ -325,6 +330,14 @@ func New(embyHost string, forceProxyUaTokens ...[]string) (*Proxy, error) {
 		playbackUserCache:    make(map[playbackUserKey]playbackUserEntry),
 		strmSourcesCache:     make(map[string]strmCacheEntry),
 	}, nil
+}
+
+// SetProxyPort 记录反代自身监听端口，作为 system/info 端口改写的兜底值。
+// 必须在 server 开始处理请求前调用（Manager.Start 中紧随 New 之后）。
+func (p *Proxy) SetProxyPort(port int) {
+	if port > 0 {
+		p.proxyPort = port
+	}
 }
 
 // ============================================================

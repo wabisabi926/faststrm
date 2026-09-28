@@ -11,7 +11,9 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -59,9 +61,10 @@ func (p *Proxy) serveSystemInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if resp.StatusCode == http.StatusOK && r.Method != http.MethodHead {
-		if rewritten, ok := rewriteSystemInfoPorts(body, currentProxyPort(r)); ok {
+		proxyPort := currentProxyPort(r, p.proxyPort)
+		if rewritten, ok := rewriteSystemInfoPorts(body, proxyPort); ok {
 			body = rewritten
-			logger.S().Infof("[EmbyProxy] system/info 端口改写: path=%s port=%d", r.URL.Path, currentProxyPort(r))
+			logger.S().Infof("[EmbyProxy] system/info 端口改写: path=%s port=%d", r.URL.Path, proxyPort)
 		}
 	}
 
@@ -94,8 +97,6 @@ func rewriteSystemInfoPorts(body []byte, proxyPort int) ([]byte, bool) {
 	if !ok || originPort <= 0 || originPort == proxyPort {
 		return body, false
 	}
-	op := strconv.Itoa(originPort)
-	np := strconv.Itoa(proxyPort)
 
 	data["WebSocketPortNumber"] = proxyPort
 	if _, has := data["HttpServerPortNumber"]; has {
@@ -108,14 +109,14 @@ func rewriteSystemInfoPorts(body []byte, proxyPort int) ([]byte, bool) {
 		}
 		for i, v := range arr {
 			if s, isStr := v.(string); isStr {
-				arr[i] = strings.ReplaceAll(s, op, np)
+				arr[i] = replacePort(s, originPort, proxyPort)
 			}
 		}
 		data[key] = arr
 	}
 	for _, key := range []string{"LocalAddress", "WanAddress"} {
 		if s, isStr := data[key].(string); isStr {
-			data[key] = strings.ReplaceAll(s, op, np)
+			data[key] = replacePort(s, originPort, proxyPort)
 		}
 	}
 
@@ -124,6 +125,29 @@ func rewriteSystemInfoPorts(body []byte, proxyPort int) ([]byte, bool) {
 		return body, false
 	}
 	return out, true
+}
+
+// replacePort 只替换字符串中「作为端口出现」的 originPort。
+// 用字符串全局替换（strings.ReplaceAll）会误伤主机名/IP 里的同名片段，
+// 例如 originPort=80 时 "http://192.168.1.80:80" 会变成 "http://192.168.1.8097:8097"。
+func replacePort(s string, originPort, newPort int) string {
+	op := strconv.Itoa(originPort)
+	np := strconv.Itoa(newPort)
+
+	// 形态一：带 scheme 的 URL，如 http://192.168.1.10:8096
+	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		if u.Port() == op {
+			u.Host = net.JoinHostPort(u.Hostname(), np)
+			return u.String()
+		}
+		return s
+	}
+
+	// 形态二：裸 host:port
+	if host, port, err := net.SplitHostPort(s); err == nil && port == op {
+		return net.JoinHostPort(host, np)
+	}
+	return s
 }
 
 // jsonIntValue 把 JSON 数值/字符串转为 int
@@ -146,8 +170,9 @@ func jsonIntValue(v interface{}) (int, bool) {
 // currentProxyPort 推导代理自身对外端口：
 //  1. X-Forwarded-Port（前置 nginx/Cloudflare 时最准确）
 //  2. r.Host 中的端口
-//  3. 默认 80
-func currentProxyPort(r *http.Request) int {
+//  3. fallbackPort（反代实际监听端口，由 Manager.Start 注入）
+//  4. 以上都拿不到时兜底 80
+func currentProxyPort(r *http.Request, fallbackPort int) int {
 	if fp := r.Header.Get("X-Forwarded-Port"); fp != "" {
 		if idx := strings.Index(fp, ","); idx != -1 {
 			fp = fp[:idx]
@@ -162,6 +187,9 @@ func currentProxyPort(r *http.Request) int {
 				return n
 			}
 		}
+	}
+	if fallbackPort > 0 {
+		return fallbackPort
 	}
 	return 80
 }

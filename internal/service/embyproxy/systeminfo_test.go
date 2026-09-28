@@ -38,17 +38,19 @@ func TestIsSystemInfoPath(t *testing.T) {
 
 func TestCurrentProxyPort(t *testing.T) {
 	cases := []struct {
-		name    string
-		xffPort string
-		host    string
-		want    int
+		name     string
+		xffPort  string
+		host     string
+		fallback int
+		want     int
 	}{
-		{"x_forwarded_port", "9000", "192.168.1.5:8097", 9000},
-		{"x_forwarded_port_multi", "9001, 9002", "x", 9001},
-		{"host_port", "", "192.168.1.5:8097", 8097},
-		{"host_no_port", "", "emby.example.com", 80},
-		{"x_forwarded_invalid_falls_back", "abc", "192.168.1.5:8097", 8097},
-		{"empty", "", "", 80},
+		{"x_forwarded_port", "9000", "192.168.1.5:8097", 8090, 9000},
+		{"x_forwarded_port_multi", "9001, 9002", "x", 8090, 9001},
+		{"host_port", "", "192.168.1.5:8097", 8090, 8097},
+		{"host_no_port_uses_listen_port", "", "emby.example.com", 8090, 8090},
+		{"host_no_port_no_fallback_uses_80", "", "emby.example.com", 0, 80},
+		{"x_forwarded_invalid_falls_back", "abc", "192.168.1.5:8097", 8090, 8097},
+		{"empty", "", "", 0, 80},
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(http.MethodGet, "http://x/emby/system/info", nil)
@@ -56,8 +58,35 @@ func TestCurrentProxyPort(t *testing.T) {
 			req.Header.Set("X-Forwarded-Port", c.xffPort)
 		}
 		req.Host = c.host
-		if got := currentProxyPort(req); got != c.want {
+		if got := currentProxyPort(req, c.fallback); got != c.want {
 			t.Errorf("%s: currentProxyPort = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// ================================================================
+// replacePort 精确替换端口
+// ================================================================
+
+func TestReplacePort(t *testing.T) {
+	cases := []struct {
+		name            string
+		in              string
+		origin, newPort int
+		want            string
+	}{
+		{"url_with_port", "http://192.168.1.10:8096", 8096, 8097, "http://192.168.1.10:8097"},
+		{"https_with_port", "https://emby.example.com:8096", 8096, 8097, "https://emby.example.com:8097"},
+		{"bare_host_port", "192.168.1.5:8096", 8096, 8097, "192.168.1.5:8097"},
+		// 回归：端口 80 时旧实现用全局替换会把 IP 末段一起改掉
+		{"ip_ends_with_origin_port", "http://192.168.1.80:80", 80, 8097, "http://192.168.1.80:8097"},
+		{"hostname_contains_origin_port", "http://emby80.example.com:8096", 80, 8097, "http://emby80.example.com:8096"},
+		{"no_port_unchanged", "http://192.168.1.80", 80, 8097, "http://192.168.1.80"},
+		{"port_mismatch_unchanged", "https://emby.example.com:8920", 8096, 8097, "https://emby.example.com:8920"},
+	}
+	for _, c := range cases {
+		if got := replacePort(c.in, c.origin, c.newPort); got != c.want {
+			t.Errorf("%s: replacePort(%q) = %q, want %q", c.name, c.in, got, c.want)
 		}
 	}
 }
@@ -133,6 +162,35 @@ func TestRewriteSystemInfoPorts_NoChange(t *testing.T) {
 	}
 }
 
+// 回归：originPort=80 时不能把 IP / 主机名里的 "80" 一起改掉
+func TestRewriteSystemInfoPorts_Port80KeepsIP(t *testing.T) {
+	in := `{
+		"WebSocketPortNumber": 80,
+		"LocalAddress": "http://192.168.1.80:80",
+		"LocalAddresses": ["http://10.0.0.80:80"]
+	}`
+
+	out, ok := rewriteSystemInfoPorts([]byte(in), 8097)
+	if !ok {
+		t.Fatal("期望发生端口改写")
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("改写结果非法 JSON: %v", err)
+	}
+	if m["WebSocketPortNumber"] != float64(8097) {
+		t.Errorf("WebSocketPortNumber = %v, want 8097", m["WebSocketPortNumber"])
+	}
+	if m["LocalAddress"] != "http://192.168.1.80:8097" {
+		t.Errorf("IP 末段被误改: LocalAddress = %v", m["LocalAddress"])
+	}
+	addrs, _ := m["LocalAddresses"].([]interface{})
+	if len(addrs) != 1 || addrs[0] != "http://10.0.0.80:8097" {
+		t.Errorf("IP 末段被误改: LocalAddresses = %v", addrs)
+	}
+}
+
 // ================================================================
 // serveSystemInfo 端到端
 // ================================================================
@@ -166,7 +224,7 @@ func TestServeSystemInfo_RewritesToProxyPort(t *testing.T) {
 		t.Fatalf("响应非 JSON: %v (%s)", err, string(body))
 	}
 	// 代理端口 = httptest 随机端口，须与 r.Host 推导一致
-	wantPort := float64(currentProxyPort(httptest.NewRequest(http.MethodGet, pServer.URL, nil)))
+	wantPort := float64(currentProxyPort(httptest.NewRequest(http.MethodGet, pServer.URL, nil), 0))
 	if m["WebSocketPortNumber"] != wantPort {
 		t.Errorf("WebSocketPortNumber = %v, want %v（代理端口）", m["WebSocketPortNumber"], wantPort)
 	}

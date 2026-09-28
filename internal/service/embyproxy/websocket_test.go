@@ -197,6 +197,65 @@ func TestWebSocketProxy_UpstreamNotUpgraded(t *testing.T) {
 	}
 }
 
+// TestWebSocketProxy_UpstreamErrorBodyNotLengthMismatched 回归：上游拒绝升级且错误
+// 响应体超过 64KB 截断上限时，回写响应不得原样带上上游的 Content-Length。
+// 否则客户端会按完整长度读取，遇到连接提前关闭而报 unexpected EOF。
+func TestWebSocketProxy_UpstreamErrorBodyNotLengthMismatched(t *testing.T) {
+	const bodySize = 100 * 1024
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, strings.Repeat("x", bodySize))
+	}))
+	defer backend.Close()
+
+	proxy, err := New(backend.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	pServer := httptest.NewServer(proxy.Handler())
+	defer pServer.Close()
+
+	addr := strings.TrimPrefix(pServer.URL, "http://")
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	req := "GET /embywebsocket HTTP/1.1\r\n" +
+		"Host: " + addr + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write handshake: %v", err)
+	}
+
+	parseReq, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/embywebsocket", nil)
+	resp, err := http.ReadResponse(bufio.NewReader(conn), parseReq)
+	if err != nil {
+		t.Fatalf("读取代理响应失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("期望透传 401，实际: %d", resp.StatusCode)
+	}
+	if resp.ContentLength >= 0 {
+		t.Errorf("截断响应不应带 Content-Length，实际声明 %d", resp.ContentLength)
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取截断的错误响应体失败（长度声明与实际不符）: %v", err)
+	}
+	if len(got) != 64*1024 {
+		t.Errorf("错误响应体应被截断为 64KB，实际 %d 字节", len(got))
+	}
+	t.Logf("✅ 超长错误响应被安全截断：无 Content-Length 声明，客户端读取无错")
+}
+
 // TestWebSocketProxy_UpstreamPushAfterHandshake 回归：上游在 101 之后紧接着推送数据。
 //
 // 这些字节与响应头同一次写、落在同一个 TCP 段，会被 http.ReadResponse 缓冲进
@@ -514,4 +573,88 @@ func TestWebSocketProxy_IdleWatchdogKeepsActiveConn(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Logf("✅ 持续流量下连接未被空闲看门狗误杀（跨过 %s 空闲阈值）", proxy.wsIdleTimeout)
+}
+
+// TestWebSocketProxy_StripsBodyFramingHeadersOn101 101 回写时不得带上
+// Content-Length / Transfer-Encoding：升级后是裸双向流，没有消息边界，
+// 带上这两个头会让客户端按「有长度/有分块」解析而错乱。
+func TestWebSocketProxy_StripsBodyFramingHeadersOn101(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("backend: ResponseWriter 不支持 hijack")
+			return
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("backend hijack: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		fmt.Fprint(buf, "HTTP/1.1 101 Switching Protocols\r\n"+
+			"Upgrade: websocket\r\n"+
+			"Connection: Upgrade\r\n"+
+			"Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"+
+			"Content-Length: 0\r\n"+
+			"Transfer-Encoding: chunked\r\n\r\n")
+		if err := buf.Flush(); err != nil {
+			return
+		}
+		_, _ = io.Copy(io.Discard, buf.Reader)
+	}))
+	defer backend.Close()
+
+	proxy, err := New(backend.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	pServer := httptest.NewServer(proxy.Handler())
+	defer pServer.Close()
+
+	addr := strings.TrimPrefix(pServer.URL, "http://")
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	req := "GET /embywebsocket HTTP/1.1\r\n" +
+		"Host: " + addr + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write handshake: %v", err)
+	}
+
+	// 逐行读原始响应头，保留文本以便断言
+	br := bufio.NewReader(conn)
+	var raw strings.Builder
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("读取响应头失败: %v", err)
+		}
+		raw.WriteString(line)
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+	headers := strings.ToLower(raw.String())
+
+	if !strings.Contains(headers, "101") {
+		t.Fatalf("期望 101 Switching Protocols，实际响应头:\n%s", raw.String())
+	}
+	if !strings.Contains(headers, "sec-websocket-accept") {
+		t.Errorf("101 响应缺少 Sec-WebSocket-Accept:\n%s", raw.String())
+	}
+	for _, bad := range []string{"content-length", "transfer-encoding"} {
+		if strings.Contains(headers, bad) {
+			t.Errorf("101 响应不应回写 %s:\n%s", bad, raw.String())
+		}
+	}
+	t.Logf("✅ 101 回写已剔除 Content-Length / Transfer-Encoding")
 }
