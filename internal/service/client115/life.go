@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -681,10 +682,16 @@ func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]f
 		ErrMsg    string                `json:"errmsg,omitempty"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse medialist response: %w (body=%s)", err, truncateBody(body, 256))
+		// 解析失败：把原始响应打出来，用于区分「字段名/结构变更」与「接口返回非 JSON（如登录页 / 风控页）」
+		logger.S().Warnf("[LifeClient] FsFilesMediaAncestors 解析失败 cid=%s err=%v body=%s",
+			cid, err, truncateBody(body, 512))
+		return nil, fmt.Errorf("parse medialist response: %w (body=%s)", err, truncateBody(body, 512))
 	}
 	if !resp.State {
-		return nil, fmt.Errorf("medialist state=false: %s", resp.ErrMsg)
+		// state=false：把原始响应打出来，用于区分「接口拒绝该 cid」还是「接口本身不可靠」
+		logger.S().Warnf("[LifeClient] FsFilesMediaAncestors state=false cid=%s errmsg=%s body=%s",
+			cid, resp.ErrMsg, truncateBody(body, 512))
+		return nil, fmt.Errorf("medialist state=false: %s (body=%s)", resp.ErrMsg, truncateBody(body, 512))
 	}
 
 	// 优先解析真实字段 path（父目录树，含目录自身）
@@ -711,9 +718,22 @@ func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]f
 		return resp.Ancestors, nil
 	}
 
-	// state=true 但两种字段都为空：把原始响应打出来便于定位（cid 不被接受 / 字段再次变更）
-	logger.S().Warnf("[LifeClient] FsFilesMediaAncestors state=true 但 path/ancestors 均为空 cid=%s body=%s",
-		cid, truncateBody(body, 256))
+	// state=true 却没有可用祖先：把原始响应与顶层字段一并打出来，
+	// 用于「最终判定」是接口真的返回空数组（如 "path":[]），还是字段名/结构变更导致解析未命中。
+	pathRaw := "(无 path 字段)"
+	var topKeys []string
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(body, &raw) == nil {
+		for k := range raw {
+			topKeys = append(topKeys, k)
+		}
+		sort.Strings(topKeys)
+		if v, ok := raw["path"]; ok {
+			pathRaw = truncateBody(v, 128)
+		}
+	}
+	logger.S().Warnf("[LifeClient] FsFilesMediaAncestors state=true 但无可用 path/ancestors cid=%s keys=%v path=%s body=%s",
+		cid, topKeys, pathRaw, truncateBody(body, 512))
 	return nil, nil
 }
 

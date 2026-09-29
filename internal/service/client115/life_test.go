@@ -200,6 +200,55 @@ func TestFsFilesMediaAncestors_ParsesPathIncludingSelf(t *testing.T) {
 	}
 }
 
+// 解析出错（返回非 JSON，如风控/登录页）时必须把原始响应带出，
+// 供运维「最终判定」是接口不可靠还是解析问题。
+func TestFsFilesMediaAncestors_ParseError_SurfacesRawBody(t *testing.T) {
+	lc := newLifeClientWithTrips(t, []*mockTrip{{
+		Path:       "/files/medialist",
+		Query:      map[string]string{"cid": "888"},
+		BodyString: `<html>风控验证页</html>`,
+	}})
+	_, err := lc.FsFilesMediaAncestors(context.Background(), "888")
+	if err == nil {
+		t.Fatal("want parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "风控验证页") {
+		t.Fatalf("parse error should surface raw body, got %v", err)
+	}
+}
+
+// state=false（接口拒绝该 cid）时同样把 errmsg 与原始响应带出。
+func TestFsFilesMediaAncestors_StateFalse_SurfacesRawBody(t *testing.T) {
+	lc := newLifeClientWithTrips(t, []*mockTrip{{
+		Path:       "/files/medialist",
+		Query:      map[string]string{"cid": "888"},
+		BodyString: `{"state":false,"errmsg":"cid 无效"}`,
+	}})
+	_, err := lc.FsFilesMediaAncestors(context.Background(), "888")
+	if err == nil {
+		t.Fatal("want state=false error, got nil")
+	}
+	if !strings.Contains(err.Error(), "state=false") || !strings.Contains(err.Error(), "cid 无效") {
+		t.Fatalf("state=false error should surface errmsg, got %v", err)
+	}
+}
+
+// state=true 且接口真的返回空数组（path:[]）→ 无可用祖先，返回 nil,nil（不报错），交由上层降级链。
+func TestFsFilesMediaAncestors_EmptyPath_ReturnsNilNoError(t *testing.T) {
+	lc := newLifeClientWithTrips(t, []*mockTrip{{
+		Path:       "/files/medialist",
+		Query:      map[string]string{"cid": "888"},
+		BodyString: `{"state":true,"path":[]}`,
+	}})
+	nodes, err := lc.FsFilesMediaAncestors(context.Background(), "888")
+	if err != nil {
+		t.Fatalf("empty path should not error, got %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("want 0 nodes, got %d: %+v", len(nodes), nodes)
+	}
+}
+
 // path 含目标自身时，ResolvePathByFileID 必须丢弃自身项，避免路径出现重复段。
 func TestResolvePathByFileID_PathIncludesSelf(t *testing.T) {
 	lc := newLifeClientWithTrips(t, []*mockTrip{{
