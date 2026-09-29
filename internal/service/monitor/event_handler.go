@@ -188,7 +188,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		// EVENT_DECIDE 已记录 cloud_path_unresolved；此处把错误再返回 pollOnce，pollOnce 会累计 Errors 并推进 LastErr UI 可见
 		// P1-1：同时写入用户可见事件日志，避免"没日志、没反应"的观感
 		m.appendLog(ctx, account, string(decision.EventKind), false, "", "",
-			fmt.Sprintf("跳过: cloud_path_unresolved (file=%s fid=%s)", event.FileName, event.FileID))
+			fmt.Sprintf("跳过: cloud_path_unresolved (file=%s fid=%s pid=%s)", event.FileName, event.FileID, event.ParentID))
 		pollCountsAddSkipped(ctx, "cloud_path_unresolved")
 		m.markDedupProcessed(event)
 		return fmt.Errorf("event file_path 为空且路径解析失败，无法处理")
@@ -216,7 +216,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		// P1-1：关键跳过原因写入用户可见事件日志（只记录疑似配置问题的原因，避免常规过滤刷屏）
 		if shouldLogSkipReason(decision.SkipReason) {
 			m.appendLog(ctx, account, string(decision.EventKind), false, cloudPath, decision.MatchedLocalBase,
-				fmt.Sprintf("跳过: %s (file=%s pid=%s)", decision.SkipReason, event.FileName, event.ParentID))
+				fmt.Sprintf("跳过: %s (file=%s fid=%s pid=%s)", decision.SkipReason, event.FileName, event.FileID, event.ParentID))
 		}
 		pollCountsAddSkipped(ctx, decision.SkipReason)
 		m.markDedupProcessed(event)
@@ -228,7 +228,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		reason := "mapping_type_" + string(decision.MappingType) + "_phase2_not_handled"
 		if shouldLogSkipReason(reason) {
 			m.appendLog(ctx, account, string(decision.EventKind), false, cloudPath, decision.MatchedLocalBase,
-				fmt.Sprintf("跳过: %s (file=%s pid=%s)", reason, event.FileName, event.ParentID))
+				fmt.Sprintf("跳过: %s (file=%s fid=%s pid=%s)", reason, event.FileName, event.FileID, event.ParentID))
 		}
 		pollCountsAddSkipped(ctx, reason)
 		m.markDedupProcessed(event)

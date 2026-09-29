@@ -601,6 +601,69 @@ func TestShouldLogSkipReason(t *testing.T) {
 	}
 }
 
+// TestProcessEvent_NoPathMapping_WritesIdentityLog 第3项回归：
+// no_path_mapping 跳过时用户可见日志必须带上 fid / pid（parent_id 即父目录 cid），
+// 否则在 CoreELEC 现场只能看到裸文件名，无法判断是哪个目录出的问题。
+func TestProcessEvent_NoPathMapping_WritesIdentityLog(t *testing.T) {
+	dir := t.TempDir()
+	sqldb, err := db.OpenNew(dir)
+	if err != nil {
+		t.Fatalf("Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqldb.Close() })
+	logRepo, err := db.NewLifeEventLogRepo(sqldb)
+	if err != nil {
+		t.Fatalf("NewLifeEventLogRepo: %v", err)
+	}
+
+	cfg := model.LifeMonitorSettings{
+		Enabled:  true,
+		Accounts: []string{"acc1"},
+		PathMappings: []model.MonitorPathMapping{
+			{Account: "acc1", CloudPath: "电影/", LocalPath: filepath.Join(dir, "Videos")},
+		},
+		EventTypes: model.EventTypesSettings{Create: true, Remove: true, Rename: true, Move: true},
+	}
+	m := &Monitor{
+		settingsFn:       func() model.LifeMonitorSettings { return cfg },
+		sqliteDB:         sqldb,
+		lifeEventLogRepo: logRepo,
+	}
+	// 云路径落在映射范围外 → MappingType=None → skipReason=no_path_mapping
+	event := client115.LifeEventItem{
+		Type:         1,
+		FileID:       "90001",
+		FileName:     "Some.Movie.2024.mkv",
+		ParentID:     "88888",
+		FileCategory: 1,
+		PickCode:     "abcdefghij1234567",
+		FileSize:     1024 * 1024 * 1024,
+		FilePath:     "其他/Some.Movie.2024.mkv",
+	}
+
+	ctx := context.Background()
+	if err := m.processEvent(ctx, "acc1", event, nil); err != nil {
+		t.Fatalf("processEvent: %v", err)
+	}
+	logs, err := logRepo.Query(ctx, db.LifeEventLogQuery{Account: "acc1", Limit: 10})
+	if err != nil {
+		t.Fatalf("Query life logs: %v", err)
+	}
+	if len(logs) != 1 || logs[0].Success {
+		t.Fatalf("应记录 1 条 success=false 的 no_path_mapping 跳过日志, got %+v", logs)
+	}
+	msg := logs[0].Message
+	if !strings.Contains(msg, "no_path_mapping") {
+		t.Fatalf("日志应含 no_path_mapping, got %q", msg)
+	}
+	if !strings.Contains(msg, "fid=90001") {
+		t.Fatalf("日志应含 fid, got %q", msg)
+	}
+	if !strings.Contains(msg, "pid=88888") {
+		t.Fatalf("日志应含 pid(parent_id/cid), got %q", msg)
+	}
+}
+
 // ======================================================================
 // P1-2 单文件被 115 误标为目录（FileCategory==0）的防线
 // ======================================================================

@@ -667,7 +667,7 @@ func (m *Monitor) preProcessEventWithSource( //nolint:cyclop // complexity: 34
 			// 重打一次修正后的 EVENT_DECIDE（最小成本，避免后续判断逻辑分支漂移）
 			logger.S().Infof("[Monitor] EVENT_DECIDE_corrected %s", decision.String())
 		}
-		m.appendLog(ctx, account, "new_folder", false, cloudPath, mr.LocalPath, fmt.Sprintf("跳过: %s", skipReason))
+		m.appendLog(ctx, account, "new_folder", false, cloudPath, mr.LocalPath, fmt.Sprintf("跳过: %s (file=%s fid=%s pid=%s)", skipReason, event.FileName, event.FileID, event.ParentID))
 		return decision, true // 仍然"消化掉"，让 caller 按 skipped 计
 	}
 
