@@ -185,6 +185,30 @@ func anyIDMatches(a any, target string) bool {
 	return false
 }
 
+// cidToString 将 JSON 里任意类型的 cid（int/float64/string）统一转成字符串。
+func cidToString(a any) string {
+	switch v := a.(type) {
+	case string:
+		return v
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	return ""
+}
+
+// parentDirOf 取云路径的父目录（以 "/" 分隔）；顶层目录或空路径返回空串（表示根目录）。
+func parentDirOf(p string) string {
+	p = strings.Trim(strings.TrimSpace(p), "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[:i]
+	}
+	return ""
+}
+
 // stripRootPrefix 去掉"根目录/"前缀（带/不带前导斜杠都处理），并清理多余斜杠空格
 func stripRootPrefix(p string) string {
 	p = strings.TrimSpace(p)
@@ -737,10 +761,63 @@ func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]f
 	return nil, nil
 }
 
+// fsAncestorsViaFiles 首选「/files 列目录」响应顶层 path 字段解析祖先链，失败再退回 medialist。
+//
+// 为什么优先它：/files/medialist 带 type=6 媒体过滤，会把祖先链里的「非媒体目录」从 path 中剔除，
+// 导致 state=true 但 path 为空（第4项 raw 日志已证实），路径解析退化成裸文件名 → no_path_mapping 跳过。
+// 而 /files（列目录）响应的 path 是纯粹目录树，不受媒体类型过滤影响，稳定性更高——参考实现
+// p115client 正是基于它在客户端合成 ancestors（tool/attr.py::update_resp_ancestors，直接读 resp["path"]）。
+//
+// 语义与 medialist 的 path 一致：从根到「被列出目录」的完整目录树，**最后一项即目标目录自身**。
+// 因此调用方（ResolveDirPath）既拿得到祖先段，也直接拿得到目标目录自身名，无需再列父目录。
+func (c *LifeClient) fsAncestorsViaFiles(ctx context.Context, cid string) ([]fsMediaAncestorNode, error) {
+	if cid == "" || cid == "0" {
+		return nil, nil
+	}
+
+	// 1) 首选：/files?cid={cid} 列出目标目录自身，取其响应顶层 path 作为祖先链（含自身）。
+	if c.fsClient != nil {
+		resp, err := c.fsClient.FsFiles(ctx, cid, 1, 0, c.cookie)
+		if err != nil {
+			logger.S().Warnf("[LifeClient] fsAncestorsViaFiles FsFiles(cid=%s) 失败，退回 medialist: %v", cid, err)
+		} else if resp != nil && resp.State && len(resp.Path) > 0 {
+			nodes := make([]fsMediaAncestorNode, 0, len(resp.Path))
+			for _, p := range resp.Path {
+				name := strings.TrimSpace(p.Name)
+				if name == "" {
+					continue
+				}
+				nodes = append(nodes, fsMediaAncestorNode{
+					ID:       p.Cid,
+					Name:     name,
+					ParentID: p.Pid,
+				})
+			}
+			if len(nodes) > 0 {
+				return nodes, nil
+			}
+			logger.S().Warnf("[LifeClient] fsAncestorsViaFiles FsFiles(cid=%s) path 存在但全为空名，退回 medialist", cid)
+		} else {
+			state := false
+			dataCount := 0
+			if resp != nil {
+				state = resp.State
+				dataCount = len(resp.Data)
+			}
+			logger.S().Warnf("[LifeClient] fsAncestorsViaFiles FsFiles(cid=%s) 无可用 path(state=%v data=%d)，退回 medialist",
+				cid, state, dataCount)
+		}
+	}
+
+	// 2) 兜底：medialist（保留原实现，含第4项 raw 诊断日志）
+	return c.FsFilesMediaAncestors(ctx, cid)
+}
+
 // ResolveDirPath 通过 cid 获取文件夹的完整云端路径（包含文件夹自身名称）。
 // 三级回退：
 //  1. 内存缓存 pathCache (key=cid)
-//  2. FsFilesMediaAncestors(cid) 祖先链（path 含目录自身）+ 兜底 FsFiles 回查自身 Name
+//  2. fsAncestorsViaFiles(cid) 祖先链：首选 /files 列目录响应的 path 字段（不受 medialist
+//     的 type=6 媒体过滤影响），失败退回 FsFilesMediaAncestors(medialist)；path 含目录自身名
 //  3. 失败返回空串+error（不再伪造 /unknown/ 虚拟路径）
 func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, error) {
 	if cid == "" || cid == "0" {
@@ -756,13 +833,14 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 		c.pathCache.Delete(cid)
 	}
 
-	// 2) 祖先链
-	ancestors, err := c.FsFilesMediaAncestors(ctx, cid)
+	// 2) 祖先链：首选 /files 列目录响应的 path（不受 medialist 的 type=6 媒体过滤影响），
+	//    失败自动退回 FsFilesMediaAncestors(medialist)。path 语义含目录自身。
+	ancestors, err := c.fsAncestorsViaFiles(ctx, cid)
 	if err != nil {
 		return "", fmt.Errorf("ResolveDirPath ancestors cid=%s: %w", cid, err)
 	}
 
-	// a) 判定 path/ancestors 语义：115 /files/medialist 的 path 是「从根到目标目录」的
+	// a) 判定祖先链语义：/files 列目录响应与 /files/medialist 的 path 都是「从根到目标目录」的
 	//    完整目录树，**最后一项即目标目录自身**（官方 SDK 与参考实现均如此）。
 	//    兼容极端情况：若最后一项 cid 与目标 cid 不一致，则视为「仅父目录链」。
 	selfIncluded := len(ancestors) > 0 && sameCid(ancestors[len(ancestors)-1].ID, cid)
@@ -844,7 +922,8 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 //  1. /files/medialist?cid=file_id 返回的 path 是「从根到目标」的目录树；当 cid 指向
 //     文件时，最后一项即该文件自身 → 需要丢弃自身项，剩余项才是父目录段
 //  2. 组装 ancestors(排除 根目录) + "/" + fileName
-//  3. 失败返回空串，不再伪造虚拟路径
+//  3. 祖先链为空/失败时走「语义优先」降级链：ResolveDirPath(fileID) 完整祖先链（支持任意
+//     深度）→ 根目录直查 → 受限遍历根目录一级子目录；均失败才返回裸文件名（不伪造虚拟路径）
 func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName string) string { //nolint:cyclop // complexity: 43
 	fileID = strings.TrimSpace(fileID)
 	fileName = strings.TrimSpace(fileName)
@@ -876,26 +955,33 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 	if ancestorsOK {
 		ancestorCount = len(ancestors)
 	}
-	// 对 err / state=false / ancestors=0 三种情况，统一进入回退逻辑：
-	//   1) FsFiles(cid=0) 根目录列目录核对 → 确认真在根目录 → 裸文件名
-	//   2) 否则遍历根目录下每个子文件夹列子目录内容，找到 fileID 匹配 → 得出父目录名
-	//   3) 最后尝试把 fileID 当 cid 调 ResolveDirPath 反查自身所在位置
+	// 对 err / state=false / ancestors=0 三种情况，统一进入「语义优先」降级链：
+	//   1) 语义优先：ResolveDirPath(fileID) 走完整祖先链，支持任意深度，命中即得目录完整路径
+	//   2) 次选：FsFiles(cid=0) 根目录直查 → 确认真在根目录 → 裸文件名
+	//   3) 末端：受限遍历根目录一级子目录(maxRootSubdirScan)，仅在语义解析与根目录核对都未命中时兜底
 	if !ancestorsOK || ancestorCount == 0 {
-		logTag := "ancestors=0"
 		if !ancestorsOK {
-			logTag = "ancestors_FAIL"
-			logger.S().Warnf("[LifeClient] ResolvePathByFileID ancestors 失败 fid=%s name=%s: %v → 转入根目录核对降级",
+			logger.S().Warnf("[LifeClient] ResolvePathByFileID ancestors 失败 fid=%s name=%s: %v → 转入语义优先降级链",
 				fileID, fileName, err)
 		}
-		if ancestorCount == 0 {
-			logger.S().Infof("[LifeClient] ResolvePathByFileID ancestors=0 fid=%s name=%s, 将用 FsFiles 核对是否为真根目录",
-				fileID, fileName)
+
+		// 1) 语义优先：本函数仅由文件夹事件调用（fileID 即文件夹 cid），
+		//    直接用 ResolveDirPath(fileID) 解析其完整云端路径，避免盲目假设「父目录是根目录」。
+		if dirPath, derr := c.ResolveDirPath(ctx, fileID); derr == nil && dirPath != "" {
+			parent := parentDirOf(dirPath)
+			logger.S().Infof("[LifeClient] ResolvePathByFileID fid=%s 语义优先(ResolveDirPath)命中 dir=%s → parent=%q",
+				fileID, dirPath, parent)
+			c.pathCache.Store("fid:"+fileID, cachedPathEntry{
+				path:      parent,
+				expiresAt: now.Add(c.pathCacheTTL),
+			})
+			return parent + "/" + fileName
 		}
-		_ = logTag
+
+		// 2) 次选：语义解析未命中 → 列根目录核对（是否真的位于根目录）
 		if c.fsClient != nil {
 			resp, lerr := c.fsClient.FsFiles(ctx, "0", 2000, 0, c.cookie)
 			if lerr == nil && resp != nil && resp.State {
-				foundAtRoot := false
 				for i := range resp.Data {
 					e := &resp.Data[i]
 					if strings.EqualFold(strings.TrimSpace(e.Name), fileName) && anyIDMatches(e.CID, fileID) {
@@ -908,70 +994,51 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 						return "/" + fileName
 					}
 				}
-				if !foundAtRoot {
-					// 不在根目录 → 遍历根目录下每个子文件夹（cid），递归列其内容，找到 cid==fileID 且名匹配时返回 parentName/fileName
-					dirCount := 0
-					for i := range resp.Data {
-						e := &resp.Data[i]
-						if !e.IsDir {
-							continue
-						}
+
+				// 3) 末端兜底：语义解析与根目录核对都未命中，才受限遍历根目录一级子目录
+				dirCount := 0
+				for i := range resp.Data {
+					if resp.Data[i].IsDir {
 						dirCount++
 					}
-					logger.S().Infof("[LifeClient] ResolvePathByFileID 根目录列到 %d 个子文件夹，开始遍历查找 fid=%s name=%s",
-						dirCount, fileID, fileName)
-					scanned := 0
-					for i := range resp.Data {
-						e := &resp.Data[i]
-						if !e.IsDir {
-							continue
-						}
-						if scanned >= maxRootSubdirScan {
-							logger.S().Warnf("[LifeClient] ResolvePathByFileID 根目录子文件夹过多(>%d)，停止遍历 fid=%s name=%s，改走 parent_id 反查",
-								maxRootSubdirScan, fileID, fileName)
-							break
-						}
-						scanned++
-						subCid := ""
-						switch v := e.CID.(type) {
-						case string:
-							subCid = v
-						case int, int64, float64:
-							subCid = fmt.Sprintf("%v", v)
-						}
-						if subCid == "" || subCid == "0" {
-							continue
-						}
-						subResp, slerr := c.fsClient.FsFiles(ctx, subCid, 2000, 0, c.cookie)
-						if slerr != nil || subResp == nil || !subResp.State {
-							continue
-						}
-						for j := range subResp.Data {
-							se := &subResp.Data[j]
-							if strings.EqualFold(strings.TrimSpace(se.Name), fileName) && anyIDMatches(se.CID, fileID) {
-								parentName := strings.TrimSpace(e.Name)
-								if parentName == "" || parentName == "根目录" {
-									continue
-								}
-								logger.S().Infof("[LifeClient] ResolvePathByFileID fid=%s 通过FsFiles核对: parent=%s name=%s",
-									fileID, parentName, fileName)
-								c.pathCache.Store("fid:"+fileID, cachedPathEntry{
-									path:      parentName,
-									expiresAt: now.Add(c.pathCacheTTL),
-								})
-								return parentName + "/" + fileName
-							}
-						}
+				}
+				logger.S().Infof("[LifeClient] ResolvePathByFileID 语义解析未命中，回落根目录一级子目录浅扫(共%d个/上限%d) fid=%s name=%s",
+					dirCount, maxRootSubdirScan, fileID, fileName)
+				scanned := 0
+				for i := range resp.Data {
+					e := &resp.Data[i]
+					if !e.IsDir {
+						continue
 					}
-					// 两级都没找到：最后尝试把 fileID 当文件夹 cid 调 ResolveDirPath 反查自身所在位置
-					if dirPath, derr := c.ResolveDirPath(ctx, fileID); derr == nil && dirPath != "" {
-						logger.S().Infof("[LifeClient] ResolvePathByFileID fid=%s 通过ResolveDirPath回退: dirPath=%s",
-							fileID, dirPath)
-						c.pathCache.Store("fid:"+fileID, cachedPathEntry{
-							path:      dirPath,
-							expiresAt: now.Add(c.pathCacheTTL),
-						})
-						return dirPath + "/" + fileName
+					if scanned >= maxRootSubdirScan {
+						logger.S().Warnf("[LifeClient] ResolvePathByFileID 根目录一级子目录过多(>%d)，停止浅扫 fid=%s name=%s，改走 parent_id 反查",
+							maxRootSubdirScan, fileID, fileName)
+						break
+					}
+					scanned++
+					subCid := cidToString(e.CID)
+					if subCid == "" || subCid == "0" {
+						continue
+					}
+					subResp, slerr := c.fsClient.FsFiles(ctx, subCid, 2000, 0, c.cookie)
+					if slerr != nil || subResp == nil || !subResp.State {
+						continue
+					}
+					for j := range subResp.Data {
+						se := &subResp.Data[j]
+						if strings.EqualFold(strings.TrimSpace(se.Name), fileName) && anyIDMatches(se.CID, fileID) {
+							parentName := strings.TrimSpace(e.Name)
+							if parentName == "" || parentName == "根目录" {
+								continue
+							}
+							logger.S().Infof("[LifeClient] ResolvePathByFileID fid=%s FsFiles浅扫命中: parent=%s name=%s",
+								fileID, parentName, fileName)
+							c.pathCache.Store("fid:"+fileID, cachedPathEntry{
+								path:      parentName,
+								expiresAt: now.Add(c.pathCacheTTL),
+							})
+							return parentName + "/" + fileName
+						}
 					}
 				}
 			} else {
@@ -979,7 +1046,7 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 					fileID, lerr, resp != nil && resp.State)
 			}
 		}
-		// 所有 API 都失败：返回 "/" + fileName 作为最后兜底（caller 会根据 mapping 判断无效）
+		// 所有途径都失败：返回 "/" + fileName 作为最后兜底（caller 会根据 mapping 判断无效）
 		return "/" + fileName
 	}
 

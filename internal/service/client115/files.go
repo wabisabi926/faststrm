@@ -320,6 +320,7 @@ type FsFileEntry struct {
 	PickCode string `json:"pc,omitempty"`
 	FID      any    `json:"fid"`
 	CID      any    `json:"cid"`
+	PID      any    `json:"pid,omitempty"` // 父目录 cid（115 /files 目录条目会带，文件条目通常不带）
 	Name     string `json:"n"`
 	Size     int64  `json:"s,omitempty"`
 	SHA      string `json:"sha,omitempty"`
@@ -327,13 +328,23 @@ type FsFileEntry struct {
 	IsDir    bool   `json:"-"`
 }
 
+// FsFilesPathNode /files 响应顶层 path 字段的元素：从根到「当前被列出目录」的完整目录树。
+// 115 实测字段为 {cid, name, pid}，其中 cid 为该层级目录自身 id，pid 为其父目录 id。
+// path 描述的是「被列出目录」自身的祖先链（从根直到并包含该目录），不含其子项。
+type FsFilesPathNode struct {
+	Cid  flexInt `json:"cid"`
+	Pid  flexInt `json:"pid"`
+	Name string  `json:"name"`
+}
+
 // FsFilesResp fs_files 返回结构
 type FsFilesResp struct {
-	State  bool          `json:"state"`
-	Data   []FsFileEntry `json:"data"`
-	Count  int           `json:"count"`
-	ErrNo  int           `json:"errno,omitempty"`
-	ErrMsg string        `json:"errmsg,omitempty"`
+	State  bool              `json:"state"`
+	Data   []FsFileEntry     `json:"data"`
+	Path   []FsFilesPathNode `json:"path,omitempty"` // 当前列目录的祖先链（含被列出目录自身）
+	Count  int               `json:"count"`
+	ErrNo  int               `json:"errno,omitempty"`
+	ErrMsg string            `json:"errmsg,omitempty"`
 }
 
 // FsFiles 列目录

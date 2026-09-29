@@ -435,6 +435,42 @@ func TestFsFiles_EmptyCookie(t *testing.T) {
 	}
 }
 
+// 第5项：/files 响应顶层 path 字段（被列目录自身的祖先链，元素 {cid,name,pid}）
+// 必须被解析出来，供 ResolveDirPath 首选祖先来源使用（不受 medialist type=6 过滤影响）。
+func TestFsFiles_ParsesTopLevelPath(t *testing.T) {
+	trips := []*mockTrip{{
+		Path: "/files",
+		Query: map[string]string{"cid": "888"},
+		BodyString: `{"state":true,"count":0,"data":[],
+			"path":[
+				{"cid":0,"name":"根目录","pid":-1},
+				{"cid":777,"name":"电影","pid":0},
+				{"cid":"888","name":"动作片","pid":"777"}
+			]}`,
+	}}
+	c := newMockClient(t, trips)
+
+	resp, err := c.FsFiles(context.Background(), "888", 1, 0, "UID=x;CID=y")
+	if err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if len(resp.Path) != 3 {
+		t.Fatalf("want 3 path nodes, got %d (%+v)", len(resp.Path), resp.Path)
+	}
+	if int64(resp.Path[2].Cid) != 888 {
+		t.Errorf("path[2].cid want 888, got %d", int64(resp.Path[2].Cid))
+	}
+	if resp.Path[2].Name != "动作片" {
+		t.Errorf("path[2].name want 动作片, got %q", resp.Path[2].Name)
+	}
+	if int64(resp.Path[2].Pid) != 777 {
+		t.Errorf("path[2].pid want 777, got %d", int64(resp.Path[2].Pid))
+	}
+	if int64(resp.Path[0].Pid) != -1 {
+		t.Errorf("root pid want -1 (numeric), got %d", int64(resp.Path[0].Pid))
+	}
+}
+
 // === FsDirGetID ===
 
 func TestFsDirGetID_NewFormat(t *testing.T) {
