@@ -439,7 +439,7 @@ func TestFsFiles_EmptyCookie(t *testing.T) {
 // 必须被解析出来，供 ResolveDirPath 首选祖先来源使用（不受 medialist type=6 过滤影响）。
 func TestFsFiles_ParsesTopLevelPath(t *testing.T) {
 	trips := []*mockTrip{{
-		Path: "/files",
+		Path:  "/files",
 		Query: map[string]string{"cid": "888"},
 		BodyString: `{"state":true,"count":0,"data":[],
 			"path":[

@@ -653,7 +653,7 @@ func (m *Monitor) pullEventsWithRetry(
 			delay = retryDelayMax
 		}
 		if half := delay / 2; half > 0 {
-			delay += time.Duration(rand.Int63n(int64(half)))
+			delay += time.Duration(rand.Int63n(int64(half))) //nolint:gosec // G404 — 退避抖动，非安全用途，仅用于打散多账号重试峰值
 		}
 		logger.S().Warnf("[Monitor] 拉取事件失败 account=%s, 剩余重试=%d, 等待=%v: %v",
 			account, attempt, delay, err)
@@ -819,7 +819,7 @@ func (m *Monitor) applyBackoffLocked(accMon *AccountMonitor) {
 	}
 	// 抖动 [0, d/2)，避免多账号在同一时刻集中重试
 	if half := d / 2; half > 0 {
-		d += time.Duration(rand.Int63n(int64(half)))
+		d += time.Duration(rand.Int63n(int64(half))) //nolint:gosec // G404 — 退避抖动，非安全用途，仅用于打散多账号重试峰值
 	}
 	accMon.backoffUntil = time.Now().Add(d).UnixMilli()
 }
@@ -841,7 +841,7 @@ func (m *Monitor) applyRateLimitCooldownLocked(accMon *AccountMonitor) {
 		d = rateLimitMaxDelay
 	}
 	if half := d / 2; half > 0 {
-		d += time.Duration(rand.Int63n(int64(half)))
+		d += time.Duration(rand.Int63n(int64(half))) //nolint:gosec // G404 — 退避抖动，非安全用途，仅用于打散多账号重试峰值
 	}
 	accMon.backoffUntil = time.Now().Add(d).UnixMilli()
 }

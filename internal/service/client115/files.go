@@ -81,7 +81,7 @@ func retryBackoffDelay(attempt int) time.Duration {
 		d = requestRetryMaxDelay
 	}
 	if half := d / 2; half > 0 {
-		d += time.Duration(rand.Int63n(int64(half)))
+		d += time.Duration(rand.Int63n(int64(half))) //nolint:gosec // G404 — 退避抖动，非安全用途，仅用于打散多账号重试峰值
 	}
 	return d
 }
