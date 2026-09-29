@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -42,7 +43,98 @@ func (c *Client) buildCommonHeaders(opt RequestOptions) map[string]string {
 	return h
 }
 
-// request115 发送 115 API 请求，自动走 API 限流器
+// ==================== 请求层重试策略（P0-1） ====================
+//
+// 目标：对 115 API 的「瞬态故障」做有限重试，提升拉取/查询稳定性，同时避免放大风控。
+// 原则：
+//  1. 仅幂等方法（GET/HEAD）自动重试；POST 等可能有副作用的请求保持单次调用。
+//  2. 仅网络错误、超时、5xx、429 重试；4xx 与业务错误（HTTP 200 但 state=false）不重试。
+//  3. 父级 ctx 取消/超时不重试，避免无谓延长调用方等待。
+
+const (
+	// requestMaxAttempts 幂等请求最大尝试次数（含首次）
+	requestMaxAttempts = 3
+	// requestRetryBaseDelay 首次重试退避基数
+	requestRetryBaseDelay = 500 * time.Millisecond
+	// requestRetryMaxDelay 单次退避上限
+	requestRetryMaxDelay = 8 * time.Second
+)
+
+// isIdempotentMethod 仅幂等方法参与自动重试，避免副操作被重复执行
+func isIdempotentMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
+}
+
+// isRetryableStatus 5xx 服务端错误与 429 限流/风控可安全重试
+func isRetryableStatus(code int) bool {
+	return code >= 500 || code == http.StatusTooManyRequests
+}
+
+// retryBackoffDelay 计算第 attempt 次重试前的退避时长（attempt 从 0 计）
+// 指数增长（×2）并附加 [0, d/2) 抖动，打散多账号同时重试形成的尖峰
+func retryBackoffDelay(attempt int) time.Duration {
+	d := requestRetryBaseDelay
+	for i := 0; i < attempt && d < requestRetryMaxDelay; i++ {
+		d *= 2
+	}
+	if d > requestRetryMaxDelay {
+		d = requestRetryMaxDelay
+	}
+	if half := d / 2; half > 0 {
+		d += time.Duration(rand.Int63n(int64(half)))
+	}
+	return d
+}
+
+// acquireAPI 获取一个 115 API 令牌（重试时每次尝试都需重新过限流）
+func (c *Client) acquireAPI(ctx context.Context) error {
+	lim := rate.GetRegistry().GetLimiter("global", rate.TypeAPI115)
+	if err := lim.Acquire(ctx); err != nil {
+		return fmt.Errorf("rate limited: %w", err)
+	}
+	return nil
+}
+
+// doHTTPOnce 执行单次 HTTP 往返，返回响应体与状态码（不判定业务状态）
+// 错误仅在传输/读取阶段产生；HTTP 状态码由调用方决定是否重试
+func (c *Client) doHTTPOnce(
+	ctx context.Context,
+	method string,
+	urlStr string,
+	body string,
+	headers map[string]string,
+) ([]byte, int, error) {
+	var reqBody io.Reader
+	if body != "" {
+		reqBody = strings.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
+	if err != nil {
+		return nil, 0, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return data, resp.StatusCode, nil
+}
+
+// request115 发送 115 API 请求，自动走 API 限流器。
+//
+// P0-1：幂等请求（GET/HEAD）在网络错误、超时、5xx、429 时做有限重试
+// （指数退避 + 抖动）；非幂等方法（POST 等）保持单次调用，行为与原实现一致。
+// 业务错误（HTTP 200 但 state=false）由调用方解析处理，不在此重试。
 func (c *Client) request115(
 	ctx context.Context,
 	method string,
@@ -50,12 +142,6 @@ func (c *Client) request115(
 	body string,
 	opt RequestOptions,
 ) ([]byte, error) {
-	// 限流：API 115 令牌桶
-	lim := rate.GetRegistry().GetLimiter("global", rate.TypeAPI115)
-	if err := lim.Acquire(ctx); err != nil {
-		return nil, fmt.Errorf("rate limited: %w", err)
-	}
-
 	headers := make(map[string]string)
 	if opt.UseCommonHeaders {
 		headers = c.buildCommonHeaders(opt)
@@ -72,32 +158,49 @@ func (c *Client) request115(
 		}
 	}
 
-	var (
-		reqBody io.Reader
-	)
-	if body != "" {
-		reqBody = strings.NewReader(body)
+	// 非幂等：单次调用，不重试、不判定状态码（保持原行为）
+	if !isIdempotentMethod(method) {
+		if err := c.acquireAPI(ctx); err != nil {
+			return nil, err
+		}
+		data, _, err := c.doHTTPOnce(ctx, method, urlStr, body, headers)
+		return data, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	var lastErr error
+	for attempt := 0; attempt < requestMaxAttempts; attempt++ {
+		if attempt > 0 {
+			delay := retryBackoffDelay(attempt - 1)
+			logger.S().Warnf("[115] 请求失败重试 %d/%d，等待 %v 后重试 url=%s err=%v",
+				attempt, requestMaxAttempts-1, delay, urlStr, lastErr)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		if err := c.acquireAPI(ctx); err != nil {
+			return nil, err
+		}
+
+		data, status, err := c.doHTTPOnce(ctx, method, urlStr, body, headers)
+		if err != nil {
+			// 父级 ctx 取消/超时为终止性错误，不再重试
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			lastErr = err
+			continue
+		}
+		if isRetryableStatus(status) {
+			lastErr = fmt.Errorf("HTTP %d", status)
+			continue
+		}
+		return data, nil
 	}
 
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
+	return nil, fmt.Errorf("请求重试 %d 次仍失败: %w", requestMaxAttempts, lastErr)
 }
 
 // ==================== 下载链接解析 ====================

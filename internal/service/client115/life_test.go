@@ -161,18 +161,53 @@ func TestResolvePath_FileEvent_NoMedialist(t *testing.T) {
 }
 
 // 文件夹事件(parent_id=0 + file_category==0)：file_id 是合法文件夹 cid，可用它反查祖先链。
+// 真实 /files/medialist 响应字段为 path，元素 {cid,name,pid}，且**含目标目录自身作为最后一项**。
 func TestResolvePath_FolderEvent_UsesFileIDAsCid(t *testing.T) {
 	var medialistCalled bool
 	lc := newLifeClientWithTrips(t, []*mockTrip{{
 		Path:       "/files/medialist",
 		Query:      map[string]string{"cid": "888"},
-		BodyString: `{"state":true,"ancestors":[{"id":1,"name":"根目录","parent_id":0},{"id":777,"name":"电影","parent_id":1}]}`,
+		BodyString: `{"state":true,"path":[{"cid":"1","name":"根目录","pid":"0"},{"cid":"777","name":"电影","pid":"1"},{"cid":"888","name":"新文件夹","pid":"777"}]}`,
 		called:     &medialistCalled,
 	}})
 	got := lc.ResolvePath(context.Background(), "0", "888", "新文件夹", 0)
 	if !medialistCalled {
 		t.Fatal("medialist should be called for folder event file_id-as-cid")
 	}
+	if got != "电影/新文件夹" {
+		t.Fatalf("want 电影/新文件夹, got %q", got)
+	}
+}
+
+// FsFilesMediaAncestors 解析真实 path 字段（{cid,name,pid}，含目录自身），
+// 并兼容 id/cid/pid 为数字字面量或数字字符串两种形态。
+func TestFsFilesMediaAncestors_ParsesPathIncludingSelf(t *testing.T) {
+	lc := newLifeClientWithTrips(t, []*mockTrip{{
+		Path:       "/files/medialist",
+		Query:      map[string]string{"cid": "888", "aid": "1", "format": "json"},
+		BodyString: `{"state":true,"path":[{"cid":"1","name":"根目录","pid":"0"},{"cid":777,"name":"电影","pid":1},{"cid":"888","name":"新文件夹","pid":777}]}`,
+	}})
+	nodes, err := lc.FsFilesMediaAncestors(context.Background(), "888")
+	if err != nil {
+		t.Fatalf("FsFilesMediaAncestors err: %v", err)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("want 3 nodes, got %d: %+v", len(nodes), nodes)
+	}
+	last := nodes[len(nodes)-1]
+	if last.Name != "新文件夹" || last.ID.Int() != 888 || last.ParentID.Int() != 777 {
+		t.Fatalf("last node mismatch: %+v", last)
+	}
+}
+
+// path 含目标自身时，ResolvePathByFileID 必须丢弃自身项，避免路径出现重复段。
+func TestResolvePathByFileID_PathIncludesSelf(t *testing.T) {
+	lc := newLifeClientWithTrips(t, []*mockTrip{{
+		Path:       "/files/medialist",
+		Query:      map[string]string{"cid": "888"},
+		BodyString: `{"state":true,"path":[{"cid":1,"name":"根目录","pid":0},{"cid":777,"name":"电影","pid":1},{"cid":888,"name":"新文件夹","pid":777}]}`,
+	}})
+	got := lc.ResolvePathByFileID(context.Background(), "888", "新文件夹")
 	if got != "电影/新文件夹" {
 		t.Fatalf("want 电影/新文件夹, got %q", got)
 	}

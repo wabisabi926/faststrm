@@ -205,6 +205,11 @@ const (
 	lifeApiPrimaryPath  = "/ios/behavior/detail"
 	lifeApiFallbackHost = "https://webapi.115.com"
 	lifeApiFallbackPath = "/behavior/detail"
+
+	// maxRootSubdirScan 单次请求内遍历根目录子文件夹的上限。
+	// 根目录下若有成百上千个目录，逐一 FsFiles 探测会产生大量 API 调用且拖慢事件处理；
+	// 超过上限时放弃遍历，交由调用方走更可靠的 parent_id / folders 表反查链路。
+	maxRootSubdirScan = 30
 )
 
 // getApiHost 返回当前使用的 API 域名
@@ -363,7 +368,7 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 		// 调试：打印首批事件的原始数据
 		if page == 0 && len(resp.Data.List) > 0 {
 			first := resp.Data.List[0]
-			logger.S().Infof("[LifeClient] DEBUG 首批事件 sample: list_len=%d, first.id=%v first.type=%v first.update_time=%v first.file_name=%s",
+			logger.S().Debugf("[LifeClient] DEBUG 首批事件 sample: list_len=%d, first.id=%v first.type=%v first.update_time=%v first.file_name=%s",
 				len(resp.Data.List), first.ID, first.Type, first.UpdateTime, first.FileName)
 		}
 
@@ -423,7 +428,7 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 
 	_ = account
 
-	logger.S().Infof("[LifeClient] pulled events: filtered=%d, from_id=%d, from_time=%d",
+	logger.S().Debugf("[LifeClient] pulled events: filtered=%d, from_id=%d, from_time=%d",
 		len(allFiltered), fromID, fromTime)
 	return allFiltered, nil
 }
@@ -465,7 +470,73 @@ func parseCountInt(v any) int {
 }
 
 // doRequest 发送 HTTP 请求，返回响应体
+//
+// P0-1：幂等请求（GET/HEAD）在网络错误、超时、5xx、429 时做有限重试
+// （指数退避 + 抖动，复用 request115 的退避策略）；非幂等方法（POST 等）
+// 保持单次调用，行为与原实现一致。
 func (c *LifeClient) doRequest(ctx context.Context, method, urlStr, body string) ([]byte, error) {
+	headers := map[string]string{
+		"User-Agent": DefaultUA,
+		"Accept":     "application/json, text/plain, */*",
+		"Referer":    "https://115.com/",
+		"Origin":     "https://115.com",
+		"Cookie":     c.cookie,
+	}
+	if body != "" {
+		headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
+	}
+
+	if !isIdempotentMethod(method) {
+		data, _, err := c.doLifeHTTPOnce(ctx, method, urlStr, body, headers)
+		return data, err
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < requestMaxAttempts; attempt++ {
+		if attempt > 0 {
+			delay := retryBackoffDelay(attempt - 1)
+			logger.S().Warnf("[115-life] 请求失败重试 %d/%d，等待 %v 后重试 url=%s err=%v",
+				attempt, requestMaxAttempts-1, delay, urlStr, lastErr)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		data, status, err := c.doLifeHTTPOnce(ctx, method, urlStr, body, headers)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			lastErr = err
+			continue
+		}
+		if isRetryableStatus(status) {
+			lastErr = fmt.Errorf("HTTP %d", status)
+			continue
+		}
+		if status < 200 || status >= 300 {
+			snippet := string(data)
+			if len(snippet) > 256 {
+				snippet = snippet[:256]
+			}
+			return nil, fmt.Errorf("HTTP %d: %s", status, snippet)
+		}
+		return data, nil
+	}
+
+	return nil, fmt.Errorf("请求重试 %d 次仍失败: %w", requestMaxAttempts, lastErr)
+}
+
+// doLifeHTTPOnce 执行单次 HTTP 往返，返回响应体与状态码（不判定业务状态）
+func (c *LifeClient) doLifeHTTPOnce(
+	ctx context.Context,
+	method string,
+	urlStr string,
+	body string,
+	headers map[string]string,
+) ([]byte, int, error) {
 	var reqBody io.Reader
 	if body != "" {
 		reqBody = strings.NewReader(body)
@@ -473,38 +544,23 @@ func (c *LifeClient) doRequest(ctx context.Context, method, urlStr, body string)
 
 	req, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	req.Header.Set("User-Agent", DefaultUA)
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Referer", "https://115.com/")
-	req.Header.Set("Origin", "https://115.com")
-	req.Header.Set("Cookie", c.cookie)
-
-	if reqBody != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, resp.StatusCode, err
 	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet := string(respBody)
-		if len(snippet) > 256 {
-			snippet = snippet[:256]
-		}
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet)
-	}
-
-	return respBody, nil
+	return respBody, resp.StatusCode, nil
 }
 
 // GetPickCodeByFileID 通过 file_id 反查 pick_code
@@ -546,48 +602,125 @@ func (c *LifeClient) GetPickCodeByFileID(ctx context.Context, fileID string) (st
 
 // ==================== 路径解析 ====================
 
-// fsMediaAncestorNode 文件祖先节点
-type fsMediaAncestorNode struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	ParentID int    `json:"parent_id"`
+// flexInt 兼容 115 接口把 id/cid/pid 返回为 JSON 数字或数字字符串两种情况。
+// 非数字（如占位串）按 0 处理，避免单条字段解析失败导致整段祖先链不可用。
+type flexInt int64
+
+// Int 以 int 返回，便于与既有的 int 语义比较/格式化逻辑对接。
+func (f flexInt) Int() int { return int(f) }
+
+// UnmarshalJSON 同时接受 123、"123"、null。
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	s = strings.Trim(s, `"`)
+	if s == "" {
+		*f = 0
+		return nil
+	}
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		*f = flexInt(n)
+		return nil
+	}
+	*f = 0
+	return nil
 }
 
-// FsFilesMediaAncestors 通过 fs_files_media API 获取指定目录的祖先路径链
-// GET https://webapi.115.com/files/medialist?cid={cid}&limit=1&type=6&nf=1
-// 对齐 p115client fs_files_media
+// fsMediaAncestorNode 祖先节点（统一暴露 id/parent_id 语义）。
+type fsMediaAncestorNode struct {
+	ID       flexInt `json:"id"`
+	Name     string  `json:"name"`
+	ParentID flexInt `json:"parent_id"`
+}
+
+// fsMediaPathNode /files/medialist 响应中 path 字段（父目录树）的原始元素。
+// 115 接口与官方 SDK 实测字段为 {cid, name, pid}，其中 cid 即该目录自身 id。
+type fsMediaPathNode struct {
+	Cid  flexInt `json:"cid"`
+	Pid  flexInt `json:"pid"`
+	Name string  `json:"name"`
+}
+
+// sameCid 判断祖先节点 id 与目标 cid 是否一致（均为十进制数字串语义）。
+func sameCid(id flexInt, cid string) bool {
+	return cid != "" && strconv.FormatInt(int64(id), 10) == cid
+}
+
+// FsFilesMediaAncestors 通过 /files/medialist 获取指定目录的祖先路径链。
+//
+// GET https://webapi.115.com/files/medialist?aid=1&cid={cid}&limit=1&type=6&nf=1&format=json
+//
+// 关键：115 原始响应里祖先链的字段名是 path（父目录树），元素为 {cid, name, pid}，
+// 且 **包含被查询目录自身作为最后一项**；不存在顶层 ancestors 字段
+// （ancestors 只是 p115client 在客户端从 path 合成的）。
+// 早期实现误读 ancestors → 恒为空 → 拿不到目录自身名 → 路径退化成裸文件名 → no_path_mapping 跳过。
 func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]fsMediaAncestorNode, error) {
 	if cid == "" || cid == "0" {
 		return nil, nil // 根目录无祖先
 	}
 
 	// /files/medialist 仅在 webapi 上调用，不跟随 life API 的 proapi/ios 切换
-	// （proapi 上需要 /{app} 前缀，路径不同，且 fs_files_media 是 web 端口 API）
-	endpoint := fmt.Sprintf("https://webapi.115.com/files/medialist?cid=%s&limit=1&type=6&nf=1", url.QueryEscape(cid))
+	// （proapi 上需要 /{app} 前缀，路径不同，且 medialist 是 web 端口 API）
+	endpoint := fmt.Sprintf(
+		"https://webapi.115.com/files/medialist?aid=1&cid=%s&limit=1&type=6&nf=1&format=json",
+		url.QueryEscape(cid),
+	)
 
 	body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
 	if err != nil {
-		return nil, fmt.Errorf("fs_files_media request: %w", err)
+		return nil, fmt.Errorf("medialist request: %w", err)
 	}
 
 	var resp struct {
 		State     bool                  `json:"state"`
-		Ancestors []fsMediaAncestorNode `json:"ancestors"`
+		Path      []fsMediaPathNode     `json:"path"`
+		Ancestors []fsMediaAncestorNode `json:"ancestors"` // 兼容直接返回合成 ancestors 的实现
 		ErrMsg    string                `json:"errmsg,omitempty"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse fs_files_media response: %w (body=%s)", err, truncateBody(body, 256))
+		return nil, fmt.Errorf("parse medialist response: %w (body=%s)", err, truncateBody(body, 256))
 	}
 	if !resp.State {
-		return nil, fmt.Errorf("fs_files_media state=false: %s", resp.ErrMsg)
+		return nil, fmt.Errorf("medialist state=false: %s", resp.ErrMsg)
 	}
-	return resp.Ancestors, nil
+
+	// 优先解析真实字段 path（父目录树，含目录自身）
+	if len(resp.Path) > 0 {
+		nodes := make([]fsMediaAncestorNode, 0, len(resp.Path))
+		for _, p := range resp.Path {
+			name := strings.TrimSpace(p.Name)
+			if name == "" {
+				continue
+			}
+			nodes = append(nodes, fsMediaAncestorNode{
+				ID:       p.Cid,
+				Name:     name,
+				ParentID: p.Pid,
+			})
+		}
+		if len(nodes) > 0 {
+			return nodes, nil
+		}
+	}
+
+	// 回退：兼容直接给出 ancestors 的响应
+	if len(resp.Ancestors) > 0 {
+		return resp.Ancestors, nil
+	}
+
+	// state=true 但两种字段都为空：把原始响应打出来便于定位（cid 不被接受 / 字段再次变更）
+	logger.S().Warnf("[LifeClient] FsFilesMediaAncestors state=true 但 path/ancestors 均为空 cid=%s body=%s",
+		cid, truncateBody(body, 256))
+	return nil, nil
 }
 
 // ResolveDirPath 通过 cid 获取文件夹的完整云端路径（包含文件夹自身名称）。
 // 三级回退：
 //  1. 内存缓存 pathCache (key=cid)
-//  2. FsFilesMediaAncestors(cid) 祖先链 +  在父目录中 FsFiles 回查自身 Name
+//  2. FsFilesMediaAncestors(cid) 祖先链（path 含目录自身）+ 兜底 FsFiles 回查自身 Name
 //  3. 失败返回空串+error（不再伪造 /unknown/ 虚拟路径）
 func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, error) {
 	if cid == "" || cid == "0" {
@@ -609,9 +742,18 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 		return "", fmt.Errorf("ResolveDirPath ancestors cid=%s: %w", cid, err)
 	}
 
-	// a) 组装祖先段路径（去掉 根目录/ 前缀）
+	// a) 判定 path/ancestors 语义：115 /files/medialist 的 path 是「从根到目标目录」的
+	//    完整目录树，**最后一项即目标目录自身**（官方 SDK 与参考实现均如此）。
+	//    兼容极端情况：若最后一项 cid 与目标 cid 不一致，则视为「仅父目录链」。
+	selfIncluded := len(ancestors) > 0 && sameCid(ancestors[len(ancestors)-1].ID, cid)
+
+	// 祖先段（不含自身，去掉 根目录/ 前缀）
+	ancestorNodes := ancestors
+	if selfIncluded {
+		ancestorNodes = ancestors[:len(ancestors)-1]
+	}
 	var ancestorNames []string
-	for _, n := range ancestors {
+	for _, n := range ancestorNodes {
 		name := strings.TrimSpace(n.Name)
 		if name == "" || name == "根目录" {
 			continue
@@ -619,21 +761,25 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 		ancestorNames = append(ancestorNames, name)
 	}
 
-	// b) grandparentCid = 包含 cid 所指文件夹的那个目录（cid 的直接父目录）。
-	//    - 如果 ancestors 非空，ancestors 的最后一项就是 cid 的父文件夹
-	//    - 如果 ancestors 为空，说明 cid 是根目录下的一级文件夹，父就是 "0"
-	grandparentCid := "0"
-	if len(ancestors) > 0 {
-		last := ancestors[len(ancestors)-1]
-		if last.ID > 0 {
-			grandparentCid = strconv.Itoa(last.ID)
+	// b) 自身名称：path 含自身时直接取最后一项，无需再发请求
+	var folderOwnName string
+	if selfIncluded {
+		folderOwnName = strings.TrimSpace(ancestors[len(ancestors)-1].Name)
+		if folderOwnName == "根目录" {
+			folderOwnName = ""
 		}
 	}
 
-	// c) 在 grandparentCid 目录下列表，找到 ID=cid 的文件夹项就读它的 Name
-	var folderOwnName string
-	if c.fsClient != nil {
-		resp, listErr := c.fsClient.FsFiles(ctx, grandparentCid, 2000, 0, c.cookie)
+	// c) 自身不在 path 中（兼容仅父目录链的响应）：在直接父目录下 FsFiles 回查自身名
+	if folderOwnName == "" && c.fsClient != nil {
+		parentCid := "0"
+		if len(ancestorNodes) > 0 {
+			last := ancestorNodes[len(ancestorNodes)-1]
+			if last.ID > 0 {
+				parentCid = strconv.FormatInt(int64(last.ID), 10)
+			}
+		}
+		resp, listErr := c.fsClient.FsFiles(ctx, parentCid, 2000, 0, c.cookie)
 		if listErr == nil && resp != nil && resp.State {
 			for i := range resp.Data {
 				e := &resp.Data[i]
@@ -646,26 +792,15 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 				}
 			}
 		} else if listErr != nil {
-			logger.S().Warnf("[LifeClient] ResolveDirPath FsFiles(grandparent=%s) 失败 (将尝试仅用祖先链): %v",
-				grandparentCid, listErr)
+			logger.S().Warnf("[LifeClient] ResolveDirPath FsFiles(parent=%s) 失败 (将尝试仅用祖先链): %v",
+				parentCid, listErr)
 		}
 	}
 
-	// d) 如果 FsFiles 没找到名字，尝试再查一次祖先 API 的「扩展字段」：
-	//    部分实现会把当前目录自身作为「最后一个 ancestor」，我们可以再尝试。
-	if folderOwnName == "" && len(ancestors) > 0 {
-		last := ancestors[len(ancestors)-1]
-		if grandparentCid != "0" && strconv.Itoa(last.ID) != grandparentCid {
-			folderOwnName = strings.TrimSpace(last.Name)
-			if folderOwnName == "根目录" {
-				folderOwnName = ""
-			}
-		}
-	}
-	// e) 仍找不到名 —— 返回错误，路径不完整不做臆造（参考项目也是 API 失败直接 return None）
+	// d) 仍找不到名 —— 返回错误，路径不完整不做臆造（参考项目也是 API 失败直接 return None）
 	if folderOwnName == "" {
-		return "", fmt.Errorf("ResolveDirPath: 无法获取文件夹自身名称 cid=%s grandparent=%s ancestorCount=%d",
-			cid, grandparentCid, len(ancestors))
+		return "", fmt.Errorf("ResolveDirPath: 无法获取文件夹自身名称 cid=%s ancestorCount=%d selfInPath=%v",
+			cid, len(ancestors), selfIncluded)
 	}
 
 	// 3) 组装完整路径：[ancestorNames...] + folderOwnName
@@ -686,8 +821,9 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 // 经常不可靠（甚至全部为 0），此时直接用 file_id 作为 cid 调 medialist 祖先链仍然能拿到真实路径链。
 //
 // 解析策略：
-//  1. ancestors 里包含所有祖先目录（不含 file_id 自身）—— 最后一个节点即 file_id 的直接父目录
-//  2. 组装 ancestors(排除根目录) + "/" + fileName
+//  1. /files/medialist?cid=file_id 返回的 path 是「从根到目标」的目录树；当 cid 指向
+//     文件时，最后一项即该文件自身 → 需要丢弃自身项，剩余项才是父目录段
+//  2. 组装 ancestors(排除 根目录) + "/" + fileName
 //  3. 失败返回空串，不再伪造虚拟路径
 func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName string) string { //nolint:cyclop // complexity: 43
 	fileID = strings.TrimSpace(fileID)
@@ -764,11 +900,18 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 					}
 					logger.S().Infof("[LifeClient] ResolvePathByFileID 根目录列到 %d 个子文件夹，开始遍历查找 fid=%s name=%s",
 						dirCount, fileID, fileName)
+					scanned := 0
 					for i := range resp.Data {
 						e := &resp.Data[i]
 						if !e.IsDir {
 							continue
 						}
+						if scanned >= maxRootSubdirScan {
+							logger.S().Warnf("[LifeClient] ResolvePathByFileID 根目录子文件夹过多(>%d)，停止遍历 fid=%s name=%s，改走 parent_id 反查",
+								maxRootSubdirScan, fileID, fileName)
+							break
+						}
+						scanned++
 						subCid := ""
 						switch v := e.CID.(type) {
 						case string:
@@ -820,9 +963,19 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 		return "/" + fileName
 	}
 
+	// path 含目标自身（最后一项即本次查询的文件/目录），需先丢弃自身项，
+	// 剩下的才是父目录段；兼容「仅父目录链」的响应（末项不等于自身则保留）。
+	parentNodes := ancestors
+	if len(parentNodes) > 0 {
+		last := parentNodes[len(parentNodes)-1]
+		if sameCid(last.ID, fileID) || strings.EqualFold(strings.TrimSpace(last.Name), fileName) {
+			parentNodes = parentNodes[:len(parentNodes)-1]
+		}
+	}
+
 	// 组装父目录段（排除 根目录、空名）
 	var parentNames []string
-	for _, n := range ancestors {
+	for _, n := range parentNodes {
 		name := strings.TrimSpace(n.Name)
 		if name == "" || name == "根目录" {
 			continue
@@ -896,6 +1049,15 @@ func (c *LifeClient) FsFiles(ctx context.Context, cid string, limit, offset int)
 		return nil, fmt.Errorf("fsClient not initialized")
 	}
 	return c.fsClient.FsFiles(ctx, cid, limit, offset, c.cookie)
+}
+
+// FsDirGetID 云端目录路径 → cid 反查（P0-2 映射前缀反查 parent_id 用）。
+// 走 webapi /files/getid，与全量任务同一条链路；不依赖 /files/medialist 祖先链。
+func (c *LifeClient) FsDirGetID(ctx context.Context, dirPath string) (int64, error) {
+	if c.fsClient == nil {
+		return 0, fmt.Errorf("fsClient not initialized")
+	}
+	return c.fsClient.FsDirGetID(ctx, dirPath, c.cookie)
 }
 
 // toLifeEventItem 将灵活解析的 raw 转为强类型 LifeEventItem
