@@ -100,7 +100,10 @@ func UpsertFilePathEntryBatch(db *sql.DB, account string, entries []FilePathEntr
 		return err
 	}
 	defer func() {
-		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+		// Commit 成功后 Rollback 必然返回 sql.ErrTxDone（"transaction has already been committed or rolled back"），
+		// 属正常路径，不应记为错误，否则每次批量写入都会打一条 rollback error 噪音。
+		if err := tx.Rollback(); err != nil &&
+			!errors.Is(err, sql.ErrTxDone) && !errors.Is(err, sql.ErrConnDone) {
 			log.Printf("rollback error: %v", err)
 		}
 	}()

@@ -83,6 +83,11 @@ func (s *TasksStore) ReadTasks() ([]task.Task, error) {
 		return []task.Task{}, nil
 	}
 	if err := json.Unmarshal(raw, &persisted); err != nil {
+		// 历史遗留：早期版本在默认模板缺失时把 tasks.json 写成 {}，与 []persistedTask 类型不符。
+		// 空对象按空列表处理，避免每次读取都报 unmarshal 告警。
+		if string(bytesTrimSpace(raw)) == "{}" {
+			return []task.Task{}, nil
+		}
 		logger.S().Warnf("[ReadTasks] json unmarshal failed: %v, returning empty list", err)
 		return []task.Task{}, nil
 	}

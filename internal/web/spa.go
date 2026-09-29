@@ -35,6 +35,12 @@ func SPAHandler() http.HandlerFunc {
 			} else {
 				w.Header().Set("Cache-Control", "public, max-age=86400")
 			}
+			// 必须显式写状态码：go-zero 的 notFoundHandler 会把本 handler 包进
+			// HeaderOnceResponseWriter，并在其后强制调用 WriteHeader(404)。
+			// 该包装器的 Write() 只是转发底层、不会置位 wroteHeader，
+			// 若这里只调 Write，收尾的 WriteHeader(404) 会二次写头并打出
+			// "superfluous response.WriteHeader call"。显式 WriteHeader(200) 可将其抑制。
+			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(data)
 			return
 		}
@@ -43,6 +49,7 @@ func SPAHandler() http.HandlerFunc {
 		indexHTML, _ := fs.ReadFile(spaSub, "index.html")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(indexHTML)
 	}
 }

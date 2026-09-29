@@ -423,10 +423,11 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 	defaultFiles := []struct {
 		srcName string // .config / .settings 等前缀
 		dstName string
+		empty   string // 模板缺失时的兜底内容（必须匹配读取端的反序列化目标类型）
 	}{
-		{".config.json", "config.json"},
-		{".account.json", "account.json"},
-		{".tasks.json", "tasks.json"},
+		{".config.json", "config.json", "{}"},   // model.AppConfig（对象）
+		{".account.json", "account.json", "[]"}, // []model.AccountInfo（数组）
+		{".tasks.json", "tasks.json", "[]"},     // []store.persistedTask（数组）
 	}
 	for _, df := range defaultFiles {
 		dst := filepath.Join(paths.ConfigDir, df.dstName)
@@ -439,8 +440,8 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 					logger.S().Infof("Created %s from default", dst)
 				}
 			} else {
-				logger.S().Warnf("default file %s not found, creating empty JSON", src)
-				_ = os.WriteFile(dst, []byte("{}"), 0600)
+				logger.S().Warnf("default file %s not found, creating empty JSON %s", src, df.empty)
+				_ = os.WriteFile(dst, []byte(df.empty), 0600)
 			}
 		}
 	}
