@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,11 +55,14 @@ type AccountMonitor struct {
 	consecutiveFailures int                       // 连续认证失败次数（仅 isAuthError 累加，成功清零）
 	cookieMarkedInvalid bool                      // 是否已标记 cookie 失效
 	rateLimiter         *client115.APIRateLimiter // API 冷却限流器
-	// 异常处理：通知去重 + 通知节流（退避已禁用，保持配置轮询间隔）
-	consecutiveErrors  int   // 连续轮询失败次数（任意错误累加，成功清零；用于诊断，不再触发退避）
-	backoffUntil       int64 // 退避已禁用：保留字段用于诊断/兼容 Status，实际始终为 0
+	// 异常处理：失败指数退避 + 通知去重/节流
+	consecutiveErrors  int   // 连续轮询失败次数（任意错误累加，成功清零；驱动指数退避，并由 Status 暴露）
+	backoffUntil       int64 // 退避截止时间（UnixMilli，0 表示不处于退避中）
 	lastPollErrNotify  int64 // 上次轮询错误通知时间（毫秒），用于节流去重
 	lastBatchErrNotify int64 // 上次批量事件错误通知时间（毫秒），用于节流去重
+	// 风控/限流识别（P0-3）：与 cookie 失效区分，触发更长的冷却降温
+	rateLimitHits       int   // 连续风控/限流次数（成功清零），驱动冷却时长
+	lastRateLimitNotify int64 // 上次风控告警时间（毫秒），独立节流
 	// 文件删除批量聚合（oncePoll 串行，每轮 reset，批次结束按父目录合并发送）
 	delCollector *deleteNotifyCollector
 }
@@ -95,6 +99,10 @@ type Monitor struct {
 	embyRefresh      *emby.MediaServerRefresh // Emby 媒体库刷库服务
 	notifyMerger     *NotifyMerger            // P2-8 通知合并器
 	mu               sync.RWMutex
+
+	// prefixCIDCache 映射云端前缀 → cid 缓存（P0-2 前缀反查用，避免每个事件都打 /files/getid）
+	prefixCIDMu    sync.Mutex
+	prefixCIDCache map[string]prefixCIDEntry
 }
 
 // ==================== 构造函数 ====================
@@ -425,7 +433,18 @@ func (m *Monitor) pollLoop(ctx context.Context, account string) {
 			// 重置 timer（读取最新间隔，支持热重载）
 			config = m.settingsFn()
 			interval = pollIntervalDur(config)
-			// 退避已禁用：保持配置间隔轮询，不因失败拉长 interval；backoffUntil 字段保留作诊断（Status 暴露）
+			// P0-2：若账号处于失败退避窗口内，本轮等待退避剩余时间（不小于配置间隔）
+			m.mu.RLock()
+			if accMon, ok := m.accounts[account]; ok && accMon.backoffUntil > 0 {
+				remain := time.Until(time.UnixMilli(accMon.backoffUntil))
+				if remain <= 0 {
+					accMon.backoffUntil = 0
+				} else if remain > interval {
+					logger.S().Infof("[Monitor] 账号 %s 处于退避窗口，本轮等待 %v", account, remain)
+					interval = remain
+				}
+			}
+			m.mu.RUnlock()
 			timer.Reset(interval)
 		}
 	}
@@ -533,6 +552,7 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 		// 直到 VerifyAccount 成功（resetConsecutiveFailures）才允许重发，避免间歇性恢复导致循环刷屏
 		// 轮询成功：清零退避状态，恢复正常轮询节奏
 		accMon.consecutiveErrors = 0
+		accMon.rateLimitHits = 0
 		accMon.backoffUntil = 0
 		if counts.LastError != nil {
 			accMon.lastErr = counts.LastError.Error()
@@ -623,8 +643,18 @@ func (m *Monitor) pullEventsWithRetry(
 			break
 		}
 
-		// 指数退避
-		delay := time.Duration(maxRetries-attempt+1) * retryDelay
+		// 指数退避：retryDelay ×2^step，上限 retryDelayMax，附加 [0, d/2) 抖动
+		step := maxRetries - attempt
+		delay := retryDelay
+		for i := 0; i < step && delay < retryDelayMax; i++ {
+			delay *= 2
+		}
+		if delay > retryDelayMax {
+			delay = retryDelayMax
+		}
+		if half := delay / 2; half > 0 {
+			delay += time.Duration(rand.Int63n(int64(half)))
+		}
 		logger.S().Warnf("[Monitor] 拉取事件失败 account=%s, 剩余重试=%d, 等待=%v: %v",
 			account, attempt, delay, err)
 
@@ -640,15 +670,55 @@ func (m *Monitor) pullEventsWithRetry(
 
 // ==================== Cookie 有效性自动检测 ====================
 
-// 异常处理策略：通知去重 + 通知节流（退避已禁用，保持配置轮询间隔）
-// 目标：账号异常时避免 TG 刷屏；cookie 失效通知每个账号只发一次，直到 VerifyAccount 成功才允许重发。
-// 退避禁用理由：原 v1.1.5 阶梯退避会拉长轮询间隔，导致 STRM 生成延迟；现保持配置间隔持续轮询，
-// cookie 失效请求会被 115 直接拒绝（返回未登录，不消耗正常配额），不影响 STRM 生成时效。
+// 异常处理策略：失败指数退避 + 通知去重 + 通知节流
+// 目标：账号异常时避免 TG 刷屏，同时避免对已异常账号高频轮询放大风控。
+// 退避：连续失败按 30s ×2^n 递增、上限 10min，成功即清零（P0-2）。
+// cookie 失效：通知每个账号只发一次，直到 VerifyAccount 成功才允许重发。
 const (
 	cookieInvalidStage = "cookie 可能已失效" // 标识 cookie 失效通知（绕过节流，因已由 cookieMarkedInvalid 去重）
+	rateLimitStage     = "疑似触发 115 风控/限流"
 
-	notifyCooldown = 10 * time.Minute // 同一账号同类错误通知节流窗口
+	notifyCooldown          = 10 * time.Minute // 同一账号同类错误通知节流窗口
+	rateLimitNotifyCooldown = 30 * time.Minute // 风控告警独立节流窗口（更长，避免刷屏）
+
+	backoffBaseDelay = 30 * time.Second // 首次失败退避基数
+	backoffMaxDelay  = 10 * time.Minute // 单次退避上限
+	retryDelayMax    = 30 * time.Second // 单次轮询内重试退避上限
+
+	rateLimitBaseDelay = 2 * time.Minute  // 风控/限流首次冷却基数（比普通退避更激进）
+	rateLimitMaxDelay  = 30 * time.Minute // 风控/限流冷却上限
 )
+
+// rateLimitPatterns 可能表示 115 风控/限流（而非 cookie 失效）的错误关键词
+var rateLimitPatterns = []string{
+	"429",
+	"too many requests",
+	"rate limit",
+	"访问频繁",
+	"请求过于频繁",
+	"操作过于频繁",
+	"频率限制",
+	"系统繁忙",
+	"请稍后",
+	"风控",
+	"安全风险",
+	"验证码",
+}
+
+// isRateLimitError 判断错误是否疑似 115 风控/限流：
+// 需先于 isAuthError 判定，避免把限流误判为 cookie 失效。
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	for _, pattern := range rateLimitPatterns {
+		if strings.Contains(errStr, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
+}
 
 // pollErrorPatterns 可能表示 cookie 失效的错误关键词
 var pollErrorPatterns = []string{
@@ -678,52 +748,102 @@ func isAuthError(err error) bool {
 	return false
 }
 
-// handlePollError 处理轮询错误，检测 cookie 失效
+// handlePollError 处理轮询错误：
+//  1. 识别风控/限流（P0-3），触发更长冷却降温并发送独立告警，不误判 cookie 失效；
+//  2. 识别 cookie 失效，达阈值后去重告警一次；
+//  3. 其他错误按普通指数退避处理并节流告警。
 func (m *Monitor) handlePollError(account string, err error) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
 
+	// 先判定风控/限流，避免被 isAuthError 中 "invalid"/"auth" 等宽泛模式误判为 cookie 失效
+	isRateLimit := isRateLimitError(err)
 	isAuth := isAuthError(err)
 
 	m.mu.Lock()
 	accMon, ok := m.accounts[account]
 	if ok {
 		accMon.lastErr = err.Error()
-		// 通用失败计数累加（诊断用，applyBackoffLocked 已禁用退避，保持配置间隔）
 		accMon.consecutiveErrors++
-		m.applyBackoffLocked(accMon)
-		if isAuth {
-			accMon.consecutiveFailures++
-			if accMon.consecutiveFailures >= 3 && !accMon.cookieMarkedInvalid {
-				accMon.cookieMarkedInvalid = true
-				// 退避已禁用：不设 backoffUntil，保持配置轮询间隔；
-				// cookie 失效通知只发一次（由 cookieMarkedInvalid 去重），避免 TG 刷屏
-				m.mu.Unlock()
-				m.markCookiePotentiallyInvalid(account, err)
-				m.notifyPollError(account, cookieInvalidStage, err)
-				return
-			}
-		} else {
+		if isRateLimit {
+			// 风控/限流：申请更长的冷却退避，且不标记 cookie 失效（避免误判）
+			accMon.rateLimitHits++
 			accMon.consecutiveFailures = 0
+			m.applyRateLimitCooldownLocked(accMon)
+		} else {
+			accMon.rateLimitHits = 0
+			m.applyBackoffLocked(accMon)
+			if isAuth {
+				accMon.consecutiveFailures++
+				if accMon.consecutiveFailures >= 3 && !accMon.cookieMarkedInvalid {
+					accMon.cookieMarkedInvalid = true
+					// cookie 失效：申请更长的冷却退避，降低对失效账号的高频轮询；
+					// cookie 失效通知只发一次（由 cookieMarkedInvalid 去重），避免 TG 刷屏
+					m.applyBackoffLocked(accMon)
+					m.mu.Unlock()
+					m.markCookiePotentiallyInvalid(account, err)
+					m.notifyPollError(account, cookieInvalidStage, err)
+					return
+				}
+			} else {
+				accMon.consecutiveFailures = 0
+			}
 		}
 	}
 	m.mu.Unlock()
 
-	// 非认证错误但需要通知的场景：拉取事件失败等（notifyPollError 内部带节流）
-	if !isAuth {
+	switch {
+	case isRateLimit:
+		m.notifyPollError(account, rateLimitStage, err)
+	case !isAuth:
 		m.notifyPollError(account, "轮询异常", err)
 	}
 }
 
-// applyBackoffLocked 退避已禁用：保持配置的 PollInterval 轮询，避免 STRM 生成被延迟
+// applyBackoffLocked 依据连续失败次数计算并设置账号退避截止时间（P0-2）
 //
-//	设计变更：原 v1.1.5 阶梯退避（2/10/30min）会拉长轮询间隔，导致 STRM 生成延迟。
-//	现改为保持配置间隔持续轮询；cookie 失效等异常通过通知去重（cookieMarkedInvalid）
-//	与 10min 通知节流处理，不再拉长轮询。
-//	consecutiveErrors 仍累计用于诊断（Status 暴露），但不触发退避。
+//	策略：base=30s，指数 ×2^n，上限 10min，附加 [0, d/2) 抖动打散多账号重试尖峰。
+//	成功轮询（oncePoll）或验证成功（resetConsecutiveFailures）会清零 backoffUntil。
+//	调用方需持有 m.mu 写锁。
 func (m *Monitor) applyBackoffLocked(accMon *AccountMonitor) {
-	// 退避已禁用：不设 backoffUntil，pollLoop 维持配置的 PollInterval
+	if accMon.consecutiveErrors <= 0 {
+		return
+	}
+	d := backoffBaseDelay
+	for i := 1; i < accMon.consecutiveErrors && d < backoffMaxDelay; i++ {
+		d *= 2
+	}
+	if d > backoffMaxDelay {
+		d = backoffMaxDelay
+	}
+	// 抖动 [0, d/2)，避免多账号在同一时刻集中重试
+	if half := d / 2; half > 0 {
+		d += time.Duration(rand.Int63n(int64(half)))
+	}
+	accMon.backoffUntil = time.Now().Add(d).UnixMilli()
+}
+
+// applyRateLimitCooldownLocked 风控/限流冷却降温（P0-3）
+//
+//	策略：base=2min（比普通退避更激进），指数 ×2^n，上限 30min，附加 [0, d/2) 抖动。
+//	目的：被 115 风控命中后主动降温、降低后续请求频率，避免触发更严厉的限制。
+//	调用方需持有 m.mu 写锁。
+func (m *Monitor) applyRateLimitCooldownLocked(accMon *AccountMonitor) {
+	if accMon.rateLimitHits <= 0 {
+		return
+	}
+	d := rateLimitBaseDelay
+	for i := 1; i < accMon.rateLimitHits && d < rateLimitMaxDelay; i++ {
+		d *= 2
+	}
+	if d > rateLimitMaxDelay {
+		d = rateLimitMaxDelay
+	}
+	if half := d / 2; half > 0 {
+		d += time.Duration(rand.Int63n(int64(half)))
+	}
+	accMon.backoffUntil = time.Now().Add(d).UnixMilli()
 }
 
 // markCookiePotentiallyInvalid 标记账号 cookie 可能失效
@@ -738,7 +858,8 @@ func (m *Monitor) markCookiePotentiallyInvalid(account string, err error) {
 }
 
 // notifyPollError 主动推送轮询错误到 TG（参考项目 post_message 通知策略）
-// 节流：同一账号 10 分钟内最多 1 条；cookie 失效通知绕过节流（已由 cookieMarkedInvalid 去重）
+// 节流：普通错误同一账号 10 分钟内最多 1 条；风控告警独立 30 分钟节流；
+// cookie 失效通知绕过节流（已由 cookieMarkedInvalid 去重）。
 func (m *Monitor) notifyPollError(account, stage string, err error) {
 	if m.notifier == nil {
 		return
@@ -748,17 +869,31 @@ func (m *Monitor) notifyPollError(account, stage string, err error) {
 		m.mu.Lock()
 		if accMon, ok := m.accounts[account]; ok {
 			now := time.Now().UnixMilli()
-			if accMon.lastPollErrNotify > 0 && now-accMon.lastPollErrNotify < int64(notifyCooldown) {
-				m.mu.Unlock()
-				logger.S().Infof("[Monitor] 账号 %s 轮询错误通知节流中，跳过 (stage=%s)", account, stage)
-				return
+			if stage == rateLimitStage {
+				// 风控告警独立以更长窗口节流，避免刷屏
+				if accMon.lastRateLimitNotify > 0 && now-accMon.lastRateLimitNotify < int64(rateLimitNotifyCooldown) {
+					m.mu.Unlock()
+					logger.S().Infof("[Monitor] 账号 %s 风控告警节流中，跳过 (stage=%s)", account, stage)
+					return
+				}
+				accMon.lastRateLimitNotify = now
+			} else {
+				if accMon.lastPollErrNotify > 0 && now-accMon.lastPollErrNotify < int64(notifyCooldown) {
+					m.mu.Unlock()
+					logger.S().Infof("[Monitor] 账号 %s 轮询错误通知节流中，跳过 (stage=%s)", account, stage)
+					return
+				}
+				accMon.lastPollErrNotify = now
 			}
-			accMon.lastPollErrNotify = now
 		}
 		m.mu.Unlock()
 	}
-	msg := fmt.Sprintf("⚠️ <b>115 生活监控异常</b>\n\n账号: <code>%s</code>\n阶段: %s\n错误: %s\n\n请检查 Cookie 状态或网络连接",
-		account, stage, err.Error())
+	hint := "请检查 Cookie 状态或网络连接"
+	if stage == rateLimitStage {
+		hint = "疑似触发 115 风控/限流，已自动降温（延长轮询间隔）。请降低轮询频率或稍后重试"
+	}
+	msg := fmt.Sprintf("⚠️ <b>115 生活监控异常</b>\n\n账号: <code>%s</code>\n阶段: %s\n错误: %s\n\n%s",
+		account, stage, err.Error(), hint)
 	if err := m.notifier.Notify(context.Background(), msg); err != nil {
 		logger.S().Warnf("[Monitor] 错误通知推送失败 account=%s: %v", account, err)
 	}
@@ -811,6 +946,7 @@ func (m *Monitor) resetConsecutiveFailures(account string) {
 		accMon.cookieMarkedInvalid = false
 		// 同时清零退避状态（Start 验证成功调用）
 		accMon.consecutiveErrors = 0
+		accMon.rateLimitHits = 0
 		accMon.backoffUntil = 0
 	}
 }

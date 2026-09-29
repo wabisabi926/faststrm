@@ -352,7 +352,7 @@ func TestListAllFilesRecursive_SkipsBdmvStream(t *testing.T) {
 	out, err := listAllFilesRecursive(
 		context.Background(), newMockClient(rt), "cookie", 100, "电影/沙丘",
 		map[string]struct{}{".mkv": {}, ".m2ts": {}}, map[string]struct{}{},
-		0, nil, "", nil, nil,
+		0, nil, "", nil, nil, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("listAllFilesRecursive: %v", err)
@@ -383,7 +383,7 @@ func TestListAllFilesRecursive_TargetInsideBdmvStream(t *testing.T) {
 	out, err := listAllFilesRecursive(
 		context.Background(), newMockClient(rt), "cookie", 300, "电影/沙丘/BDMV/STREAM",
 		map[string]struct{}{".m2ts": {}}, map[string]struct{}{},
-		0, nil, "", nil, nil,
+		0, nil, "", nil, nil, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("listAllFilesRecursive: %v", err)
@@ -403,7 +403,7 @@ func TestListAllFilesRecursive_StandaloneM2tsKept(t *testing.T) {
 	out, err := listAllFilesRecursive(
 		context.Background(), newMockClient(rt), "cookie", 100, "电影",
 		map[string]struct{}{".m2ts": {}}, map[string]struct{}{},
-		0, nil, "", nil, nil,
+		0, nil, "", nil, nil, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("listAllFilesRecursive: %v", err)

@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -232,6 +233,7 @@ func urlPathEncode(s string) string {
 // 对齐 MoviePilot StrmGenerater.should_generate_strm + not_blacklist_key。
 // pickcode 校验：STRM 文件必须是 17 位字母数字的有效 pickcode
 // 新增：taskID/rt/sseServer 用于扫描阶段的进度心跳广播（大库场景下避免 UI 显示 0% 卡死）
+// 新增：sqliteDB/account 用于顺手维护 folders 表（目录 → cid），供生活事件按 parent_id 离线反查
 func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 	ctx context.Context,
 	c115 *client115.Client,
@@ -245,13 +247,16 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 	taskID string,
 	rt *Runtime,
 	sseServer *sse.Server,
+	sqliteDB *sql.DB,
+	account string,
 ) ([]*fileItem, error) {
 	type stackEntry struct {
-		cid     int64
-		relPath string // 相对 originPath 的前缀路径（为空表示在 originPath 下）
+		cid       int64
+		relPath   string // 相对 originPath 的前缀路径（为空表示在 originPath 下）
+		parentCID int64  // 父目录 cid（0 表示未知）
 	}
 	var out []*fileItem
-	stk := []stackEntry{{cid: rootCID, relPath: ""}}
+	stk := []stackEntry{{cid: rootCID, relPath: "", parentCID: 0}}
 
 	// P2-2：黑名单条目数 ≥ 阈值时构建一次 AC 自动机复用，避免 per-file 重构建
 	var blMatcher *concurrency.StringMatcher
@@ -317,6 +322,29 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 		}
 		cidSeen[top.cid] = struct{}{}
 
+		// P1-1：全量扫描顺手维护 folders 表（目录 cid → 云端路径），对齐参考项目 parent_id_paths 目录路径库。
+		// 生活事件的 parent_id 就是父目录自身的 cid，该表命中后事件路径反查可完全离线完成（零 115 接口）。
+		if sqliteDB != nil && account != "" {
+			dirPath := strings.TrimRight(originPath, "/")
+			if top.relPath != "" {
+				dirPath = strings.TrimRight(originPath, "/") + "/" + top.relPath
+			}
+			if dirPath != "" {
+				parentID := ""
+				if top.parentCID > 0 {
+					parentID = strconv.FormatInt(top.parentCID, 10)
+				}
+				if ferr := db.UpsertFolderEntry(sqliteDB, account, db.FilePathEntry{
+					FileID:   strconv.FormatInt(top.cid, 10),
+					Path:     dirPath,
+					FileName: filepath.Base(dirPath),
+					ParentID: parentID,
+				}); ferr != nil {
+					logger.S().Warnf("[listAllFilesRecursive] 写 folders 表失败 cid=%d path=%s: %v", top.cid, dirPath, ferr)
+				}
+			}
+		}
+
 		var offset int
 		pageMatched := 0
 		for page := 0; ; page++ {
@@ -354,7 +382,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 				if isDir {
 					cid, _ := strconv.ParseInt(fmt.Sprintf("%v", e.CID), 10, 64)
 					if cid > 0 {
-						stk = append(stk, stackEntry{cid: cid, relPath: relName})
+						stk = append(stk, stackEntry{cid: cid, relPath: relName, parentCID: top.cid})
 						dirCount++
 					}
 					continue

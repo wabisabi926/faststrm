@@ -27,6 +27,8 @@ const (
 	srcEventRaw   = "EVENT_RAW"
 	srcDB         = "DB"
 	srcDBRejected = "DB_SINGLE_REJECTED" // DB 有记录但仅单段+未命中根映射，强制丢弃重查
+	srcDBParent   = "DB_PARENT_ID"       // 按事件 parent_id 反查 folders 表命中父目录路径
+	srcMapPrefix  = "MAP_PREFIX_CID"     // 映射云端前缀反查 cid 命中父目录
 	srcAPIPID     = "API_PARENT_ID"
 	srcAPIFID     = "API_FILE_ID"
 	srcAPIRootLs  = "API_ROOT_FSLIST"
@@ -80,29 +82,48 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		return nil
 	}
 
-	// 解析云端路径（四级回退，对齐参考项目策略）
+	// 解析云端路径（多级回退，对齐参考项目策略）
 	//  0) event.FilePath（极少由 API 直接填充）
-	//  1) DB getByID(file_id) → path（参考项目首选，避免对每个事件打祖先链 API）
+	//  1) file_id → files 表缓存路径（仅非 rename/move；参考项目首选，避免对每个事件打祖先链 API）
 	//     - 但 DB path 如果是 SINGLE_SEG（不含"/"）且非根目录级映射命中，视为历史脏数据（旧错误写入），丢弃
-	//  2) lifeClient.ResolvePath：parentID 合法→ResolveDirPath(parentID)；否则用 file_id 自身查祖先链
+	//  2) parent_id → 父目录路径（folders 表 / 映射前缀反查 cid），再拼 event.FileName
+	//  3) lifeClient.ResolvePath：parentID 合法→ResolveDirPath(parentID)；否则用 file_id 自身查祖先链
 	//     - ResolvePath 内部仍有 祖先链→根目录列目录→二级目录列目录→ResolveDirPath 四级降级
 	rawCloudPath := event.FilePath
 	source := srcEventRaw
 
-	// rename/move 事件：跳过 DB 缓存，强制走 API 刷新新路径（对齐参考项目 rename() refresh=True）
-	// 原因：rename/move 事件到达时 DB 存的还是旧路径（上一个 create/move 写入的），
-	// 若信任 DB 会算错 mapping.localPath → recreate 到旧目录名（看似没变）
-	// 注意：oldCloudPath（旧路径）由 handler 内部 resolveOldCloudPathByFileID 单独查 DB，不受此处影响
+	// rename/move 事件：跳过「file_id → files 表」这级缓存，强制走 API 刷新新路径
+	// （对齐参考项目 rename() refresh=True）。原因：rename/move 事件到达时 DB 存的还是旧路径
+	// （上一个 create/move 写入的），若信任 DB 会算错 mapping.localPath → recreate 到旧目录名（看似没变）。
+	// 注意：oldCloudPath（旧路径）由 handler 内部 resolveOldCloudPathByFileID 单独查 DB，不受此处影响。
 	isRenameOrMove := client115.RenameEventTypes[eventType] || client115.MoveEventTypes[eventType]
 
-	if !isRenameOrMove && strings.TrimSpace(rawCloudPath) == "" && m.sqliteDB != nil && strings.TrimSpace(event.FileID) != "" {
-		// P0-2: 按 fileID 反查 DB 缓存路径（方案 B / 对齐参考 `_get_path_by_cid` 的 FileDbHelper 缓存）。
-		// 文件事件 parent_id=0 时，只要该文件之前经文件夹递归/事件落盘，即可从 files 表取回完整云路径，
-		// 避免退化成裸文件名导致 no_path_mapping 跳过。
-		if path, src := m.resolveCloudPathFromDB(account, event, config); src != "" {
-			source = src
-			if src == srcDB {
-				rawCloudPath = path
+	// 1) file_id → files 表缓存路径（仅非 rename/move，rename/move 时表里存的是旧路径）
+	if !isRenameOrMove && strings.TrimSpace(rawCloudPath) == "" {
+		if m.sqliteDB != nil && strings.TrimSpace(event.FileID) != "" {
+			if path, src := m.resolveCloudPathFromDB(account, event, config); src != "" {
+				source = src
+				if src == srcDB {
+					rawCloudPath = path
+				}
+			}
+		}
+	}
+	// 2) 按事件 parent_id 反查「父目录」路径，拼成完整云路径 —— rename/move 同样适用：
+	// rename 时父目录未变、move 时 parent_id 即目标父目录，都不存在 DB 陈旧问题；
+	// 而 /files/medialist 祖先链对部分目录返回 state=true 但 ancestors 为空，
+	// 会让路径退化成裸文件名 → no_path_mapping 跳过，这段反查是唯一能解出完整路径的途径。
+	//   2.1 P0-1: parent_id → folders 表（对齐参考 `_get_path_by_cid(event["parent_id"])`）
+	//   2.2 P0-2: 映射云端前缀 → cid 比对，走 /files/getid，不依赖 /files/medialist
+	if strings.TrimSpace(rawCloudPath) == "" && strings.TrimSpace(event.FileName) != "" {
+		if dir := m.resolveCloudDirPathByParentID(account, event.ParentID); dir != "" {
+			rawCloudPath = dir + "/" + event.FileName
+			source = srcDBParent
+		}
+		if strings.TrimSpace(rawCloudPath) == "" && lifeClient != nil {
+			if dir := m.resolveCloudDirPathByMappingPrefix(ctx, account, event.ParentID, config, lifeClient); dir != "" {
+				rawCloudPath = dir + "/" + event.FileName
+				source = srcMapPrefix
 			}
 		}
 	}
@@ -195,7 +216,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		// P1-1：关键跳过原因写入用户可见事件日志（只记录疑似配置问题的原因，避免常规过滤刷屏）
 		if shouldLogSkipReason(decision.SkipReason) {
 			m.appendLog(ctx, account, string(decision.EventKind), false, cloudPath, decision.MatchedLocalBase,
-				fmt.Sprintf("跳过: %s (file=%s)", decision.SkipReason, event.FileName))
+				fmt.Sprintf("跳过: %s (file=%s pid=%s)", decision.SkipReason, event.FileName, event.ParentID))
 		}
 		pollCountsAddSkipped(ctx, decision.SkipReason)
 		m.markDedupProcessed(event)
@@ -207,7 +228,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 		reason := "mapping_type_" + string(decision.MappingType) + "_phase2_not_handled"
 		if shouldLogSkipReason(reason) {
 			m.appendLog(ctx, account, string(decision.EventKind), false, cloudPath, decision.MatchedLocalBase,
-				fmt.Sprintf("跳过: %s (file=%s)", reason, event.FileName))
+				fmt.Sprintf("跳过: %s (file=%s pid=%s)", reason, event.FileName, event.ParentID))
 		}
 		pollCountsAddSkipped(ctx, reason)
 		m.markDedupProcessed(event)
@@ -362,6 +383,100 @@ func (m *Monitor) resolveCloudPathFromDB(account string, event client115.LifeEve
 	logger.S().Infof("[Monitor] 路径DB反查拒绝(单段脏数据): fileID=%s name=%s dbPath=%s → 将强制走API解析",
 		event.FileID, event.FileName, entry.Path)
 	return "", srcDBRejected
+}
+
+// prefixCIDEntry 映射前缀 → cid 缓存项。
+// cid 命中后不再过期（目录 cid 不会变）；查不到（前缀不存在/接口失败）短期过期后重试。
+type prefixCIDEntry struct {
+	cid    string
+	expire time.Time // 零值表示永不过期
+}
+
+// prefixCIDNegativeTTL 反查失败结果的缓存时长，避免映射写错时每个事件都打接口
+const prefixCIDNegativeTTL = 5 * time.Minute
+
+// resolveCloudDirPathByParentID P0-1：按事件 parent_id 反查 folders 表，取回父目录云路径。
+//
+// 对齐参考项目 `_get_path_by_cid(event["parent_id"])` 的第一级 FileDbHelper 缓存命中。
+// 事件的 parent_id 就是父目录自身的 cid，而 folders.file_id 存的正是该 cid。
+func (m *Monitor) resolveCloudDirPathByParentID(account, parentID string) string {
+	parentID = strings.TrimSpace(parentID)
+	if m.sqliteDB == nil || parentID == "" || parentID == "0" {
+		return ""
+	}
+	entry, err := db.GetFolderEntry(m.sqliteDB, account, parentID)
+	if err != nil || entry == nil {
+		return ""
+	}
+	dir := normalizeCloudPath(entry.Path)
+	if dir == "" {
+		return ""
+	}
+	logger.S().Debugf("[Monitor] 路径父目录反查命中: parentID=%s → %s (src=%s)", parentID, dir, srcDBParent)
+	return dir
+}
+
+// resolveCloudDirPathByMappingPrefix P0-2：用配置的映射云端前缀反查 cid，与事件 parent_id 比对。
+//
+// 走 webapi /files/getid（路径→cid，全量任务同款链路），不依赖 /files/medialist 祖先链 ——
+// 后者对部分目录返回 state=true 但 ancestors 为空数组，会让路径解析退化成裸文件名。
+// 命中结果进 prefixCIDCache，同一前缀不会反复打接口。
+func (m *Monitor) resolveCloudDirPathByMappingPrefix(
+	ctx context.Context,
+	account, parentID string,
+	config model.LifeMonitorSettings,
+	lifeClient *client115.LifeClient,
+) string {
+	parentID = strings.TrimSpace(parentID)
+	if lifeClient == nil || parentID == "" || parentID == "0" {
+		return ""
+	}
+	for _, mm := range config.PathMappings {
+		if mm.Account != "" && !strings.EqualFold(strings.TrimSpace(mm.Account), strings.TrimSpace(account)) {
+			continue
+		}
+		prefix := normalizeCloudPath(mm.CloudPath)
+		if prefix == "" {
+			continue
+		}
+		if cid := m.prefixCID(ctx, account, prefix, lifeClient); cid != "" && cid == parentID {
+			logger.S().Infof("[Monitor] 路径映射前缀反查命中: parentID=%s → prefix=%s (account=%s, src=%s)",
+				parentID, prefix, account, srcMapPrefix)
+			return prefix
+		}
+	}
+	return ""
+}
+
+// prefixCID 求映射前缀对应的 cid，带进程内缓存（含失败结果的短期负缓存）
+func (m *Monitor) prefixCID(ctx context.Context, account, prefix string, lifeClient *client115.LifeClient) string {
+	key := account + "\x00" + prefix
+	m.prefixCIDMu.Lock()
+	if e, ok := m.prefixCIDCache[key]; ok && (e.expire.IsZero() || time.Now().Before(e.expire)) {
+		m.prefixCIDMu.Unlock()
+		return e.cid
+	}
+	m.prefixCIDMu.Unlock()
+
+	cid, err := lifeClient.FsDirGetID(ctx, prefix)
+	if err != nil {
+		logger.S().Debugf("[Monitor] 映射前缀反查 cid 失败: prefix=%s: %v", prefix, err)
+		m.prefixCIDMu.Lock()
+		if m.prefixCIDCache == nil {
+			m.prefixCIDCache = make(map[string]prefixCIDEntry)
+		}
+		m.prefixCIDCache[key] = prefixCIDEntry{expire: time.Now().Add(prefixCIDNegativeTTL)}
+		m.prefixCIDMu.Unlock()
+		return ""
+	}
+	s := strconv.FormatInt(cid, 10)
+	m.prefixCIDMu.Lock()
+	if m.prefixCIDCache == nil {
+		m.prefixCIDCache = make(map[string]prefixCIDEntry)
+	}
+	m.prefixCIDCache[key] = prefixCIDEntry{cid: s}
+	m.prefixCIDMu.Unlock()
+	return s
 }
 
 // handleStallError P0-5 处理整理队列无进展超时后的行为

@@ -3,22 +3,68 @@ package monitor
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/wabisabi926/faststrm/internal/model"
 )
 
-// TestApplyBackoffLocked_Disabled_NoBackoffUntil 退避已禁用：
-// 任意连续失败次数都不应设置 backoffUntil，保证轮询按配置间隔执行、STRM 生成不被延迟。
-// 若未来有人恢复阶梯退避，本测试应失败以提醒行为变更。
-func TestApplyBackoffLocked_Disabled_NoBackoffUntil(t *testing.T) {
+// expectedBackoffBase 复刻 applyBackoffLocked 的基数计算（不含抖动），用于校验区间。
+func expectedBackoffBase(n int) time.Duration {
+	d := backoffBaseDelay
+	for i := 1; i < n && d < backoffMaxDelay; i++ {
+		d *= 2
+	}
+	if d > backoffMaxDelay {
+		d = backoffMaxDelay
+	}
+	return d
+}
+
+// TestApplyBackoffLocked_ExponentialCapped 退避恢复（P0-2）：
+// consecutiveErrors=0 不设退避；失败次数越多退避越长（指数 ×2^n），
+// 退避值落在 [base, base+base/2) 抖动区间内，且不超过上限（含抖动）。
+func TestApplyBackoffLocked_ExponentialCapped(t *testing.T) {
 	m := newTestMonitor(model.LifeMonitorSettings{})
-	// 覆盖原 v1.1.5 阶梯边界：1-2(原不退避) / 3-5(原2min) / 6-9(原10min) / >=10(原30min)
-	for _, n := range []int{1, 2, 3, 5, 6, 9, 10, 20, 100} {
+
+	acc0 := &AccountMonitor{Account: "acc1", consecutiveErrors: 0}
+	m.applyBackoffLocked(acc0)
+	if acc0.backoffUntil != 0 {
+		t.Fatalf("consecutiveErrors=0 不应设置退避，实际 %d", acc0.backoffUntil)
+	}
+
+	for _, n := range []int{1, 2, 3, 5, 9, 10, 20, 100} {
+		now := time.Now()
 		acc := &AccountMonitor{Account: "acc1", consecutiveErrors: n}
 		m.applyBackoffLocked(acc)
-		if acc.backoffUntil != 0 {
-			t.Errorf("consecutiveErrors=%d: 退避已禁用，backoffUntil 应保持 0，实际 %d", n, acc.backoffUntil)
+		if acc.backoffUntil == 0 {
+			t.Fatalf("consecutiveErrors=%d 应设置退避", n)
 		}
+		got := time.UnixMilli(acc.backoffUntil).Sub(now)
+		base := expectedBackoffBase(n)
+		// 退避 = base + [0, base/2)
+		if got < base {
+			t.Errorf("consecutiveErrors=%d: 退避 %v 小于基数 %v", n, got, base)
+		}
+		if upper := base + base/2; got >= upper {
+			t.Errorf("consecutiveErrors=%d: 退避 %v 超过抖动上界 %v", n, got, upper)
+		}
+		if got > backoffMaxDelay+backoffMaxDelay/2 {
+			t.Errorf("consecutiveErrors=%d: 退避 %v 超过全局上限(含抖动)", n, got)
+		}
+	}
+}
+
+// TestResetConsecutiveFailures_ClearsBackoff 成功/重置后应清零退避状态。
+func TestResetConsecutiveFailures_ClearsBackoff(t *testing.T) {
+	m := newTestMonitor(model.LifeMonitorSettings{})
+	m.accounts = map[string]*AccountMonitor{
+		"acc1": {Account: "acc1", consecutiveErrors: 5, backoffUntil: time.Now().Add(time.Minute).UnixMilli()},
+	}
+	m.resetConsecutiveFailures("acc1")
+	acc := m.accounts["acc1"]
+	if acc.consecutiveErrors != 0 || acc.backoffUntil != 0 {
+		t.Fatalf("resetConsecutiveFailures 应清零退避状态，实际 consecutiveErrors=%d backoffUntil=%d",
+			acc.consecutiveErrors, acc.backoffUntil)
 	}
 }
 
@@ -67,5 +113,97 @@ func TestHandlePollError_CookieInvalidNotifyOnce(t *testing.T) {
 	}
 	if msgs := fn.Messages(); len(msgs) != 2 {
 		t.Fatalf("验证成功后再次失效应发第 2 条通知，实际 %d 条", len(msgs))
+	}
+}
+
+// TestIsRateLimitError 风控/限流关键词识别（P0-3），需区别于 cookie 失效。
+func TestIsRateLimitError(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+	}{
+		{"HTTP 429: 请求过于频繁", true},
+		{"too many requests", true},
+		{"Rate Limit exceeded", true},
+		{"访问频繁，请稍后再试", true},
+		{"系统繁忙", true},
+		{"疑似触发风控，需验证码", true},
+		{"未登录", false},
+		{"cookie 已失效", false},
+		{"login expired", false},
+		{"connection reset by peer", false},
+	}
+	for _, c := range cases {
+		if got := isRateLimitError(errors.New(c.msg)); got != c.want {
+			t.Errorf("isRateLimitError(%q)=%v, want %v", c.msg, got, c.want)
+		}
+	}
+	if isRateLimitError(nil) {
+		t.Error("isRateLimitError(nil) 应为 false")
+	}
+}
+
+// TestHandlePollError_RateLimit_NotMarkCookieInvalid 风控/限流不应误判为 cookie 失效：
+// 应累计 rateLimitHits、设置冷却退避、不累加 consecutiveFailures、不标记 cookieMarkedInvalid，
+// 且告警受 30min 独立节流（多次连续风控只发 1 条）。
+func TestHandlePollError_RateLimit_NotMarkCookieInvalid(t *testing.T) {
+	m, fn := newAggTestMonitor()
+	rateErr := errors.New("HTTP 429: 请求过于频繁")
+
+	for i := 0; i < 5; i++ {
+		m.handlePollError("acc1", rateErr)
+	}
+
+	acc := m.accounts["acc1"]
+	if acc.cookieMarkedInvalid {
+		t.Fatalf("风控/限流不应标记 cookie 失效")
+	}
+	if acc.consecutiveFailures != 0 {
+		t.Fatalf("风控/限流不应累加认证失败计数，实际 %d", acc.consecutiveFailures)
+	}
+	if acc.rateLimitHits != 5 {
+		t.Fatalf("rateLimitHits 应累计为 5，实际 %d", acc.rateLimitHits)
+	}
+	if acc.backoffUntil == 0 {
+		t.Fatalf("风控/限流应设置冷却退避")
+	}
+	if msgs := fn.Messages(); len(msgs) != 1 {
+		t.Fatalf("风控告警应受独立节流，仅 1 条，实际 %d 条: %v", len(msgs), msgs)
+	}
+}
+
+// TestApplyRateLimitCooldownLocked 冷却退避强度应高于普通退避，且不超过上限（含抖动）。
+func TestApplyRateLimitCooldownLocked(t *testing.T) {
+	m := newTestMonitor(model.LifeMonitorSettings{})
+	now := time.Now()
+	acc := &AccountMonitor{Account: "acc1", rateLimitHits: 1}
+	m.applyRateLimitCooldownLocked(acc)
+	got := time.UnixMilli(acc.backoffUntil).Sub(now)
+	if got < rateLimitBaseDelay || got >= rateLimitBaseDelay+rateLimitBaseDelay/2 {
+		t.Fatalf("首次风控冷却应落在 [%v, %v)，实际 %v",
+			rateLimitBaseDelay, rateLimitBaseDelay+rateLimitBaseDelay/2, got)
+	}
+	// 达到上限后含抖动不应超过上限的 1.5 倍
+	acc2 := &AccountMonitor{Account: "acc1", rateLimitHits: 100}
+	m.applyRateLimitCooldownLocked(acc2)
+	got2 := time.UnixMilli(acc2.backoffUntil).Sub(now)
+	if got2 < rateLimitMaxDelay || got2 > rateLimitMaxDelay+rateLimitMaxDelay/2 {
+		t.Fatalf("多次风控冷却应封顶在 [%v, %v]，实际 %v",
+			rateLimitMaxDelay, rateLimitMaxDelay+rateLimitMaxDelay/2, got2)
+	}
+	if got2 <= got {
+		t.Fatalf("冷却应随风控次数增长，首次=%v 封顶=%v", got, got2)
+	}
+}
+
+// TestResetConsecutiveFailures_ClearsRateLimit 重置应同时清零风控计数。
+func TestResetConsecutiveFailures_ClearsRateLimit(t *testing.T) {
+	m := newTestMonitor(model.LifeMonitorSettings{})
+	m.accounts = map[string]*AccountMonitor{
+		"acc1": {Account: "acc1", rateLimitHits: 4, backoffUntil: time.Now().Add(time.Minute).UnixMilli()},
+	}
+	m.resetConsecutiveFailures("acc1")
+	if acc := m.accounts["acc1"]; acc.rateLimitHits != 0 {
+		t.Fatalf("resetConsecutiveFailures 应清零 rateLimitHits，实际 %d", acc.rateLimitHits)
 	}
 }
