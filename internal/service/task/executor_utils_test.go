@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
+	"github.com/wabisabi926/faststrm/internal/service/db"
 )
 
 func TestResolveStrmSettings_Default(t *testing.T) {
@@ -410,5 +412,76 @@ func TestListAllFilesRecursive_StandaloneM2tsKept(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].Name != "录制.m2ts" {
 		t.Fatalf("独立 m2ts 应照常命中, got %d", len(out))
+	}
+}
+
+// ======================================================================
+// P1-1：全量扫描顺手维护 folders 表（目录 cid → 云端路径）
+// 这是「命中后零 API 定位父目录」的前提：生活事件的 parent_id 就是父目录自身的 cid，
+// folders.file_id 存该 cid、path 存完整云路径，事件侧 resolveCloudDirPathByParentID 即可离线命中。
+// ======================================================================
+
+// newTaskTestSqliteDB 打开一次性 SQLite（测试后自动 Close）
+func newTaskTestSqliteDB(t *testing.T) *sql.DB {
+	t.Helper()
+	sqldb, err := db.OpenNew(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqldb.Close() })
+	return sqldb
+}
+
+// TestListAllFilesRecursive_WritesFoldersTable 全量遍历到的每个目录都必须落入 folders 表：
+// file_id=目录 cid、path=完整云端路径、file_name=目录自身名、parent_id=父目录 cid。
+func TestListAllFilesRecursive_WritesFoldersTable(t *testing.T) {
+	rt := &bdmvRT{fixtures: map[string]string{
+		// 根：一个子目录 SubA
+		"100": `{"state":true,"data":[{"n":"SubA","cid":200,"fc":2}]}`,
+		// SubA：一个子目录 SubB + 一个媒体文件
+		"200": `{"state":true,"data":[` +
+			`{"n":"SubB","cid":300,"fc":2},` +
+			`{"n":"a.mkv","fid":11,"pc":"abcdefghij1234567","s":100000,"cid":200}]}`,
+		// SubB：一个媒体文件
+		"300": `{"state":true,"data":[` +
+			`{"n":"b.mkv","fid":12,"pc":"abcdefghij1234568","s":100000,"cid":300}]}`,
+	}}
+	sqldb := newTaskTestSqliteDB(t)
+
+	_, err := listAllFilesRecursive(
+		context.Background(), newMockClient(rt), "cookie", 100, "电影/沙丘",
+		map[string]struct{}{".mkv": {}}, map[string]struct{}{},
+		0, nil, "", nil, nil, sqldb, "acc1",
+	)
+	if err != nil {
+		t.Fatalf("listAllFilesRecursive: %v", err)
+	}
+
+	want := map[string]struct {
+		path   string
+		name   string
+		parent string
+	}{
+		"100": {"电影/沙丘", "沙丘", "0"},
+		"200": {"电影/沙丘/SubA", "SubA", "100"},
+		"300": {"电影/沙丘/SubA/SubB", "SubB", "200"},
+	}
+	for cid, exp := range want {
+		entry, gerr := db.GetFolderEntry(sqldb, "acc1", cid)
+		if gerr != nil {
+			t.Fatalf("GetFolderEntry(%s): %v", cid, gerr)
+		}
+		if entry == nil {
+			t.Fatalf("folders 表缺 cid=%s 记录（全量扫描未写入）", cid)
+		}
+		if entry.Path != exp.path {
+			t.Errorf("cid=%s path=%q, want %q", cid, entry.Path, exp.path)
+		}
+		if entry.FileName != exp.name {
+			t.Errorf("cid=%s file_name=%q, want %q", cid, entry.FileName, exp.name)
+		}
+		if entry.ParentID != exp.parent {
+			t.Errorf("cid=%s parent_id=%q, want %q", cid, entry.ParentID, exp.parent)
+		}
 	}
 }
