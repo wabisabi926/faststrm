@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -467,6 +468,7 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 	if err := json.Unmarshal(body, &data); err != nil {
 		resp.Body = io.NopCloser(strings.NewReader(string(body)))
 		resp.ContentLength = int64(len(body))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 		return nil
 	}
 
@@ -526,6 +528,7 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 	if !isStrm {
 		resp.Body = io.NopCloser(strings.NewReader(string(body)))
 		resp.ContentLength = int64(len(body))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 		return nil
 	}
 
@@ -556,6 +559,11 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 	resp.Body = io.NopCloser(strings.NewReader(string(newBody)))
 	resp.ContentLength = int64(len(newBody))
 	resp.Header.Del("Content-Encoding")
+	// 必须同步改写 Content-Length 头：httputil.ReverseProxy 会把上游原始
+	// Content-Length 头原样透传给客户端，若与改写后的 body 长度不一致，
+	// 浏览器会以 net::ERR_CONTENT_LENGTH_MISMATCH 中断请求，表现为
+	// “当前没有兼容的流 / Failed to fetch” 的播放失败弹窗。
+	resp.Header.Set("Content-Length", strconv.Itoa(len(newBody)))
 	return nil
 }
 
@@ -1047,17 +1055,20 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ===== 步骤 2: 解析重定向链拿最终 CDN URL =====
-	finalURL := p.resolveRedirectChain(r.Context(), meta.path, r, userID)
-	if finalURL == "" {
-		// 解析失败：STRM 端点自身报错（最常见是 115 Cookie 失效）。此处不能 302 回自身，
-		// 否则客户端会二次拿到同样的失败，浏览器只报 "Failed to fetch"，无从定位。
-		logger.S().Errorf("[EmbyProxy] media 直链解析失败: item=%s source=%s strm=%s（请检查 115 账号 Cookie 是否失效）",
-			itemID, sourceID, meta.path)
-		http.Error(w, "Failed to resolve media direct URL: STRM endpoint returned an error (check 115 account cookie)", http.StatusBadGateway)
-		return
-	}
-	if finalURL != meta.path {
-		logger.S().Infof("[EmbyProxy] resolveRedirectChain: item=%s %s -> %s", itemID, meta.path, finalURL)
+	// 对齐 MoviePilot `_resolve_redirect`：解析失败（超时 / STRM 端点报错）时返回原始
+	// STRM URL，由客户端再走一次 STRM 端点，而不是在代理侧直接报 502。
+	// upstreamStatus 仅用于诊断日志（响应行为不变），MP 本身对 4xx/5xx 是静默的。
+	finalURL, upstreamStatus := p.resolveRedirectChain(r.Context(), meta.path, r, userID)
+	if finalURL == meta.path {
+		if upstreamStatus >= http.StatusBadRequest {
+			logger.S().Warnf("[EmbyProxy] media 直链解析失败: STRM 端点返回 %d，疑似 115 Cookie 失效/直链过期，302 回退原始 STRM URL: item=%s source=%s strm=%s",
+				upstreamStatus, itemID, sourceID, meta.path)
+		} else {
+			logger.S().Warnf("[EmbyProxy] media 直链解析未成功（上游无响应/超时），302 回退原始 STRM URL: item=%s source=%s strm=%s",
+				itemID, sourceID, meta.path)
+		}
+	} else {
+		logger.S().Infof("[EmbyProxy] resolveRedirectChain: item=%s %s -> %s (status=%d)", itemID, meta.path, finalURL, upstreamStatus)
 	}
 
 	// ===== 步骤 3: 缓存最终 URL 并 302 =====
@@ -1110,13 +1121,17 @@ func (p *Proxy) passthroughToEmby(w http.ResponseWriter, r *http.Request) {
 // 对齐 MoviePilot _resolve_redirect
 // ============================================================
 
-// resolveRedirectChain 对起始 URL 发 HEAD 请求，跟随所有重定向拿到最终 URL
-// 使用渐进超时策略（3 次重试，每次更长）
+// resolveRedirectChain 对起始 URL 发 HEAD 请求，跟随所有重定向拿到最终 URL。
+// 使用渐进超时策略（3 次重试，每次更长）。
 //
-// 返回空串表示解析失败（构造失败 / 传输超时 / STRM 端点自身返回 4xx/5xx），
-// 由调用方回明确错误，绝不再把失败地址当成功结果返回——否则调用方会 302 回自身，
-// 客户端最终只能看到 502 与浏览器 "Failed to fetch"，问题被隐藏。
-func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *http.Request, userID string) string {
+// 对齐 MoviePilot `_resolve_redirect`：无论成功与否都返回一个可用 URL——
+// 解析成功返回跟随重定向后的最终 URL；构造失败 / 传输超时 / STRM 端点自身报错
+// 时原样返回 startURL，交给调用方 302 给客户端，由客户端再走一次 STRM 端点，
+// 与 MP 保持一致的降级行为（不在代理侧直接报 502）。
+//
+// 第二个返回值是上游最终 HTTP 状态码（仅用于调用方诊断日志，不影响响应行为）：
+// 无 HTTP 响应（构造失败/超时）时为 0，其余为 resp.StatusCode。
+func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *http.Request, userID string) (string, int) {
 	fwdHeaders := buildForwardHeaders(r)
 	if userID != "" {
 		fwdHeaders["X-Emby-UserId"] = userID
@@ -1128,10 +1143,9 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, startURL, nil)
 		if err != nil {
 			cancel()
-			logger.S().Warnf("[EmbyProxy] resolveRedirectChain: 构造 HEAD 请求失败: %v", err)
-			return ""
+			logger.S().Warnf("[EmbyProxy] resolveRedirectChain: 构造 HEAD 请求失败，回退原始 URL: %v", err)
+			return startURL, 0
 		}
-		requestedURL := req.URL.String()
 		for k, v := range fwdHeaders {
 			req.Header.Set(k, v)
 		}
@@ -1140,36 +1154,28 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 		resp, err := p.followRedirectClient.Do(req)
 		if err != nil {
 			cancel()
-			// 超时 → 重试（最后一次超时则放弃）
+			// 超时 → 重试（最后一次超时则回退原始 URL）
 			if attempt < len(redirectResolveTimeouts)-1 {
 				logger.S().Infof("[EmbyProxy] resolveRedirectChain 超时，重试 %d/%d: url=%s err=%v",
 					attempt+1, len(redirectResolveTimeouts), startURL, err)
 				continue
 			}
-			logger.S().Warnf("[EmbyProxy] resolveRedirectChain 最终失败: url=%s err=%v", startURL, err)
-			return ""
+			logger.S().Warnf("[EmbyProxy] resolveRedirectChain 最终失败，回退原始 URL: url=%s err=%v", startURL, err)
+			return startURL, 0
 		}
 
-		// resp.Request.URL 是跟随所有重定向后的最终 URL
+		// resp.Request.URL 是跟随所有重定向后的最终 URL；未发生重定向时即 startURL
+		// （例如 STRM 端点自身返回 4xx/5xx，此时 finalURL == startURL，交给客户端再走一次）。
 		finalURL := resp.Request.URL.String()
 		status := resp.StatusCode
 		resp.Body.Close()
 		cancel()
 
-		// STRM 端点自身失败（未发生任何重定向却返回 4xx/5xx，典型是 115 Cookie 失效
-		// 导致 /api/strm 直接 502）：判定解析失败。若此时仍 302 回自身，客户端会
-		// 二次请求拿到同一个失败，表现为播放无声失败。
-		if status >= http.StatusBadRequest && finalURL == requestedURL {
-			logger.S().Warnf("[EmbyProxy] resolveRedirectChain: STRM 端点返回 %d，判定解析失败: url=%s",
-				status, startURL)
-			return ""
-		}
-
-		logger.S().Debugf("[EmbyProxy] resolveRedirectChain: %s -> %s (attempt %d)", startURL, finalURL, attempt+1)
-		return finalURL
+		logger.S().Debugf("[EmbyProxy] resolveRedirectChain: %s -> %s (status=%d attempt=%d)", startURL, finalURL, status, attempt+1)
+		return finalURL, status
 	}
 
-	return ""
+	return startURL, 0
 }
 
 // ============================================================
@@ -1360,19 +1366,29 @@ func isHTTPPath(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
-// extractAPIKey 从请求头提取 Emby API Key：
-// 优先 X-Emby-Token，其次 Authorization: MediaBrowser Token="xxx" / Token="xxx"
+// extractAPIKey 提取 Emby API Key：
+// 优先请求头 X-Emby-Token，其次 Authorization: MediaBrowser Token="xxx" / Token="xxx"，
+// 最后兜底 URL 查询参数。Emby Web 的详情页 Items 等 GET 请求会把令牌放在
+// ?X-Emby-Token=（而非请求头），不兜底会导致外部播放器注入等依赖 apiKey 的功能静默失效。
 func extractAPIKey(r *http.Request) string {
 	if tk := strings.TrimSpace(r.Header.Get("X-Emby-Token")); tk != "" {
 		return tk
 	}
-	auth := r.Header.Get("Authorization")
-	if auth == "" {
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		if idx := strings.Index(auth, "Token="); idx != -1 {
+			if tk := strings.Trim(auth[idx+len("Token="):], `"' `); tk != "" {
+				return tk
+			}
+		}
+	}
+	if r.URL == nil {
 		return ""
 	}
-	if idx := strings.Index(auth, "Token="); idx != -1 {
-		tk := auth[idx+len("Token="):]
-		return strings.Trim(tk, `"' `)
+	q := r.URL.Query()
+	for _, k := range []string{"X-Emby-Token", "api_key", "X-MediaBrowser-Token"} {
+		if tk := strings.TrimSpace(q.Get(k)); tk != "" {
+			return tk
+		}
 	}
 	return ""
 }
