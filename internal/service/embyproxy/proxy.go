@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wabisabi926/faststrm/internal/service/strm"
@@ -240,6 +241,9 @@ type Proxy struct {
 	// 避免回落到与实际监听不一致的硬编码 80。
 	proxyPort int
 
+	// externalPlayersEnabled 是否启用外部播放器链接注入（默认关，由设置热更新）。
+	externalPlayersEnabled atomic.Bool
+
 	// httpClient 透传给 Emby 的客户端（不跟随重定向）
 	httpClient *http.Client
 	// followRedirectClient 用于解析重定向链拿最终 CDN URL（跟随所有重定向）
@@ -373,7 +377,8 @@ func (p *Proxy) Handler() http.Handler {
 	}
 
 	// 媒体流路径走 HandleMediaStream（查缓存/解析重定向链 → 302），其余透传反代
-	// 分发顺序：WS 升级 → system/info 端口改写 → JS 修补（crossOrigin）→ 媒体流拦截 → HTML 注入 → 透传
+	// 分发顺序：WS 升级 → system/info 端口改写 → 外部播放器唤起 → JS 修补（crossOrigin）
+	//          → 媒体流拦截 → 详情页 ExternalUrls 注入 → HTML 注入 → 透传
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
@@ -386,6 +391,12 @@ func (p *Proxy) Handler() http.Handler {
 		// 0.5 system/info：改写端口为代理自身端口，否则客户端会绕过代理直连 Emby 原端口
 		if isSystemInfoPath(path) {
 			p.serveSystemInfo(w, r)
+			return
+		}
+
+		// 0.6 外部播放器唤起跳转：/redirect2external?link=<base64>
+		if p.externalPlayersOn() && path == externalRedirectPath {
+			p.serveExternalRedirect(w, r)
 			return
 		}
 
@@ -405,6 +416,14 @@ func (p *Proxy) Handler() http.Handler {
 		if _, ok := matchMediaRoute(path); ok {
 			p.HandleMediaStream(w, r)
 			return
+		}
+
+		// 2.5 外部播放器：详情页 Items 响应注入 ExternalUrls 起播链接
+		if r.Method == http.MethodGet && p.externalPlayersOn() {
+			if _, ok := isExternalPlayerItemPath(path); ok {
+				p.serveItemExternalURLs(w, r)
+				return
+			}
 		}
 
 		// 3. 可能返回 Emby Web HTML 壳的 GET 请求：整包拉取并注入 crossOrigin 拦截脚本
@@ -675,26 +694,42 @@ func mayReturnEmbyHTMLShell(path string) bool {
 	return false
 }
 
+// injectScriptAtHead 在 HTML 的 head 中插入 script：优先插到 </head> 之前，
+// 退而插到 <head...> 标签结束符之后；两者都没有时返回 (html, false)。
+func injectScriptAtHead(html, script string) (string, bool) {
+	lower := strings.ToLower(html)
+	// 优先 </head>（不区分大小写）
+	if idx := strings.Index(lower, "</head>"); idx != -1 {
+		return html[:idx] + script + html[idx:], true
+	}
+	// 退而找 <head...>，插入到标签结束符之后
+	if idx := strings.Index(lower, "<head"); idx != -1 {
+		if gt := strings.Index(html[idx:], ">"); gt != -1 {
+			end := idx + gt + 1
+			return html[:end] + script + html[end:], true
+		}
+	}
+	return html, false
+}
+
 // injectScriptsIntoHTML 在 HTML 的 head 中注入 crossOrigin 拦截脚本；
 // 已注入（含 marker）则跳过；找不到 </head> 或 <head> 时返回原样。
 func injectScriptsIntoHTML(html string) string {
 	if strings.Contains(html, crossOriginInterceptMarker) {
 		return html
 	}
-	script := crossOriginInterceptScript
-	// 优先 </head>（不区分大小写）
-	lower := strings.ToLower(html)
-	if idx := strings.Index(lower, "</head>"); idx != -1 {
-		return html[:idx] + script + html[idx:]
+	out, _ := injectScriptAtHead(html, crossOriginInterceptScript)
+	return out
+}
+
+// injectExternalPlayerIntoHTML 在已有 crossOrigin 注入结果上，按需追加外部播放器按钮脚本；
+// 未启用或已注入（含 marker）时原样返回。
+func (p *Proxy) injectExternalPlayerIntoHTML(html string) string {
+	if !p.externalPlayersOn() || strings.Contains(html, externalPlayerMarker) {
+		return html
 	}
-	// 退而找 <head...>，插入到标签结束符之后
-	if idx := strings.Index(lower, "<head"); idx != -1 {
-		if gt := strings.Index(html[idx:], ">"); gt != -1 {
-			end := idx + gt + 1
-			return html[:end] + script + html[end:]
-		}
-	}
-	return html
+	out, _ := injectScriptAtHead(html, buildExternalPlayerScript())
+	return out
 }
 
 // patchBasehtmlplayerJS 修补 getCrossOriginValue 相关逻辑，使其恒返回 null（不设置 crossorigin）。
@@ -765,10 +800,11 @@ func (p *Proxy) serveHTMLInjected(w http.ResponseWriter, r *http.Request) {
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if resp.StatusCode == http.StatusOK && strings.Contains(ct, "text/html") {
 		html := string(body)
-		if newHTML := injectScriptsIntoHTML(html); newHTML != html {
+		newHTML := p.injectExternalPlayerIntoHTML(injectScriptsIntoHTML(html))
+		if newHTML != html {
 			out = []byte(newHTML)
 			injected = true
-			logger.S().Infof("[EmbyProxy] 已在 HTML 注入 crossOrigin 脚本: path=%s", r.URL.Path)
+			logger.S().Infof("[EmbyProxy] 已在 HTML 注入脚本: path=%s", r.URL.Path)
 		}
 	}
 

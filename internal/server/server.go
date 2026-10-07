@@ -299,6 +299,10 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 			logger.S().Infof("[EmbyProxy] 请将 Emby 客户端连接到 %s", proxyDisplayAddr)
 		}
 	}
+	// 外部播放器开关（反代未启用时也记录，待启用后生效）
+	if initSettings != nil {
+		embyProxyManager.SetExternalPlayers(initSettings.Emby.ExternalPlayerEnabled)
+	}
 
 	server.Start()
 	return nil

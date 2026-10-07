@@ -138,6 +138,7 @@ type embySettingsPatch struct {
 	RefreshOnDelete          *bool                          `json:"refreshOnDelete,omitempty"`
 	DebounceSeconds          *int                           `json:"debounceSeconds,omitempty"`
 	ProxyPort                *int                           `json:"proxyPort,omitempty"`
+	ExternalPlayerEnabled    *bool                          `json:"externalPlayerEnabled,omitempty"`
 }
 
 // HandleEmbySettingsPOST POST /api/emby/settings 局部 patch 保存 Emby 设置
@@ -226,6 +227,9 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 		if patch.ProxyPort != nil {
 			em.ProxyPort = *patch.ProxyPort
 		}
+		if patch.ExternalPlayerEnabled != nil {
+			em.ExternalPlayerEnabled = *patch.ExternalPlayerEnabled
+		}
 		settings.Emby = em
 
 		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
@@ -265,6 +269,8 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 					mgr.StopAll()
 				}
 			}
+			// 外部播放器开关热更新（无需重启反代 server）
+			mgr.SetExternalPlayers(em.ExternalPlayerEnabled)
 		}
 
 		// 返回保存后的配置（apiKey 脱敏）

@@ -153,6 +153,9 @@ type EmbySettings struct {
 	// Emby 反向代理（PlaybackInfo STRM 强制 DirectPlay）
 	// 设为 0 或负数则不启动
 	ProxyPort int `json:"proxyPort"` // 反代监听端口，默认 0（不启用）
+	// ExternalPlayerEnabled 是否在 Web 详情页注入外部播放器起播按钮
+	// （PotPlayer / VLC / Infuse / MPV），默认 false
+	ExternalPlayerEnabled bool `json:"externalPlayerEnabled"`
 }
 
 // SyncDeletePathMapping 删除同步路径映射

@@ -87,26 +87,45 @@ export function ConnectionSection({
             </span>
           </label>
           {proxyEnabled && (
-            <div className="space-y-2">
-              <Label htmlFor="embyProxyPort">反代监听端口</Label>
-              <Input
-                id="embyProxyPort"
-                type="number"
-                placeholder="8097"
-                value={settings.proxyPort || ""}
-                onChange={(e) =>
-                  updateSetting("proxyPort", parseInt(e.target.value) || 0)
-                }
-              />
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                与 Emby 本体端口（如 8096）不同，填一个空闲端口即可（默认 8097）。
-                启用后，将 Emby for Kodi Next Gen 的服务器地址改为：
-                <code className="block bg-muted px-1.5 py-0.5 rounded mt-1 break-all font-mono text-[11px]">
-                  http://{settings.url
-                    ?.replace(/^https?:\/\//, "")
-                    ?.replace(/:\d+$/, "")}:{settings.proxyPort || 8097}
-                </code>
-              </p>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="embyProxyPort">反代监听端口</Label>
+                <Input
+                  id="embyProxyPort"
+                  type="number"
+                  placeholder="8097"
+                  value={settings.proxyPort || ""}
+                  onChange={(e) =>
+                    updateSetting("proxyPort", parseInt(e.target.value) || 0)
+                  }
+                />
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  与 Emby 本体端口（如 8096）不同，填一个空闲端口即可（默认 8097）。
+                  启用后，将 Emby for Kodi Next Gen 的服务器地址改为：
+                  <code className="block bg-muted px-1.5 py-0.5 rounded mt-1 break-all font-mono text-[11px]">
+                    http://{settings.url
+                      ?.replace(/^https?:\/\//, "")
+                      ?.replace(/:\d+$/, "")}:{settings.proxyPort || 8097}
+                  </code>
+                </p>
+              </div>
+              <label htmlFor="externalPlayerToggle" className="flex items-start gap-3 min-h-[36px] cursor-pointer select-none">
+                <span className="flex items-center justify-center shrink-0 pt-1">
+                  <input
+                    id="externalPlayerToggle"
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={settings.externalPlayerEnabled ?? false}
+                    onChange={(e) => updateSetting("externalPlayerEnabled", e.target.checked)}
+                  />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="text-sm font-medium">外部播放器按钮</span>
+                  <span className="block text-xs text-muted-foreground mt-0.5">
+                    在 Emby 网页端详情页显示 PotPlayer / VLC / Infuse / MPV 按钮，点击唤起本地播放器播放网盘直链
+                  </span>
+                </span>
+              </label>
             </div>
           )}
         </div>

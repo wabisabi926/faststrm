@@ -22,6 +22,8 @@ export interface EmbySettings {
   debounceSeconds?: number;   // 刷库防抖秒数
   // Emby 反向代理（PlaybackInfo 拦截，强制 STRM DirectPlay）
   proxyPort?: number;  // 反代监听端口，0 或空 = 不启用
+  // 外部播放器按钮（PotPlayer / VLC / Infuse / MPV），默认关
+  externalPlayerEnabled?: boolean;
 }
 
 export interface TestResult {

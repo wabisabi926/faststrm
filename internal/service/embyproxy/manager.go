@@ -30,6 +30,8 @@ type Manager struct {
 	addr               string // 当前监听地址 "host:port"
 	embyURL            string // 当前代理的 Emby 源 URL
 	forceProxyUaTokens []string
+	// externalPlayerEnabled 外部播放器链接注入开关，热更新（无需重启 server）
+	externalPlayerEnabled bool
 }
 
 // NewManager 创建一个空的 Manager（未启动）
@@ -76,6 +78,7 @@ func (m *Manager) Start(host string, port int, embyURL string, forceProxyUaToken
 		return fmt.Errorf("embyproxy.New(%q): %w", embyURL, err)
 	}
 	proxy.SetProxyPort(port)
+	proxy.SetExternalPlayers(m.externalPlayerEnabled)
 
 	// 同步预检测端口是否可用（避免异步 ListenAndServe 失败但 Start 已返回 nil）
 	ln, err := net.Listen("tcp", wantAddr)
@@ -148,6 +151,18 @@ func (m *Manager) Stop(ctx context.Context) error {
 // Restart 等价于 Start。在旧实例上换地址/embyURL 时会自动先 Stop 再 Start。
 func (m *Manager) Restart(host string, port int, embyURL string, forceProxyUaTokens ...[]string) error {
 	return m.Start(host, port, embyURL, forceProxyUaTokens...)
+}
+
+// SetExternalPlayers 热更新外部播放器开关：proxy 在跑则就地更新（原子），
+// 未跑则仅记录，待下次 Start 生效。
+func (m *Manager) SetExternalPlayers(enabled bool) {
+	m.mu.Lock()
+	m.externalPlayerEnabled = enabled
+	proxy := m.proxy
+	m.mu.Unlock()
+	if proxy != nil {
+		proxy.SetExternalPlayers(enabled)
+	}
 }
 
 // StopAll 方便全局关闭时调用（context.Background 超时 5s）
