@@ -190,6 +190,9 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 		}()
 	}
 
+	// 账号 Cookie 主动巡检（默认每 6 小时一次，可在 settings.cookieInspect 关闭/调整）
+	go startAccountInspector(context.Background(), settingsStore, accountStore)
+
 	// ==================== Telegram 开机自动轮询（AutoPolling） ====================
 	if initSettings != nil {
 		go func() {

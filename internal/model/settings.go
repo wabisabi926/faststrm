@@ -10,20 +10,46 @@ import (
 // Settings 对应 settings.json 顶层结构
 // 对齐 docs/配置项参考.md
 type Settings struct {
-	UserAgent          string              `json:"user-agent"`
-	InternalToken      string              `json:"internalToken"`
-	StrmExtensions     []string            `json:"strmExtensions"`
-	DownloadExtensions []string            `json:"downloadExtensions"`
-	MediaMountPath     []string            `json:"mediaMountPath"`
-	StrmPrefix         string              `json:"strmPrefix"`
-	EnablePathEncoding bool                `json:"enablePathEncoding"`
-	RemoveExtraFiles   bool                `json:"removeExtraFiles"`
-	Download           DownloadSettings    `json:"download"`
-	Strm               StrmSettings        `json:"strm"`
-	Emby               EmbySettings        `json:"emby"`
-	Telegram           TelegramSettings    `json:"telegram"`
-	LifeMonitor        LifeMonitorSettings `json:"lifeMonitor"`
-	Cleanup            CleanupSettings     `json:"cleanup"`
+	UserAgent          string                `json:"user-agent"`
+	InternalToken      string                `json:"internalToken"`
+	StrmExtensions     []string              `json:"strmExtensions"`
+	DownloadExtensions []string              `json:"downloadExtensions"`
+	MediaMountPath     []string              `json:"mediaMountPath"`
+	StrmPrefix         string                `json:"strmPrefix"`
+	EnablePathEncoding bool                  `json:"enablePathEncoding"`
+	RemoveExtraFiles   bool                  `json:"removeExtraFiles"`
+	Download           DownloadSettings      `json:"download"`
+	Strm               StrmSettings          `json:"strm"`
+	Emby               EmbySettings          `json:"emby"`
+	Telegram           TelegramSettings      `json:"telegram"`
+	LifeMonitor        LifeMonitorSettings   `json:"lifeMonitor"`
+	Cleanup            CleanupSettings       `json:"cleanup"`
+	CookieInspect      CookieInspectSettings `json:"cookieInspect"`
+}
+
+// CookieInspectSettings 115 账号 Cookie 主动巡检配置。
+// 用于补齐「未被生活事件监控覆盖」的账号状态盲区：定时用权威探测接口验证 Cookie 存活。
+type CookieInspectSettings struct {
+	// Enabled 是否启用主动巡检；nil 视为 true（默认开启，老配置升级后仍生效）
+	Enabled *bool `json:"enabled,omitempty"`
+	// IntervalHours 巡检间隔（小时），默认 6；<=0 时使用默认值
+	IntervalHours int `json:"intervalHours,omitempty"`
+}
+
+// DefaultCookieInspectIntervalHours 主动巡检默认间隔（小时）
+const DefaultCookieInspectIntervalHours = 6
+
+// IsEnabled 返回主动巡检是否启用（未显式配置时默认开启）
+func (c *CookieInspectSettings) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// EffectiveIntervalHours 返回生效的巡检间隔（小时），非法值回退默认
+func (c *CookieInspectSettings) EffectiveIntervalHours() int {
+	if c.IntervalHours <= 0 {
+		return DefaultCookieInspectIntervalHours
+	}
+	return c.IntervalHours
 }
 
 // CleanupSettings STRM 清理对账配置（参考 MoviePilot p115strmhelper full_sync_remove_unless_* + cleanup_confirm_mode）
@@ -325,11 +351,20 @@ func DefaultSettings() *Settings {
 			RemoveEmptyDirs:    false,
 			RemoveRelatedFiles: false,
 		},
+		CookieInspect: CookieInspectSettings{
+			Enabled:       boolPtr(true), // 默认开启主动巡检
+			IntervalHours: DefaultCookieInspectIntervalHours,
+		},
 	}
 }
 
 // intPtr 返回 int 的指针（用于设置可选配置字段）
 func intPtr(v int) *int {
+	return &v
+}
+
+// boolPtr 返回 bool 的指针（用于三态可选配置字段）
+func boolPtr(v bool) *bool {
 	return &v
 }
 
