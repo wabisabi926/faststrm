@@ -14,6 +14,8 @@ import (
 // AccountReader 读取账号（由 store.AccountStore 实现）
 type AccountReader interface {
 	Get(name string) *model.AccountInfo
+	// SetCookieStatus 回写 Cookie 三态状态（供任务前置探测联动账号状态）。
+	SetCookieStatus(name, status string, errno int, source string) error
 }
 
 // TasksReaderWriter 任务读写（由 store.TasksStore 实现）

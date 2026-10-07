@@ -179,6 +179,46 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		return ExecuteResult{Success: false, Reason: "bad_account", Message: msg}
 	}
 
+	// 4.5) 前置权威探测：Cookie 已失效则快速失败，避免大库任务白跑一趟
+	probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
+	probeErr := client115.ProbeAccount(probeCtx, account.Cookie)
+	probeCancel()
+	probeStatus := model.CookieStatusUnknown
+	if probeErr == nil {
+		probeStatus = model.CookieStatusValid
+	} else if client115.IsAuthError(probeErr) {
+		probeStatus = model.CookieStatusInvalid
+	}
+	// 无论结果如何都回写状态：unknown 不会覆盖已知状态，仅刷新排查信息
+	_ = deps.AccountStore.SetCookieStatus(task.Account, probeStatus, client115.ErrnoOf(probeErr), model.CookieSourceProbe)
+	if client115.IsAuthError(probeErr) {
+		detail := ""
+		if e := client115.ErrnoOf(probeErr); e != 0 {
+			detail = fmt.Sprintf("（errno=%d）", e)
+		}
+		msg := "115 账号 Cookie 已失效，请重新登录后再执行任务" + detail
+		histSuccess = false
+		histErrMsg = msg
+		sseServer.EmitLog(task.ID, "error", msg)
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Status = StatusFailed
+			s.Error = msg
+			s.EndedAt = time.Now().UnixMilli()
+			s.Stage = StageFailed
+			s.StageDetail = msg
+		})
+		sseServer.EmitComplete(sse.CompletePayload{
+			TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds(),
+		})
+		if deps.Notifier != nil {
+			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
+		}
+		return ExecuteResult{Success: false, Reason: "cookie_expired", Message: msg}
+	}
+	if probeErr != nil {
+		sseServer.EmitLog(task.ID, "warn", "账号存活探测未确认（可能是风控/网络）："+probeErr.Error())
+	}
+
 	// 5) 合并全局 settings + 任务覆盖得到最终 strm 配置
 	settings, err := deps.SettingsStore.ReadSettings()
 	if err != nil { //nolint:staticcheck // SA9003: 空分支为有意设计
