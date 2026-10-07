@@ -197,6 +197,50 @@ func TestCreateAccount_Success115(t *testing.T) {
 	}
 }
 
+// 新建时格式完整不等于存活：应记 unknown（待探测），不得直接判为 valid。
+func TestCreateAccount_StatusUnknownUntilProbed(t *testing.T) {
+	s := newTestAccountStore(t)
+	w := httptest.NewRecorder()
+	body := CreateAccountRequest{
+		AccountType: "115", Name: "a",
+		Cookie: "UID=1; CID=2; SEID=abcdef1234567890; KID=k",
+	}
+	r := httptest.NewRequest(http.MethodPost, "/api/account", jsonBody(t, body))
+	r.Header.Set("Content-Type", "application/json")
+	CreateAccount(s).ServeHTTP(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201 (body=%s)", w.Code, w.Body.String())
+	}
+	acc := s.Get("a")
+	if got := acc.EffectiveCookieStatus(); got != model.CookieStatusUnknown {
+		t.Errorf("格式完整应记 unknown（待探测），got %q", got)
+	}
+	if acc.CookieSource != model.CookieSourceFormat {
+		t.Errorf("source 应为 format，got %q", acc.CookieSource)
+	}
+	if acc.LastCookieCheck == 0 {
+		t.Error("LastCookieCheck 应被刷新")
+	}
+}
+
+// 新建时 Cookie 缺必需字段 → 直接判 invalid。
+func TestCreateAccount_InvalidFormatMarksInvalid(t *testing.T) {
+	s := newTestAccountStore(t)
+	w := httptest.NewRecorder()
+	body := CreateAccountRequest{AccountType: "115", Name: "b", Cookie: "UID=1"}
+	r := httptest.NewRequest(http.MethodPost, "/api/account", jsonBody(t, body))
+	r.Header.Set("Content-Type", "application/json")
+	CreateAccount(s).ServeHTTP(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201 (body=%s)", w.Code, w.Body.String())
+	}
+	if got := s.Get("b").EffectiveCookieStatus(); got != model.CookieStatusInvalid {
+		t.Errorf("缺字段应记 invalid，got %q", got)
+	}
+}
+
 // ================================================================
 // UpdateAccount (核心约束：originalName 查找)
 // ================================================================
@@ -249,6 +293,50 @@ func TestUpdateAccount_WithoutOriginalName_FallsBackToName(t *testing.T) {
 	}
 	if s.Get("a").Cookie != "UID=2" {
 		t.Errorf("cookie not updated: %s", s.Get("a").Cookie)
+	}
+}
+
+// 更新语义：改 Cookie → 旧存活结论作废并回到 unknown；未改 Cookie 则不覆盖既有明确状态。
+func TestUpdateAccount_StatusSemantics(t *testing.T) {
+	s := newTestAccountStore(t)
+	if err := s.Upsert(&model.AccountInfo{Name: "a", AccountType: "115", Cookie: "UID=old"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetCookieStatus("a", model.CookieStatusValid, 0, model.CookieSourceProbe); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	// 场景1：改 Cookie（格式完整）→ 旧结论作废，回到 unknown 等待重新探测
+	w := httptest.NewRecorder()
+	req := UpdateAccountRequest{
+		Name: "a", AccountType: "115",
+		Cookie: "UID=new; CID=2; SEID=abcdef1234567890; KID=k",
+	}
+	r := httptest.NewRequest(http.MethodPut, "/api/account", jsonBody(t, req))
+	r.Header.Set("Content-Type", "application/json")
+	UpdateAccount(s).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	if got := s.Get("a").EffectiveCookieStatus(); got != model.CookieStatusUnknown {
+		t.Errorf("改 Cookie 后应回到 unknown，got %q", got)
+	}
+
+	// 场景2：Cookie 未变更 → unknown 不覆盖已有的 valid
+	if err := s.SetCookieStatus("a", model.CookieStatusValid, 0, model.CookieSourceProbe); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	unchanged := s.Get("a").Cookie
+	w2 := httptest.NewRecorder()
+	req2 := UpdateAccountRequest{Name: "a", AccountType: "115", Cookie: unchanged, URL: "http://x"}
+	r2 := httptest.NewRequest(http.MethodPut, "/api/account", jsonBody(t, req2))
+	r2.Header.Set("Content-Type", "application/json")
+	UpdateAccount(s).ServeHTTP(w2, r2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (body=%s)", w2.Code, w2.Body.String())
+	}
+	if got := s.Get("a").EffectiveCookieStatus(); got != model.CookieStatusValid {
+		t.Errorf("未改 Cookie 时不应覆盖 valid，got %q", got)
 	}
 }
 
