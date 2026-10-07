@@ -1091,6 +1091,61 @@ func TestResolveRedirectChain_HTTPError(t *testing.T) {
 	t.Logf("✅ HTTP error (403) handled gracefully, no hang/panic, finalURL=%q", finalURL)
 }
 
+// TestResolveRedirectChain_StrmEndpointError 回归：
+// STRM 端点自身返回 5xx（如 115 Cookie 失效 → /api/strm 直接 502）时，
+// resolveRedirectChain 必须返回空串表示解析失败，而不是把自身 URL 当成功结果返回。
+// 否则调用方会 302 回自身，客户端二次请求拿到同样的 502，浏览器只报 "Failed to fetch"。
+func TestResolveRedirectChain_StrmEndpointError(t *testing.T) {
+	strm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "115 账号 Cookie 已失效，请重新登录", http.StatusBadGateway)
+	}))
+	defer strm.Close()
+
+	emby := mockEmby(t, nil)
+	defer emby.Close()
+
+	proxy, _ := New(emby.URL)
+
+	req, _ := http.NewRequest("GET", "/Videos/123/stream", nil)
+	finalURL := proxy.resolveRedirectChain(context.Background(), strm.URL+"/api/strm?account=a&pickcode=p", req, "u1")
+	if finalURL != "" {
+		t.Fatalf("STRM 端点 5xx 时应返回空串表示失败，got %q", finalURL)
+	}
+}
+
+// TestHandleMediaStream_StrmEndpointError 回归：
+// 直链解析失败时不再 302 回自身，而是直接回 502 + 可读错误。
+func TestHandleMediaStream_StrmEndpointError(t *testing.T) {
+	strm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "115 账号 Cookie 已失效，请重新登录", http.StatusBadGateway)
+	}))
+	defer strm.Close()
+	strmURL := strm.URL + "/api/strm?account=a&pickcode=p"
+
+	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(buildStrmPlaybackInfoResp(strmURL, "src1"))
+	})
+	defer emby.Close()
+
+	proxy, _ := New(emby.URL)
+
+	// 先走 PlaybackInfo 填充 STRM 源缓存
+	req1 := httptest.NewRequest("POST", emby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
+	proxy.Handler().ServeHTTP(httptest.NewRecorder(), req1)
+
+	req2 := httptest.NewRequest("GET", emby.URL+"/Videos/123/stream?Static=true&MediaSourceId=src1", nil)
+	rr := httptest.NewRecorder()
+	proxy.HandleMediaStream(rr, req2)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("解析失败应回 502，got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("Location") != "" {
+		t.Errorf("解析失败不应再 302，Location=%q", rr.Header().Get("Location"))
+	}
+}
+
 // TestHandleMediaStream_POSTMethod POST 请求 stream 也能正确拦截
 func TestHandleMediaStream_POSTMethod(t *testing.T) {
 	strmSrc := mockStrmSrc(t, "")
