@@ -117,7 +117,7 @@ func HandleMediaMountSyncPOST(deps MediaMountDeps) http.HandlerFunc {
 		var nginxResult mediasync.NginxResult
 		if body.SkipNginxReload {
 			nginxResult = mediasync.NginxResult{
-				Attempted: false, Available: false, OK: true,
+				Attempted: false, Available: false, Skipped: true, OK: true,
 				Message: "skipped (skipNginxReload=true)",
 			}
 		} else {

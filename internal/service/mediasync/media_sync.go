@@ -54,6 +54,7 @@ type ComputeResult struct {
 type NginxResult struct {
 	Attempted bool   `json:"attempted"`
 	Available bool   `json:"available"`
+	Skipped   bool   `json:"skipped"`
 	OK        bool   `json:"ok"`
 	Message   string `json:"message"`
 }
