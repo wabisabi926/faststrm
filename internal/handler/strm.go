@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 
 	"github.com/wabisabi926/faststrm/internal/config"
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/internal/service/store"
@@ -145,6 +147,20 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		// 解析直链
 		meta, err := strm.ResolveDownloadUrl(r.Context(), opts.Client115, pickcode, accountName, account.Cookie, userAgent)
 		if err != nil {
+			// 认证类失败（errno=99 等）确定性联动账号状态：播放端只会看到播放失败，
+			// 必须让账号列表页能同步显示「Cookie 已失效」，否则用户无从定位。
+			if errors.Is(err, client115.ErrCookieExpired) {
+				errno := client115.ErrnoOf(err)
+				if serr := opts.AccountStore.SetCookieStatus(
+					accountName, model.CookieStatusInvalid, errno, model.CookieSourceStrm); serr != nil {
+					logger.S().Warnf("[STRM] account=%s write cookie status failed: %v", accountName, serr)
+				}
+				logger.S().Errorf("[STRM] account=%s cookie expired%s: %v", accountName, errnoSuffix(errno), err)
+				writeJSON(w, http.StatusBadGateway, map[string]string{
+					"error": "115 账号 Cookie 已失效，请重新登录" + errnoSuffix(errno),
+				})
+				return
+			}
 			logger.S().Errorf("[STRM] account=%s failed to get download URL: %v", accountName, err)
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Failed to get download URL: " + err.Error()})
 			return
