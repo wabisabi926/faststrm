@@ -261,27 +261,35 @@ func (c *Client) GetDownloadUrlWebFull(
 		return nil, fmt.Errorf("115 download API request: %w", err)
 	}
 
+	// data 容错为 RawMessage：115 在 state=false 时可能返回 data:[]（数组），
+	// 若直接声明为 string 会先报 JSON 解析错误，把真正的 errno/错误文案盖掉。
 	var resp struct {
-		State bool   `json:"state"`
-		Data  string `json:"data"`
-		Error string `json:"error,omitempty"`
+		State bool            `json:"state"`
+		ErrNo int             `json:"errno,omitempty"`
+		Data  json.RawMessage `json:"data"`
+		Error string          `json:"error,omitempty"`
 	}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("parse 115 download API response: %w (body=%s)", err, truncate(respBody, 512))
 	}
 	if !resp.State {
-		return nil, fmt.Errorf("115 download API state=false: %s", firstNonEmpty(resp.Error, string(respBody)))
+		return nil, newAPIError(resp.ErrNo, firstNonEmpty(resp.Error, string(respBody)))
 	}
-	if resp.Data == "" {
+	var encData string
+	if err := json.Unmarshal(resp.Data, &encData); err != nil {
+		return nil, fmt.Errorf("115 download API unexpected data field: %s (body=%s)",
+			truncate(resp.Data, 128), truncate(respBody, 256))
+	}
+	if encData == "" {
 		return nil, fmt.Errorf("115 download API returned empty data field")
 	}
 
 	// 解密
-	decrypted, decErr := crypto115.Decrypt(resp.Data)
+	decrypted, decErr := crypto115.Decrypt(encData)
 	if decErr != nil {
 		// 输出调试信息：原始响应体 + data字段前128字节，便于排查
 		logger.S().Errorf("[115Download] decrypt failed: %v | respData[:128]=%q rawBody[:256]=%q",
-			decErr, truncate([]byte(resp.Data), 128), truncate(respBody, 256))
+			decErr, truncate([]byte(encData), 128), truncate(respBody, 256))
 		return nil, fmt.Errorf("decrypt 115 download API response: %w", decErr)
 	}
 	var dm struct {
@@ -345,6 +353,7 @@ type FsFilesResp struct {
 	Count  int               `json:"count"`
 	ErrNo  int               `json:"errno,omitempty"`
 	ErrMsg string            `json:"errmsg,omitempty"`
+	Error  string            `json:"error,omitempty"`
 }
 
 // FsFiles 列目录
@@ -394,6 +403,11 @@ func (c *Client) FsFiles(
 	var resp FsFilesResp
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parse fs_files response: %w (body=%s)", err, truncate(body, 512))
+	}
+	// state=false 且带错误码/文案：按类型化错误返回，避免调用方把失败当成「空目录」而漏扫。
+	// 用 ErrNo/ErrMsg/Error 守卫：兼容部分测试/旧响应缺失 state 字段（缺省 false）的情况。
+	if !resp.State && (resp.ErrNo != 0 || resp.ErrMsg != "" || resp.Error != "") {
+		return nil, newAPIError(resp.ErrNo, firstNonEmpty(resp.ErrMsg, resp.Error))
 	}
 	// 标记目录
 	// 115 web API:
