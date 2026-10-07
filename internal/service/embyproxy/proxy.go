@@ -654,21 +654,21 @@ func mayReturnEmbyHTMLShell(path string) bool {
 	if strings.Contains(pl, "playbackinfo") {
 		return false
 	}
-	if path == "/" || path == "" {
+	if pl == "/" || pl == "" {
 		return true
 	}
-	if strings.HasPrefix(path, "/web/") || path == "/web" {
+	if strings.HasPrefix(pl, "/web/") || pl == "/web" {
 		return true
 	}
-	if strings.HasSuffix(path, ".html") || strings.HasSuffix(path, ".htm") {
+	if strings.HasSuffix(pl, ".html") || strings.HasSuffix(pl, ".htm") {
 		return true
 	}
-	if strings.HasPrefix(path, "/emby/") || strings.HasPrefix(path, "/items/") ||
-		strings.HasPrefix(path, "/videos/") || strings.HasPrefix(path, "/audio/") ||
-		strings.HasPrefix(path, "/sync/") {
+	if strings.HasPrefix(pl, "/emby/") || strings.HasPrefix(pl, "/items/") ||
+		strings.HasPrefix(pl, "/videos/") || strings.HasPrefix(pl, "/audio/") ||
+		strings.HasPrefix(pl, "/sync/") {
 		return false
 	}
-	last := path[strings.LastIndex(path, "/")+1:]
+	last := pl[strings.LastIndex(pl, "/")+1:]
 	if !strings.Contains(last, ".") {
 		return true
 	}
@@ -878,9 +878,21 @@ func isSeekRequiredFormat(container, name string) bool {
 	return false
 }
 
+// disableWriteDeadline 清除当前响应的写截止时间。
+// http.Server 的 WriteTimeout 是「读完请求头起算」的绝对截止时间，
+// 一旦超过（默认 120s）就会切断正在持续写入的长流（ISO/原盘等大文件播放、
+// 媒体流转发），客户端表现为播放中途断开。流式 handler 在开始拷贝 body 前
+// 调用本函数，仅对该请求解除写超时；其余请求仍受 server WriteTimeout 保护。
+func disableWriteDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+}
+
 // proxyStreamToStrm 将媒体流请求透传给 FastStrm 自身 STRM 端点（/api/strm?...），
 // 由 STRM handler 层走 proxy 模式转发 Range 到 115 CDN，保证 ISO/原盘 seek 正常。
 func (p *Proxy) proxyStreamToStrm(w http.ResponseWriter, r *http.Request, strmURL string) {
+	// 长流：解除写超时，避免大文件连续播放被 120s WriteTimeout 截断
+	disableWriteDeadline(w)
+
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, strmURL, nil)
 	if err != nil {
 		logger.S().Warnf("[EmbyProxy] proxyStreamToStrm: 构造请求失败: %v", err)
@@ -1022,6 +1034,9 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 
 // passthroughToEmby 透传媒体流请求到 Emby 真实地址
 func (p *Proxy) passthroughToEmby(w http.ResponseWriter, r *http.Request) {
+	// 长流：解除写超时，避免大文件连续播放被 120s WriteTimeout 截断
+	disableWriteDeadline(w)
+
 	target := p.embyHost + r.URL.Path + "?" + r.URL.RawQuery
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
 	if err != nil {
@@ -1039,9 +1054,15 @@ func (p *Proxy) passthroughToEmby(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	for k, v := range resp.Header {
-		for _, vv := range v {
-			w.Header().Add(k, vv)
+	// 回写响应头（过滤 hop-by-hop + set-cookie，与其它 handler 保持一致，
+	// 避免 transfer-encoding/connection 等被错误透传，或泄漏 Emby 会话 cookie）
+	for k, vv := range resp.Header {
+		lk := strings.ToLower(k)
+		if hopByHopHeaders[lk] || lk == "set-cookie" {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
