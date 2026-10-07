@@ -475,6 +475,50 @@ func TestGetAccountStatus_115NoCookie(t *testing.T) {
 	}
 }
 
+// ---------- Verify handlers（无网络分支） ----------
+
+func TestVerifyAccount_MissingName(t *testing.T) {
+	s := newTestAccountStore(t)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/account/verify", nil)
+	VerifyAccountHandler(s).ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400", w.Code)
+	}
+}
+
+func TestVerifyAccount_NotFound(t *testing.T) {
+	s := newTestAccountStore(t)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/account/verify?name=nope", nil)
+	VerifyAccountHandler(s).ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404", w.Code)
+	}
+}
+
+// 非 115 或空 Cookie 的账号不做存活探测，直接 400，避免无意义网络调用。
+func TestVerifyAccount_Non115OrEmptyCookie(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		acc  *model.AccountInfo
+	}{
+		{"non-115", &model.AccountInfo{Name: "o", AccountType: "openlist"}},
+		{"empty-cookie", &model.AccountInfo{Name: "e", AccountType: "115"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestAccountStore(t)
+			_ = s.Upsert(tc.acc)
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/api/account/verify?name="+tc.acc.Name, nil)
+			VerifyAccountHandler(s).ServeHTTP(w, r)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status: got %d, want 400 (body=%s)", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 // ---------- tiny helper ----------
 
 func contains(s, substr string) bool {
