@@ -58,6 +58,14 @@ export type Settings = {
     linkMaxConcurrent?: number;
     downloadMaxConcurrent?: number;
     autoDownloadMetadata?: boolean;
+    // 增量同步：快照比对跳过未变化文件（全局开关，定时与手动执行同时生效）
+    incrementalSync?: boolean;
+    // 全局文件过滤：最小文件大小阈值（字节，0 表示不过滤）
+    minFileSize?: number;
+    // 全局文件过滤：文件名黑名单关键词（大小写不敏感，如 "*trailer*"）
+    strmGenerateBlacklist?: string[];
+    // STRM 覆盖模式："always"(总是覆盖，默认) / "never"(跳过已存在)
+    overwriteMode?: "always" | "never";
   };
   lifeMonitor?: LifeMonitorConfig;
 } & Record<string, unknown>;

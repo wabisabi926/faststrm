@@ -28,6 +28,11 @@ export default function SettingsPage() {
   const [downloadExtensionsInput, setDownloadExtensionsInput] = useState("");
   // STRM 路由策略配置
   const [forceProxyUaInput, setForceProxyUaInput] = useState("");
+  // 全局文件过滤
+  const [globalMinFileSizeMb, setGlobalMinFileSizeMb] = useState("");
+  const [globalBlacklistInput, setGlobalBlacklistInput] = useState("");
+  // STRM 覆盖模式："always"(总是覆盖，默认) / "never"(跳过已存在)
+  const [globalOverwriteMode, setGlobalOverwriteMode] = useState<"always" | "never">("always");
 
   // 媒体挂载路径：SSOT 管理，不再手动编辑
   const [mountDryRun, setMountDryRun] = useState<MountDryRunData>(null);
@@ -109,6 +114,12 @@ export default function SettingsPage() {
         setStrmExtensionsInput((settings.strmExtensions || []).join(", "));
         setDownloadExtensionsInput((settings.downloadExtensions || []).join(", "));
         setForceProxyUaInput((settings.strm?.forceProxyUaTokens || []).join(", "));
+
+        // 全局文件过滤
+        const loadedGlobalMin = typeof settings.download?.minFileSize === "number" ? settings.download.minFileSize : 0;
+        setGlobalMinFileSizeMb(loadedGlobalMin > 0 ? (loadedGlobalMin / (1024 * 1024)).toString() : "");
+        setGlobalBlacklistInput((settings.download?.strmGenerateBlacklist || []).join(", "));
+        setGlobalOverwriteMode(settings.download?.overwriteMode === "never" ? "never" : "always");
 
         // Load life monitor config
         const monitor = settings.lifeMonitor || DEFAULT_MONITOR_CONFIG;
@@ -225,61 +236,71 @@ export default function SettingsPage() {
     }
   };
 
+  // 组装 /api/settings 提交体：集中处理文本输入 → 结构化字段的转换，
+  // 避免 onSave 与 handleRemoveFromMonitor 两处重复实现导致字段遗漏或互相覆盖。
+  const buildSaveData = (lifeMonitorOverride: Partial<{ accounts: string[] }> = {}) => {
+    const parseExts = (raw: string) =>
+      raw
+        .split(",")
+        .map(ext => ext.trim())
+        .filter(ext => ext.length > 0)
+        .map(ext => (ext.startsWith(".") ? ext : `.${ext}`))
+        .map(ext => ext.toLowerCase());
+
+    // 解析 MB 输入为字节；空值或非法值视为 0（不过滤）
+    const parseMb = (raw: string) => {
+      const mb = parseFloat(raw);
+      return Number.isFinite(mb) && mb > 0 ? Math.floor(mb * 1024 * 1024) : 0;
+    };
+
+    // 解析强制代理 UA tokens
+    const forceProxyUaTokens = forceProxyUaInput
+      .split(",")
+      .map(token => token.trim())
+      .filter(token => token.length > 0);
+
+    // 解析全局文件名黑名单关键词
+    const globalBlacklist = globalBlacklistInput
+      .split(",")
+      .map(keyword => keyword.trim())
+      .filter(keyword => keyword.length > 0);
+
+    // 注意：mediaMountPath 不在此处手工写入，由 SSOT 的 syncMediaMountPaths() 统一维护
+    //       （PUT /api/settings 内部会自动触发 sync，并返回同步详情）
+    return {
+      ...data,
+      strmExtensions: parseExts(strmExtensionsInput),
+      downloadExtensions: parseExts(downloadExtensionsInput),
+      download: {
+        ...data.download,
+        autoDownloadMetadata: data.download?.autoDownloadMetadata ?? true,
+        minFileSize: parseMb(globalMinFileSizeMb),
+        strmGenerateBlacklist: globalBlacklist,
+        overwriteMode: globalOverwriteMode,
+      },
+      strm: {
+        ...data.strm,
+        forceProxyUaTokens,
+      },
+      lifeMonitor: {
+        enabled: monitorEnabled,
+        accounts: selectedAccounts,
+        pollInterval,
+        pathMappings,
+        removeEmptyDirs,
+        eventTypes,
+        minFileSize: parseMb(minFileSizeMb),
+        firstPullMode,
+        moveMediaMode,
+        ...lifeMonitorOverride,
+      },
+    };
+  };
+
   const onSave = async () => {
     setSaving(true);
     try {
-      const strmExtensions = strmExtensionsInput
-        .split(",")
-        .map(ext => ext.trim())
-        .filter(ext => ext.length > 0)
-        .map(ext => ext.startsWith(".") ? ext : `.${ext}`)
-        .map(ext => ext.toLowerCase());
-
-      const downloadExtensions = downloadExtensionsInput
-        .split(",")
-        .map(ext => ext.trim())
-        .filter(ext => ext.length > 0)
-        .map(ext => ext.startsWith(".") ? ext : `.${ext}`)
-        .map(ext => ext.toLowerCase());
-
-      // 解析 MB 输入为字节；空值或非法值视为 0（不过滤）
-      const parsedMb = parseFloat(minFileSizeMb);
-      const minBytes = Number.isFinite(parsedMb) && parsedMb > 0
-        ? Math.floor(parsedMb * 1024 * 1024)
-        : 0;
-
-      // 解析强制代理 UA tokens
-      const forceProxyUaTokens = forceProxyUaInput
-        .split(",")
-        .map(token => token.trim())
-        .filter(token => token.length > 0);
-
-      // 注意：mediaMountPath 不在此处手工写入，由 SSOT 的 syncMediaMountPaths() 统一维护
-      //       （PUT /api/settings 内部会自动触发 sync，并返回同步详情）
-      const saveData = {
-        ...data,
-        strmExtensions,
-        downloadExtensions,
-        download: {
-          ...data.download,
-          autoDownloadMetadata: data.download?.autoDownloadMetadata ?? true,
-        },
-        strm: {
-          ...data.strm,
-          forceProxyUaTokens,
-        },
-        lifeMonitor: {
-          enabled: monitorEnabled,
-          accounts: selectedAccounts,
-          pollInterval,
-          pathMappings,
-          removeEmptyDirs,
-          eventTypes,
-          minFileSize: minBytes,
-          firstPullMode,
-          moveMediaMode,
-        },
-      };
+      const saveData = buildSaveData();
 
       const saveResp = await axiosInstance.post("/api/settings", saveData);
       setData(saveData);
@@ -487,55 +508,8 @@ export default function SettingsPage() {
     try {
       const nextSelected = selectedAccounts.filter(a => a !== account);
 
-      // 与 onSave 保持一致：重新组装 saveData，重点覆盖 lifeMonitor.accounts
-      const strmExtensions = strmExtensionsInput
-        .split(",")
-        .map(ext => ext.trim())
-        .filter(ext => ext.length > 0)
-        .map(ext => ext.startsWith(".") ? ext : `.${ext}`)
-        .map(ext => ext.toLowerCase());
-
-      const downloadExtensions = downloadExtensionsInput
-        .split(",")
-        .map(ext => ext.trim())
-        .filter(ext => ext.length > 0)
-        .map(ext => ext.startsWith(".") ? ext : `.${ext}`)
-        .map(ext => ext.toLowerCase());
-
-      const parsedMb = parseFloat(minFileSizeMb);
-      const minBytes = Number.isFinite(parsedMb) && parsedMb > 0
-        ? Math.floor(parsedMb * 1024 * 1024)
-        : 0;
-
-      const forceProxyUaTokens = forceProxyUaInput
-        .split(",")
-        .map(token => token.trim())
-        .filter(token => token.length > 0);
-
-      const saveData = {
-        ...data,
-        strmExtensions,
-        downloadExtensions,
-        download: {
-          ...data.download,
-          autoDownloadMetadata: data.download?.autoDownloadMetadata ?? true,
-        },
-        strm: {
-          ...data.strm,
-          forceProxyUaTokens,
-        },
-        lifeMonitor: {
-          enabled: monitorEnabled,
-          accounts: nextSelected,
-          pollInterval,
-          pathMappings,
-          removeEmptyDirs,
-          eventTypes,
-          minFileSize: minBytes,
-          firstPullMode,
-          moveMediaMode,
-        },
-      };
+      // 与 onSave 共用同一组装逻辑，重点覆盖 lifeMonitor.accounts，避免字段漂移
+      const saveData = buildSaveData({ accounts: nextSelected });
 
       const saveResp = await axiosInstance.post("/api/settings", saveData);
 
@@ -659,6 +633,12 @@ export default function SettingsPage() {
           setDownloadExtensionsInput={setDownloadExtensionsInput}
           forceProxyUaInput={forceProxyUaInput}
           setForceProxyUaInput={setForceProxyUaInput}
+          globalMinFileSizeMb={globalMinFileSizeMb}
+          setGlobalMinFileSizeMb={setGlobalMinFileSizeMb}
+          globalBlacklistInput={globalBlacklistInput}
+          setGlobalBlacklistInput={setGlobalBlacklistInput}
+          globalOverwriteMode={globalOverwriteMode}
+          setGlobalOverwriteMode={setGlobalOverwriteMode}
           mountDryRun={mountDryRun}
           mountDryRunLoading={mountDryRunLoading}
           mountSyncing={mountSyncing}

@@ -316,6 +316,12 @@ export function TaskScheduleDialog({
           {hasExisting && schedule && (
             <ScheduleStatsCard schedule={schedule} />
           )}
+
+          {/* 执行策略说明：定时只决定「何时」触发，策略由全局开关控制 */}
+          <p className="text-xs text-slate-500 leading-relaxed">
+            执行策略（全量 / 增量）由「设置 → 增量同步」全局开关控制，定时执行与手动执行完全一致。
+            本配置只决定<span className="font-medium">何时</span>触发，不改变<span className="font-medium">怎么</span>执行。
+          </p>
         </div>
 
         <DialogFooter className="gap-2">

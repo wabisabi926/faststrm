@@ -292,6 +292,7 @@ func DefaultSettings() *Settings {
 			MinFileSize:           0,          // 默认不限制最小文件大小
 			StrmGenerateBlacklist: []string{}, // 默认空黑名单
 			OverwriteMode:         "always",   // 默认始终覆盖（与 MoviePilot 默认行为一致）
+			IncrementalSync:       true,       // 默认开启增量同步；首次执行为全量，不影响首轮生成
 		},
 		Strm: StrmSettings{
 			// ForceProxyUaTokens 仅对 STRM 端点层生效（命中则强制走 proxy）。

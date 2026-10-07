@@ -477,6 +477,18 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				settings.Download.DownloadMaxConcurrent = body.Download.DownloadMaxConcurrent
 			}
 			settings.Download.AutoDownloadMetadata = body.Download.AutoDownloadMetadata
+			// 增量同步全局开关（前端始终发送全量对象，直接覆盖）
+			settings.Download.IncrementalSync = body.Download.IncrementalSync
+			// 全局文件过滤：最小文件大小阈值（字节），前端始终发送全量值，直接覆盖
+			settings.Download.MinFileSize = body.Download.MinFileSize
+			// 全局文件过滤：文件名黑名单（nil 表示未提供，保留旧值；空数组表示用户主动清空）
+			if body.Download.StrmGenerateBlacklist != nil {
+				settings.Download.StrmGenerateBlacklist = body.Download.StrmGenerateBlacklist
+			}
+			// STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空值表示未提供，保留旧配置
+			if body.Download.OverwriteMode != "" {
+				settings.Download.OverwriteMode = body.Download.OverwriteMode
+			}
 		}
 
 		// ====== STRM 嵌套对象 ======

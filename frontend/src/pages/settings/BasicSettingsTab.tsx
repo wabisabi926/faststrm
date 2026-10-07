@@ -4,12 +4,19 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Settings } from "lucide-react";
+import { Settings, Filter } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
   Settings as SettingsType,
   MountDryRunData,
@@ -25,6 +32,12 @@ export interface BasicSettingsTabProps {
   setDownloadExtensionsInput: Dispatch<SetStateAction<string>>;
   forceProxyUaInput: string;
   setForceProxyUaInput: Dispatch<SetStateAction<string>>;
+  globalMinFileSizeMb: string;
+  setGlobalMinFileSizeMb: Dispatch<SetStateAction<string>>;
+  globalBlacklistInput: string;
+  setGlobalBlacklistInput: Dispatch<SetStateAction<string>>;
+  globalOverwriteMode: "always" | "never";
+  setGlobalOverwriteMode: Dispatch<SetStateAction<"always" | "never">>;
   mountDryRun: MountDryRunData;
   mountDryRunLoading: boolean;
   mountSyncing: boolean;
@@ -45,6 +58,12 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
     setDownloadExtensionsInput,
     forceProxyUaInput,
     setForceProxyUaInput,
+    globalMinFileSizeMb,
+    setGlobalMinFileSizeMb,
+    globalBlacklistInput,
+    setGlobalBlacklistInput,
+    globalOverwriteMode,
+    setGlobalOverwriteMode,
     mountDryRun,
     mountDryRunLoading,
     mountSyncing,
@@ -150,6 +169,63 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               删除多余 STRM 文件
             </label>
           </div>
+        </div>
+
+        {/* 全局文件过滤 */}
+        <div className="space-y-4 pt-4 border-t">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-muted-foreground" />
+            <h3 className="text-sm font-medium">全局文件过滤</h3>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            满足以下条件的文件不会生成 STRM，对所有账号的生活事件监控和全量扫描生效，任务级可单独覆盖。
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="space-y-3">
+              <Label>最小文件大小（MB）</Label>
+              <Input
+                type="number"
+                min="0"
+                value={globalMinFileSizeMb}
+                onChange={(e) => setGlobalMinFileSizeMb(e.target.value)}
+                placeholder="0（不过滤）"
+              />
+              <p className="text-xs text-muted-foreground">
+                小于该大小的视频不生成 STRM；留空或 0 表示不过滤（可用于跳过预告、花絮等小文件）。
+              </p>
+            </div>
+            <div className="space-y-3">
+              <Label>文件名黑名单关键词</Label>
+              <Input
+                value={globalBlacklistInput}
+                onChange={(e) => setGlobalBlacklistInput(e.target.value)}
+                placeholder="trailer, 预告, sample"
+              />
+              <p className="text-xs text-muted-foreground">
+                逗号分隔，文件名包含任一关键词即跳过（大小写不敏感）。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* STRM 覆盖模式 */}
+        <div className="space-y-3 pt-4 border-t">
+          <Label>STRM 覆盖模式</Label>
+          <Select
+            value={globalOverwriteMode}
+            onValueChange={(value) => setGlobalOverwriteMode(value as "always" | "never")}
+          >
+            <SelectTrigger className="w-full md:w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="always">总是覆盖（默认）</SelectItem>
+              <SelectItem value="never">跳过已存在</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            决定重新生成时如何处理已存在的 STRM 文件。「总是覆盖」每次重新生成，保证与网盘一致；「跳过已存在」可加速重复生成，但源文件改名或换链时可能残留旧链接。
+          </p>
         </div>
 
         {/* STRM 路由策略配置（始终生效，后端智能路由自动决定 proxy/redirect） */}
@@ -336,6 +412,40 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </div>
           <p className="text-xs text-muted-foreground">
             全量同步时自动下载 nfo/jpg/png/srt 等媒体元数据文件。关闭后只生成 STRM 视频索引文件。
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <Label>增量同步</Label>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={data.download?.incrementalSync ?? true}
+              onClick={() =>
+                setData({
+                  ...data,
+                  download: {
+                    ...(data.download || {}),
+                    incrementalSync: !(data.download?.incrementalSync ?? true)
+                  },
+                })
+              }
+              className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                (data.download?.incrementalSync ?? true) ? "bg-primary" : "bg-muted"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  (data.download?.incrementalSync ?? true) ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            与数据库快照比对，跳过 pickcode/文件名未变化的文件，只重新生成/下载变化项。
+            对<span className="font-medium">定时任务</span>与<span className="font-medium">手动执行</span>同时生效。
+            注意：仍会完整扫描一次云端目录，仅节省写盘与下载。
           </p>
         </div>
       </section>
