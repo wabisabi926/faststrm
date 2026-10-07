@@ -1000,6 +1000,14 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 
 	// ===== 步骤 2: 解析重定向链拿最终 CDN URL =====
 	finalURL := p.resolveRedirectChain(r.Context(), meta.path, r, userID)
+	if finalURL == "" {
+		// 解析失败：STRM 端点自身报错（最常见是 115 Cookie 失效）。此处不能 302 回自身，
+		// 否则客户端会二次拿到同样的失败，浏览器只报 "Failed to fetch"，无从定位。
+		logger.S().Errorf("[EmbyProxy] media 直链解析失败: item=%s source=%s strm=%s（请检查 115 账号 Cookie 是否失效）",
+			itemID, sourceID, meta.path)
+		http.Error(w, "Failed to resolve media direct URL: STRM endpoint returned an error (check 115 account cookie)", http.StatusBadGateway)
+		return
+	}
 	if finalURL != meta.path {
 		logger.S().Infof("[EmbyProxy] resolveRedirectChain: item=%s %s -> %s", itemID, meta.path, finalURL)
 	}
@@ -1047,7 +1055,10 @@ func (p *Proxy) passthroughToEmby(w http.ResponseWriter, r *http.Request) {
 
 // resolveRedirectChain 对起始 URL 发 HEAD 请求，跟随所有重定向拿到最终 URL
 // 使用渐进超时策略（3 次重试，每次更长）
-// 失败时返回原始 url（让调用方 fallback 到其他策略）
+//
+// 返回空串表示解析失败（构造失败 / 传输超时 / STRM 端点自身返回 4xx/5xx），
+// 由调用方回明确错误，绝不再把失败地址当成功结果返回——否则调用方会 302 回自身，
+// 客户端最终只能看到 502 与浏览器 "Failed to fetch"，问题被隐藏。
 func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *http.Request, userID string) string {
 	fwdHeaders := buildForwardHeaders(r)
 	if userID != "" {
@@ -1061,8 +1072,9 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 		if err != nil {
 			cancel()
 			logger.S().Warnf("[EmbyProxy] resolveRedirectChain: 构造 HEAD 请求失败: %v", err)
-			return startURL
+			return ""
 		}
+		requestedURL := req.URL.String()
 		for k, v := range fwdHeaders {
 			req.Header.Set(k, v)
 		}
@@ -1078,19 +1090,29 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 				continue
 			}
 			logger.S().Warnf("[EmbyProxy] resolveRedirectChain 最终失败: url=%s err=%v", startURL, err)
-			return startURL
+			return ""
 		}
 
 		// resp.Request.URL 是跟随所有重定向后的最终 URL
 		finalURL := resp.Request.URL.String()
+		status := resp.StatusCode
 		resp.Body.Close()
 		cancel()
+
+		// STRM 端点自身失败（未发生任何重定向却返回 4xx/5xx，典型是 115 Cookie 失效
+		// 导致 /api/strm 直接 502）：判定解析失败。若此时仍 302 回自身，客户端会
+		// 二次请求拿到同一个失败，表现为播放无声失败。
+		if status >= http.StatusBadRequest && finalURL == requestedURL {
+			logger.S().Warnf("[EmbyProxy] resolveRedirectChain: STRM 端点返回 %d，判定解析失败: url=%s",
+				status, startURL)
+			return ""
+		}
 
 		logger.S().Debugf("[EmbyProxy] resolveRedirectChain: %s -> %s (attempt %d)", startURL, finalURL, attempt+1)
 		return finalURL
 	}
 
-	return startURL
+	return ""
 }
 
 // ============================================================
