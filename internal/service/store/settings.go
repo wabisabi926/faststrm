@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/wabisabi926/faststrm/internal/model"
-	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -68,27 +67,6 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 		logger.S().Infof("[SettingsStore] 迁移: 合并新默认值到 settings.json 并回写")
 		if err := s.SaveSettings(&out); err != nil {
 			logger.S().Warnf("[SettingsStore] 迁移回写 settings.json 失败: %v", err)
-		}
-	}
-	// T9 迁移：开关打开后若 secret 未生成或长度异常则自动生成并回写 settings.json
-	// 兜底场景：settings.json 损坏、被截断、或老版本写入了非法值
-	if out.Strm.EnableTokenSigning {
-		const expectedSecretLen = 64 // 32 字节 hex 编码
-		regenerate := false
-		switch {
-		case out.Strm.TokenSecret == "":
-			logger.S().Infof("[SettingsStore] EnableTokenSigning=true, 生成 Strm.TokenSecret, 回写 settings.json")
-			regenerate = true
-		case len(out.Strm.TokenSecret) != expectedSecretLen:
-			logger.S().Warnf("[SettingsStore] TokenSecret 长度异常 (len=%d, 期望 %d), 重新生成以保证签名一致性",
-				len(out.Strm.TokenSecret), expectedSecretLen)
-			regenerate = true
-		}
-		if regenerate {
-			out.Strm.TokenSecret = strm.GenerateTokenSecret()
-			if err := s.SaveSettings(&out); err != nil {
-				logger.S().Warnf("[SettingsStore] 回写 tokenSecret 失败: %v", err)
-			}
 		}
 	}
 	return &out, nil
