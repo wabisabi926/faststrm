@@ -2,8 +2,8 @@ package client115
 
 import (
 	"context"
+	"errors"
 	"strings"
-	"time"
 )
 
 // ValidateCookieResult cookie 校验结果
@@ -53,31 +53,33 @@ func ValidateCookie(cookie string) ValidateCookieResult {
 	}
 }
 
-// PingCookie 真实请求 115 API 验证 cookie 是否存活
-// 比 ValidateCookie 只验格式多了一步网络验证，能检测 cookie 过期/被踢
-func PingCookie(cookie string) (ok bool, message string) {
+// ProbeAccount 通过权威探测接口验证 cookie 是否存活。
+//
+// 判定只看 HTTP 状态与结构化 state/errno，不再依赖错误文案关键词：
+//   - 返回 nil            → 有效（valid）
+//   - ErrCookieExpired    → 确定失效（invalid）
+//   - ErrRateLimited/Transient → 临时不可用（unknown，调用方不得改写账号状态）
+//
+// 探测端点选用 /files?cid=0（必须登录才可用、返回结构化 errno），
+// 后续如需更换端点，仅改本函数内部实现即可。
+func ProbeAccount(ctx context.Context, cookie string) error {
 	if cookie == "" {
-		return false, "Cookie 为空"
+		return &APIError{Message: "cookie is empty", Kind: ErrCookieExpired}
 	}
-	formatResult := ValidateCookie(cookie)
-	if !formatResult.Valid {
-		return false, "Cookie 缺少字段: " + strings.Join(formatResult.Missing, ", ")
+	if r := ValidateCookie(cookie); !r.Valid {
+		return &APIError{
+			Message: "cookie 缺少字段: " + strings.Join(r.Missing, ", "),
+			Kind:    ErrCookieExpired,
+		}
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	c := NewClient(DefaultUA)
-	_, err := c.FsFiles(ctx, "0", 1, 0, cookie)
-	if err != nil {
-		errMsg := err.Error()
-		// 识别常见过期关键词
-		if strings.Contains(errMsg, "未登录") || strings.Contains(errMsg, "cookie") ||
-			strings.Contains(errMsg, "登录过期") || strings.Contains(errMsg, "401") ||
-			strings.Contains(errMsg, "403") {
-			return false, "Cookie 可能已失效: " + errMsg
+	if _, err := c.FsFiles(ctx, "0", 1, 0, cookie); err != nil {
+		if errors.Is(err, ErrCookieExpired) || errors.Is(err, ErrRateLimited) || errors.Is(err, ErrTransient) {
+			return err
 		}
-		return false, "115 API 请求失败: " + errMsg
+		// 网络层/解析层错误：按文案兜底分类，无法归类时视为临时错误（不改写状态）。
+		return &APIError{Message: err.Error(), Kind: classifyAPIError(0, err.Error())}
 	}
-	return true, "Cookie 有效"
+	return nil
 }

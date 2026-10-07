@@ -136,19 +136,19 @@ func (s *AccountStore) ValidateCookie(name string) (bool, []string, error) {
 		return false, nil, ErrAccountNotFound
 	}
 	if acc.AccountType != "115" || acc.Cookie == "" {
-		// 非 115 账号或无 cookie，直接标记为有效（格式上没问题）
-		now := time.Now().UnixMilli()
-		acc.LastCookieCheck = now
-		valid := true
-		acc.CookieValid = &valid
+		// 非 115 账号或无 cookie：格式层面无缺失，但真伪需探测，记为 unknown
+		s.setCookieStatusLocked(acc, model.CookieStatusUnknown, 0, model.CookieSourceFormat)
 		s.dirty = true
 		return true, nil, nil
 	}
 	result := client115.ValidateCookie(acc.Cookie)
-	now := time.Now().UnixMilli()
-	acc.LastCookieCheck = now
-	valid := result.Valid
-	acc.CookieValid = &valid
+	// 仅格式校验：缺字段才可确定不可用（invalid）；格式完整不等于存活，记为 unknown，
+	// 真正的 valid/invalid 只由权威探测（ProbeAccount）或监控判定写入。
+	if result.Valid {
+		s.setCookieStatusLocked(acc, model.CookieStatusUnknown, 0, model.CookieSourceFormat)
+	} else {
+		s.setCookieStatusLocked(acc, model.CookieStatusInvalid, 0, model.CookieSourceFormat)
+	}
 	s.dirty = true
 	return result.Valid, result.Missing, nil
 }
@@ -157,16 +157,14 @@ func (s *AccountStore) ValidateCookie(name string) (bool, []string, error) {
 func (s *AccountStore) ValidateAllCookies() (validCount, invalidCount int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now().UnixMilli()
 	for _, acc := range s.accounts {
 		if acc.AccountType == "115" && acc.Cookie != "" {
 			result := client115.ValidateCookie(acc.Cookie)
-			acc.LastCookieCheck = now
-			valid := result.Valid
-			acc.CookieValid = &valid
 			if result.Valid {
+				s.setCookieStatusLocked(acc, model.CookieStatusUnknown, 0, model.CookieSourceFormat)
 				validCount++
 			} else {
+				s.setCookieStatusLocked(acc, model.CookieStatusInvalid, 0, model.CookieSourceFormat)
 				invalidCount++
 			}
 		}
@@ -177,18 +175,36 @@ func (s *AccountStore) ValidateAllCookies() (validCount, invalidCount int, err e
 
 // ==================== Cookie 状态管理 ====================
 
-// MarkCookieStatus 标记账号 cookie 有效/失效（由 monitor 错误检测调用）
-func (s *AccountStore) MarkCookieStatus(name string, valid bool) error {
+// SetCookieStatus 写入账号 Cookie 三态状态（valid / invalid / unknown）。
+//
+// unknown 表示临时不可用或未校验，不改写已有的明确状态（valid/invalid），
+// 避免网络抖动、风控限流把正常账号误判为失效。
+func (s *AccountStore) SetCookieStatus(name, status string, errno int, source string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	acc, ok := s.accounts[name]
 	if !ok {
 		return ErrAccountNotFound
 	}
-	acc.CookieValid = &valid
-	acc.LastCookieCheck = time.Now().UnixMilli()
+	s.setCookieStatusLocked(acc, status, errno, source)
 	s.dirty = true
 	return nil
+}
+
+// setCookieStatusLocked 内部实现，调用方需持有写锁。
+func (s *AccountStore) setCookieStatusLocked(acc *model.AccountInfo, status string, errno int, source string) {
+	now := time.Now().UnixMilli()
+	if status == model.CookieStatusUnknown {
+		prev := acc.EffectiveCookieStatus()
+		if prev != model.CookieStatusUnknown {
+			// 保留既有明确状态，仅刷新排查信息
+			acc.LastCookieCheck = now
+			acc.CookieErrno = errno
+			acc.CookieSource = source
+			return
+		}
+	}
+	acc.SetCookieStatus(status, errno, source, now)
 }
 
 // ==================== 热路径 API（内存操作） ====================

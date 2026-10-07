@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -465,6 +466,12 @@ type AccountStatusInfo struct {
 	Message         string `json:"message,omitempty"`
 	CookieValid     *bool  `json:"cookieValid,omitempty"`
 	LastCookieCheck int64  `json:"lastCookieCheck,omitempty"`
+	// CookieStatus 三态状态：valid / invalid / unknown。
+	CookieStatus string `json:"cookieStatus,omitempty"`
+	// CookieErrno 最近一次判定拿到的 115 错误码。
+	CookieErrno int `json:"cookieErrno,omitempty"`
+	// CookieSource 最近一次判定来源。
+	CookieSource string `json:"cookieSource,omitempty"`
 }
 
 // GetAccountStatus GET /api/account/status?names=xxx,yyy&deep=true
@@ -506,16 +513,18 @@ func GetAccountStatus(accountStore *store.AccountStore) http.HandlerFunc {
 			deepResults = make([]map[string]any, 0, len(targets))
 			for _, acc := range targets {
 				if acc.AccountType == "115" && acc.Cookie != "" {
-					pingOk, pingMsg := client115.PingCookie(acc.Cookie)
-					// 根据真实结果更新 store 中的 CookieValid
-					validBool := pingOk
-					_ = accountStore.MarkCookieStatus(acc.Name, validBool)
+					ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+					probeErr := client115.ProbeAccount(ctx, acc.Cookie)
+					cancel()
+					status := classifyProbeStatus(probeErr)
+					_ = accountStore.SetCookieStatus(acc.Name, status, client115.ErrnoOf(probeErr), model.CookieSourceProbe)
 					deepResults = append(deepResults, map[string]any{
 						"account":   acc.Name,
 						"type":      "115",
-						"valid":     pingOk,
+						"valid":     status == model.CookieStatusValid,
+						"status":    status,
 						"missing":   []string{},
-						"error":     pingMsg,
+						"error":     probeMessage(probeErr),
 						"checkedAt": now,
 					})
 				} else if acc.AccountType == "115" && acc.Cookie == "" {
@@ -556,6 +565,9 @@ func checkAccountStatusInfo(acc model.AccountInfo) AccountStatusInfo {
 		Name:            acc.Name,
 		CookieValid:     acc.CookieValid,
 		LastCookieCheck: acc.LastCookieCheck,
+		CookieStatus:    acc.EffectiveCookieStatus(),
+		CookieErrno:     acc.CookieErrno,
+		CookieSource:    acc.CookieSource,
 	}
 
 	switch acc.AccountType {
@@ -571,11 +583,21 @@ func checkAccountStatusInfo(acc model.AccountInfo) AccountStatusInfo {
 			info.Message = "Cookie 缺少字段: " + strings.Join(result.Missing, ", ")
 			return info
 		}
-		info.Status = "ok"
-		info.Message = "Cookie 格式有效"
+		// 格式完整不代表存活：状态由三态判定（权威探测/监控）驱动。
+		timeStr := ""
 		if acc.LastCookieCheck > 0 {
-			checkedAt := time.UnixMilli(acc.LastCookieCheck)
-			info.Message += fmt.Sprintf(" (校验于 %s)", checkedAt.Format("2006-01-02 15:04:05"))
+			timeStr = fmt.Sprintf(" (校验于 %s)", time.UnixMilli(acc.LastCookieCheck).Format("2006-01-02 15:04:05"))
+		}
+		switch acc.EffectiveCookieStatus() {
+		case model.CookieStatusInvalid:
+			info.Status = "error"
+			info.Message = "Cookie 已失效，请重新登录" + errnoSuffix(acc.CookieErrno) + timeStr
+		case model.CookieStatusValid:
+			info.Status = "ok"
+			info.Message = "Cookie 有效" + timeStr
+		default:
+			info.Status = "ok"
+			info.Message = "Cookie 格式有效，待存活校验" + timeStr
 		}
 		return info
 	case "openlist":
@@ -592,6 +614,41 @@ func checkAccountStatusInfo(acc model.AccountInfo) AccountStatusInfo {
 		info.Message = "未知账户类型"
 		return info
 	}
+}
+
+// classifyProbeStatus 将探测错误映射为三态状态。
+func classifyProbeStatus(err error) string {
+	switch {
+	case err == nil:
+		return model.CookieStatusValid
+	case client115.IsAuthError(err):
+		return model.CookieStatusInvalid
+	default:
+		// 风控/临时错误：不改写账号状态
+		return model.CookieStatusUnknown
+	}
+}
+
+// probeMessage 生成探测结果的可读文案。
+func probeMessage(err error) string {
+	if err == nil {
+		return "Cookie 有效"
+	}
+	if client115.IsAuthError(err) {
+		return "Cookie 已失效，请重新登录: " + err.Error()
+	}
+	if client115.IsRateLimitError(err) {
+		return "疑似风控/限流，暂不判定: " + err.Error()
+	}
+	return "暂时无法验证: " + err.Error()
+}
+
+// errnoSuffix 拼接错误码后缀（0 时不显示）。
+func errnoSuffix(errno int) string {
+	if errno == 0 {
+		return ""
+	}
+	return fmt.Sprintf("（errno=%d）", errno)
 }
 
 // ==================== Cookie 验证 API ====================
