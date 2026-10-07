@@ -35,7 +35,8 @@ type Notifier interface {
 // AccountReader 账号读取接口（由 store.AccountStore 实现）
 type AccountReader interface {
 	Get(name string) *model.AccountInfo
-	MarkCookieStatus(name string, valid bool) error
+	// SetCookieStatus 写入三态状态（valid/invalid/unknown）；unknown 不覆盖已有明确状态。
+	SetCookieStatus(name, status string, errno int, source string) error
 }
 
 // ==================== 类型定义 ====================
@@ -383,6 +384,23 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 	// 验证成功，重置连续失败计数
 	m.resetConsecutiveFailures(account)
 
+	// 生活事件可用不等于下载直链可用，故以权威探测结果回写账号状态：
+	// 探测有效 → valid（清除此前的失效标记）；探测失败 → 按类型判定。
+	if m.accountReader != nil {
+		status := model.CookieStatusUnknown
+		errno := 0
+		switch perr := client115.ProbeAccount(ctx, cookie); {
+		case perr == nil:
+			status = model.CookieStatusValid
+		case client115.IsAuthError(perr):
+			status = model.CookieStatusInvalid
+			errno = client115.ErrnoOf(perr)
+		}
+		if serr := m.accountReader.SetCookieStatus(account, status, errno, model.CookieSourceMonitor); serr != nil {
+			logger.S().Warnf("[Monitor] 回写账号状态失败 account=%s: %v", account, serr)
+		}
+	}
+
 	logger.S().Infof("[Monitor] 账号 %s 验证成功，最近事件数: %d", account, len(events))
 	return nil
 }
@@ -689,63 +707,16 @@ const (
 	rateLimitMaxDelay  = 30 * time.Minute // 风控/限流冷却上限
 )
 
-// rateLimitPatterns 可能表示 115 风控/限流（而非 cookie 失效）的错误关键词
-var rateLimitPatterns = []string{
-	"429",
-	"too many requests",
-	"rate limit",
-	"访问频繁",
-	"请求过于频繁",
-	"操作过于频繁",
-	"频率限制",
-	"系统繁忙",
-	"请稍后",
-	"风控",
-	"安全风险",
-	"验证码",
-}
-
-// isRateLimitError 判断错误是否疑似 115 风控/限流：
+// isRateLimitError 判断错误是否为 115 风控/限流：
 // 需先于 isAuthError 判定，避免把限流误判为 cookie 失效。
+// 统一委托 client115.ClassifyError：先看类型化 errno，再按文案兜底。
 func isRateLimitError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-	for _, pattern := range rateLimitPatterns {
-		if strings.Contains(errStr, strings.ToLower(pattern)) {
-			return true
-		}
-	}
-	return false
+	return client115.IsRateLimitError(client115.ClassifyError(err))
 }
 
-// pollErrorPatterns 可能表示 cookie 失效的错误关键词
-var pollErrorPatterns = []string{
-	"未登录",
-	"cookie",
-	"登录过期",
-	"401",
-	"403",
-	"unauthorized",
-	"invalid",
-	"expired",
-	"auth",
-	"login expired",
-}
-
-// isAuthError 判断错误是否为认证/授权错误
+// isAuthError 判断错误是否为认证/授权错误（Cookie 失效）。
 func isAuthError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-	for _, pattern := range pollErrorPatterns {
-		if strings.Contains(errStr, strings.ToLower(pattern)) {
-			return true
-		}
-	}
-	return false
+	return client115.IsAuthError(client115.ClassifyError(err))
 }
 
 // handlePollError 处理轮询错误：
@@ -846,13 +817,15 @@ func (m *Monitor) applyRateLimitCooldownLocked(accMon *AccountMonitor) {
 	accMon.backoffUntil = time.Now().Add(d).UnixMilli()
 }
 
-// markCookiePotentiallyInvalid 标记账号 cookie 可能失效
+// markCookiePotentiallyInvalid 标记账号 cookie 失效（认证类错误，来源 monitor）
 func (m *Monitor) markCookiePotentiallyInvalid(account string, err error) {
 	if m.accountReader == nil {
 		return
 	}
-	if err := m.accountReader.MarkCookieStatus(account, false); err != nil {
-		logger.S().Warnf("[Monitor] 标记 cookie 失效失败 account=%s: %v", account, err)
+	classified := client115.ClassifyError(err)
+	errno := client115.ErrnoOf(classified)
+	if serr := m.accountReader.SetCookieStatus(account, model.CookieStatusInvalid, errno, model.CookieSourceMonitor); serr != nil {
+		logger.S().Warnf("[Monitor] 标记 cookie 失效失败 account=%s: %v", account, serr)
 	}
 	logger.S().Warnf("[Monitor] 账号 %s cookie 可能已失效: %v", account, err)
 }
