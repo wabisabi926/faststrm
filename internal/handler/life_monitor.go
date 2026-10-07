@@ -9,7 +9,6 @@ import (
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 
-	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/monitor"
 	"github.com/wabisabi926/faststrm/internal/service/store"
@@ -133,17 +132,19 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "config is required"})
 				return
 			}
-			var newCfg model.LifeMonitorSettings
-			if err := json.Unmarshal(req.Config, &newCfg); err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid config"})
-				return
-			}
 			settings, err := deps.SettingsStore.ReadSettings()
 			if err != nil {
 				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
 				return
 			}
-			settings.LifeMonitor = newCfg
+			// 合并语义：以现有配置为基准，仅覆盖 config 中出现的字段，
+			// 避免未提供字段被零值清空（与 updateConfig 保持一致）。
+			merged := settings.LifeMonitor
+			if err := json.Unmarshal(req.Config, &merged); err != nil {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid config"})
+				return
+			}
+			settings.LifeMonitor = merged
 			if err := deps.SettingsStore.SaveSettings(settings); err != nil {
 				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
 				return
