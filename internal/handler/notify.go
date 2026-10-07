@@ -870,6 +870,11 @@ func HandleNotifyAlertsGET(deps NotifyDeps) http.HandlerFunc {
 			resp["onError"] = alerts.OnError
 			resp["onRecover"] = alerts.OnRecover
 		}
+		// Cookie 主动巡检配置（与账户状态通知同页展示，回传生效值便于前端展示）
+		resp["cookieInspect"] = map[string]any{
+			"enabled":       settings.CookieInspect.IsEnabled(),
+			"intervalHours": settings.CookieInspect.EffectiveIntervalHours(),
+		}
 		httpx.OkJson(w, resp)
 	}
 }
@@ -879,6 +884,14 @@ type NotifyAlertsRequest struct {
 	Enabled   *bool `json:"enabled"`
 	OnError   *bool `json:"onError"`
 	OnRecover *bool `json:"onRecover"`
+	// CookieInspect Cookie 主动巡检配置（可选，与账户状态通知同页保存）
+	CookieInspect *CookieInspectPatch `json:"cookieInspect"`
+}
+
+// CookieInspectPatch Cookie 主动巡检配置的可选更新字段
+type CookieInspectPatch struct {
+	Enabled       *bool `json:"enabled"`
+	IntervalHours *int  `json:"intervalHours"`
 }
 
 // HandleNotifyAlertsPOST POST /api/notify/alerts 更新账户状态通知配置
@@ -911,6 +924,18 @@ func HandleNotifyAlertsPOST(deps NotifyDeps) http.HandlerFunc {
 		}
 		settings.Telegram.AccountAlerts = alerts
 
+		// Cookie 主动巡检配置（字段级合并：仅覆盖显式提供的字段）
+		if req.CookieInspect != nil {
+			ci := settings.CookieInspect
+			if req.CookieInspect.Enabled != nil {
+				ci.Enabled = req.CookieInspect.Enabled
+			}
+			if req.CookieInspect.IntervalHours != nil && *req.CookieInspect.IntervalHours > 0 {
+				ci.IntervalHours = *req.CookieInspect.IntervalHours
+			}
+			settings.CookieInspect = ci
+		}
+
 		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
 			return
@@ -919,6 +944,10 @@ func HandleNotifyAlertsPOST(deps NotifyDeps) http.HandlerFunc {
 			"success": true,
 			"message": "账户状态通知配置保存成功",
 			"config":  alerts,
+			"cookieInspect": map[string]any{
+				"enabled":       settings.CookieInspect.IsEnabled(),
+				"intervalHours": settings.CookieInspect.EffectiveIntervalHours(),
+			},
 		})
 	}
 }

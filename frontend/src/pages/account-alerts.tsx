@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   ShieldAlert,
   CheckCircle,
@@ -18,10 +20,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import axiosInstance from "@/lib/axios";
 import { toast } from "sonner";
 
+interface CookieInspectConfig {
+  enabled: boolean;
+  intervalHours: number;
+}
+
 interface AccountAlertsConfig {
   enabled: boolean;
   onError: boolean;
   onRecover: boolean;
+  cookieInspect: CookieInspectConfig;
 }
 
 interface AccountStatusInfo {
@@ -43,6 +51,7 @@ export default function AccountAlertsPage() {
     enabled: false,
     onError: true,
     onRecover: true,
+    cookieInspect: { enabled: true, intervalHours: 6 },
   });
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alertsSuccess, setAlertsSuccess] = useState<string | null>(null);
@@ -59,6 +68,10 @@ export default function AccountAlertsPage() {
           enabled: response.data.enabled ?? false,
           onError: response.data.onError ?? true,
           onRecover: response.data.onRecover ?? true,
+          cookieInspect: {
+            enabled: response.data.cookieInspect?.enabled ?? true,
+            intervalHours: response.data.cookieInspect?.intervalHours ?? 6,
+          },
         });
       }
     } catch (error) {
@@ -113,7 +126,7 @@ export default function AccountAlertsPage() {
       const response = await axiosInstance.post("/api/notify/alerts", accountAlerts);
 
       if (response.data.success) {
-        setAlertsSuccess("账户状态通知配置保存成功！");
+        setAlertsSuccess("账户状态设置保存成功！");
       }
     } catch (error) {
       const axiosError = error as { response?: { data?: { error?: string } } };
@@ -234,6 +247,68 @@ export default function AccountAlertsPage() {
       <section className="border rounded-md p-4 sm:p-5 space-y-5">
         <div>
           <div className="flex items-center gap-2">
+            <RefreshCw className="h-5 w-5" />
+            <h2 className="text-base font-medium">Cookie 主动巡检</h2>
+            <Badge variant={accountAlerts.cookieInspect.enabled ? "default" : "outline"}>
+              {accountAlerts.cookieInspect.enabled ? "已启用" : "未启用"}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            后台定时检查各账号 Cookie 是否有效，失效时可及时通过下方通知提醒你重新登录。
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="cookieInspectEnabled"
+              checked={accountAlerts.cookieInspect.enabled}
+              onCheckedChange={(checked) =>
+                setAccountAlerts({
+                  ...accountAlerts,
+                  cookieInspect: { ...accountAlerts.cookieInspect, enabled: checked === true },
+                })
+              }
+            />
+            <label
+              htmlFor="cookieInspectEnabled"
+              className="text-sm font-medium leading-none cursor-pointer"
+            >
+              启用 Cookie 主动巡检
+            </label>
+          </div>
+
+          <div className="space-y-2 max-w-xs">
+            <Label
+              htmlFor="cookieInspectInterval"
+              className={!accountAlerts.cookieInspect.enabled ? "text-muted-foreground" : ""}
+            >
+              巡检间隔（小时）
+            </Label>
+            <Input
+              id="cookieInspectInterval"
+              type="number"
+              min="1"
+              max="168"
+              disabled={!accountAlerts.cookieInspect.enabled}
+              value={accountAlerts.cookieInspect.intervalHours}
+              onChange={(e) =>
+                setAccountAlerts({
+                  ...accountAlerts,
+                  cookieInspect: {
+                    ...accountAlerts.cookieInspect,
+                    intervalHours: parseInt(e.target.value) || 6,
+                  },
+                })
+              }
+            />
+            <p className="text-xs text-muted-foreground">默认 6 小时，建议保持默认。</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="border rounded-md p-4 sm:p-5 space-y-5">
+        <div>
+          <div className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5" />
             <h2 className="text-base font-medium">通知配置</h2>
             <Badge variant={accountAlerts.enabled ? "default" : "outline"}>
@@ -335,7 +410,7 @@ export default function AccountAlertsPage() {
               disabled={alertsLoading}
               size="sm"
             >
-              {alertsLoading ? "保存中..." : "保存通知设置"}
+              {alertsLoading ? "保存中..." : "保存账户状态设置"}
             </Button>
             <Button
               onClick={() => loadAccountAlerts()}
