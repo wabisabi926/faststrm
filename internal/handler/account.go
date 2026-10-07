@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
@@ -668,7 +669,7 @@ func errnoSuffix(errno int) string {
 // ==================== Cookie 验证 API ====================
 
 // VerifyAccountHandler POST /api/account/verify?name=xxx
-// 对单个账号执行 cookie 格式校验并更新元数据
+// 对单个 115 账号执行权威存活探测（ProbeAccount），返回三态状态并回写账号。
 func VerifyAccountHandler(accountStore *store.AccountStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
@@ -691,17 +692,31 @@ func VerifyAccountHandler(accountStore *store.AccountStore) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
 			return
 		}
-
-		valid, missing, err := accountStore.ValidateCookie(name)
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		if acc.AccountType != "115" || acc.Cookie == "" {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "仅 115 账号支持存活验证"})
 			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		probeErr := client115.ProbeAccount(ctx, acc.Cookie)
+		status := classifyProbeStatus(probeErr)
+		if err := accountStore.SetCookieStatus(name, status, client115.ErrnoOf(probeErr), model.CookieSourceProbe); err != nil {
+			logger.S().Warnf("[VerifyAccount] 写入 Cookie 状态失败 account=%s: %v", name, err)
 		}
 		accountStore.Flush()
 
+		missing := client115.ValidateCookie(acc.Cookie).Missing
+		if missing == nil {
+			missing = []string{}
+		}
 		httpx.OkJson(w, map[string]any{
 			"account":   name,
-			"valid":     valid,
+			"status":    status,
+			"valid":     status == model.CookieStatusValid, // 兼容旧前端
+			"errno":     client115.ErrnoOf(probeErr),
+			"source":    model.CookieSourceProbe,
+			"message":   probeMessage(probeErr),
 			"missing":   missing,
 			"checkedAt": time.Now().UnixMilli(),
 		})
@@ -709,32 +724,66 @@ func VerifyAccountHandler(accountStore *store.AccountStore) http.HandlerFunc {
 }
 
 // VerifyAllAccountsHandler POST /api/account/verify-all
-// 批量校验所有 115 账号的 cookie
+// 并发对所有 115 账号执行权威存活探测，逐个回写三态状态。
 func VerifyAllAccountsHandler(accountStore *store.AccountStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		validCount, invalidCount, err := accountStore.ValidateAllCookies()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		accountStore.Flush()
+		const maxConcurrency = 4
+		sem := make(chan struct{}, maxConcurrency)
+		var wg sync.WaitGroup
+		var mu sync.Mutex
 
-		accounts := accountStore.List()
-		results := make([]map[string]any, 0, len(accounts))
-		for _, acc := range accounts {
-			if acc.AccountType == "115" {
-				results = append(results, map[string]any{
-					"account":     acc.Name,
-					"cookieValid": acc.CookieValid,
-					"lastCheck":   acc.LastCookieCheck,
-				})
+		targets := make([]*model.AccountInfo, 0)
+		for _, acc := range accountStore.List() {
+			if acc.AccountType == "115" && acc.Cookie != "" {
+				targets = append(targets, acc)
 			}
 		}
+
+		results := make([]map[string]any, 0, len(targets))
+		validCount, invalidCount, unknownCount := 0, 0, 0
+		for _, acc := range targets {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(a *model.AccountInfo) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+				defer cancel()
+				probeErr := client115.ProbeAccount(ctx, a.Cookie)
+				status := classifyProbeStatus(probeErr)
+				errno := client115.ErrnoOf(probeErr)
+				if err := accountStore.SetCookieStatus(a.Name, status, errno, model.CookieSourceProbe); err != nil {
+					logger.S().Warnf("[VerifyAll] 写入 Cookie 状态失败 account=%s: %v", a.Name, err)
+				}
+
+				mu.Lock()
+				switch status {
+				case model.CookieStatusValid:
+					validCount++
+				case model.CookieStatusInvalid:
+					invalidCount++
+				default:
+					unknownCount++
+				}
+				results = append(results, map[string]any{
+					"account": a.Name,
+					"status":  status,
+					"valid":   status == model.CookieStatusValid,
+					"errno":   errno,
+					"message": probeMessage(probeErr),
+				})
+				mu.Unlock()
+			}(acc)
+		}
+		wg.Wait()
+		accountStore.Flush()
 
 		httpx.OkJson(w, map[string]any{
 			"validCount":   validCount,
 			"invalidCount": invalidCount,
-			"total":        validCount + invalidCount,
+			"unknownCount": unknownCount,
+			"total":        len(targets),
 			"results":      results,
 			"checkedAt":    time.Now().UnixMilli(),
 		})
