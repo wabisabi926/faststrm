@@ -85,31 +85,36 @@ func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 			return
 		}
 
-		now := time.Now().UnixMilli()
-		cookieValid := true
+		// 格式完整不代表 Cookie 存活：格式校验仅用于判定「缺字段=invalid」，
+		// 其余一律先记 unknown，等权威探测/监控给出有效结论，避免假阳性。
+		status := model.CookieStatusUnknown
 		if req.AccountType == "115" && req.Cookie != "" {
-			result := client115.ValidateCookie(req.Cookie)
-			cookieValid = result.Valid
-			if !result.Valid {
+			if result := client115.ValidateCookie(req.Cookie); !result.Valid {
+				status = model.CookieStatusInvalid
 				logger.S().Warnf("[CreateAccount] Cookie 格式无效 account=%s 缺少: %s", req.Name, strings.Join(result.Missing, ","))
 			}
 		}
 
 		newAcc := &model.AccountInfo{
-			Name:            req.Name,
-			AccountType:     req.AccountType,
-			Cookie:          req.Cookie,
-			Account:         req.Account,
-			Password:        req.Password,
-			URL:             req.URL,
-			LastCookieCheck: now,
-			CookieValid:     &cookieValid,
+			Name:        req.Name,
+			AccountType: req.AccountType,
+			Cookie:      req.Cookie,
+			Account:     req.Account,
+			Password:    req.Password,
+			URL:         req.URL,
 		}
 
 		if err := accountStore.Upsert(newAcc); err != nil {
 			logger.S().Errorf("upsert account: %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存账号失败"})
 			return
+		}
+
+		// 统一经 SetCookieStatus 写入三态（同时刷新 LastCookieCheck），仅 115 账号有意义。
+		if req.AccountType == "115" {
+			if err := accountStore.SetCookieStatus(req.Name, status, 0, model.CookieSourceFormat); err != nil {
+				logger.S().Warnf("[CreateAccount] 写入 Cookie 状态失败 account=%s: %v", req.Name, err)
+			}
 		}
 
 		if err := accountStore.Flush(); err != nil {
@@ -177,14 +182,12 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc { //nolint
 			}
 		}
 
-		now := time.Now().UnixMilli()
-		cookieValid := true
-		if req.AccountType == "115" {
-			if cookieChanged {
-				result := client115.ValidateCookie(req.Cookie)
-				cookieValid = result.Valid
-			} else if acc.CookieValid != nil {
-				cookieValid = *acc.CookieValid
+		// 与 CreateAccount 一致：格式校验仅用于判定「缺字段=invalid」，其余记 unknown；
+		// 未改 Cookie 时记 unknown（unknown 不覆盖既有的 valid/invalid 明确状态）。
+		status := model.CookieStatusUnknown
+		if req.AccountType == "115" && cookieChanged {
+			if result := client115.ValidateCookie(req.Cookie); !result.Valid {
+				status = model.CookieStatusInvalid
 			}
 		}
 
@@ -207,8 +210,10 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc { //nolint
 			if req.URL != "" {
 				acc.URL = req.URL
 			}
-			acc.LastCookieCheck = now
-			acc.CookieValid = &cookieValid
+			if cookieChanged {
+				// Cookie 已变更：旧存活结论作废，交由后续 SetCookieStatus 重新判定
+				acc.ResetCookieStatus()
+			}
 			if err := accountStore.Delete(lookupName); err != nil {
 				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "更新账号失败"})
 				return
@@ -234,12 +239,21 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc { //nolint
 				if req.URL != "" {
 					a.URL = req.URL
 				}
-				a.LastCookieCheck = now
-				a.CookieValid = &cookieValid
+				if cookieChanged {
+					// Cookie 已变更：旧存活结论作废，交由后续 SetCookieStatus 重新判定
+					a.ResetCookieStatus()
+				}
 			})
 			if err != nil {
 				httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
 				return
+			}
+		}
+
+		// 统一经 SetCookieStatus 写入三态（同时刷新 LastCookieCheck），仅 115 账号有意义。
+		if req.AccountType == "115" {
+			if err := accountStore.SetCookieStatus(req.Name, status, 0, model.CookieSourceFormat); err != nil {
+				logger.S().Warnf("[UpdateAccount] 写入 Cookie 状态失败 account=%s: %v", req.Name, err)
 			}
 		}
 
@@ -422,15 +436,15 @@ func GetQrcodeCookieHandler(c *client115.Client, accountStore *store.AccountStor
 				return
 			}
 
-			now := time.Now().UnixMilli()
-			valid := true
 			if err := accountStore.Update(req.AccountName, func(a *model.AccountInfo) {
 				a.Cookie = cookie
-				a.LastCookieCheck = now
-				a.CookieValid = &valid
 			}); err != nil {
 				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存账号失败"})
 				return
+			}
+			// 扫码登录成功即视为有效，来源标记 login（统一经三态通道写入）。
+			if err := accountStore.SetCookieStatus(req.AccountName, model.CookieStatusValid, 0, model.CookieSourceLogin); err != nil {
+				logger.S().Warnf("[QRCODE-LOGIN] 写入 Cookie 状态失败 account=%s: %v", req.AccountName, err)
 			}
 			if err := accountStore.Flush(); err != nil {
 				logger.S().Warnf("flush account after cookie update: %v", err)

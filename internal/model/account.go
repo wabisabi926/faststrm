@@ -16,6 +16,7 @@ const (
 	CookieSourceMonitor = "monitor" // 生活事件监控被动判定
 	CookieSourceStrm    = "strm"    // STRM 直链获取失败联动
 	CookieSourceFormat  = "format"  // 仅格式校验
+	CookieSourceLogin   = "login"   // 扫码/登录成功
 )
 
 // AccountInfo 对应 frontend/src/lib/115.ts AccountInfo
@@ -52,6 +53,15 @@ func (a *AccountInfo) EffectiveCookieStatus() string {
 		return CookieStatusValid
 	}
 	return CookieStatusInvalid
+}
+
+// ResetCookieStatus 清除存活结论，回到未判定态。
+// 用于 Cookie 变更后作废旧结论（否则 Store 的「unknown 不覆盖已知状态」会挡住重新判定）。
+func (a *AccountInfo) ResetCookieStatus() {
+	a.CookieStatus = ""
+	a.CookieErrno = 0
+	a.CookieSource = ""
+	a.CookieValid = nil
 }
 
 // SetCookieStatus 写入三态状态，并同步兼容字段 CookieValid。
