@@ -591,8 +591,8 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                         ? lastSyncApply.nginx.ok
                           ? "已成功 reload"
                           : `reload 失败 - ${lastSyncApply.nginx.message}`
-                        : lastSyncApply.nginx.available
-                          ? "skipNginxReload=true（跳过）"
+                        : lastSyncApply.nginx.skipped
+                          ? "已按设置跳过 reload"
                           : "系统未检测到 nginx"}
                     </li>
                     {lastSyncApply.error && <li>错误：{lastSyncApply.error}</li>}

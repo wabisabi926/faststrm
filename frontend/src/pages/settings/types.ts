@@ -118,7 +118,7 @@ export type MountSyncApplyData = {
   added: string[];
   removed: string[];
   final: string[];
-  nginx: { attempted: boolean; available: boolean; ok: boolean; message: string };
+  nginx: { attempted: boolean; available: boolean; skipped: boolean; ok: boolean; message: string };
   error?: string;
 } | null;
 
