@@ -162,6 +162,88 @@ func replaceRelPathExtToStrm(relPath string) string {
 	return filepath.Join(dir, getStrmFileName(name))
 }
 
+// resolveStrmRelPath 计算 STRM 文件的相对路径（P1-4 文件名模板优先，否则默认替换扩展名）。
+// 抽成公共函数，保证「增量跳过判定」与「实际写入」使用完全一致的路径，
+// 否则判定路径与实际路径不一致会导致漏补生成。
+func resolveStrmRelPath(template, account string, f *fileItem) string {
+	if template == "" {
+		return replaceRelPathExtToStrm(f.RelPath)
+	}
+	relDir, relName := filepath.Split(f.RelPath)
+	ext := strings.ToLower(filepath.Ext(f.Name))
+	stem := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
+	if strings.EqualFold(ext, ".iso") {
+		stem = stem + ".iso"
+	}
+	newName := model.RenderStrmFilenameTemplate(template, f.Name, ext, stem, account)
+	if newName == "" {
+		newName = getStrmFileName(relName)
+	}
+	return filepath.Join(relDir, newName)
+}
+
+// localArtifactExists 判断增量跳过候选的本地产物是否仍存在
+// （STRM → 目标 STRM 路径；下载 → 目标真实文件路径）。
+// 本地被误删的条目不能跳过，否则永远补不回来（漏生成无法自愈）。
+func localArtifactExists(task *Task, strmTemplate string, f *fileItem) bool {
+	var rel string
+	switch f.Kind {
+	case kindStrm:
+		rel = resolveStrmRelPath(strmTemplate, task.Account, f)
+	case kindDownload:
+		rel = f.RelPath
+	default:
+		return true
+	}
+	if rel == "" {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(task.TargetPath, rel))
+	return err == nil
+}
+
+// anyToInt64 把 115 返回的 any 型 id（可能是 string / float64 / int）安全转成 int64。
+// 115 大 cid（19 位）可能超出 float64 精度：一旦被解码成 float64，%v 会输出
+// 科学计数法（如 3.49e+18），再 ParseInt 必然失败并把 cid 当成 0，
+// 导致整棵子树被静默丢弃（表现为大库漏生成）。因此字符串优先、按原样解析。
+func anyToInt64(v any) (int64, bool) {
+	switch x := v.(type) {
+	case nil:
+		return 0, false
+	case int64:
+		return x, true
+	case int:
+		return int64(x), true
+	case int32:
+		return int64(x), true
+	case float64:
+		return int64(x), true
+	case string:
+		s := strings.TrimSpace(x)
+		if s == "" {
+			return 0, false
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		return n, err == nil
+	default:
+		s := strings.TrimSpace(fmt.Sprintf("%v", x))
+		if s == "" {
+			return 0, false
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		return n, err == nil
+	}
+}
+
+// idString 把 any 型 id 规范化为十进制字符串（避免科学计数法写进 DB）。
+// 无法解析时回退 %v，保持与旧行为兼容。
+func idString(v any) string {
+	if n, ok := anyToInt64(v); ok {
+		return strconv.FormatInt(n, 10)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 // writeStrmFile 原子写入 STRM 文件（先写 tmp 再 rename）
 func writeStrmFile(strmPath, content string) error {
 	tmpPath := strmPath + ".tmp"
@@ -346,6 +428,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 		}
 
 		var offset int
+		expectedCount := 0
 		pageMatched := 0
 		for page := 0; ; page++ {
 			resp, err := c115.FsFiles(ctx, strconv.FormatInt(top.cid, 10), 1000, offset, cookie)
@@ -360,7 +443,10 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 			if len(resp.Data) == 0 {
 				break
 			}
-			logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q page=%d offset=%d returned=%d", top.cid, top.relPath, page, offset, len(resp.Data))
+			if resp.Count > 0 {
+				expectedCount = resp.Count
+			}
+			logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q page=%d offset=%d returned=%d count=%d", top.cid, top.relPath, page, offset, len(resp.Data), resp.Count)
 			for _, e := range resp.Data {
 				logger.S().Infof("[listAllFilesRecursive] entry name=%q cid=%v fid=%v fc=%v size=%d pickcode=%q isDir=%v", e.Name, e.CID, e.FID, e.FC, e.Size, e.PickCode, e.IsDir)
 				relName := e.Name
@@ -380,11 +466,14 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 				// isDir 判断：FsFiles 已经基于 cid/fid 做了可靠判定，这里直接复用，不再用 fc 覆盖。
 				isDir := e.IsDir
 				if isDir {
-					cid, _ := strconv.ParseInt(fmt.Sprintf("%v", e.CID), 10, 64)
-					if cid > 0 {
-						stk = append(stk, stackEntry{cid: cid, relPath: relName, parentCID: top.cid})
-						dirCount++
+					cid, ok := anyToInt64(e.CID)
+					if !ok || cid <= 0 {
+						// 解析失败不能再静默 cid=0：那会把整棵子树悄悄丢掉（大库漏生成的直接原因之一）。
+						logger.S().Warnf("[listAllFilesRecursive] 目录 cid 解析失败，跳过整棵子树: cid=%v name=%q relPath=%q", e.CID, e.Name, relName)
+						continue
 					}
+					stk = append(stk, stackEntry{cid: cid, relPath: relName, parentCID: top.cid})
+					dirCount++
 					continue
 				}
 				fileCount++
@@ -417,17 +506,28 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 					Size:      e.Size,
 					Ext:       ext,
 					Kind:      kind,
-					FID:       fmt.Sprintf("%v", e.FID),
+					FID:       idString(e.FID),
 					ParentID:  strconv.FormatInt(top.cid, 10),
 				})
 			}
-			// 翻页
+			// 翻页：优先用 count 判定是否还有下一页。
+			// 仅靠 len<limit 判定，会在 115 未按 limit 返回（单页封顶小于 1000）时提前退出，导致大库漏生成。
 			offset += len(resp.Data)
+			if resp.Count > 0 {
+				if offset >= resp.Count {
+					break
+				}
+				continue
+			}
 			if len(resp.Data) < 1000 {
 				break
 			}
 		}
-		logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q pageMatched=%d", top.cid, top.relPath, pageMatched)
+		// 每目录对账：累计返回条目数与 API 的 count 不一致时告警，便于现场定位漏扫
+		if expectedCount > 0 && offset < expectedCount {
+			logger.S().Warnf("[listAllFilesRecursive] cid=%d relPath=%q 分页未取全: returned=%d count=%d（疑似漏扫）", top.cid, top.relPath, offset, expectedCount)
+		}
+		logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q pageMatched=%d returned=%d count=%d", top.cid, top.relPath, pageMatched, offset, expectedCount)
 	}
 	return out, nil
 }

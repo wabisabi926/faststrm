@@ -292,6 +292,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			incremental = false
 		} else if len(snap) > 0 {
 			skipped := 0
+			repaired := 0
+			strmTemplate := settings.Strm.StrmFilenameTemplate
 			for _, f := range fileEntries {
 				// kindSkip 已跳过的不重复处理（黑名单/过小的）
 				if f.Kind == kindSkip {
@@ -300,9 +302,19 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				if se, ok := snap[f.CloudPath]; ok &&
 					se.PickCode == f.PickCode &&
 					se.FileName == f.Name {
+					// 增量跳过前必须确认本地产物仍存在：本地 STRM/文件被误删后，
+					// 若仅凭快照命中就跳过，将永远不会被补回（漏生成无法自愈）。
+					if !localArtifactExists(task, strmTemplate, f) {
+						repaired++
+						continue
+					}
 					f.Kind = kindSkip
 					skipped++
 				}
+			}
+			if repaired > 0 {
+				sseServer.EmitLog(task.ID, "warn", fmt.Sprintf(
+					"增量模式：检测到 %d 个文件本地缺失，已强制重新生成/下载（不跳过）", repaired))
 			}
 			if skipped > 0 {
 				sseServer.EmitLog(task.ID, "info", fmt.Sprintf(
@@ -490,27 +502,12 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		// P2-1：统一用 WorkerPool，不再每处手写 sem+wg 模板
 		pool := concurrency.NewPool(strmWorkers)
 		skipped := new(int64)
+		writeFailed := new(int64)
 		for _, f := range strmFiles {
 			f := f
 			pool.Submit(func() error {
 				// P1-4 文件名模板优先，否则回退默认（.iso 保留双扩展名）
-				var strmRelPath string
-				if strmFilenameTemplate != "" {
-					relDir, relName := filepath.Split(f.RelPath)
-					ext := strings.ToLower(filepath.Ext(f.Name))
-					stem := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
-					if strings.EqualFold(ext, ".iso") {
-						stem = stem + ".iso"
-					}
-					newName := model.RenderStrmFilenameTemplate(strmFilenameTemplate, f.Name, ext, stem, task.Account)
-					if newName == "" {
-						newName = getStrmFileName(relName)
-					}
-					strmRelPath = filepath.Join(relDir, newName)
-				} else {
-					// 默认：正确处理 .iso 双扩展名：f.RelPath = "sub/game.iso" → "sub/game.iso.strm"
-					strmRelPath = replaceRelPathExtToStrm(f.RelPath)
-				}
+				strmRelPath := resolveStrmRelPath(strmFilenameTemplate, task.Account, f)
 				savePath := filepath.Join(task.TargetPath, strmRelPath)
 				// 对齐 MoviePilot：overwrite_mode=="never" 且文件已存在 → 跳过
 				if overwriteNever {
@@ -521,15 +518,18 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				}
 				content, cerr := buildStrmContent(task, f, resolved, strmUrlTemplate)
 				if cerr != nil {
+					atomic.AddInt64(writeFailed, 1)
 					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("build strm %s: %v", f.RelPath, cerr))
 					return nil
 				}
 				if cerr = ensureDir(filepath.Dir(savePath)); cerr != nil {
+					atomic.AddInt64(writeFailed, 1)
 					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("mkdir %s: %v", filepath.Dir(savePath), cerr))
 					return nil
 				}
 				// 原子写入：先写 tmp 再 rename，避免并发读到半截文件
 				if cerr = writeStrmFile(savePath, content); cerr != nil {
+					atomic.AddInt64(writeFailed, 1)
 					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("write %s: %v", savePath, cerr))
 					return nil
 				}
@@ -558,6 +558,12 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		pool.Wait()
 		if overwriteNever && skipped != nil && *skipped > 0 {
 			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("overwrite=never：已跳过 %d 个已存在 STRM 文件", *skipped))
+		}
+		if writeFailed != nil && *writeFailed > 0 {
+			// 写入失败此前只打日志、不计数，导致任务显示成功但实际漏了一批文件。
+			msg := fmt.Sprintf("STRM 生成失败 %d 个（详见上方错误日志），请检查目标目录权限/磁盘空间后重跑", *writeFailed)
+			logger.S().Errorf("[Task] %s", msg)
+			sseServer.EmitLog(task.ID, "warn", msg)
 		}
 	}
 
