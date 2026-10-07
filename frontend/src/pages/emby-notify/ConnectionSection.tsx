@@ -82,7 +82,7 @@ export function ConnectionSection({
             <span className="min-w-0 flex-1">
               <span className="text-sm font-medium">Emby 反向代理</span>
               <span className="block text-xs text-muted-foreground mt-0.5">
-                开启后 Emby 网页端播放 STRM 会重定向到网盘直链：禁转码、流量不走 NAS。Kodi/next-gen 直接读 STRM，无需开启
+                开启后 Emby 网页端播放 STRM 会重定向到网盘直链：禁转码、流量不走 NAS。Emby for Kodi Next Gen 直接读 STRM，无需开启
               </span>
             </span>
           </label>
@@ -100,7 +100,7 @@ export function ConnectionSection({
               />
               <p className="text-xs text-muted-foreground leading-relaxed">
                 与 Emby 本体端口（如 8096）不同，填一个空闲端口即可（默认 8097）。
-                启用后，将 Emby for Kodi 的服务器地址改为：
+                启用后，将 Emby for Kodi Next Gen 的服务器地址改为：
                 <code className="block bg-muted px-1.5 py-0.5 rounded mt-1 break-all font-mono text-[11px]">
                   http://{settings.url
                     ?.replace(/^https?:\/\//, "")
