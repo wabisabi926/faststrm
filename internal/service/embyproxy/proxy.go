@@ -1478,10 +1478,17 @@ func (p *Proxy) fetchPlaybackInfoFallback(ctx context.Context, r *http.Request, 
 	return strmSourceMeta{}
 }
 
+// staticDirectStreamRE 匹配反代自己生成的直链流请求 /videos/{id}/stream、/audio/{id}/stream。
+// 与 mediaRoutePatterns 保持一致，兼容客户端带上的可选 /emby/ 前缀：
+// Emby Web 的 API 基址含 /emby，会把改写的 DirectStreamUrl 拼成
+// /emby/videos/{id}/stream，若不识别则该请求会静默透传给 Emby Server，
+// 由其 ffmpeg 拉流（UA=Lavf）失败，表现为「无兼容的流」。
+// 同时容忍可选的容器后缀（/stream.mkv 等别名）。
+var staticDirectStreamRE = regexp.MustCompile(`^/(?:emby/)?(?:videos|audio)/[^/]+/stream(?:\.[a-z0-9]+)?$`)
+
 // isStaticDirectStream 判断是否为反代自己生成的直链流请求（/videos/ 或 /audio/ 且 Static=true）
 func isStaticDirectStream(path string, r *http.Request) bool {
-	lower := strings.ToLower(path)
-	if !strings.HasPrefix(lower, "/videos/") && !strings.HasPrefix(lower, "/audio/") {
+	if !staticDirectStreamRE.MatchString(strings.ToLower(path)) {
 		return false
 	}
 	return strings.EqualFold(r.URL.Query().Get("Static"), "true")
