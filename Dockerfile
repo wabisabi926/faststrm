@@ -5,7 +5,7 @@
 # =============================================
 
 # ---------- 阶段1: 构建 Go 二进制 ----------
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 ENV TZ=Asia/Shanghai \
     CGO_ENABLED=0
@@ -22,11 +22,12 @@ RUN go mod download
 
 COPY . .
 
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=dev
 ARG BUILD_DATE
 
-RUN GOOS=linux GOARCH=${TARGETARCH} \
+RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath \
     -ldflags="-s -w \
       -X 'github.com/wabisabi926/faststrm/internal/handler.appVersion=${VERSION}' \
@@ -52,6 +53,21 @@ COPY docker-entrypoint.sh .
 COPY .config/ ./.config/
 # 防御性 CRLF → LF 转换：即使 .gitattributes 未生效（Windows clone autocrlf=true），也保证入口脚本是 LF
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x faststrm docker-entrypoint.sh
+
+RUN set -eu; \
+    runtime_arch="$(apk --print-arch)"; \
+    elf_machine="$(od -An -tu1 -j18 -N1 /app/faststrm | tr -dc '0-9')"; \
+    case "${runtime_arch}" in \
+      x86_64)      expect=62 ;; \
+      aarch64)     expect=183 ;; \
+      armv7|armhf) expect=40 ;; \
+      *) echo "arch gate: unsupported runtime arch ${runtime_arch}"; exit 1 ;; \
+    esac; \
+    if [ "${elf_machine}" != "${expect}" ]; then \
+      echo "arch gate FAILED: runtime ${runtime_arch} expects ELF e_machine ${expect}, got ${elf_machine} for /app/faststrm"; \
+      exit 1; \
+    fi; \
+    echo "arch gate passed: ${runtime_arch} ELF e_machine=${elf_machine}"
 
 RUN addgroup -g 12331 faststrm && \
     adduser -D -u 12331 -G faststrm faststrm
