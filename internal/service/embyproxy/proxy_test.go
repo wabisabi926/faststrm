@@ -1031,6 +1031,16 @@ func TestHandler_OnlyInterceptStaticStreams(t *testing.T) {
 		t.Logf("✅ Static=true stream intercepted → %s", rr.Header().Get("Location"))
 	})
 
+	t.Run("Static=true + /emby/ 前缀 → 反代拦截并 302（回归）", func(t *testing.T) {
+		req := httptest.NewRequest("GET", emby.URL+"/emby/Videos/123/stream?Static=true&MediaSourceId=src1", nil)
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusFound {
+			t.Fatalf("status = %d, want 302 (intercepted with /emby prefix)", rr.Code)
+		}
+		t.Logf("✅ /emby/ 前缀 stream intercepted → %s", rr.Header().Get("Location"))
+	})
+
 	t.Run("Static=false → 透传给 Emby（转码路径不被劫持）", func(t *testing.T) {
 		req := httptest.NewRequest("GET", emby.URL+"/Videos/123/stream?MediaSourceId=src1&transcoding=true", nil)
 		rr := httptest.NewRecorder()
@@ -1487,6 +1497,38 @@ func TestMatchMediaRoute(t *testing.T) {
 		}
 	}
 	t.Logf("✅ matchMediaRoute 矩阵通过")
+}
+
+// TestIsStaticDirectStream 覆盖 /emby/ 前缀与容器后缀场景：
+// 客户端（Emby Web）会把改写的 DirectStreamUrl 拼成 /emby/videos/{id}/stream，
+// 必须被拦截，否则请求静默透传给 Emby Server → ffmpeg 拉流 → 「无兼容的流」。
+func TestIsStaticDirectStream(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/videos/123/stream?Static=true", true},
+		{"/Videos/123/Stream?Static=true", true},
+		{"/emby/videos/123/stream?Static=true", true},
+		{"/emby/Videos/123/stream?Static=true&MediaSourceId=src1", true},
+		{"/emby/audio/456/stream?Static=true", true},
+		{"/emby/videos/123/stream.mkv?Static=true", true},
+		// 生产环境真实复现 URL（外部播放器/Web 播放器均为此形态）
+		{"http://192.168.50.250:8097/emby/videos/168357/stream.mkv?Static=true&MediaSourceId=mediasource_168357&api_key=c6fb64e19ec7479db5b3dcdc15ae90bd", true},
+		{"/emby/videos/123/stream?Static=false", false},
+		{"/emby/videos/123/stream", false},                  // 无 Static
+		{"/emby/videos/123/master.m3u8?Static=true", false}, // HLS 转码
+		{"/emby/videos/123/movie.mkv?Static=true", false},   // 由 matchMediaRoute 管辖
+		{"/emby/items/789/download?Static=true", false},     // 非 stream 路径
+		{"/videos/123/stream/extra?Static=true", false},     // 多余层级
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest("GET", c.path, nil)
+		if got := isStaticDirectStream(req.URL.Path, req); got != c.want {
+			t.Errorf("isStaticDirectStream(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+	t.Logf("✅ isStaticDirectStream 矩阵通过")
 }
 
 func TestExtractAPIKey(t *testing.T) {
