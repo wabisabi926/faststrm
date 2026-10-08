@@ -1977,3 +1977,141 @@ func TestWarnThrottle(t *testing.T) {
 	}
 	t.Logf("✅ 上游告警抑制：窗口内去重、跨窗口报告抑制条数、key 数受上限约束")
 }
+
+// ================================================================
+// 上游请求/响应头收敛（A1/A2/A3）
+// ================================================================
+
+func TestStripConditionalRequestHeaders(t *testing.T) {
+	h := http.Header{}
+	h.Set("If-Modified-Since", "Mon, 02 Jan 2006 15:04:05 GMT")
+	h.Set("If-None-Match", `"v1"`)
+	h.Set("If-Range", `"v1"`)
+	h.Set("Authorization", "Bearer x")
+
+	stripConditionalRequestHeaders(h)
+
+	for _, k := range []string{"If-Modified-Since", "If-None-Match", "If-Range"} {
+		if got := h.Get(k); got != "" {
+			t.Errorf("%s 应被剥离，got %q", k, got)
+		}
+	}
+	if h.Get("Authorization") == "" {
+		t.Error("无关请求头不应被误删")
+	}
+	t.Logf("✅ 条件请求头剥离：命中项删除、其他头保留")
+}
+
+func TestStripBodyValidators(t *testing.T) {
+	h := http.Header{}
+	h.Set("Content-MD5", "Q2hlY2sgSW50ZWdyaXR5IQ==")
+	h.Set("ETag", `"v1"`)
+	h.Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+	h.Set("Content-Type", "text/html")
+
+	stripBodyValidators(h)
+
+	for _, k := range []string{"Content-MD5", "ETag", "Last-Modified"} {
+		if got := h.Get(k); got != "" {
+			t.Errorf("%s 应被剥离，got %q", k, got)
+		}
+	}
+	if h.Get("Content-Type") == "" {
+		t.Error("无关响应头不应被误删")
+	}
+	t.Logf("✅ 正文校验头剥离：Content-MD5/ETag/Last-Modified 删除、其他头保留")
+}
+
+func TestNewUpstreamTransport_NoEnvProxy(t *testing.T) {
+	tr := newUpstreamTransport()
+	if tr == nil {
+		t.Fatal("transport 不应为 nil")
+	}
+	if tr.Proxy != nil {
+		t.Error("上游 transport 必须显式关闭环境变量代理（Proxy=nil）")
+	}
+	if !tr.ForceAttemptHTTP2 {
+		t.Error("应保留 DefaultTransport 默认（ForceAttemptHTTP2=true）")
+	}
+	if newUpstreamTransport() == tr {
+		t.Error("每次应返回独立 transport，避免 client 间共享可变状态")
+	}
+	t.Logf("✅ 上游 transport：直连（Proxy=nil）、保留默认、实例独立")
+}
+
+func TestServePatchedJS_StripsValidatorsAndConditionalHeaders(t *testing.T) {
+	var gotIfNoneMatch, gotIfModifiedSince string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIfNoneMatch = r.Header.Get("If-None-Match")
+		gotIfModifiedSince = r.Header.Get("If-Modified-Since")
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("ETag", `"js-v1"`)
+		w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+		w.Header().Set("Content-MD5", "Q2hlY2sgSW50ZWdyaXR5IQ==")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`var a = foo.IsRemote && "DirectPlay" === foo ? null : "anonymous";`))
+	}))
+	defer upstream.Close()
+
+	p, err := New(upstream.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.web/web/modules/htmlvideoplayer/basehtmlplayer.js", nil)
+	req.Header.Set("If-None-Match", `"js-v1"`)
+	req.Header.Set("If-Modified-Since", "Mon, 02 Jan 2006 15:04:05 GMT")
+	rr := httptest.NewRecorder()
+	p.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if gotIfNoneMatch != "" || gotIfModifiedSince != "" {
+		t.Errorf("转发时应剥离条件请求头，upstream 仍收到 If-None-Match=%q If-Modified-Since=%q",
+			gotIfNoneMatch, gotIfModifiedSince)
+	}
+	for _, k := range []string{"ETag", "Last-Modified", "Content-MD5"} {
+		if v := rr.Header().Get(k); v != "" {
+			t.Errorf("JS 正文改写后应剥离校验头 %s，got %q", k, v)
+		}
+	}
+	if strings.Contains(rr.Body.String(), `"anonymous"`) {
+		t.Errorf("JS 应被修补（去掉 anonymous），got: %s", rr.Body.String())
+	}
+	t.Logf("✅ servePatchedJS：条件头不进上游、校验头不出响应、正文已修补")
+}
+
+func TestServeHTMLInjected_StripsBodyValidators(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("ETag", `"html-v1"`)
+		w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+		w.Header().Set("Content-MD5", "Q2hlY2sgSW50ZWdyaXR5IQ==")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html><head></head><body>Emby</body></html>"))
+	}))
+	defer upstream.Close()
+
+	p, err := New(upstream.URL)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.web/web/index.html", nil)
+	rr := httptest.NewRecorder()
+	p.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), crossOriginInterceptMarker) {
+		t.Fatalf("应注入 crossOrigin 脚本，got: %s", rr.Body.String())
+	}
+	for _, k := range []string{"ETag", "Last-Modified", "Content-MD5"} {
+		if v := rr.Header().Get(k); v != "" {
+			t.Errorf("HTML 正文改写后应剥离校验头 %s，got %q", k, v)
+		}
+	}
+	t.Logf("✅ serveHTMLInjected：注入生效且校验头（含 Content-MD5）已剥离")
+}
