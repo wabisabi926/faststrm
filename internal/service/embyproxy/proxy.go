@@ -17,8 +17,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -346,6 +348,81 @@ func (p *Proxy) SetProxyPort(port int) {
 }
 
 // ============================================================
+// 上游告警：客户端取消过滤 + 重复抑制
+// 上游 Emby 停机时客户端（Emby Web 仪表盘）会高频轮询，若每条都打 WARN 会刷屏，
+// 且把「客户端主动断开」误报为代理失败，淹没真正的故障。此处统一收敛。
+// ============================================================
+
+// upstreamWarnWindow 同一上游故障告警的最小重复间隔。
+const upstreamWarnWindow = 30 * time.Second
+
+// upstreamWarnMaxKeys 抑制器 key 数上限，防止异常路径撑爆 map。
+const upstreamWarnMaxKeys = 256
+
+// upstreamWarn 全局上游告警抑制器。
+var upstreamWarn = newWarnThrottle(upstreamWarnWindow)
+
+// isClientGone 判断错误是否由「客户端主动断开」引起（切页/刷新/取消），
+// 而非上游 Emby 故障。此类错误不应记为 WARN。
+func isClientGone(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed)
+}
+
+// warnUpstream 记录一次上游失败告警：客户端取消不打印，同一 key 的重复告警按窗口抑制。
+func warnUpstream(key, msg string) {
+	if emit, dropped := upstreamWarn.allow(key); emit {
+		if dropped > 0 {
+			logger.S().Warnf("%s（同类告警已抑制 %d 条）", msg, dropped)
+			return
+		}
+		logger.S().Warnf("%s", msg)
+	}
+}
+
+// warnThrottle 对相同 key 的告警做窗口抑制：窗口内只放行第一条，其余累计；
+// 下一次放行时一并报告被抑制的条数。
+type warnThrottle struct {
+	mu     sync.Mutex
+	window time.Duration
+	seen   map[string]*throttleState
+}
+
+type throttleState struct {
+	last    time.Time
+	dropped int
+}
+
+func newWarnThrottle(window time.Duration) *warnThrottle {
+	return &warnThrottle{window: window, seen: make(map[string]*throttleState)}
+}
+
+// allow 返回本次是否放行打印，以及自上次放行以来被抑制的条数。
+func (t *warnThrottle) allow(key string) (emit bool, dropped int) {
+	if t == nil {
+		return true, 0
+	}
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := t.seen[key]
+	if st == nil {
+		if len(t.seen) >= upstreamWarnMaxKeys {
+			t.seen = make(map[string]*throttleState)
+		}
+		t.seen[key] = &throttleState{last: now}
+		return true, 0
+	}
+	if now.Sub(st.last) < t.window {
+		st.dropped++
+		return false, 0
+	}
+	dropped = st.dropped
+	st.dropped = 0
+	st.last = now
+	return true, dropped
+}
+
+// ============================================================
 // Handler — 返回反代 HTTP handler
 // ============================================================
 
@@ -373,7 +450,9 @@ func (p *Proxy) Handler() http.Handler {
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		logger.S().Warnf("[EmbyProxy] 代理失败 %s %s: %v", r.Method, r.URL.Path, err)
+		if !isClientGone(err) {
+			warnUpstream(r.Method+" "+r.URL.Path, fmt.Sprintf("[EmbyProxy] 代理失败 %s %s: %v", r.Method, r.URL.Path, err))
+		}
 		http.Error(w, fmt.Sprintf("Emby Proxy Error: %v", err), http.StatusBadGateway)
 	}
 

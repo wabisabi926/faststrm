@@ -48,7 +48,9 @@ func (p *Proxy) serveSystemInfo(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		logger.S().Warnf("[EmbyProxy] system/info 请求失败: %v", err)
+		if !isClientGone(err) {
+			warnUpstream("system/info", "[EmbyProxy] system/info 请求失败: "+err.Error())
+		}
 		http.Error(w, "Emby Error: "+err.Error(), http.StatusBadGateway)
 		return
 	}

@@ -81,7 +81,7 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	backendConn, err := dialEmbyWS(p.embyHost)
 	if err != nil {
-		logger.S().Warnf("[EmbyProxy][ws] 连接上游失败 %s: %v", p.embyHost, err)
+		warnUpstream("ws-dial", "[EmbyProxy][ws] 连接上游失败 "+p.embyHost+": "+err.Error())
 		http.Error(w, "WebSocket upstream dial failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
