@@ -2115,3 +2115,124 @@ func TestServeHTMLInjected_StripsBodyValidators(t *testing.T) {
 	}
 	t.Logf("✅ serveHTMLInjected：注入生效且校验头（含 Content-MD5）已剥离")
 }
+
+// ================================================================
+// 反代优化 O1/O2：媒体 302 缓存有效期提示 + 全局 Referrer-Policy
+// ================================================================
+
+// mediaRedirectCacheControl：带签名 t 参数时按剩余有效期封顶，无法解析签名则不缓存
+func TestMediaRedirectCacheControl(t *testing.T) {
+	longFuture := time.Now().Add(10 * time.Minute).Unix()
+	past := time.Now().Add(-1 * time.Minute).Unix()
+
+	cases := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"无t参数→no-store", "https://cdn.115.com/x.mkv", "no-store"},
+		{"t非法→no-store", "https://cdn.115.com/x.mkv?t=abc", "no-store"},
+		{"t已过期→no-store", fmt.Sprintf("https://cdn.115.com/x.mkv?t=%d", past), "no-store"},
+		{"URL解析失败→no-store", "http://[::1", "no-store"},
+		{"t远期→封顶playbackURLCacheTTL", fmt.Sprintf("https://cdn.115.com/x.mkv?t=%d", longFuture), "private, max-age=90"},
+	}
+	for _, c := range cases {
+		if got := mediaRedirectCacheControl(c.url); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// t 剩余约 30s（< 90s）→ max-age 取剩余时长
+	got := mediaRedirectCacheControl(fmt.Sprintf("https://cdn.115.com/x.mkv?t=%d", time.Now().Add(30*time.Second).Unix()))
+	var n int
+	if _, err := fmt.Sscanf(got, "private, max-age=%d", &n); err != nil {
+		t.Fatalf("t 有效时应为 private, max-age=N，got %q (%v)", got, err)
+	}
+	if n < 27 || n > 30 {
+		t.Errorf("max-age 应≈30（剩余签名有效期），got %d", n)
+	}
+	t.Logf("✅ mediaRedirectCacheControl 矩阵通过（有效t→private, max-age=剩余；其余→no-store）")
+}
+
+// 媒体 302（缓存命中 + 解析后）都应下发 Cache-Control
+func TestHandleMediaStream_302SetsCacheControl(t *testing.T) {
+	strmSrc := mockStrmSrc(t, "")
+	defer strmSrc.Close()
+	strmURL := strmSrc.URL + "/video.mkv"
+	body := buildStrmPlaybackInfoResp(strmURL, "src1")
+
+	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+	defer emby.Close()
+
+	proxy, _ := New(emby.URL)
+
+	piReq := httptest.NewRequest("POST", emby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
+	proxy.Handler().ServeHTTP(httptest.NewRecorder(), piReq)
+
+	// 首次：解析重定向链后 302
+	rr := httptest.NewRecorder()
+	proxy.HandleMediaStream(rr, httptest.NewRequest("GET", emby.URL+"/Videos/123/stream?Static=true&MediaSourceId=src1", nil))
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rr.Code)
+	}
+	// mockStrmSrc 直链无签名 t 参数 → no-store（避免缓存短时直链）
+	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("无签名 t 参数的直链 302 应 no-store，got %q", cc)
+	}
+
+	// 第二次：缓存命中 302，同样应带 Cache-Control
+	rr2 := httptest.NewRecorder()
+	proxy.HandleMediaStream(rr2, httptest.NewRequest("GET", emby.URL+"/Videos/123/stream?Static=true&MediaSourceId=src1", nil))
+	if rr2.Code != http.StatusFound {
+		t.Fatalf("cache hit status = %d, want 302", rr2.Code)
+	}
+	if cc := rr2.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("缓存命中的 302 也应带 Cache-Control，got %q", cc)
+	}
+	t.Logf("✅ 媒体 302 均下发 Cache-Control（解析后 + 缓存命中）")
+}
+
+// 全局 Referrer-Policy: no-referrer（302 与 HTML 透传分支均生效）
+func TestHandler_SetsReferrerPolicy(t *testing.T) {
+	strmSrc := mockStrmSrc(t, "")
+	defer strmSrc.Close()
+	strmURL := strmSrc.URL + "/video.mkv"
+	body := buildStrmPlaybackInfoResp(strmURL, "src1")
+
+	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+	defer emby.Close()
+
+	proxy, _ := New(emby.URL)
+
+	t.Run("media_302", func(t *testing.T) {
+		piReq := httptest.NewRequest("POST", emby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
+		proxy.Handler().ServeHTTP(httptest.NewRecorder(), piReq)
+
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, httptest.NewRequest("GET", emby.URL+"/Videos/123/stream?Static=true&MediaSourceId=src1", nil))
+		if rr.Code != http.StatusFound {
+			t.Fatalf("status = %d, want 302", rr.Code)
+		}
+		if got := rr.Header().Get("Referrer-Policy"); got != "no-referrer" {
+			t.Errorf("302 响应应带 Referrer-Policy: no-referrer，got %q", got)
+		}
+	})
+
+	t.Run("html_passthrough", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		proxy.Handler().ServeHTTP(rr, httptest.NewRequest("GET", emby.URL+"/web/index.html", nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rr.Code)
+		}
+		if got := rr.Header().Get("Referrer-Policy"); got != "no-referrer" {
+			t.Errorf("HTML 透传响应应带 Referrer-Policy: no-referrer，got %q", got)
+		}
+	})
+	t.Logf("✅ 全局 Referrer-Policy: no-referrer（302 与 HTML 分支均生效）")
+}
