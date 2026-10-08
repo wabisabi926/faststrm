@@ -288,7 +288,8 @@ func New(embyHost string, forceProxyUaTokens ...[]string) (*Proxy, error) {
 
 	// Client A: 用于 Emby 反向代理透传，不跟随重定向
 	proxyHTTPClient := &http.Client{
-		Timeout: 120 * time.Second,
+		Timeout:   120 * time.Second,
+		Transport: newUpstreamTransport(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse // 不跟随重定向，让客户端自己 302
 		},
@@ -297,7 +298,8 @@ func New(embyHost string, forceProxyUaTokens ...[]string) (*Proxy, error) {
 	// Client B: 用于解析重定向链拿最终 CDN URL
 	// 对齐 MoviePilot httpx.AsyncClient(follow_redirects=True)
 	followClient := &http.Client{
-		Timeout: 30 * time.Second, // 单次超时由 resolveRedirectChain 自己控制
+		Timeout:   30 * time.Second, // 单次超时由 resolveRedirectChain 自己控制
+		Transport: newUpstreamTransport(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("too many redirects: %d", len(via))
@@ -316,7 +318,7 @@ func New(embyHost string, forceProxyUaTokens ...[]string) (*Proxy, error) {
 			IdleConnTimeout:       90 * time.Second,
 			ResponseHeaderTimeout: 0,
 			DisableCompression:    true,
-			Proxy:                 http.ProxyFromEnvironment,
+			Proxy:                 nil, // 直连上游，避免环境变量代理误伤内网 Emby
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
@@ -423,6 +425,42 @@ func (t *warnThrottle) allow(key string) (emit bool, dropped int) {
 }
 
 // ============================================================
+// 上游请求/响应头收敛
+// ============================================================
+
+// newUpstreamTransport 返回直连上游 Emby 的 transport。
+// 显式关闭环境变量代理：若部署机设置了 HTTP_PROXY/HTTPS_PROXY，内网 Emby（如 192.168.x.x）
+// 会被错误地走代理，导致反代 502。对齐 MoviePilot / QMediaSync 显式控制代理的做法。
+func newUpstreamTransport() *http.Transport {
+	var t *http.Transport
+	if def, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = def.Clone()
+	} else {
+		t = &http.Transport{}
+	}
+	t.Proxy = nil
+	return t
+}
+
+// stripConditionalRequestHeaders 剥离条件请求头。
+// 转发 JS/HTML 时若带上 If-Modified-Since / If-None-Match，上游可能直接返回 304，
+// 我们将拿不到正文，crossOrigin 注入 / JS 补丁随之失效。
+func stripConditionalRequestHeaders(h http.Header) {
+	h.Del("If-Modified-Since")
+	h.Del("If-None-Match")
+	h.Del("If-Range")
+}
+
+// stripBodyValidators 剥离正文校验头。
+// 一旦我们改写了响应正文（注入脚本 / 打补丁），原 ETag/Last-Modified/Content-MD5 即失效，
+// 若继续下发，中间缓存可能命中旧版本，导致补丁不生效。
+func stripBodyValidators(h http.Header) {
+	h.Del("Content-MD5")
+	h.Del("ETag")
+	h.Del("Last-Modified")
+}
+
+// ============================================================
 // Handler — 返回反代 HTTP handler
 // ============================================================
 
@@ -438,6 +476,7 @@ func (p *Proxy) Handler() http.Handler {
 		})
 	}
 	proxy := httputil.NewSingleHostReverseProxy(u)
+	proxy.Transport = newUpstreamTransport()
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
@@ -867,6 +906,8 @@ func (p *Proxy) serveHTMLInjected(w http.ResponseWriter, r *http.Request) {
 	req.Header.Del("Host")
 	// 去掉 Accept-Encoding，确保上游返回未压缩内容以便修改 body
 	req.Header.Del("Accept-Encoding")
+	// 去掉条件请求头，避免上游返回 304 导致拿不到正文、无法注入
+	stripConditionalRequestHeaders(req.Header)
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -908,8 +949,7 @@ func (p *Proxy) serveHTMLInjected(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
-		w.Header().Del("ETag")
-		w.Header().Del("Last-Modified")
+		stripBodyValidators(w.Header())
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(out)
@@ -929,6 +969,8 @@ func (p *Proxy) servePatchedJS(w http.ResponseWriter, r *http.Request) {
 	req.Header = r.Header.Clone()
 	req.Header.Del("Host")
 	req.Header.Del("Accept-Encoding")
+	// 去掉条件请求头，避免上游返回 304 导致拿不到正文、无法打补丁
+	stripConditionalRequestHeaders(req.Header)
 
 	resp, err := p.followRedirectClient.Do(req)
 	if err != nil {
@@ -978,6 +1020,7 @@ func (p *Proxy) servePatchedJS(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
+		stripBodyValidators(w.Header())
 		logger.S().Infof("[EmbyProxy] 已修补 JS: path=%s", r.URL.Path)
 	}
 	w.WriteHeader(http.StatusOK)
