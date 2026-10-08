@@ -4,13 +4,19 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // SettingsStore settings.json 读写（不加密，因为是通用配置，不含用户密钥字段）
+//
+// 并发安全：异步 webhook 处理协程与 HTTP handler 会同时读/写同一份 settings.json，
+// 必须串行化访问，否则读侧可能读到写侧截断到 0 字节的半截文件，
+// 进而触发迁移回写把真实配置覆盖回默认值（丢密钥等）。
 type SettingsStore struct {
+	mu   sync.Mutex
 	salt string
 	path string
 }
@@ -25,6 +31,9 @@ func NewSettingsStore(salt, configDir string) *SettingsStore {
 
 // ReadSettings 读取 Settings，不存在或权限不足则返回默认值
 func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -65,7 +74,7 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	// 迁移后如果有变更，回写 settings.json（保持幂等，下次启动不会重复触发）
 	if changed {
 		logger.S().Infof("[SettingsStore] 迁移: 合并新默认值到 settings.json 并回写")
-		if err := s.SaveSettings(&out); err != nil {
+		if err := s.saveLocked(&out); err != nil {
 			logger.S().Warnf("[SettingsStore] 迁移回写 settings.json 失败: %v", err)
 		}
 	}
@@ -121,6 +130,14 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 
 // SaveSettings 保存 Settings
 func (s *SettingsStore) SaveSettings(cfg *model.Settings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked(cfg)
+}
+
+// saveLocked 落盘（调用方需持有 s.mu）：先写临时文件再原子重命名，
+// 保证任何时刻读到的 settings.json 都是完整内容（不会被写到一半）。
+func (s *SettingsStore) saveLocked(cfg *model.Settings) error {
 	if cfg == nil {
 		cfg = model.DefaultSettings()
 	}
@@ -131,7 +148,15 @@ func (s *SettingsStore) SaveSettings(cfg *model.Settings) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0o600)
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // sliceContains 判断字符串切片是否包含目标值
