@@ -3,6 +3,7 @@ package embyproxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -1899,4 +1900,80 @@ func TestISOPlayback_EndToEnd(t *testing.T) {
 	})
 
 	t.Logf("✅ ISO 播放链路端到端验证通过：ISO 走 seek 代理流(200/206)且 Range 透传，mkv 仍走 302")
+}
+
+// ================================================================
+// 上游告警收敛：客户端取消过滤 + 重复抑制
+// ================================================================
+
+// isClientGone 只应把「客户端主动断开」判为真，真实上游故障不受影响
+func TestIsClientGone(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"canceled", context.Canceled, true},
+		{"wrapped_canceled", fmt.Errorf("proxy: %w", context.Canceled), true},
+		{"net_closed", net.ErrClosed, true},
+		{"deadline", context.DeadlineExceeded, false},
+		{"dial_refused", errors.New("dial tcp 192.168.50.250:8096: connect: connection refused"), false},
+		{"nil", nil, false},
+	}
+	for _, c := range cases {
+		if got := isClientGone(c.err); got != c.want {
+			t.Errorf("isClientGone(%s) = %v, want %v", c.name, got, c.want)
+		}
+	}
+	t.Logf("✅ 客户端取消过滤：canceled/net.ErrClosed 判真，上游故障/超时不受影响")
+}
+
+// warnThrottle 窗口内抑制同类告警、跨窗口恢复并报告抑制条数
+func TestWarnThrottle(t *testing.T) {
+	// nil 抑制器：始终放行（防御性，避免调用方未初始化时静默丢日志）
+	var nilThrottle *warnThrottle
+	if emit, _ := nilThrottle.allow("k"); !emit {
+		t.Error("nil 抑制器应始终放行")
+	}
+
+	th := newWarnThrottle(time.Minute)
+	if emit, dropped := th.allow("a"); !emit || dropped != 0 {
+		t.Errorf("首次应放行且无抑制，got emit=%v dropped=%d", emit, dropped)
+	}
+	for i := 0; i < 3; i++ {
+		if emit, _ := th.allow("a"); emit {
+			t.Error("窗口内重复告警应被抑制")
+		}
+	}
+	if emit, _ := th.allow("b"); !emit {
+		t.Error("不同 key 不应被相互抑制")
+	}
+
+	// 把 a 的最近放行时间拨到窗口之外 → 再次放行并报告累计的 3 条
+	th.mu.Lock()
+	th.seen["a"].last = time.Now().Add(-2 * time.Minute)
+	th.mu.Unlock()
+	if emit, dropped := th.allow("a"); !emit || dropped != 3 {
+		t.Errorf("跨窗口应放行且报告抑制 3 条，got emit=%v dropped=%d", emit, dropped)
+	}
+
+	// window<=0：不抑制
+	th0 := newWarnThrottle(0)
+	th0.allow("x")
+	if emit, _ := th0.allow("x"); !emit {
+		t.Error("window=0 时不应抑制")
+	}
+
+	// key 数超上限时重置，避免无界增长
+	thc := newWarnThrottle(time.Minute)
+	for i := 0; i < upstreamWarnMaxKeys+5; i++ {
+		thc.allow("k" + strconv.Itoa(i))
+	}
+	thc.mu.Lock()
+	n := len(thc.seen)
+	thc.mu.Unlock()
+	if n > upstreamWarnMaxKeys {
+		t.Errorf("key 数应受上限约束，got %d", n)
+	}
+	t.Logf("✅ 上游告警抑制：窗口内去重、跨窗口报告抑制条数、key 数受上限约束")
 }
