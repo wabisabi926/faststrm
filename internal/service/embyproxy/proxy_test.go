@@ -1320,7 +1320,7 @@ func TestResolveFileNameFromStrmURL(t *testing.T) {
 	t.Logf("✅ resolveFileNameFromStrmURL 矩阵通过")
 }
 
-// 修复1 验收：STRM URL 的 .iso 能被解析出扩展名 → isSeekRequiredFormat=true
+// 修复1 验收：STRM URL 的扩展名 / Emby Container 字段都能触发 seek 判定，覆盖 ISO/TS/M2TS
 func TestIsSeekRequiredFormat_StrmURL(t *testing.T) {
 	strmURL := "http://host/原盘/movie.iso"
 	name := resolveFileNameFromStrmURL(strmURL)
@@ -1333,7 +1333,39 @@ func TestIsSeekRequiredFormat_StrmURL(t *testing.T) {
 	if isSeekRequiredFormat("", "") {
 		t.Error("空 name 不应识别为 seek 格式")
 	}
-	t.Logf("✅ 修复1：ISO seek 判断来源验证通过")
+
+	// 文件名扩展名来源：ISO/TS/M2TS 需 seek，普通容器不需要
+	byName := []struct {
+		name string
+		want bool
+	}{
+		{"movie.iso", true},
+		{"movie.ts", true},
+		{"movie.m2ts", true},
+		{"movie.mkv", false},
+	}
+	for _, c := range byName {
+		if got := isSeekRequiredFormat("", c.name); got != c.want {
+			t.Errorf("isSeekRequiredFormat(name=%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	// Emby Container 字段来源：iso/ts/m2ts
+	byContainer := []struct {
+		container string
+		want      bool
+	}{
+		{"iso", true},
+		{"ts", true},
+		{"m2ts", true},
+		{"mkv", false},
+	}
+	for _, c := range byContainer {
+		if got := isSeekRequiredFormat(c.container, ""); got != c.want {
+			t.Errorf("isSeekRequiredFormat(container=%q) = %v, want %v", c.container, got, c.want)
+		}
+	}
+	t.Logf("✅ 修复1：ISO/TS/M2TS seek 判断来源验证通过")
 }
 
 // ================================================================
@@ -1513,6 +1545,9 @@ func TestIsStaticDirectStream(t *testing.T) {
 		{"/emby/Videos/123/stream?Static=true&MediaSourceId=src1", true},
 		{"/emby/audio/456/stream?Static=true", true},
 		{"/emby/videos/123/stream.mkv?Static=true", true},
+		{"/emby/videos/123/stream.iso?Static=true", true},  // ISO 原盘
+		{"/emby/videos/123/stream.ts?Static=true", true},   // TS
+		{"/emby/videos/123/stream.m2ts?Static=true", true}, // M2TS
 		// 生产环境真实复现 URL（外部播放器/Web 播放器均为此形态）
 		{"http://192.168.50.250:8097/emby/videos/168357/stream.mkv?Static=true&MediaSourceId=mediasource_168357&api_key=c6fb64e19ec7479db5b3dcdc15ae90bd", true},
 		{"/emby/videos/123/stream?Static=false", false},
@@ -1817,6 +1852,49 @@ func TestISOPlayback_EndToEnd(t *testing.T) {
 		}
 		if loc != strmMkv {
 			t.Errorf("302 Location 应等于 STRM 源 %q，got %q", strmMkv, loc)
+		}
+	})
+
+	// 5. 生产真实形态回归：/emby 前缀 + 裸 /stream（无扩展名）+ Static=true
+	// Emby Web / 原生播放器用的是 forceDirectPlay 注入的 DirectStreamUrl：
+	// /videos/{id}/stream?Static=true（不带扩展名），客户端 API 基址含 /emby，会拼成
+	// /emby/videos/{id}/stream。修复前该路径既不匹配 isStaticDirectStream（缺 /emby 支持），
+	// 又被 matchMediaRoute 主动跳过（裸 /stream 后缀），于是被静默透传给 Emby Server，
+	// 由其 ffmpeg 拉流失败，表现为 8097 端口「无法兼容的流」。
+	// 注意：必须用裸 /stream；带扩展名（如 /stream.iso）会被 matchMediaRoute 命中，无法复现。
+	t.Run("emby_prefix_bare_stream_route", func(t *testing.T) {
+		for _, ext := range []string{"iso", "ts", "m2ts"} {
+			ext := ext
+			t.Run(ext, func(t *testing.T) {
+				src := isoSrc.URL + "/原盘/阿凡达." + ext
+				sid := "src-" + ext
+				eb := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write(buildStrmPlaybackInfoResp(src, sid))
+				})
+				defer eb.Close()
+
+				px, _ := New(eb.URL)
+
+				piReq := httptest.NewRequest("POST", eb.URL+"/Items/777/PlaybackInfo", strings.NewReader("{}"))
+				piRR := httptest.NewRecorder()
+				px.Handler().ServeHTTP(piRR, piReq)
+				if piRR.Code != http.StatusOK {
+					t.Fatalf("PlaybackInfo 应 200，got %d", piRR.Code)
+				}
+
+				streamURL := eb.URL + "/emby/videos/777/stream?Static=true&MediaSourceId=" + sid
+				req := httptest.NewRequest("GET", streamURL, nil)
+				rr := httptest.NewRecorder()
+				px.Handler().ServeHTTP(rr, req)
+
+				if rr.Code != http.StatusOK {
+					t.Fatalf("[%s] /emby 裸 stream 应走 seek 代理流 200（修复前会透传 Emby 而失败），got %d", ext, rr.Code)
+				}
+				if rr.Body.String() != string(content) {
+					t.Errorf("[%s] 代理流内容应等于 STRM 源（修复前透传 Emby 会拿到 PlaybackInfo JSON），got %q", ext, rr.Body.String())
+				}
+			})
 		}
 	})
 
