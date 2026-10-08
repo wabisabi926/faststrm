@@ -499,6 +499,11 @@ func (p *Proxy) Handler() http.Handler {
 	// 分发顺序：WS 升级 → system/info 端口改写 → 外部播放器唤起 → JS 修补（crossOrigin）
 	//          → 媒体流拦截 → 详情页 ExternalUrls 注入 → HTML 注入 → 透传
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 全局收敛 Referrer：Emby Web/播放器向 115 等 CDN 拉流时不应携带反代地址，
+		// 既避免泄露内网地址，也避免被 CDN 作为来源校验拒绝。
+		// 对齐 QMediaSync referrerPolicySetter（Referrer-Policy: no-referrer）。
+		w.Header().Set("Referrer-Policy", "no-referrer")
+
 		path := r.URL.Path
 
 		// 0. WebSocket 升级请求：透明双向转发（Emby 实时通知/进度同步/远程控制依赖此链路）
@@ -1105,6 +1110,38 @@ func (p *Proxy) proxyStreamToStrm(w http.ResponseWriter, r *http.Request, strmUR
 }
 
 // ============================================================
+// 媒体 302 缓存有效期提示
+// ============================================================
+
+// mediaRedirectCacheControl 生成媒体 302 的 Cache-Control。
+// 反代下发的最终直链多为带签名的短时 URL（如 115 的 t 参数）：若客户端/中间缓存
+// 把这次 302 缓存过久，签名过期后起播必然失败。因此把可缓存时长收敛为
+// 「min(反代缓存 TTL, CDN 签名剩余有效期)」；无法解析签名时直接 no-store（不缓存）。
+// 对齐 QMediaSync redirectCacheExpiresAt「以签名到期为准」的策略。
+func mediaRedirectCacheControl(finalURL string) string {
+	parsed, err := url.Parse(finalURL)
+	if err != nil {
+		return "no-store"
+	}
+	tStr := parsed.Query().Get("t")
+	if tStr == "" {
+		return "no-store"
+	}
+	t, err := strconv.ParseInt(tStr, 10, 64)
+	if err != nil {
+		return "no-store"
+	}
+	remain := time.Until(time.Unix(t, 0))
+	if remain <= 0 {
+		return "no-store"
+	}
+	if remain > playbackURLCacheTTL {
+		remain = playbackURLCacheTTL
+	}
+	return fmt.Sprintf("private, max-age=%d", int(remain.Seconds()))
+}
+
+// ============================================================
 // HandleMediaStream — 核心媒体流路由
 // ============================================================
 
@@ -1131,6 +1168,7 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	// 1a. playbackURLCache — 已解析的最终 CDN URL（命中率最高）
 	if finalURL, ok := p.getCachedPlaybackURL(cacheKey); ok {
 		logger.S().Debugf("[EmbyProxy] playbackURLCache 命中: item=%s source=%s -> %s", itemID, sourceID, finalURL)
+		w.Header().Set("Cache-Control", mediaRedirectCacheControl(finalURL))
 		w.Header().Set("Location", finalURL)
 		w.WriteHeader(http.StatusFound)
 		return
@@ -1197,6 +1235,7 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	p.cachePlaybackURL(cacheKey, finalURL)
 
 	logger.S().Infof("[EmbyProxy] media 302: item=%s source=%s -> %s", itemID, sourceID, finalURL)
+	w.Header().Set("Cache-Control", mediaRedirectCacheControl(finalURL))
 	w.Header().Set("Location", finalURL)
 	w.WriteHeader(http.StatusFound)
 }
