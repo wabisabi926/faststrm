@@ -1,0 +1,85 @@
+name: Build & Release Kodi (CoreELEC) Addon
+
+# 为 FastStrm 构建并发布 Kodi / CoreELEC (Linux ARM64) 后台服务插件。
+# 产物: 一次性生成 CoreELEC 插件 zip (service.faststrm-<ver>-arm64.zip)，并作为资产挂到对应版本的 GitHub Release。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 前端 SPA 通过 //go:embed 内嵌进二进制，必须先构建再交叉编译
+      - name: Build frontend (embedded into Go binary)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Build Kodi addon (ARM64)
+        run: |
+          chmod +x ./build_kodi_addon.sh
+          ./build_kodi_addon.sh arm64
+
+      - name: Determine tag and locate asset
+        id: get_info
+        run: |
+          VER_TAG="${GITHUB_REF_NAME}"
+          ZIP_SRC=$(ls dist/service.faststrm-*-arm64.zip | head -n 1)
+          if [ -f "${ZIP_SRC}" ]; then
+            KODI_VER=$(unzip -p "${ZIP_SRC}" "service.faststrm/addon.xml" | sed -n 's/.*version="\([^"]*\)".*/\1/p' | head -n 1)
+          fi
+          echo "TAG=${VER_TAG}" >> $GITHUB_OUTPUT
+          echo "ZIP=${ZIP_SRC}" >> $GITHUB_OUTPUT
+          echo "KODI_VER=${KODI_VER:-${VER_TAG#v}}" >> $GITHUB_OUTPUT
+      - name: List artifacts
+        run: |
+          echo "Release tag: ${{ steps.get_info.outputs.TAG }}"
+          echo "Kodi addon version: ${{ steps.get_info.outputs.KODI_VER }}"
+          ls -lh dist/service.faststrm-*-arm64.zip
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER_TAG="${{ steps.get_info.outputs.TAG }}"
+          ZIP_SRC="${{ steps.get_info.outputs.ZIP }}"
+          if [ -z "${ZIP_SRC}" ] || [ ! -f "${ZIP_SRC}" ]; then
+            echo "ERROR: 未找到 Kodi addon zip 产物"
+            exit 1
+          fi
+          if gh release view "${VER_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${VER_TAG} 已存在，追加上传 Kodi addon 资产..."
+            gh release upload "${VER_TAG}" "${ZIP_SRC}" --clobber --repo "${{ github.repository }}"
+          else
+            echo "Release ${VER_TAG} 不存在，创建并上传资产..."
+            gh release create "${VER_TAG}" "${ZIP_SRC}" \
+              --repo "${{ github.repository }}" \
+              --title "FastStrm ${VER_TAG}" \
+              --notes "FastStrm Kodi (CoreELEC / Linux ARM64) 后台服务插件构建。"
+          fi
