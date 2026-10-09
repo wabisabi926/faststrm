@@ -359,7 +359,6 @@ jobs:
         rm -f cmd/server/rsrc.syso
         echo "Cleaned up rsrc.syso for cross-platform builds"
         
-        cp -r internal/web "${OUT_DIR}/web" 2>/dev/null || true
         (cd "${OUT_DIR}" && zip -q -r "../${OUT_DIR}.zip" .)
         ls -lh "${OUT_DIR}.zip"
 
