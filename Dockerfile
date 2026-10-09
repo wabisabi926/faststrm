@@ -54,6 +54,10 @@ COPY .config/ ./.config/
 # 防御性 CRLF → LF 转换：即使 .gitattributes 未生效（Windows clone autocrlf=true），也保证入口脚本是 LF
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x faststrm docker-entrypoint.sh
 
+# 架构自检门禁：核对运行架构与 /app/faststrm 二进制 ELF 机器码一致，防止误装错架构镜像。
+# 注意：CI 用 buildx 只产出 linux/amd64 + linux/arm64（见 release.yml，飞牛 fNOS 亦仅支持这两者），
+# 因此下方 armv7|armhf 分支在 CI 流水线中实际永远不会命中（死分支）；
+# 仅当有人手动用 GOARCH=arm 本地交叉构建出 arm 32 位二进制时才有兜底作用，这里保留以便该场景同样受保护，勿删。
 RUN set -eu; \
     runtime_arch="$(apk --print-arch)"; \
     elf_machine="$(od -An -tu1 -j18 -N1 /app/faststrm | tr -dc '0-9')"; \

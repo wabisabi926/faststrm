@@ -170,6 +170,17 @@ jobs:
           node -e "console.log('current version:', require('./package.json').version)"
         fi
 
+    - name: Build frontend SPA (Vite) 并嵌入 Go embed
+      env:
+        NODE_OPTIONS: --max-old-space-size=4096
+      run: |
+        set -euo pipefail
+        cd frontend
+        npm ci
+        npm run build
+        echo "frontend build ok, internal/web/spa contents:"
+        ls -la ../internal/web/spa/
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
 
