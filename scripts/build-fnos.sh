@@ -55,10 +55,15 @@ fi
 echo "==> go mod download"
 go mod download
 
-# 确保前端构建产物已就位 (internal/web/spa) —— embed 嵌入不需要额外动作
+# 前端构建产物必须就位 (internal/web/spa) —— go:embed 直接嵌入该目录。
+# 该目录在仓库中是受 git 跟踪的 Vite 构建产物；若缺失，说明仓库被破坏或前端未构建，
+# 此时产出的 .fpk 将没有 Web UI，故直接阻断而不是仅警告。
 if [ ! -f "${ROOT_DIR}/internal/web/spa/index.html" ]; then
-  echo "WARN: internal/web/spa/index.html 未找到，请先构建前端 (cd frontend && npm i && npm run build)" >&2
-  echo "      并把 frontend/dist/* 复制到 internal/web/spa/。否则二进制里没有 Web UI 页面。" >&2
+  echo "ERROR: internal/web/spa/index.html 未找到（缺少前端构建产物）。" >&2
+  echo "  请先构建前端并让产物落位到 internal/web/spa/：" >&2
+  echo "    cd frontend && npm ci && npm run build" >&2
+  echo "  （CI 的 fnos-build/docker-release job 会自动执行该步；本地构建需手动）" >&2
+  exit 1
 fi
 
 for ARCH in "${ARCHES[@]}"; do

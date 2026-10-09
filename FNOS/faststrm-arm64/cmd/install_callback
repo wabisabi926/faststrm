@@ -1,23 +1,4 @@
 #!/bin/bash
-# 安装后回调：读取 wizard_service_port 环境变量（来自安装向导填写值）
-# 校验并持久化到用户数据区 ${TRIM_PKGVAR}/config/port.env
-# 升级不会覆盖 TRIM_PKGVAR，用户自定义端口因此被保留
-PORT="${wizard_service_port:-8090}"
-
-# 合法性校验：必须是 1-65535 的整数
-if ! [[ "${PORT}" =~ ^[0-9]+$ ]] || [ "${PORT}" -lt 1 ] || [ "${PORT}" -gt 65535 ]; then
-    PORT=8090
-fi
-
-# 持久化目录优先用 TRIM_PKGVAR（fNOS 官方可写区），兜底 /tmp
-PKGVAR="${TRIM_PKGVAR:-}"
-if [ -z "${PKGVAR}" ]; then
-    PKGVAR="/tmp/faststrm-$(id -u 2>/dev/null || echo 0)"
-    mkdir -p "${PKGVAR}" 2>/dev/null || true
-fi
-ETC_DIR="${PKGVAR}/config"
-mkdir -p "${ETC_DIR}" 2>/dev/null || true
-
-echo "SERVER_PORT=${PORT}" > "${ETC_DIR}/port.env"
-echo "[install_callback] 服务端口已持久化: SERVER_PORT=${PORT} -> ${ETC_DIR}/port.env"
+# 安装后回调：端口固定为 8090（见 manifest service_port / app/ui/config），无需持久化。
+# 此处保留为一个可扩展的占位，后续如需在安装时写默认配置可在此处补充。
 exit 0

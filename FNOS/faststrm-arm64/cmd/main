@@ -113,32 +113,36 @@ start_process() {
     mkdir -p "$(dirname "${LOG_FILE}")" "$(dirname "${PID_FILE}")" 2>/dev/null || true
 
     # --- 二进制定位 ---
-    # fNOS 的 TRIM_APPDEST 是 app.tgz 解压后的 target 目录，二进制直接在根目录
-    BIN="${TRIM_APPDEST}/faststrm"
-    if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/app/faststrm"; fi
+    # fNOS 的 TRIM_APPDEST 是应用安装目录（fNOS 约定含 app/cmd/config/wizard 等子目录，
+    # 可能只读）。二进制由 build-fnos.sh 实际落在 ${TRIM_APPDEST}/app/faststrm，
+    # 因此 app/ 优先；根目录 / bin/ 作为老布局兜底。
+    BIN="${TRIM_APPDEST}/app/faststrm"
+    if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/faststrm"; fi
     if [ ! -x "${BIN}" ]; then BIN="${TRIM_APPDEST}/bin/faststrm"; fi
     if [ ! -x "${BIN}" ]; then
         log_msg "ERROR: faststrm 二进制未找到 (TRIM_APPDEST=${TRIM_APPDEST})"
         return 1
     fi
     chmod +x "${BIN}" 2>/dev/null || true
+    # 默认配置模板始终与二进制同目录（build-fnos.sh 把它复制到 app/.config），
+    # 从已解析的 BIN 推导，避免与 TRIM_APPDEST 的层级假设耦合：
+    #   TRIM_APPDEST 可能是包根（含 app/），也可能是 app/ 本身，推导法两者皆稳。
+    BIN_DIR="$(dirname "${BIN}")"
+    export DEFAULT_CONFIG_DIR="${BIN_DIR}/.config"
 
     # --- 环境变量：和 cmd/server/main.go getDefaultRoot 对齐 ---
     # Go 后端使用 config.InitApp(defaultRoot) 管理一套纯 JSON 配置：
     #   config.json / account.json / tasks.json / settings.json
     # DEFAULT_CONFIG_DIR：只读默认模板目录（含 .config.json/.settings.json 等模板）
     # CONFIG_DIR：用户可写配置目录（运行时生成 config.json/settings.json 等）
-    export DEFAULT_CONFIG_DIR="${TRIM_APPDEST}/.config"
     export CONFIG_DIR="${FASTSTRM_CONFIG_DIR}"
     export DATA_DIR="${FASTSTRM_DATA_DIR}"
     export LOGS_DIR="${FASTSTRM_LOGS_DIR}"
     export RUN_DIR="${FASTSTRM_RUN_DIR}"
 
-    # 读取安装向导持久化的端口（用户在安装时自定义 -> upgrade不丢）
-    if [ -f "${FASTSTRM_CONFIG_DIR}/port.env" ]; then
-        set -a; . "${FASTSTRM_CONFIG_DIR}/port.env"; set +a
-    fi
-    export SERVER_PORT="${SERVER_PORT:-8090}"
+    # 端口固定为 8090：与 manifest service_port、app/ui/config 的 desktop 启动器端口保持一致，
+    # 避免用户自定义端口后桌面快捷方式失配（quickbox 启动器不支持动态端口）。
+    export SERVER_PORT="8090"
 
     STD_LOG="${FASTSTRM_LOGS_DIR}/app.out.log"
     ERR_LOG="${FASTSTRM_LOGS_DIR}/app.err.log"
