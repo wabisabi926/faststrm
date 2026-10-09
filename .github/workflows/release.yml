@@ -408,9 +408,55 @@ jobs:
           faststrm_linux_amd64
           faststrm_linux_arm64
 
-  # ---- Job 4: 统一创建 Release 并上传所有产物 ----
+  # ---- Job 4: Kodi (CoreELEC / Linux ARM64) 后台服务插件 ----
+  kodi-build:
+    needs: release-notes
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25'
+        cache: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: 20
+
+    # 前端 SPA 通过 //go:embed 内嵌进二进制，必须先构建再交叉编译
+    - name: Build frontend (embedded into Go binary)
+      run: |
+        set -euo pipefail
+        cd frontend
+        npm ci
+        npm run build
+
+    - name: Install zip
+      run: sudo apt-get update && sudo apt-get install -y zip
+
+    - name: Build Kodi addon (ARM64)
+      run: |
+        set -euo pipefail
+        chmod +x ./build_kodi_addon.sh
+        ./build_kodi_addon.sh arm64
+
+    - name: List Kodi addon artifact
+      run: ls -lh dist/service.faststrm-*-arm64.zip
+
+    - name: Upload Kodi addon as artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: kodi-addon
+        path: dist/service.faststrm-*-arm64.zip
+
+  # ---- Job 5: 统一创建 Release 并上传所有产物 ----
   github-release:
-    needs: [release-notes, docker-release, fnos-build, native-build]
+    needs: [release-notes, docker-release, fnos-build, native-build, kodi-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -433,6 +479,12 @@ jobs:
       with:
         name: native-binaries
         path: artifacts/native-binaries
+
+    - name: Download kodi-addon artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: kodi-addon
+        path: artifacts/kodi-addon
 
     - name: List all downloaded artifacts
       run: find artifacts -type f -ls
@@ -463,6 +515,11 @@ jobs:
         
         # 原生二进制
         for f in artifacts/native-binaries/faststrm_*; do
+          [ -f "$f" ] && ASSETS+=("$f")
+        done
+
+        # Kodi (CoreELEC) 插件 zip
+        for f in artifacts/kodi-addon/*.zip; do
           [ -f "$f" ] && ASSETS+=("$f")
         done
         
