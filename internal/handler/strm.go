@@ -209,11 +209,20 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		logger.S().Infof("[STRM] account=%s pickcode=%s decision=%s reason=%s redirect_check=%s%s method=%s elapsed=%dms",
 			accountName, shortPc, finalDecision, finalReason, rcs, sizeLog, r.Method, elapsed)
 
-		// ===== HEAD 短路径：用 meta.FileSize 直接吐 Accept-Ranges + Content-Length 头，不打 CDN =====
+		// ===== HEAD 短路径：默认用 meta.FileSize 直接吐 Accept-Ranges + Content-Length 头，不打 CDN =====
 		// 115 signed URL HEAD 经常 403 / Content-Length 缺失，download API 的 meta.FileSize 100% 正确。
 		// 这条给 Lavf probe 判定 seek 能力，后续 GET Range 206 链路独立工作。
+		// 但当请求携带内部参数 redirect=1（EmbyProxy 的 resolveRedirectChain 解析请求）且
+		// 最终决策为 Redirect 时，直接返回真正的 302 CDN URL，让 EmbyProxy 无需代理中转即可
+		// 302 直连 CDN（对齐 MoviePilot 的 _resolve_redirect：普通格式走 CDN 直链）。
+		// 决策为 Proxy（UA 需代理 / redirect_check 失败 / 并发超限）时保持 200 probe，
+		// 使 EmbyProxy 落到代理流兜底，绝不在需代理时泄漏 CDN URL。
 		if r.Method == http.MethodHead {
-			writeStrmHeadResponse(w, r, meta.FileSize, cdnURL, account.Cookie, userAgent, finalName, shortPc)
+			if q.Get("redirect") == "1" && finalDecision == strm.DecisionRedirect {
+				doRedirect(w, finalName, cdnURL)
+			} else {
+				writeStrmHeadResponse(w, r, meta.FileSize, cdnURL, account.Cookie, userAgent, finalName, shortPc)
+			}
 			return
 		}
 

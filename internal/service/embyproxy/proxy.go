@@ -1326,10 +1326,26 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 		fwdHeaders["X-Emby-UserId"] = userID
 	}
 
+	// FastStrm 自身 /api/strm 端点的 HEAD 默认固定返回 200（见 strm.go writeStrmHeadResponse），
+	// 使解析永远走不出重定向链、取不到 CDN URL。追加内部参数 redirect=1 后，该端点对
+	// 「决策为 Redirect」的 HEAD 会返回真正的 302 CDN URL（见 strm.go HEAD 短路径），
+	// 让普通格式能 302 直连 CDN（对齐 MoviePilot _resolve_redirect）。
+	// headURL 仅在本次解析请求使用，不影响上层 meta.path 的缓存键与兜底比较。
+	headURL := startURL
+	if isSelfStrmEndpoint(startURL) {
+		u, err := url.Parse(startURL)
+		if err == nil {
+			q := u.Query()
+			q.Set("redirect", "1")
+			u.RawQuery = q.Encode()
+			headURL = u.String()
+		}
+	}
+
 	for attempt, to := range redirectResolveTimeouts {
 		reqCtx, cancel := context.WithTimeout(ctx, to.connect+to.read)
 
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, startURL, nil)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, headURL, nil)
 		if err != nil {
 			cancel()
 			logger.S().Warnf("[EmbyProxy] resolveRedirectChain: 构造 HEAD 请求失败，回退原始 URL: %v", err)
@@ -1353,12 +1369,20 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 			return startURL, 0
 		}
 
-		// resp.Request.URL 是跟随所有重定向后的最终 URL；未发生重定向时即 startURL
-		// （例如 STRM 端点自身返回 4xx/5xx，此时 finalURL == startURL，交给客户端再走一次）。
+		// resp.Request.URL 是跟随所有重定向后的最终 URL；未发生重定向时即 headURL
+		// （例如 STRM 端点自身返回 4xx/5xx，此时 finalURL == headURL，交给客户端再走一次）。
 		finalURL := resp.Request.URL.String()
 		status := resp.StatusCode
 		resp.Body.Close()
 		cancel()
+
+		// 对 FastStrm 自身 /api/strm：若最终仍停在 /api/strm 端点（决策为 Proxy 或
+		// 解析失败，未得到 CDN 302），把结果规范化回原始 startURL。这能让上层
+		// `finalURL == meta.path` 的兜底判断保持成立并落到代理流，避免带上 redirect=1
+		// 的中间 URL 破坏缓存键与兜底逻辑。
+		if isSelfStrmEndpoint(startURL) && isSelfStrmEndpoint(finalURL) {
+			finalURL = startURL
+		}
 
 		logger.S().Debugf("[EmbyProxy] resolveRedirectChain: %s -> %s (status=%d attempt=%d)", startURL, finalURL, status, attempt+1)
 		return finalURL, status
