@@ -1135,8 +1135,9 @@ func TestResolveRedirectChain_StrmEndpointError(t *testing.T) {
 	}
 }
 
-// TestHandleMediaStream_StrmEndpointError 回归（对齐 MP）：
-// 直链解析失败时不再回 502，而是 302 回退原始 STRM URL，由客户端再走一次。
+// TestHandleMediaStream_StrmEndpointError 回归：
+// 直链解析失败时不再 302 回退原始 STRM URL（内网地址在外网反代下连不上），
+// 而是改走 proxyStreamToStrm 代理流：中转 STRM 端点并回传其响应码。
 func TestHandleMediaStream_StrmEndpointError(t *testing.T) {
 	strm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "115 账号 Cookie 已失效，请重新登录", http.StatusBadGateway)
@@ -1160,11 +1161,13 @@ func TestHandleMediaStream_StrmEndpointError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	proxy.HandleMediaStream(rr, req2)
 
-	if rr.Code != http.StatusFound {
-		t.Fatalf("解析失败应 302 回退原始 URL，got %d (body=%s)", rr.Code, rr.Body.String())
+	// 不再 302：改为代理流转发 STRM 端点，回传其上游状态码（此处 STRM 返回 502）
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("解析失败应走代理流回传 STRM 端点状态码 %d，got %d (body=%s)",
+			http.StatusBadGateway, rr.Code, rr.Body.String())
 	}
-	if loc := rr.Header().Get("Location"); loc != strmURL {
-		t.Errorf("Location 应为原始 STRM URL %q，got %q", strmURL, loc)
+	if loc := rr.Header().Get("Location"); loc != "" {
+		t.Errorf("失败分支不应设置 Location（旧逻辑 302 回退原 URL），got %q", loc)
 	}
 }
 

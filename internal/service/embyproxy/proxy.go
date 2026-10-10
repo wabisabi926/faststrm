@@ -1216,12 +1216,27 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 
 	// ===== 步骤 2: 解析重定向链拿最终 CDN URL =====
 	// 对齐 MoviePilot `_resolve_redirect`：解析失败（超时 / STRM 端点报错）时返回原始
-	// STRM URL，由客户端再走一次 STRM 端点，而不是在代理侧直接报 502。
-	// upstreamStatus 仅用于诊断日志（响应行为不变），MP 本身对 4xx/5xx 是静默的。
+	// STRM URL，由调用方决定后续处理。
+	//
+	// 反代外网场景的关键修复：FastStrm 的 STRM 源统一为 `{prefix}/api/strm?...`，
+	// 其 HEAD 响应固定 200（见 strm.go writeStrmHeadResponse），因此 resolveRedirectChain
+	// 永远走不出重定向链，finalURL 恒等于原始 STRM URL。若沿用旧逻辑 302 回退该 URL，
+	// 反代暴露给外网时，Location 是内网地址（如 http://192.168.31.24:8091/api/strm），
+	// 外网客户端连不上 → 「无兼容的流」。
+	// 故对 FastStrm 自身 /api/strm 端点，解析无重定向时改走 proxyStreamToStrm 代理流：
+	// 客户端连接始终停留在 FastStrm，由服务端拉 STRM→CDN 再回传，外网/内网均能兜底播放。
+	// 对其他可直连的外部源（非 /api/strm），保留原 302 回退行为。
+	// upstreamStatus 仅用于诊断日志。
 	finalURL, upstreamStatus := p.resolveRedirectChain(r.Context(), meta.path, r, userID)
 	if finalURL == meta.path {
+		if isSelfStrmEndpoint(meta.path) {
+			logger.S().Infof("[EmbyProxy] media 直链解析无重定向（FastStrm /api/strm：HEAD 固定 200），改走代理流: item=%s source=%s strm=%s",
+				itemID, sourceID, meta.path)
+			p.proxyStreamToStrm(w, r, meta.path)
+			return
+		}
 		if upstreamStatus >= http.StatusBadRequest {
-			logger.S().Warnf("[EmbyProxy] media 直链解析失败: STRM 端点返回 %d，疑似 115 Cookie 失效/直链过期，302 回退原始 STRM URL: item=%s source=%s strm=%s",
+			logger.S().Warnf("[EmbyProxy] media 直链解析失败: STRM 端点返回 %d，302 回退原始 STRM URL: item=%s source=%s strm=%s",
 				upstreamStatus, itemID, sourceID, meta.path)
 		} else {
 			logger.S().Warnf("[EmbyProxy] media 直链解析未成功（上游无响应/超时），302 回退原始 STRM URL: item=%s source=%s strm=%s",
@@ -1238,6 +1253,19 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", mediaRedirectCacheControl(finalURL))
 	w.Header().Set("Location", finalURL)
 	w.WriteHeader(http.StatusFound)
+}
+
+// isSelfStrmEndpoint 判断 STRM 源是否为 FastStrm 自身的 /api/strm 端点。
+// FastStrm 所有 STRM 生成器统一硬编码 `{prefix}/api/strm?account=...&pickcode=...`，
+// 该端点 HEAD 固定返回 200（writeStrmHeadResponse），resolveRedirectChain 无法沿
+// 重定向链取到 CDN URL。这种自引用端点暴露给外网时，302 回退到的内网地址客户端连不上，
+// 因此必须改走代理流。其余可直连的外部源走原 302 逻辑。
+func isSelfStrmEndpoint(strmURL string) bool {
+	u, err := url.Parse(strmURL)
+	if err != nil {
+		return false
+	}
+	return u.Path == "/api/strm" || u.Path == "/api/strm/"
 }
 
 // passthroughToEmby 透传媒体流请求到 Emby 真实地址
