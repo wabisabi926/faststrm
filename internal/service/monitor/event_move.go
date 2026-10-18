@@ -199,7 +199,7 @@ func (m *Monitor) recreateStrmInDirectory(
 		in := singleFileCreateInput{
 			CloudPath: cloudPath,
 			FileName:  event.FileName,
-			PickCode:  m.resolveEventPickCode(ctx, account, lifeClient, event),
+			PickCode:  m.resolveEventPickCodeWithRetry(ctx, account, lifeClient, event),
 			FileSize:  event.FileSize,
 			FileID:    event.FileID,
 			ParentID:  event.ParentID,

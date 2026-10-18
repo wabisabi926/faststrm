@@ -19,7 +19,6 @@ type Settings struct {
 	MediaMountPath     []string              `json:"mediaMountPath"`
 	StrmPrefix         string                `json:"strmPrefix"`
 	EnablePathEncoding bool                  `json:"enablePathEncoding"`
-	RemoveExtraFiles   bool                  `json:"removeExtraFiles"`
 	Download           DownloadSettings      `json:"download"`
 	Strm               StrmSettings          `json:"strm"`
 	RateLimit          RateLimitSettings     `json:"rateLimit"`
@@ -117,14 +116,12 @@ type DownloadSettings struct {
 	StrmGenerateBlacklist []string `json:"strmGenerateBlacklist"`       // STRM 生成文件名黑名单关键词列表（如 "*trailer*", "sample.*"），大小写不敏感
 	OverwriteMode         string   `json:"overwriteMode"`               // STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)
 	// P2-3 增量同步：以 files 表为 snapshot，对 pickcode+name+size 完全一致的条目跳过写 STRM/下载，仅处理变化的部分
-	IncrementalSync bool `json:"incrementalSync"`
 	// P0-1 增量对账清理：增量同步结束后，扫描 TargetPath 下所有 .strm 文件，
 	// 提取内容中的 pickcode 与云端快照比对，孤儿 STRM 按以下模式处理：
 	//   "off"        默认。不清理（保持原行为）
 	//   "mark_only"  仅日志记录孤儿路径，不删除
 	//   "auto_clean" 自动软删（.deleted.bak），超阈值时复用 CleanupSettings 二次确认流程
 	// 对齐参考项目 increment_sync_remove_unless_strm
-	IncrementalCleanupMode string `json:"incrementalCleanupMode"`
 	// P0-2 全量对账清理：全量任务开始前预扫描 TargetPath 下所有 .strm 文件，
 	// 提取 pickcode 与 DB 反查（云端最新 fileEntries）比对，孤儿 STRM 按以下模式处理：
 	//   "off"        默认。不预扫描（保持原行为）
@@ -334,14 +331,15 @@ func DefaultSettings() *Settings {
 		DownloadExtensions: append([]string{}, DefaultDownloadExtensions...),
 		MediaMountPath:     []string{},
 		EnablePathEncoding: true, // URL 路径编码 —— 含特殊字符的路径不编码会挂
-		RemoveExtraFiles:   true, // 删除多余 STRM —— 清理体验默认开启
 		Download: DownloadSettings{
 			StrmMaxConcurrent:     intPtr(20), // STRM 写入并发数默认 20
 			AutoDownloadMetadata:  true,       // 默认开启，保持向后兼容
 			MinFileSize:           0,          // 默认不限制最小文件大小
 			StrmGenerateBlacklist: []string{}, // 默认空黑名单
 			OverwriteMode:         "always",   // 默认始终覆盖（与 MoviePilot 默认行为一致）
-			IncrementalSync:       true,       // 默认开启增量同步；首次执行为全量，不影响首轮生成
+			// 孤儿 STRM 清理：只按 STRM 内容里的 pickcode 对账，不会碰用户自己的文件。
+			// 路径级清理（RemoveExtraFiles）默认关闭，需在任务里显式开启。
+			FullSyncCleanupOrphans: "auto_clean",
 		},
 		Strm: StrmSettings{
 			// ForceProxyUaTokens 仅对 STRM 端点层生效（命中则强制走 proxy）。

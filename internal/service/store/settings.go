@@ -117,6 +117,14 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		logger.S().Infof("[SettingsStore] 迁移: 清理阈值升级为 ratio=%.2f abs=%d dirs=%d（原单阈值 10）",
 			out.Cleanup.MaxRatio, out.Cleanup.MaxThreshold, out.Cleanup.MaxDirs)
 	}
+	// 清理默认值反转：pickcode 级清理此前没有前端入口、默认关闭，绝大多数用户
+	// 实际只有「按路径删除多余文件」在跑——它会删掉保留集合之外的任何本地文件。
+	// 这里把 pickcode 级清理打开（一次性），路径级清理由任务级开关控制且默认关闭。
+	if out.Download.FullSyncCleanupOrphans == "" {
+		out.Download.FullSyncCleanupOrphans = def.Download.FullSyncCleanupOrphans
+		changed = true
+		logger.S().Infof("[SettingsStore] 迁移: 孤儿 STRM 清理默认开启（%s）", out.Download.FullSyncCleanupOrphans)
+	}
 	// v1.4.3 强制代理格式改为可配置：旧配置没有该字段，补默认值写回，
 	// 让用户能在 settings.json 里看到并调整（例如把 .ts 移除）。
 	if len(out.Strm.ForceProxyFormats) == 0 {

@@ -108,6 +108,31 @@ func (s *TasksStore) ReadTasks() ([]task.Task, error) {
 			UpdatedAt:          p.UpdatedAt,
 		})
 	}
+
+	// 清理默认值反转（一次性）：旧版本新建任务默认开启「按路径删除多余文件」，
+	// 该模式会删除保留集合之外的任何本地文件（用户自建海报/字幕/手动 STRM）。
+	// 现在默认只按 pickcode 对账，这里把存量任务关掉；用户可在任务编辑里显式重新开启。
+	// 用标记文件保证只执行一次，避免把用户后续的主动开启又改回去。
+	marker := filepath.Join(filepath.Dir(s.path), ".cleanup-path-disabled")
+	if _, statErr := os.Stat(marker); errors.Is(statErr, os.ErrNotExist) {
+		flipped := 0
+		for i := range out {
+			if out[i].RemoveExtraFiles {
+				out[i].RemoveExtraFiles = false
+				flipped++
+			}
+		}
+		if flipped > 0 {
+			if serr := s.saveTasksLocked(out); serr != nil {
+				logger.S().Warnf("[ReadTasks] 迁移：关闭路径级清理后回写失败: %v", serr)
+			} else {
+				logger.S().Infof("[ReadTasks] 迁移：%d 个任务的「删除多余文件」已关闭（改为按 pickcode 对账）", flipped)
+			}
+		}
+		if werr := os.WriteFile(marker, []byte("v1\n"), 0o600); werr != nil {
+			logger.S().Warnf("[ReadTasks] 迁移：写入标记文件失败: %v", werr)
+		}
+	}
 	return out, nil
 }
 
@@ -115,7 +140,11 @@ func (s *TasksStore) ReadTasks() ([]task.Task, error) {
 func (s *TasksStore) SaveTasks(tasks []task.Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveTasksLocked(tasks)
+}
 
+// saveTasksLocked 调用方必须已持有 s.mu
+func (s *TasksStore) saveTasksLocked(tasks []task.Task) error {
 	if err := ensureDir(filepath.Dir(s.path)); err != nil {
 		return err
 	}

@@ -157,18 +157,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               URL 路径编码
             </label>
           </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="global-remove-extra"
-              checked={!!data.removeExtraFiles}
-              onCheckedChange={(checked) =>
-                setData({ ...data, removeExtraFiles: checked === true })
-              }
-            />
-            <label htmlFor="global-remove-extra" className="text-sm cursor-pointer">
-              删除多余 STRM 文件
-            </label>
-          </div>
         </div>
 
         {/* 全局文件过滤 */}
@@ -225,6 +213,33 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </Select>
           <p className="text-xs text-muted-foreground">
             决定重新生成时如何处理已存在的 STRM 文件。「总是覆盖」每次重新生成，保证与网盘一致；「跳过已存在」可加速重复生成，但源文件改名或换链时可能残留旧链接。
+          </p>
+        </div>
+
+        {/* 清理策略：只按 STRM 内容里的 pickcode 对账，不会碰用户自己的文件 */}
+        <div className="space-y-3 pt-4 border-t">
+          <Label>孤儿 STRM 清理</Label>
+          <Select
+            value={data.download?.fullSyncCleanupOrphans ?? "auto_clean"}
+            onValueChange={(value) =>
+              setData({
+                ...data,
+                download: { ...(data.download || {}), fullSyncCleanupOrphans: value },
+              })
+            }
+          >
+            <SelectTrigger className="w-full md:w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">关闭</SelectItem>
+              <SelectItem value="mark_only">仅记录（不删除）</SelectItem>
+              <SelectItem value="auto_clean">自动清理（推荐）</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            网盘里已删除的影片，其本地 STRM 会按此策略处理。只检查 STRM 文件内容里的 pickcode，
+            不会删除你自己放进去的海报、字幕或其他文件；超过保护阈值时会先进入待确认队列。
           </p>
         </div>
 
@@ -386,39 +401,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </p>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Label>增量同步</Label>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={data.download?.incrementalSync ?? true}
-              onClick={() =>
-                setData({
-                  ...data,
-                  download: {
-                    ...(data.download || {}),
-                    incrementalSync: !(data.download?.incrementalSync ?? true)
-                  },
-                })
-              }
-              className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                (data.download?.incrementalSync ?? true) ? "bg-primary" : "bg-muted"
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  (data.download?.incrementalSync ?? true) ? "translate-x-4" : "translate-x-0.5"
-                }`}
-              />
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            与数据库快照比对，跳过 pickcode/文件名未变化的文件，只重新生成/下载变化项。
-            对<span className="font-medium">定时任务</span>与<span className="font-medium">手动执行</span>同时生效。
-            注意：仍会完整扫描一次云端目录，仅节省写盘与下载。
-          </p>
-        </div>
       </section>
 
       <Separator />

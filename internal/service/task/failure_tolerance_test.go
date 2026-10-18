@@ -215,11 +215,12 @@ func TestCleanupOrphanStrms_FailedDirProtected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cloud := map[string]struct{}{"zzzzzzzzzzzzzzz99": {}} // 不含两个本地 pickcode
+	// 本次清单：只含一个无关 pickcode，两个本地 STRM 都应判孤儿
+	cloud := map[string]string{"zzzzzzzzzzzzzzz99": "无关/x.strm"}
 
 	// 带失败目录前缀：前缀内的 x.strm 被跳过，前缀外的 y.strm 仍判孤儿
 	n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
-		"task1", target, cloud, []string{"电影/失败目录"}, "mark_only",
+		"task1", target, cloud, nil, []string{"电影/失败目录"}, "mark_only",
 		model.CleanupSettings{}, nil)
 	if err != nil {
 		t.Fatalf("cleanupOrphanStrms: %v", err)
@@ -230,12 +231,73 @@ func TestCleanupOrphanStrms_FailedDirProtected(t *testing.T) {
 
 	// 不带前缀：两个都算孤儿
 	n2, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
-		"task1", target, cloud, nil, "mark_only",
+		"task1", target, cloud, nil, nil, "mark_only",
 		model.CleanupSettings{}, nil)
 	if err != nil {
 		t.Fatalf("cleanupOrphanStrms: %v", err)
 	}
 	if n2 != 2 {
 		t.Fatalf("无保护时应检出 2 个孤儿, got %d", n2)
+	}
+}
+
+// TestCleanupOrphanStrms_StalePathDetected pickcode 仍在云端但本地路径变了（云端改名/移动），
+// 旧 STRM 必须被判为残留——这是原来只有路径级清理能做的事。
+func TestCleanupOrphanStrms_StalePathDetected(t *testing.T) {
+	target := t.TempDir()
+	oldDir := filepath.Join(target, "电影", "旧片名")
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pc := "abcdefghij1234567"
+	content := `http://x/api/strm?account=a&pickcode=` + pc
+	oldPath := filepath.Join(oldDir, "movie.strm")
+	if err := os.WriteFile(oldPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 云端期望路径：电影/新片名/movie.strm
+	cloud := map[string]string{pc: filepath.Join("电影", "新片名", "movie.strm")}
+	n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+		"t", target, cloud, nil, nil, "mark_only", model.CleanupSettings{}, nil)
+	if err != nil {
+		t.Fatalf("cleanupOrphanStrms: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("路径不一致的旧 STRM 应判残留, got %d", n)
+	}
+
+	// 期望路径与本地一致 → 不算孤儿
+	same := map[string]string{pc: filepath.Join("电影", "旧片名", "movie.strm")}
+	n2, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+		"t", target, same, nil, nil, "mark_only", model.CleanupSettings{}, nil)
+	if err != nil {
+		t.Fatalf("cleanupOrphanStrms: %v", err)
+	}
+	if n2 != 0 {
+		t.Fatalf("路径一致不应判孤儿, got %d", n2)
+	}
+}
+
+// TestCleanupOrphanStrms_SnapshotOnlyKept 仅 DB 快照知道的 pickcode 一律保留（路径未知，防误删）
+func TestCleanupOrphanStrms_SnapshotOnlyKept(t *testing.T) {
+	target := t.TempDir()
+	dir := filepath.Join(target, "电影")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pc := "abcdefghij1234567"
+	if err := os.WriteFile(filepath.Join(dir, "movie.strm"),
+		[]byte(`http://x/api/strm?account=a&pickcode=`+pc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+		"t", target, nil, map[string]struct{}{pc: {}}, nil, "mark_only", model.CleanupSettings{}, nil)
+	if err != nil {
+		t.Fatalf("cleanupOrphanStrms: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("快照命中的 STRM 应保留, got %d", n)
 	}
 }

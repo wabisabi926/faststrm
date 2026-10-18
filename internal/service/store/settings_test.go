@@ -49,3 +49,27 @@ func TestReadSettings_MigratesMissingEventTypes(t *testing.T) {
 			et2.Create, et2.Remove, et2.Rename, et2.Move)
 	}
 }
+
+// TestReadSettings_MigratesCleanupDefaults 清理默认值反转（一次性）：
+// 旧配置没有 fullSyncCleanupOrphans → 开启 pickcode 级清理；用户显式设成 off 时不得覆盖。
+func TestReadSettings_MigratesCleanupDefaults(t *testing.T) {
+	dir1 := t.TempDir()
+	writeSettings(t, dir1, `{"download":{"minFileSize":0}}`)
+	s1, err := NewSettingsStore("test_salt", dir1).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if got := s1.Download.FullSyncCleanupOrphans; got != "auto_clean" {
+		t.Errorf("缺字段应迁移为 auto_clean, got %q", got)
+	}
+
+	dir2 := t.TempDir()
+	writeSettings(t, dir2, `{"download":{"fullSyncCleanupOrphans":"off"}}`)
+	s2, err := NewSettingsStore("test_salt", dir2).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if got := s2.Download.FullSyncCleanupOrphans; got != "off" {
+		t.Errorf("用户显式关闭不应被覆盖, got %q", got)
+	}
+}

@@ -334,145 +334,55 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			len(scanStats.FailedDirs), scanStats.FailedDirs))
 	}
 
-	// ---- P2-3 增量同步：基于 files 表 snapshot 跳过未变更条目 ----
-	// 执行顺序：必须在写回 filePathDb 之前取 snapshot，否则 upsert 覆盖后无差异可识别。
-	incremental := settings.Download.IncrementalSync && deps.SQLiteDB != nil && task.Account != ""
-	if incremental {
-		histKind = db.StrmHistoryKindIncrement
-	}
-	if incremental {
+	// ---- P0-2 全量预扫清理：全量任务时清理孤儿 STRM ----
+	// cloudPickcodes = DB 快照 + 本次 fileEntries 合并，
+	// 避免误删历史 STRM 或本次新增的 STRM。对齐参考项目 full_sync_remove_unless_strm。
+	// 与 removeExtraFiles（基于路径）互补：本扫描基于 STRM 内容的 pickcode，更精确。
+	mode := strings.ToLower(strings.TrimSpace(settings.Download.FullSyncCleanupOrphans))
+	if mode != "" && mode != "off" {
 		rt.SetState(task.ID, func(s *RuntimeState) {
-			s.Stage = StageIncremental
-			s.StageDetail = "正在进行增量比对..."
+			s.Stage = StageCleanup
+			s.StageDetail = "全量预扫：扫描本地孤儿 STRM..."
 		})
 		sseServer.EmitProgress(sse.ProgressPayload{
 			TaskID:         task.ID,
 			OverallPercent: "0.00",
-			Stage:          StageIncremental,
-			StageDetail:    "正在进行增量比对...",
+			Stage:          StageCleanup,
+			StageDetail:    "全量预扫：扫描本地孤儿 STRM...",
 		})
-		snap, serr := db.ListSnapshotByAccount(deps.SQLiteDB, task.Account, task.OriginPath)
-		if serr != nil {
-			sseServer.EmitLog(task.ID, "warn", "增量快照读取失败，退化为全量: "+serr.Error())
-			incremental = false
-		} else if len(snap) > 0 {
-			skipped := 0
-			repaired := 0
-			strmTemplate := settings.Strm.StrmFilenameTemplate
-			for _, f := range fileEntries {
-				// kindSkip 已跳过的不重复处理（黑名单/过小的）
-				if f.Kind == kindSkip {
-					continue
-				}
-				if se, ok := snap[f.CloudPath]; ok &&
-					se.PickCode == f.PickCode &&
-					se.FileName == f.Name {
-					// 增量跳过前必须确认本地产物仍存在：本地 STRM/文件被误删后，
-					// 若仅凭快照命中就跳过，将永远不会被补回（漏生成无法自愈）。
-					if !localArtifactExists(task, strmTemplate, f) {
-						repaired++
-						continue
-					}
-					f.Kind = kindSkip
-					skipped++
-				}
-			}
-			if repaired > 0 {
-				sseServer.EmitLog(task.ID, "warn", fmt.Sprintf(
-					"增量模式：检测到 %d 个文件本地缺失，已强制重新生成/下载（不跳过）", repaired))
-			}
-			if skipped > 0 {
-				sseServer.EmitLog(task.ID, "info", fmt.Sprintf(
-					"增量模式：已跳过 %d 个未变化文件 (CloudPath+PickCode+FileName 与上次同步一致)", skipped))
-			}
-			// 刷新 totalFiles 统计，保持与进度一致
-			totalFiles = 0
-			for _, f := range fileEntries {
-				if f.Kind != kindSkip {
-					totalFiles++
-				}
-			}
-			rt.SetState(task.ID, func(s *RuntimeState) { s.TotalFiles = totalFiles })
-		}
-	}
-
-	// ---- P0-1 增量对账清理：扫描本地 STRM，孤儿（云端已删但本地仍存）按 mode 处理 ----
-	// 注意：cloudPickcodes 来自本次 fileEntries（云端最新列表），而非 DB（DB 可能滞后），
-	// 这样对账更准确。kindSkip 条目的 pickcode 仍会进入集合（buildCloudPickcodeSet 不分 Kind），
-	// 避免增量跳过的条目被误判为孤儿。
-	if incremental {
-		mode := strings.ToLower(strings.TrimSpace(settings.Download.IncrementalCleanupMode))
-		if mode != "" && mode != "off" {
-			rt.SetState(task.ID, func(s *RuntimeState) {
-				s.Stage = StageCleanup
-				s.StageDetail = "增量对账：扫描本地孤儿 STRM..."
-			})
-			sseServer.EmitProgress(sse.ProgressPayload{
-				TaskID:         task.ID,
-				OverallPercent: "0.00",
-				Stage:          StageCleanup,
-				StageDetail:    "增量对账：扫描本地孤儿 STRM...",
-			})
-			sseServer.EmitLog(task.ID, "info", "增量对账清理：开始扫描本地孤儿 STRM")
-			cloudPickcodes := buildCloudPickcodeSet(fileEntries)
-			orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
-				task.ID, task.TargetPath, cloudPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh)
-			if cerr != nil {
-				sseServer.EmitLog(task.ID, "warn", "增量对账清理失败: "+cerr.Error())
-				logger.S().Warnf("[Task] 增量对账清理失败 task=%s: %v", task.ID, cerr)
-			} else if orphanN > 0 && reqID != "" {
-				sseServer.EmitLog(task.ID, "warn",
-					fmt.Sprintf("增量对账：检测到孤儿 STRM 超阈值，已入队等待二次确认 (requestID=%s, count=%d)",
-						reqID, orphanN))
-			} else if orphanN > 0 {
-				sseServer.EmitLog(task.ID, "info",
-					fmt.Sprintf("增量对账：已处理 %d 个孤儿 STRM (mode=%s)", orphanN, mode))
+		sseServer.EmitLog(task.ID, "info", "全量预扫清理：开始扫描本地孤儿 STRM")
+		var snapPickcodes map[string]struct{}
+		if deps.SQLiteDB != nil && task.Account != "" {
+			snap, serr := db.ListSnapshotByAccount(deps.SQLiteDB, task.Account, task.OriginPath)
+			if serr != nil {
+				sseServer.EmitLog(task.ID, "warn", "全量预扫：DB 快照读取失败: "+serr.Error())
+			} else if len(snap) > 0 {
+				snapPickcodes = buildCloudPickcodeSetFromSnapshot(snap)
 			}
 		}
-	}
-
-	// ---- P0-2 全量预扫清理：全量任务时清理孤儿 STRM ----
-	// 与 P0-1 互斥（incremental=true 跳过），cloudPickcodes = DB 快照 + 本次 fileEntries 合并，
-	// 避免误删历史 STRM 或本次新增的 STRM。对齐参考项目 full_sync_remove_unless_strm。
-	// 与 removeExtraFiles（基于路径）互补：本扫描基于 STRM 内容的 pickcode，更精确。
-	if !incremental {
-		mode := strings.ToLower(strings.TrimSpace(settings.Download.FullSyncCleanupOrphans))
-		if mode != "" && mode != "off" {
-			rt.SetState(task.ID, func(s *RuntimeState) {
-				s.Stage = StageCleanup
-				s.StageDetail = "全量预扫：扫描本地孤儿 STRM..."
-			})
-			sseServer.EmitProgress(sse.ProgressPayload{
-				TaskID:         task.ID,
-				OverallPercent: "0.00",
-				Stage:          StageCleanup,
-				StageDetail:    "全量预扫：扫描本地孤儿 STRM...",
-			})
-			sseServer.EmitLog(task.ID, "info", "全量预扫清理：开始扫描本地孤儿 STRM")
-			var snapPickcodes map[string]struct{}
-			if deps.SQLiteDB != nil && task.Account != "" {
-				snap, serr := db.ListSnapshotByAccount(deps.SQLiteDB, task.Account, task.OriginPath)
-				if serr != nil {
-					sseServer.EmitLog(task.ID, "warn", "全量预扫：DB 快照读取失败: "+serr.Error())
-				} else if len(snap) > 0 {
-					snapPickcodes = buildCloudPickcodeSetFromSnapshot(snap)
-				}
+		// 本次清单：pickcode → 期望的本地 STRM 相对路径。
+		// 除了判孤儿，还能识别「pickcode 仍有效但路径变了」（云端改名/移动残留），
+		// 这是原来只有路径级清理能做的事。
+		cloudCurrent := make(map[string]string, len(fileEntries))
+		strmTemplate := settings.Strm.StrmFilenameTemplate
+		for _, f := range fileEntries {
+			if f.Kind != kindStrm || !isValidPickcode(f.PickCode) {
+				continue
 			}
-			// 合并：DB 历史 pickcode + 本次云端最新 pickcode，避免误删
-			cloudPickcodes := mergePickcodeSets(snapPickcodes, buildCloudPickcodeSet(fileEntries))
-			orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
-				task.ID, task.TargetPath, cloudPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh)
-			if cerr != nil {
-				sseServer.EmitLog(task.ID, "warn", "全量预扫清理失败: "+cerr.Error())
-				logger.S().Warnf("[Task] 全量预扫清理失败 task=%s: %v", task.ID, cerr)
-			} else if orphanN > 0 && reqID != "" {
-				sseServer.EmitLog(task.ID, "warn",
-					fmt.Sprintf("全量预扫：检测到孤儿 STRM 超阈值，已入队等待二次确认 (requestID=%s, count=%d)",
-						reqID, orphanN))
-			} else if orphanN > 0 {
-				sseServer.EmitLog(task.ID, "info",
-					fmt.Sprintf("全量预扫：已处理 %d 个孤儿 STRM (mode=%s)", orphanN, mode))
-			}
+			cloudCurrent[f.PickCode] = filepath.Clean(resolveStrmRelPath(strmTemplate, task.Account, f))
+		}
+		orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
+			task.ID, task.TargetPath, cloudCurrent, snapPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh)
+		if cerr != nil {
+			sseServer.EmitLog(task.ID, "warn", "全量预扫清理失败: "+cerr.Error())
+			logger.S().Warnf("[Task] 全量预扫清理失败 task=%s: %v", task.ID, cerr)
+		} else if orphanN > 0 && reqID != "" {
+			sseServer.EmitLog(task.ID, "warn",
+				fmt.Sprintf("全量预扫：检测到孤儿 STRM 超阈值，已入队等待二次确认 (requestID=%s, count=%d)",
+					reqID, orphanN))
+		} else if orphanN > 0 {
+			sseServer.EmitLog(task.ID, "info",
+				fmt.Sprintf("全量预扫：已处理 %d 个孤儿 STRM (mode=%s)", orphanN, mode))
 		}
 	}
 

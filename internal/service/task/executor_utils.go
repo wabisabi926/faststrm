@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -121,26 +122,6 @@ func resolveStrmRelPath(template, account string, f *fileItem) string {
 	}
 	// 目录段来自云端路径，同样需要清理（模板只负责文件名）
 	return strmutil.SanitizeRelPath(filepath.Join(relDir, newName))
-}
-
-// localArtifactExists 判断增量跳过候选的本地产物是否仍存在
-// （STRM → 目标 STRM 路径；下载 → 目标真实文件路径）。
-// 本地被误删的条目不能跳过，否则永远补不回来（漏生成无法自愈）。
-func localArtifactExists(task *Task, strmTemplate string, f *fileItem) bool {
-	var rel string
-	switch f.Kind {
-	case kindStrm:
-		rel = resolveStrmRelPath(strmTemplate, task.Account, f)
-	case kindDownload:
-		rel = strmutil.SanitizeRelPath(f.RelPath)
-	default:
-		return true
-	}
-	if rel == "" {
-		return true
-	}
-	_, err := os.Stat(filepath.Join(task.TargetPath, rel))
-	return err == nil
 }
 
 // anyToInt64 把 115 返回的 any 型 id（可能是 string / float64 / int）安全转成 int64。
@@ -572,6 +553,22 @@ func runDownloads(
 				sseServer.EmitLog(taskID, "error", "mkdir "+filepath.Dir(savePath)+": "+err.Error())
 				return nil
 			}
+			// 幂等：本地已存在且大小一致 → 跳过（同时省掉一次取直链请求）。
+			// 这是删除"增量模式"的前提：否则每轮任务都会重下全部 nfo/字幕/海报。
+			if f.Size > 0 {
+				if fi, serr := os.Stat(savePath); serr == nil && !fi.IsDir() && fi.Size() == f.Size {
+					perFile.Mark(f.CloudPath, 100)
+					atomic.AddInt64(downloaded, 1)
+					_, overall := perFile.Overall(total)
+					sseServer.EmitProgress(sse.ProgressPayload{
+						TaskID: taskID, FilePath: f.RelPath, Percent: 100, OverallPercent: overall,
+					})
+					rt.AppendLog(taskID, jsonLine(sse.ProgressPayload{
+						TaskID: taskID, FilePath: f.RelPath, Percent: 100, OverallPercent: overall,
+					}))
+					return nil
+				}
+			}
 			meta, err := c115.GetDownloadUrlWebFull(ctx, f.PickCode, cookie, c115.UserAgent)
 			if err != nil {
 				sseServer.EmitLog(taskID, "error", fmt.Sprintf("resolve dl url %s: %v", f.RelPath, err))
@@ -830,12 +827,13 @@ func normalizeExt(ext string) string {
 // mode: "off"(跳过) / "mark_only"(仅日志) / "auto_clean"(软删 + 超阈值二次确认)
 // 返回：(孤儿数, 延迟批次ID, error)。延迟批次ID 非空表示已入队待二次确认。
 
-func cleanupOrphanStrms( //nolint:cyclop // complexity: 47（缺口 2 失败目录保护后）
+func cleanupOrphanStrms( //nolint:cyclop // complexity: 53（缺口 2 失败目录保护 + 路径不符判定）
 	ctx context.Context,
 	submitter CleanupBatchSubmitter,
 	sseServer *sse.Server,
 	taskID, targetPath string,
-	cloudPickcodes map[string]struct{},
+	cloudCurrent map[string]string,
+	cloudSnapshot map[string]struct{},
 	failedDirPrefixes []string,
 	mode string,
 	cleanup model.CleanupSettings,
@@ -845,7 +843,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 47（缺口 2 失败目�
 	if mode == "" || mode == "off" {
 		return 0, "", nil
 	}
-	if len(cloudPickcodes) == 0 {
+	if len(cloudCurrent) == 0 && len(cloudSnapshot) == 0 {
 		// 云端集合为空时不做对账：避免在 fileEntries 还未填充阶段误删全部本地 STRM
 		return 0, "", nil
 	}
@@ -854,6 +852,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 47（缺口 2 失败目�
 	var orphans []string
 	strmTotal := 0
 	failedSkipped := 0
+	staleDup := 0
 	werr := filepath.Walk(targetPath, func(p string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
@@ -901,7 +900,19 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 47（缺口 2 失败目�
 			// 非 faststrm 生成的 STRM，跳过（避免误删手动创建的 STRM）
 			return nil
 		}
-		if _, exists := cloudPickcodes[pc]; !exists {
+		expectedRel, inCurrent := cloudCurrent[pc]
+		if !inCurrent {
+			// 仅 DB 快照知道这个 pickcode：路径未知，保守保留（快照存在的意义就是防误删）
+			if _, inSnapshot := cloudSnapshot[pc]; inSnapshot {
+				return nil
+			}
+			orphans = append(orphans, p)
+			return nil
+		}
+		// pickcode 仍在云端、但本地路径与本次期望不一致 → 云端改名/移动留下的旧 STRM。
+		// 之前只有路径级清理能处理这种情况，现在按 pickcode + 路径一起判。
+		if rel, rerr := filepath.Rel(targetPath, p); rerr == nil && !sameLocalPath(rel, expectedRel) {
+			staleDup++
 			orphans = append(orphans, p)
 		}
 		return nil
@@ -920,6 +931,10 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 47（缺口 2 失败目�
 	if failedSkipped > 0 && sseServer != nil {
 		sseServer.EmitLog(taskID, "info", fmt.Sprintf(
 			"对账清理：%d 个 STRM 位于列目录失败的目录下，本次跳过对账（防止误删）", failedSkipped))
+	}
+	if staleDup > 0 && sseServer != nil {
+		sseServer.EmitLog(taskID, "info", fmt.Sprintf(
+			"对账清理：%d 个 STRM 的 pickcode 仍有效但路径与云端不一致（改名/移动残留），一并清理", staleDup))
 	}
 
 	// 三重保护判定（比例 + 绝对 + 目录数）
@@ -1023,19 +1038,6 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 47（缺口 2 失败目�
 	return 0, "", nil
 }
 
-// buildCloudPickcodeSet 从 fileEntries 构建云端 pickcode 集合
-// fileEntries 是本次拉取的云端最新列表（含 kindStrm/kindDownload/kindSkip），
-// 所有合法 pickcode 都应纳入云端集合，避免增量跳过的条目被误判为孤儿。
-func buildCloudPickcodeSet(entries []*fileItem) map[string]struct{} {
-	set := make(map[string]struct{}, len(entries))
-	for _, f := range entries {
-		if isValidPickcode(f.PickCode) {
-			set[f.PickCode] = struct{}{}
-		}
-	}
-	return set
-}
-
 // buildCloudPickcodeSetFromSnapshot 从 DB 快照构建云端 pickcode 集合
 func buildCloudPickcodeSetFromSnapshot(snap map[string]db.SnapshotEntry) map[string]struct{} {
 	set := make(map[string]struct{}, len(snap))
@@ -1047,17 +1049,13 @@ func buildCloudPickcodeSetFromSnapshot(snap map[string]db.SnapshotEntry) map[str
 	return set
 }
 
-// mergePickcodeSets 将多个 pickcode 集合并集（用于全量预扫：DB 快照 + 本次 fileEntries）
-func mergePickcodeSets(sets ...map[string]struct{}) map[string]struct{} {
-	total := 0
-	for _, s := range sets {
-		total += len(s)
+// sameLocalPath 比较两个本地相对路径是否指向同一文件。
+// Windows 文件系统大小写不敏感，Linux/NAS 敏感。
+func sameLocalPath(a, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
 	}
-	out := make(map[string]struct{}, total)
-	for _, s := range sets {
-		for k := range s {
-			out[k] = struct{}{}
-		}
-	}
-	return out
+	return a == b
 }

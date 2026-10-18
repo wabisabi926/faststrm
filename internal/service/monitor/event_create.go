@@ -182,6 +182,37 @@ func (m *Monitor) resolveEventPickCode(
 	return event.PickCode
 }
 
+// resolveEventPickCodeWithRetry 在单文件事件上带短暂重试。
+//
+// 115 整理（transfer）刚完成时，create 事件可能先到、pickcode 还没生成，
+// 此时三条回退链（事件自带 → DB → files/info）都会失败。若不重试，这次事件被丢弃后
+// 只能等下一次全量扫描补回，表现为"新片偶尔没有 STRM"。
+// 只在单文件路径使用（文件夹递归可能一次处理上百个文件，不能逐个等待）。
+func (m *Monitor) resolveEventPickCodeWithRetry(
+	ctx context.Context,
+	account string,
+	lifeClient *client115.LifeClient,
+	event client115.LifeEventItem,
+) string {
+	pc := m.resolveEventPickCode(ctx, account, lifeClient, event)
+	if isValidPickcode(pc) {
+		return pc
+	}
+	for _, wait := range []time.Duration{2 * time.Second, 5 * time.Second} {
+		select {
+		case <-ctx.Done():
+			return pc
+		case <-time.After(wait):
+		}
+		if pc = m.resolveEventPickCode(ctx, account, lifeClient, event); isValidPickcode(pc) {
+			logger.S().Infof("[Monitor] pickcode 延迟可用 file_id=%s pc=%s（整理尚未完成？）", event.FileID, pc)
+			return pc
+		}
+	}
+	logger.S().Warnf("[Monitor] pickcode 多次解析仍失败 file_id=%s name=%s，本次跳过（下次全量会补）", event.FileID, event.FileName)
+	return pc
+}
+
 // handleCreateEvent 在映射的本地路径创建 STRM 文件
 // 对齐 MoviePilot MonitorLife._create：
 //   - 文件：直接生成 STRM（走 pickcode 严格校验 + .iso 命名）
@@ -262,7 +293,7 @@ func (m *Monitor) handleCreateEvent(
 	in := singleFileCreateInput{
 		CloudPath: cloudPath,
 		FileName:  event.FileName,
-		PickCode:  m.resolveEventPickCode(ctx, account, lifeClient, event),
+		PickCode:  m.resolveEventPickCodeWithRetry(ctx, account, lifeClient, event),
 		FileSize:  event.FileSize,
 		FileID:    event.FileID,
 		ParentID:  event.ParentID,

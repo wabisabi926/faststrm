@@ -213,3 +213,142 @@ M5 全量清单按 17.5 六步落地，详见 `优化方案-详细实施版.md` 
 
 - P2：下载幂等 + 删除增量（用户确认先放着）
 - P3：生活事件 3 个细节 + 清理默认值反转
+
+---
+
+## 11. 增量生成重新评估：建议删除（含"全量之后会怎样"）
+
+### 11.1 它到底做了什么（代码实证）
+
+```go
+// executor.go:339  注意：全量扫描在这一行之前已经跑完了
+incremental := settings.Download.IncrementalSync && deps.SQLiteDB != nil && task.Account != ""
+// executor.go:360-380  快照命中 → f.Kind = kindSkip
+```
+
+被标成 `kindSkip` 的条目，实际只省下三件事：
+
+| 省下的动作 | 是否还有价值 |
+|---|---|
+| 写 STRM | **没有了**——写入去重（`WriteStrmFile` 内容比对）本来就会跳过 |
+| Emby 刷新 | **没有了**——写入去重返回 `unchanged` 时本来就不刷 |
+| 下载关联文件（srt/ass/sub/nfo/jpg/png，`DefaultDownloadExtensions`） | **有**，这是它唯一不可替代的作用 |
+| 本地产物 stat（`localArtifactExists`，`executor_utils.go:129`） | 反而多了一次 stat |
+
+清理侧（`executor.go:399-432`）：增量清理只并**本次清单**，不并 DB 快照，是全仓唯一一条"清单不全就删库"的路径。
+
+### 11.2 删掉之后，定时任务是不是都变全量？
+
+**是。** 而且今天其实已经是这样：增量与否由**全局开关**决定（`TaskScheduleDialog.tsx:322` 原文："执行策略（全量 / 增量）由「设置 → 增量同步」全局开关控制，定时执行与手动执行完全一致"），跟任务本身无关。删掉开关后：
+
+- 所有任务（手动 / 定时 / 重跑）= 同一条全量路径
+- "全量" ≠ "全量重写"：M5 页级清单 + 内容比对写盘 + （待补）下载幂等
+- Emby 侧无副作用：内容没变就不写盘，mtime 不变，不会触发假重扫
+
+### 11.3 优劣势
+
+| 维度 | 保留增量 | 删除增量（全量 + 幂等） |
+|---|---|---|
+| 代码路径 | 2 条（含一条特殊清理） | 1 条 |
+| 清理安全 | 增量清理无 DB 快照兜底 | 只剩全量清理，有快照兜底 |
+| 每次运行 | 云端全扫 + 每文件 1 次 stat | 云端全扫（页级）+ 每文件 1 次小文件读 + 下载前 stat |
+| 下载 | 未变化跳过 | **必须补**"本地存在且大小一致则跳过"（约 10 行） |
+| 配置项 | 2 个全局项 + 1 个前端开关 | 0 |
+| 用户心智 | "我开了增量，为什么还扫这么久" | 只有一种行为 |
+
+### 11.4 代价量化
+
+以 5 万文件、其中约 3 万个关联文件（nfo/jpg/srt）为例：
+
+| 环节 | 增量 | 全量（M5 + 幂等） |
+|---|---|---|
+| 云端扫描 | 全量（页级） | 全量（页级），**相同** |
+| STRM 写盘 | 5 万次 stat | 5 万次 ~120B 读（SSD 1–2s，HDD/NAS 20–40s） |
+| 关联文件下载 | 0 次 | 3 万次 stat，未变化不下载 |
+| 清理 | 增量清理（危险） | 全量清理（本来每轮也扫本地） |
+
+结论：额外成本 ≈ 把 5 万次 stat 换成 5 万次小文件读。对 NAS 用户是几十秒级，可接受；换来一条代码路径 + 去掉一条无兜底的清理。
+
+### 11.5 删除清单
+
+| 项 | 位置 | 行数 |
+|---|---|---|
+| 增量分支（快照比对 / kindSkip / 修复） | `executor.go:339-397` | ~59 |
+| 增量清理分支 | `executor.go:399-432` | ~34 |
+| `localArtifactExists`（只为增量存在） | `executor_utils.go:126-150` | ~25 |
+| `IncrementalSync` / `IncrementalCleanupMode` | `model/settings.go:120,127`、`handler/emby.go:489` | ~10 |
+| 前端开关与说明 | `BasicSettingsTab.tsx:391-412`、`types.ts:58`、`TaskScheduleDialog.tsx:322` | ~25 |
+| `StrmHistoryKindIncrement`（如仅增量使用） | `db/strm_history_repo.go:18` | ~2 |
+
+**保留**：`ListSnapshotByAccount`（全量清理 `executor.go:470` 仍在用）。
+
+---
+
+## 12. 清理默认值：建议反转，但不是"一行翻转"
+
+### 12.1 现状（三个事实）
+
+1. **全局 `settings.RemoveExtraFiles` 是死配置**：只有设置接口读写（`handler/emby.go:426,474`），执行器从不读它——真正生效的是任务级 `task.RemoveExtraFiles`（`executor.go:673`）。
+2. 任务级开关前端默认 **true**（`AddTaskDialog.tsx:125`），即新建任务默认会"删掉保留集合之外的任何文件"。
+3. pickcode 级 `FullSyncCleanupOrphans` 默认空 = 关闭，而且**前端没有任何入口**，只能手改 `settings.json`。
+
+也就是说：绝大多数用户实际只有**路径级清理**在跑，而它是三套清理里最激进的一套。
+
+### 12.2 风险对比
+
+| | 路径级 `removeExtraFiles` | pickcode 级 `cleanupOrphanStrms` |
+|---|---|---|
+| 删除对象 | `targetPath` 下**任何**不在保留集合的文件 | 只删 `.strm`（可选连带同名 nfo/jpg/srt） |
+| 判据 | 路径 | STRM 内容里的 pickcode |
+| 误删用户自己的文件 | **会**（占比 <10% 时直接删，如自建海报、非默认扩展名字幕） | 不会（非 faststrm 生成的 STRM 直接跳过） |
+| DB 兜底 | 无 | 全量清理并 DB 快照 |
+| 二次确认 | 有（超 StableThreshold） | 有（延迟批次 + 确认页） |
+| 处理云端已删 | 能 | 能 |
+| 处理云端改名/移动后的旧 STRM | 能 | **不能**（pickcode 仍在云端集合，旧文件被保留） |
+
+### 12.3 推荐：反转默认 + 补一个判定，同一版本完成
+
+1. **默认值**：任务级 path-level 默认 `false`；全局 pickcode 级默认 `"auto_clean"`，并在设置页补一个下拉（关闭 / 仅标记 / 自动清理）——现在它是隐藏配置，用户根本调不到。
+2. **给 pickcode 清理补"路径不符"判定**：把 `map[pickcode]expectedRelPath` 传进 `cleanupOrphanStrms`，本地 STRM 的 pickcode 在集合里、但相对路径与期望不一致 → 判为改名/移动残留，走同一套阈值。约 30 行，补上 12.2 里唯一的短板。
+3. **迁移**：`FullSyncCleanupOrphans == "" && RemoveExtraFiles == true` → 视为"从未配置过 pickcode 清理"，一次性切换到新默认，写日志 + 更新日志说明。
+4. **下一版本**再删路径级实现（-104 行）。
+
+### 12.4 为什么不这一版就删路径级
+
+- 迁移后需要观察一个版本的真实反馈；
+- 先让 pickcode 级具备"改名去重"能力，功能对齐后再删，避免能力真空。
+
+---
+
+## 13. 待确认的执行顺序
+
+| 批次 | 内容 | 依赖 | 风险 |
+|---|---|---|---|
+| P2a | 下载幂等（存在且大小一致跳过） | 无 | 零 |
+| P2b | 删除增量（-130 行 + 前端开关 + 设置迁移） | P2a | 中 |
+| P3a | 清理默认反转 + 设置页补入口 + 配置迁移 | 无 | 中（行为变化） |
+| P3b | pickcode 清理补"路径不符"判定（+30 行） | P3a | 低 |
+| P3c | 生活事件 3 个细节 | 无 | 低 |
+| P4 | 删路径级实现（-104 行） | P3a/P3b 观察一版 | 中 |
+
+以上均为方案，等你确认后再动代码。
+
+### P2 + P3（已完成，2026-10-18）
+
+| 批次 | 内容 | 结果 |
+|---|---|---|
+| P2a | 下载幂等：本地存在且大小一致 → 跳过（连取直链请求也省掉） | `runDownloads` +18 行 |
+| P2b | 删除增量：分支、增量清理、`localArtifactExists`、2 个设置项、前端开关与文案、阶段徽章 | 净减 ~130 行 |
+| P3a | 清理默认反转：任务级路径清理默认 false（存量任务一次性迁移，标记文件 `.cleanup-path-disabled`）；pickcode 级默认 `auto_clean` 并在设置页暴露下拉；删除死配置 `settings.removeExtraFiles` | +迁移 2 处 |
+| P3b | pickcode 清理改为 `pickcode → 期望本地路径`：路径不一致的旧 STRM 判残留（补上改名/移动去重）；仅快照知道的 pickcode 一律保留 | +40 行 |
+| P3c | 单文件 create/move 事件 pickcode 解析失败时重试 2 次（2s/5s），覆盖"整理刚完成 pickcode 还没生成" | +25 行 |
+
+P3c 的另外两项经复核**不需要改**：
+- 405 降级：`PullEvents` 已按页交替 proapi/ios ↔ webapi，单页失败还会 `switchApiHost` 重试一次，覆盖度已够。
+- 关联资产迁移：同目录 rename 由 `moveOrRenameRelatedAssets` 处理，跨目录 move 由 `event_move.go:628-650` 的同名前缀搬运处理。
+
+测试：`TestCleanupOrphanStrms_StalePathDetected` / `_SnapshotOnlyKept` / `TestReadSettings_MigratesCleanupDefaults` / `TestReadTasks_DisablesPathCleanupOnce`。
+
+### P4（待办）
+
+删除路径级清理实现（`removeExtraFiles`，~104 行）。建议观察一个版本：确认 P3b 的路径判定在真实改名/移动场景下没有误判后再删。

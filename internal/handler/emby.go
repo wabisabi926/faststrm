@@ -423,7 +423,6 @@ type settingsPostBody struct {
 	MediaMountPath     []string                `json:"mediaMountPath"`
 	StrmPrefix         string                  `json:"strmPrefix"`
 	EnablePathEncoding bool                    `json:"enablePathEncoding"`
-	RemoveExtraFiles   bool                    `json:"removeExtraFiles"`
 	Download           *model.DownloadSettings `json:"download"`
 	Strm               *model.StrmSettings     `json:"strm"`
 	Emby               *model.EmbySettings     `json:"emby"`
@@ -471,7 +470,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 		// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
 		settings.EnablePathEncoding = body.EnablePathEncoding
-		settings.RemoveExtraFiles = body.RemoveExtraFiles
 
 		// ====== Download 嵌套对象 ======
 		if body.Download != nil {
@@ -485,8 +483,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				settings.Download.DownloadMaxConcurrent = body.Download.DownloadMaxConcurrent
 			}
 			settings.Download.AutoDownloadMetadata = body.Download.AutoDownloadMetadata
-			// 增量同步全局开关（前端始终发送全量对象，直接覆盖）
-			settings.Download.IncrementalSync = body.Download.IncrementalSync
 			// 全局文件过滤：最小文件大小阈值（字节），前端始终发送全量值，直接覆盖
 			settings.Download.MinFileSize = body.Download.MinFileSize
 			// 全局文件过滤：文件名黑名单（nil 表示未提供，保留旧值；空数组表示用户主动清空）
@@ -496,6 +492,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			// STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空值表示未提供，保留旧配置
 			if body.Download.OverwriteMode != "" {
 				settings.Download.OverwriteMode = body.Download.OverwriteMode
+			}
+			// 孤儿 STRM 清理策略：off / mark_only / auto_clean；空值表示未提供
+			if body.Download.FullSyncCleanupOrphans != "" {
+				settings.Download.FullSyncCleanupOrphans = body.Download.FullSyncCleanupOrphans
 			}
 		}
 

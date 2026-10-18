@@ -37,7 +37,6 @@ export type Task = {
 export const STAGE_CONFIG: Record<string, { label: string; className: string; icon: string }> = {
   starting:    { label: "启动中",     className: "bg-slate-500/20 text-slate-300 border-slate-500/30",   icon: "⏳" },
   scanning:    { label: "扫描目录",   className: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",      icon: "🔍" },
-  incremental: { label: "增量比对",   className: "bg-violet-500/20 text-violet-300 border-violet-500/30",  icon: "📊" },
   cleanup:     { label: "清理文件",   className: "bg-amber-500/20 text-amber-300 border-amber-500/30",    icon: "🧹" },
   writing_db:  { label: "写入数据库", className: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30", icon: "💾" },
   generating:  { label: "生成STRM",   className: "bg-blue-500/20 text-blue-300 border-blue-500/30",      icon: "⚡" },

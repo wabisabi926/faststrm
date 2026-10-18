@@ -122,7 +122,7 @@ export function AddTaskDialog({
       targetPath: "",
       strmType: "local",
       strmPrefix: "",
-      removeExtraFiles: true,
+      removeExtraFiles: false,
     },
   });
 

@@ -81,15 +81,14 @@ type Task struct {
 
 // 任务阶段常量（供前端展示阶段徽章）
 const (
-	StageStarting    = "starting"    // 启动中
-	StageScanning    = "scanning"    // 扫描目录
-	StageIncremental = "incremental" // 增量同步
-	StageCleanup     = "cleanup"     // 清理文件
-	StageWritingDB   = "writing_db"  // 写回数据库
-	StageGenerating  = "generating"  // 生成STRM/下载
-	StageFinalizing  = "finalizing"  // 收尾处理
-	StageCompleted   = "completed"   // 已完成
-	StageFailed      = "failed"      // 失败
+	StageStarting   = "starting"   // 启动中
+	StageScanning   = "scanning"   // 扫描目录
+	StageCleanup    = "cleanup"    // 清理文件
+	StageWritingDB  = "writing_db" // 写回数据库
+	StageGenerating = "generating" // 生成STRM/下载
+	StageFinalizing = "finalizing" // 收尾处理
+	StageCompleted  = "completed"  // 已完成
+	StageFailed     = "failed"     // 失败
 )
 
 // RuntimeState 运行时状态（内存态，不持久化）
@@ -103,7 +102,7 @@ type RuntimeState struct {
 	DownloadedFiles int `json:"downloadedFiles,omitempty"`
 	DeletedFiles    int `json:"deletedFiles,omitempty"`
 
-	Stage       string `json:"stage,omitempty"`       // 当前阶段：scanning/incremental/cleanup/writing_db/generating/finalizing
+	Stage       string `json:"stage,omitempty"`       // 当前阶段：scanning/cleanup/writing_db/generating/finalizing
 	StageDetail string `json:"stageDetail,omitempty"` // 阶段详情描述（如"已处理 5 个目录, 120 个文件"）
 }
 
