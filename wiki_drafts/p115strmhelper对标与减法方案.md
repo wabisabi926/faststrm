@@ -188,3 +188,18 @@ P0 与 P1/P2 无依赖，可以并行；P2 依赖 2.3；P3 最后。
 - 清理批次：删除后 `grep` 无残留引用；老配置文件可正常加载
 - M5：假 115 服务覆盖正常分页 / 空页 / count 变化 / 重复页 / 缺 fid / 404 回退；翻译失败子树存在本地 STRM 时清理必须被禁用
 - 增量删除：老配置 `incrementalSync=true` 不报错；下载幂等命中时任务时长明显下降
+
+---
+
+## 10. 实施记录
+
+### P0（已完成，2026-10-18）
+
+| 项 | 结果 |
+|---|---|
+| 删除 `ExportDirParse` | 实现 104 行（`files.go`）+ 调用 17 行（`executor.go`）；任务启动不再白等最多 30s，也不再在 115 侧建 zip 导出任务 |
+| 4 个重复函数合并 | 新增 `pkg/strmutil/strmfile.go`（`StrmFileName` / `IsValidPickcode` / `ShouldGenerateStrm` / `WriteStrmFile`），task 与 monitor 各自只留 1 行薄封装；调用点未动，零回归风险 |
+| 日志降噪 | 逐条目 `entry name=...` 与每页 `page=...` 由 Info 降为 Debug；任务日志只保留每目录汇总 |
+| 测试 | 新增 `pkg/strmutil/strmfile_test.go`（ISO 双扩展名 / pickcode / 黑名单 / 写入去重含 mtime 断言）；`go test ./...` 全绿 |
+
+净减约 150 行（删除 283 行，新增共用实现 101 行 + 测试）。

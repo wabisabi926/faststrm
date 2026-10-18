@@ -309,80 +309,15 @@ func (m *Monitor) deleteOldStrmAtLocalPath(
 	logger.S().Infof("[Monitor] deleteOldStrmAtLocalPath: 完成 %s", oldLocalPath)
 }
 
-// getStrmFileName 将文件名转换为 .strm 扩展名
-// 对齐 TS// getStrmFileName 生成 .strm 文件名
-// 对齐 MoviePilot StrmGenerater.get_strm_filename:
-//   - 普通文件：movie.mkv → movie.strm
-//   - ISO 镜像保留双扩展名：game.iso → game.iso.strm
-func getStrmFileName(fileName string) string {
-	// 事件里的文件名来自云端，可能含 Windows 非法字符：与 task 侧共用同一套清理规则，
-	// 保证事件生成/删除/重命名定位到与全量生成完全相同的本地路径。
-	fileName = strmutil.SanitizeFileName(fileName)
-	ext := strings.ToLower(filepath.Ext(fileName))
-	if ext == "" {
-		return fileName + ".strm"
-	}
-	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-	if ext == ".iso" {
-		return stem + ".iso.strm"
-	}
-	return stem + ".strm"
-}
+// getStrmFileName / isValidPickcode / shouldGenerateStrm 的实现在 pkg/strmutil，
+// 与 task 侧共用同一份（此前两个包各写了一遍，逐行相同）。
 
-// isValidPickcode 校验 115 pickcode 合法性
-// 对齐 MoviePilot：17 位字母数字混合字符串
-func isValidPickcode(pc string) bool {
-	if len(pc) != 17 {
-		return false
-	}
-	for i := 0; i < len(pc); i++ {
-		c := pc[i]
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-			return false
-		}
-	}
-	return true
-}
+func getStrmFileName(fileName string) string { return strmutil.StrmFileName(fileName) }
 
-// shouldGenerateStrm 统一判断文件是否应该生成 STRM（与 task 包同名函数逻辑保持一致）
-// 对齐 MoviePilot StrmGenerater.should_generate_strm：
-//  1. 黑名单关键词检查（不区分大小写子串匹配，若任一条目匹配则拒绝）
-//  2. 最小文件大小检查（minFileSize>0 且 fileSize>0 且 fileSize<minFileSize 则拒绝）
-//
-// P2-2：matcher 非空时优先用 AC 自动机；matcher 为空但黑名单条目 ≥ concurrency.ACThreshold
-// 时，会在本函数内临时构建 AC（建议外层批量调用场景传入预构建 matcher 减少重复开销）。
-// 返回：(拒绝原因, 是否通过)；通过时拒绝原因为空
+func isValidPickcode(pc string) bool { return strmutil.IsValidPickcode(pc) }
+
 func shouldGenerateStrm(fileName string, fileSize, minFileSize int64, blacklist []string, matcher ...*concurrency.StringMatcher) (string, bool) {
-	// 1) 黑名单检查
-	if len(blacklist) > 0 {
-		// 选 matcher：显式传入 > 阈值临时构建 > contains 线性扫
-		var m *concurrency.StringMatcher
-		if len(matcher) > 0 && matcher[0] != nil {
-			m = matcher[0]
-		} else if concurrency.ShouldUseAC(blacklist) {
-			m = concurrency.NewStringMatcher(blacklist)
-		}
-		if m != nil {
-			if kw, ok := m.MatchAny(fileName); ok {
-				return fmt.Sprintf("匹配黑名单关键词 %q", kw), false
-			}
-		} else {
-			lowerName := strings.ToLower(fileName)
-			for _, kw := range blacklist {
-				if kw == "" {
-					continue
-				}
-				if strings.Contains(lowerName, strings.ToLower(kw)) {
-					return fmt.Sprintf("匹配黑名单关键词 %q", kw), false
-				}
-			}
-		}
-	}
-	// 2) 最小文件大小限制
-	if minFileSize > 0 && fileSize > 0 && fileSize < minFileSize {
-		return "小于最小文件大小", false
-	}
-	return "", true
+	return strmutil.ShouldGenerateStrm(fileName, fileSize, minFileSize, blacklist, matcher...)
 }
 
 // isMediaFile 检查文件名是否为媒体文件扩展名
@@ -457,17 +392,8 @@ func generateStrmContent(cloudPath, strmPrefix string, enablePathEncoding bool, 
 // writeStrmFile 原子写入 STRM 文件（先写 tmp 再 rename）
 // P2-10: 读-比较-写，仅在内容变化时覆盖（对齐参考项目 _sync_strm_text_with_event）
 func writeStrmFile(strmPath, content string) error {
-	// P2-10: 读取现有内容，相同则跳过写入
-	if existing, err := os.ReadFile(strmPath); err == nil {
-		if string(existing) == content {
-			return nil // 内容未变化，跳过
-		}
-	}
-	tmpPath := strmPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, strmPath)
+	_, err := strmutil.WriteStrmFile(strmPath, content)
+	return err
 }
 
 // removeEmptyParents 向上递归删除空目录，直到遇到根目录或非空目录

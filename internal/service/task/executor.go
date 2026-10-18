@@ -253,7 +253,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			"未配置 STRM 前缀，已自动使用本机内网地址 %s；若需跨网段或外网播放，请手动配置为对外地址", resolved.StrmPrefix))
 	}
 
-	// 6) 取 cid + exportDirParse → 拿到根 pickcode
+	// 6) 取 cid（不再调用 115 目录导出接口：它只用于日志，却会在 115 侧创建
+	//    zip 导出任务并阻塞最多 30s）
 	sseServer.EmitLog(task.ID, "info",
 		fmt.Sprintf("Task starting: account=%s origin=%s target=%s", task.Account, task.OriginPath, task.TargetPath))
 
@@ -272,24 +273,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	}
 	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Got cid=%d for path %s", cid, task.OriginPath))
 
-	// 7) 导出目录解析（仅用于日志，实际遍历目录由 FsFiles 递归完成，不依赖 rootPick）
-	//    如果此步骤失败（例如 115 files/zip 接口返回"服务器开小差"），只记录警告不中断任务。
-	exportCtx, exportCancel := context.WithTimeout(ctx, 30*time.Second)
-	defer exportCancel()
-	rootPick := ""
-	if rp, err := deps.Client115.ExportDirParse(exportCtx, itoa(cid), account.Cookie, 0); err != nil {
-		warn := "ExportDirParse skipped: " + err.Error()
-		sseServer.EmitLog(task.ID, "warn", warn)
-	} else {
-		rootPick = rp
-	}
-	if rootPick != "" {
-		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Export root pickcode=%s", rootPick))
-	} else {
-		sseServer.EmitLog(task.ID, "info", "Export root pickcode unavailable, proceeding with FsFiles direct traversal")
-	}
-
-	// 8) 构建目录树（从导出结果列目录得到文件列表）
+	// 7) 构建目录树（从列目录结果得到文件列表）
 	//    简化版：我们用 fs_files 多次分页遍历目标目录（cid 已知），获取文件条目
 	// 对齐 MoviePilot StrmGenerater.should_generate_strm：
 	//   - minFileSize: 从全局 settings.Download.MinFileSize（full_sync_min_file_size）读取

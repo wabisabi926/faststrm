@@ -80,77 +80,16 @@ func resolveStrmSettings(task *Task, s *model.Settings, baseURL, publicBaseURL s
 	return r
 }
 
-// isValidPickcode 校验 115 pickcode 合法性
-// 对齐 MoviePilot：17 位字母数字混合字符串
-func isValidPickcode(pc string) bool {
-	if len(pc) != 17 {
-		return false
-	}
-	for i := 0; i < len(pc); i++ {
-		c := pc[i]
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-			return false
-		}
-	}
-	return true
-}
+// isValidPickcode / shouldGenerateStrm / getStrmFileName 的实现在 pkg/strmutil，
+// monitor 侧共用同一份（此前两个包各写了一遍，逐行相同）。
 
-// shouldGenerateStrm 统一判断文件是否应该生成 STRM
-// 对齐 MoviePilot StrmGenerater.should_generate_strm：
-//  1. 黑名单关键词检查（不区分大小写子串匹配，若任一条目匹配则拒绝）
-//  2. 最小文件大小检查（minFileSize>0 且 fileSize>0 且 fileSize<minFileSize 则拒绝）
-//
-// P2-2：matcher 非空时走 AC 自动机；否则阈值≥8 临时构建；<8 时 contains 线性扫常数项更低
-// 返回：(拒绝原因, 是否通过)；通过时拒绝原因为空
+func isValidPickcode(pc string) bool { return strmutil.IsValidPickcode(pc) }
+
 func shouldGenerateStrm(fileName string, fileSize, minFileSize int64, blacklist []string, matcher ...*concurrency.StringMatcher) (string, bool) {
-	// 1) 黑名单检查：不区分大小写子串匹配
-	// 对齐 MoviePilot not_blacklist_key / not_blacklist_key_automaton
-	if len(blacklist) > 0 {
-		var m *concurrency.StringMatcher
-		if len(matcher) > 0 && matcher[0] != nil {
-			m = matcher[0]
-		} else if concurrency.ShouldUseAC(blacklist) {
-			m = concurrency.NewStringMatcher(blacklist)
-		}
-		if m != nil {
-			if kw, ok := m.MatchAny(fileName); ok {
-				return fmt.Sprintf("匹配黑名单关键词 %q", kw), false
-			}
-		} else {
-			lowerName := strings.ToLower(fileName)
-			for _, kw := range blacklist {
-				if kw == "" {
-					continue
-				}
-				if strings.Contains(lowerName, strings.ToLower(kw)) {
-					return fmt.Sprintf("匹配黑名单关键词 %q", kw), false
-				}
-			}
-		}
-	}
-	// 2) 最小文件大小限制
-	// 对齐 MoviePilot not_min_limit：fileSize=0(未知)时默认通过
-	if minFileSize > 0 && fileSize > 0 && fileSize < minFileSize {
-		return "小于最小文件大小", false
-	}
-	return "", true
+	return strmutil.ShouldGenerateStrm(fileName, fileSize, minFileSize, blacklist, matcher...)
 }
 
-// getStrmFileName 将文件名转换为 .strm 扩展名
-// 对齐 MoviePilot StrmGenerater.get_strm_filename:
-//   - 普通文件：movie.mkv → movie.strm
-//   - ISO 镜像保留双扩展名：game.iso → game.iso.strm
-func getStrmFileName(fileName string) string {
-	ext := strings.ToLower(filepath.Ext(fileName))
-	if ext == "" {
-		return fileName + ".strm"
-	}
-	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-	if ext == ".iso" {
-		return stem + ".iso.strm"
-	}
-	return stem + ".strm"
-}
+func getStrmFileName(fileName string) string { return strmutil.StrmFileName(fileName) }
 
 // getRelPathStrmSuffix 基于相对路径（含扩展名）生成对应的 .strm 相对路径
 // 等价于替换文件名为 getStrmFileName(name)
@@ -252,14 +191,7 @@ func idString(v any) string {
 // 文件监视器把未变更的 STRM 当作更新，触发媒体库假重扫。
 // 注意：跳过写入≠跳过生成，调用方的清理对账清单仍需包含该文件。
 func writeStrmFile(strmPath, content string) (unchanged bool, err error) {
-	if existing, rerr := os.ReadFile(strmPath); rerr == nil && string(existing) == content {
-		return true, nil
-	}
-	tmpPath := strmPath + ".tmp"
-	if werr := os.WriteFile(tmpPath, []byte(content), 0o600); werr != nil {
-		return false, werr
-	}
-	return false, os.Rename(tmpPath, strmPath)
+	return strmutil.WriteStrmFile(strmPath, content)
 }
 
 // buildStrmContent 生成 .strm 文件内容
@@ -500,9 +432,9 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 				if resp.Count > 0 {
 					expectedCount = resp.Count
 				}
-				logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q page=%d offset=%d returned=%d count=%d", top.cid, top.relPath, page, offset, len(resp.Data), resp.Count)
+				logger.S().Debugf("[listAllFilesRecursive] cid=%d relPath=%q page=%d offset=%d returned=%d count=%d", top.cid, top.relPath, page, offset, len(resp.Data), resp.Count)
 				for _, e := range resp.Data {
-					logger.S().Infof("[listAllFilesRecursive] entry name=%q cid=%v fid=%v fc=%v size=%d pickcode=%q isDir=%v", e.Name, e.CID, e.FID, e.FC, e.Size, e.PickCode, e.IsDir)
+					logger.S().Debugf("[listAllFilesRecursive] entry name=%q cid=%v fid=%v fc=%v size=%d pickcode=%q isDir=%v", e.Name, e.CID, e.FID, e.FC, e.Size, e.PickCode, e.IsDir)
 					relName := e.Name
 					if top.relPath != "" {
 						relName = top.relPath + "/" + e.Name
