@@ -408,45 +408,12 @@ func handleProxy(
 		cancel(fmt.Errorf("client disconnected: %w", r.Context().Err()))
 	}()
 
-	// fetch 发起一次上游请求。每次重试都重建请求对象，避免复用已关闭的 body。
-	fetch := func(target string) (*http.Response, error) {
-		req, rerr := http.NewRequestWithContext(ctx, r.Method, target, nil)
-		if rerr != nil {
-			return nil, rerr
+	upstream, lastErr := fetchUpstreamWithRefresh(w, ctx, r.Method, cdnURL, reqHeaders, refresh, connTimer)
+	if upstream == nil {
+		if lastErr != nil {
+			logger.S().Warnf("[STRM][proxy] upstream fetch failed: %v", lastErr)
 		}
-		for k, v := range reqHeaders {
-			req.Header.Set(k, v)
-		}
-		return getProxyHTTPClient().Do(req)
-	}
-
-	upstream, err := fetch(cdnURL)
-	connTimer.Stop()
-	if err != nil {
-		logger.S().Warnf("[STRM][proxy] upstream fetch failed: %v", err)
-		http.Error(w, "Upstream fetch failed: "+err.Error(), http.StatusBadGateway)
 		return
-	}
-
-	// 链接过期自动刷新：此时尚未向客户端写任何响应头，可以安全地换链重试。
-	if refresh != nil && shouldRefreshUpstream(upstream.StatusCode) {
-		_, _ = io.Copy(io.Discard, io.LimitReader(upstream.Body, 4096))
-		_ = upstream.Body.Close()
-		newURL, rerr := refresh(ctx)
-		if rerr != nil {
-			logger.S().Warnf("[STRM][proxy] 直链已失效(status=%d)且刷新失败: %v", upstream.StatusCode, rerr)
-			http.Error(w, "Upstream link expired and refresh failed", http.StatusBadGateway)
-			return
-		}
-		logger.S().Infof("[STRM][proxy] 直链已失效(status=%d)，已刷新并重试一次", upstream.StatusCode)
-		connTimer.Reset(strm.ConnectTimeout)
-		upstream, err = fetch(newURL)
-		connTimer.Stop()
-		if err != nil {
-			logger.S().Warnf("[STRM][proxy] 刷新后重试失败: %v", err)
-			http.Error(w, "Upstream retry failed: "+err.Error(), http.StatusBadGateway)
-			return
-		}
 	}
 	defer upstream.Body.Close()
 
@@ -515,6 +482,64 @@ func shouldRefreshUpstream(status int) bool {
 		return true
 	}
 	return status >= 500
+}
+
+// fetchUpstreamWithRefresh 发起上游请求，并在「链接可能已过期」时自动换链重试一次。
+//
+// 返回 (nil, nil) 表示错误响应已写回客户端（4xx/5xx），调用方直接返回即可；
+// 返回 (resp, nil) 表示拿到可回传的上游响应，Body 由调用方负责关闭。
+// timer 用于建连超时：每次发起请求前重置，拿到响应后停止。
+func fetchUpstreamWithRefresh(
+	w http.ResponseWriter,
+	ctx context.Context,
+	method string,
+	cdnURL string,
+	reqHeaders map[string]string,
+	refresh func(context.Context) (string, error),
+	timer *time.Timer,
+) (*http.Response, error) {
+	// fetch 发起一次上游请求。每次重试都重建请求对象，避免复用已关闭的 body。
+	fetch := func(target string) (*http.Response, error) {
+		timer.Reset(strm.ConnectTimeout)
+		req, rerr := http.NewRequestWithContext(ctx, method, target, nil)
+		if rerr != nil {
+			timer.Stop()
+			return nil, rerr
+		}
+		for k, v := range reqHeaders {
+			req.Header.Set(k, v)
+		}
+		resp, derr := getProxyHTTPClient().Do(req)
+		timer.Stop()
+		return resp, derr
+	}
+
+	upstream, err := fetch(cdnURL)
+	if err != nil {
+		http.Error(w, "Upstream fetch failed: "+err.Error(), http.StatusBadGateway)
+		return nil, err
+	}
+
+	// 链接过期自动刷新：此时尚未向客户端写任何响应头，可以安全地换链重试。
+	if refresh == nil || !shouldRefreshUpstream(upstream.StatusCode) {
+		return upstream, nil
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(upstream.Body, 4096))
+	_ = upstream.Body.Close()
+	newURL, rerr := refresh(ctx)
+	if rerr != nil {
+		logger.S().Warnf("[STRM][proxy] 直链已失效(status=%d)且刷新失败: %v", upstream.StatusCode, rerr)
+		http.Error(w, "Upstream link expired and refresh failed", http.StatusBadGateway)
+		return nil, nil
+	}
+	logger.S().Infof("[STRM][proxy] 直链已失效(status=%d)，已刷新并重试一次", upstream.StatusCode)
+	upstream, err = fetch(newURL)
+	if err != nil {
+		logger.S().Warnf("[STRM][proxy] 刷新后重试失败: %v", err)
+		http.Error(w, "Upstream retry failed: "+err.Error(), http.StatusBadGateway)
+		return nil, err
+	}
+	return upstream, nil
 }
 
 // totalSizeFromCdn 是 HEAD 响应 Content-Length 的兜底 helper：
