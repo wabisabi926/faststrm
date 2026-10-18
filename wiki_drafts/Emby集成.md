@@ -69,6 +69,9 @@ Emby 服务器地址: http://192.168.1.10:8097
 | `GET /videos/{id}/stream`（Static=true） | **302 重定向** — 直链播放（MKV / MP4 等普通格式） |
 | `GET /videos/{id}/{name}`、`/items/{id}/download`、`/sync/jobitems/{id}/file` | **流拦截** — VIP 原盘 / 特殊格式 / 下载类请求走代理流 |
 | **ISO / BDMV / M2TS / TS 原盘** | **代理流播放（200/206）** — v1.3.2 起走字节 Range 代理，可正常拖动进度，不再 302 后失效 |
+
+> 说明：原盘的代理流只发生在**反代层**。若客户端直接读取 STRM（如 Infuse/Kodi 直连 8090），
+> `/api/strm` 会按普通格式返回 302，由客户端自己对 CDN 发 Range 请求。
 | 其他所有 Emby API | **原样透传** — 登录、刮削、通知、管理等完全不受影响 |
 
 ### 日志验证
@@ -76,8 +79,10 @@ Emby 服务器地址: http://192.168.1.10:8097
 播放 STRM 时 faststrm 日志会显示：
 ```
 [EmbyProxy] PlaybackInfo 强制 DirectPlay: path=/emby/Items/123/PlaybackInfo, sources=2
-[STRM] account=我的115 pickcode=csv7…567 decision=proxy reason=format_force_proxy:iso
+[EmbyProxy] media proxy(seek): item=123 source=abc container="iso" name="星际穿越.iso"
 ```
+
+> 直连 STRM（不经反代）时，日志里看到的是 STRM 层的 `decision=redirect`（原盘已不再在 STRM 层强制 proxy）。
 
 ### 端口说明
 

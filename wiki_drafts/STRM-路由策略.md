@@ -153,7 +153,11 @@ http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&fi
 
 - `account`：账号名
 - `pickcode`：115 文件唯一标识（17 位字母数字）
-- `file_name`：文件名（用于 Content-Disposition 和格式判断，ISO 等格式会强制 proxy 模式）
+- `file_name`：文件名（用于 Content-Disposition 和格式判断）
+
+> **注意（v1.4.2 起）**：STRM 路由层**不再对 ISO/原盘特判**，默认与其他格式一样走 302。
+> 原盘的代理流处理已经下移到 Emby 反代层（`isSeekRequiredFormat` 命中 iso/bdmv/m2ts/ts 时走服务端代理流）。
+> 这样直连 STRM 的客户端（Infuse/Kodi）可以直接 302 到 CDN，省掉一次服务器中转。
 
 ### pickcode 获取方式
 
