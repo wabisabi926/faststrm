@@ -672,21 +672,28 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			StageDetail:    "正在清理本地多余文件...",
 		})
 		sseServer.EmitLog(task.ID, "info", "scanning for extra files to remove")
-		deleted, reqID, derr := removeExtraFiles(ctx, deps.CleanupSubmitter, task.ID, task.TargetPath, fileEntries, settings)
-		if derr != nil {
+		outcome, derr := removeExtraFiles(ctx, deps.CleanupSubmitter, task.ID, task.TargetPath, fileEntries, settings)
+		switch {
+		case derr != nil:
 			sseServer.EmitLog(task.ID, "warn", "removeExtraFiles err: "+derr.Error())
-		} else if reqID != "" {
+		case outcome.Verdict == CleanupProtected:
+			// 保护态：只停删除，不停生成。必须明确告知原因，
+			// 否则用户只会看到「任务成功但什么都没删」，无从判断。
+			sseServer.EmitLog(task.ID, "warn", "清理进入保护态，本次未删除任何文件："+outcome.Reason)
+			sseServer.EmitLog(task.ID, "info", "如需强制清理，请到 Web UI 清理页手动执行")
+			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = 0 })
+		case outcome.RequestID != "":
 			// 延迟清理批次已入队，等待用户二次确认（Web UI / Telegram）
 			sseServer.EmitLog(task.ID, "warn",
-				fmt.Sprintf("检测到孤儿文件超过稳定阈值，已延迟删除并等待二次确认 (requestID=%s)", reqID))
+				fmt.Sprintf("检测到孤儿文件需要二次确认，已延迟删除 (requestID=%s)：%s", outcome.RequestID, outcome.Reason))
 			sseServer.EmitLog(task.ID, "info",
 				"请到 Web UI 清理页 /api/strmCleanup/pending 或 Telegram 按钮确认")
 			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = 0 })
-		} else {
-			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = deleted })
-			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("removed %d extra files", deleted))
+		default:
+			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = outcome.Deleted })
+			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("removed %d extra files", outcome.Deleted))
 			// Emby 刷库（删除后刷新整个目标目录，对齐 MoviePilot full_sync_media_server_refresh）
-			if deps.EmbyRefresh != nil && deleted > 0 {
+			if deps.EmbyRefresh != nil && outcome.Deleted > 0 {
 				if rerr := deps.EmbyRefresh.RefreshOnDelete(ctx, task.TargetPath); rerr != nil {
 					logger.S().Debugf("[Task] Emby 刷库安排失败 path=%s: %v", task.TargetPath, rerr)
 				}

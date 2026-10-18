@@ -105,6 +105,18 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 			changed = true
 		}
 	}
+	// v1.4.3 清理阈值升级：由「单阈值 10 个」改为「比例 + 绝对 + 目录数」三重保护。
+	//
+	// 迁移条件刻意收紧：只有 MaxRatio 尚未出现（==0，说明从未升级过）
+	// 且 MaxThreshold 仍是旧默认 10 时才升级；用户自己调过的值一律不动。
+	if out.Cleanup.MaxRatio == 0 && out.Cleanup.MaxThreshold == 10 {
+		out.Cleanup.MaxRatio = def.Cleanup.MaxRatio
+		out.Cleanup.MaxThreshold = def.Cleanup.MaxThreshold
+		out.Cleanup.MaxDirs = def.Cleanup.MaxDirs
+		changed = true
+		logger.S().Infof("[SettingsStore] 迁移: 清理阈值升级为 ratio=%.2f abs=%d dirs=%d（原单阈值 10）",
+			out.Cleanup.MaxRatio, out.Cleanup.MaxThreshold, out.Cleanup.MaxDirs)
+	}
 	if out.UserAgent == "" {
 		out.UserAgent = def.UserAgent
 		changed = true

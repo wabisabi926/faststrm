@@ -681,7 +681,7 @@ func downloadFileWithProgress(
 // submitter 为 nil 时退化为立即删除（用于单元测试或未启用持久化场景）。
 // taskID 仅用于批次关联日志，可空。
 // 返回：(已删除数, 延迟批次ID, 误差)。延迟批次ID 非空时表示已入队待二次确认，未执行删除。
-func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, taskID, targetPath string, entries []*fileItem, s *model.Settings) (int, string, error) {
+func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, taskID, targetPath string, entries []*fileItem, s *model.Settings) (CleanupOutcome, error) {
 	keep := make(map[string]struct{}, len(entries))
 	for _, e := range entries {
 		// 保留 strm 文件（.iso 文件需保留双扩展名 game.iso.strm）
@@ -692,8 +692,9 @@ func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, task
 		keep[filepath.Clean(dp)] = struct{}{}
 	}
 
-	// 第一遍扫描：收集待删文件路径
+	// 第一遍扫描：收集待删文件路径（同时统计本地文件总数，供比例阈值判定）
 	var toDelete []string
+	localTotal := 0
 	err := filepath.Walk(targetPath, func(p string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
@@ -705,6 +706,7 @@ func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, task
 		if strings.HasPrefix(filepath.Base(clean), ".") {
 			return nil
 		}
+		localTotal++
 		if _, ok := keep[clean]; ok {
 			return nil
 		}
@@ -712,36 +714,35 @@ func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, task
 		return nil
 	})
 	if err != nil {
-		return 0, "", err
+		return CleanupOutcome{}, err
 	}
 
 	if len(toDelete) == 0 {
-		return 0, "", nil
+		return CleanupOutcome{Verdict: CleanupAllow}, nil
 	}
 
-	// 阈值检查（对齐 MoviePilot full_sync_remove_unless_max_threshold / stable_threshold）
+	// 三重保护判定（比例 + 绝对 + 目录数），替代原「单阈值 10 个」硬拒绝
 	cleanup := s.Cleanup
-	maxThreshold := cleanup.MaxThreshold
-	if maxThreshold <= 0 {
-		maxThreshold = 10 // 默认安全上限
-	}
-	stableThreshold := cleanup.StableThreshold
-	if stableThreshold <= 0 {
-		stableThreshold = 5 // 默认稳定阈值
-	}
+	verdict, reason := EvaluateCleanup(CleanupInput{
+		Candidates: len(toDelete),
+		TotalLocal: localTotal,
+		Dirs:       countUniqueDirs(toDelete),
+		Cfg:        cleanup,
+	})
 	confirmMode := cleanup.ConfirmMode
 	if confirmMode == "" {
 		confirmMode = "none"
 	}
 
-	if len(toDelete) > maxThreshold {
-		logger.S().Warnf("[removeExtraFiles] 待删 %d 个文件超过安全阈值 %d，拒绝执行 (taskID=%s)",
-			len(toDelete), maxThreshold, taskID)
-		return 0, "", nil
+	// 保护态：只停删除不停生成，明确告知原因（原实现是静默返回 0，用户无从判断）
+	if verdict == CleanupProtected {
+		logger.S().Warnf("[removeExtraFiles] 进入清理保护态，本次不删除任何文件: %s (taskID=%s)",
+			reason, taskID)
+		return CleanupOutcome{Verdict: CleanupProtected, Reason: reason}, nil
 	}
 
-	// 延迟确认模式：超过 stableThreshold 且 ConfirmMode != "none" 且 submitter 已注入
-	if len(toDelete) > stableThreshold && confirmMode != "none" {
+	// 延迟确认模式：需二次确认且 ConfirmMode != "none" 且 submitter 已注入
+	if verdict == CleanupConfirm && confirmMode != "none" {
 		if submitter == nil {
 			// 未注入持久化提交器，退化为立即删除并记录警告
 			logger.S().Warnf("[removeExtraFiles] ConfirmMode=%s 但 submitter 未注入，退化为立即删除 %d 个文件 (taskID=%s)",
@@ -763,9 +764,9 @@ func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, task
 				logger.S().Errorf("[removeExtraFiles] SubmitDeferredBatch failed (taskID=%s): %v，退化为立即删除",
 					taskID, serr)
 			} else {
-				logger.S().Infof("[removeExtraFiles] 待删 %d 个文件超过稳定阈值 %d，ConfirmMode=%s，已延迟 (requestID=%s taskID=%s)",
-					len(toDelete), stableThreshold, confirmMode, reqID, taskID)
-				return 0, reqID, nil
+				logger.S().Infof("[removeExtraFiles] 已入队待确认: %s (requestID=%s taskID=%s)",
+					reason, reqID, taskID)
+				return CleanupOutcome{Verdict: CleanupConfirm, RequestID: reqID, Reason: reason}, nil
 			}
 		}
 	}
@@ -780,7 +781,7 @@ func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, task
 		}
 		deleted++
 	}
-	return deleted, "", nil
+	return CleanupOutcome{Deleted: deleted, Verdict: verdict, Reason: reason}, nil
 }
 
 // normalizeExt 确保扩展名前有 "."
@@ -841,8 +842,9 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 		return 0, "", nil
 	}
 
-	// 第一遍扫描：收集孤儿 STRM 路径
+	// 第一遍扫描：收集孤儿 STRM 路径（同时统计本地 STRM 总数，供比例阈值判定）
 	var orphans []string
+	strmTotal := 0
 	werr := filepath.Walk(targetPath, func(p string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
@@ -862,6 +864,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 		if strings.HasPrefix(filepath.Base(p), ".") {
 			return nil
 		}
+		strmTotal++
 		// 提取 pickcode
 		pc, perr := strmutil.ExtractPickcode(p)
 		if perr != nil {
@@ -885,33 +888,31 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 		return 0, "", nil
 	}
 
-	// 阈值检查（对齐 MoviePilot full_sync_remove_unless_max_threshold / stable_threshold）
-	maxThreshold := cleanup.MaxThreshold
-	if maxThreshold <= 0 {
-		maxThreshold = 10
-	}
-	stableThreshold := cleanup.StableThreshold
-	if stableThreshold <= 0 {
-		stableThreshold = 5
-	}
+	// 三重保护判定（比例 + 绝对 + 目录数）
 	confirmMode := cleanup.ConfirmMode
 	if confirmMode == "" {
 		confirmMode = "none"
 	}
+	verdict, reason := EvaluateCleanup(CleanupInput{
+		Candidates: len(orphans),
+		TotalLocal: strmTotal,
+		Dirs:       countUniqueDirs(orphans),
+		Cfg:        cleanup,
+	})
 
 	if sseServer != nil {
 		sseServer.EmitLog(taskID, "info", fmt.Sprintf(
-			"对账清理：检测到 %d 个孤儿 STRM (mode=%s, max=%d, stable=%d, confirm=%s)",
-			len(orphans), mode, maxThreshold, stableThreshold, confirmMode))
+			"对账清理：检测到 %d 个孤儿 STRM（本地共 %d 个，mode=%s，confirm=%s）判定=%s %s",
+			len(orphans), strmTotal, mode, confirmMode, verdict, reason))
 	}
 
-	// 超过最大阈值：拒绝执行（防误删大批量）
-	if len(orphans) > maxThreshold {
-		msg := fmt.Sprintf("孤儿 STRM 数 %d 超过安全阈值 %d，拒绝执行清理 (taskID=%s)",
-			len(orphans), maxThreshold, taskID)
+	// 保护态：只停删除，不停生成（原实现静默返回，用户无从判断为什么没清理）
+	if verdict == CleanupProtected {
+		msg := fmt.Sprintf("孤儿 STRM 清理进入保护态，本次不删除任何文件：%s (taskID=%s)", reason, taskID)
 		logger.S().Warnf("[cleanupOrphanStrms] %s", msg)
 		if sseServer != nil {
 			sseServer.EmitLog(taskID, "warn", msg)
+			sseServer.EmitLog(taskID, "info", "如需强制清理，请到 Web UI 清理页手动执行")
 		}
 		// 即使拒绝也返回孤儿数（供调用方统计）
 		return len(orphans), "", nil
@@ -928,8 +929,8 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 		return len(orphans), "", nil
 	}
 
-	// auto_clean 模式：超稳定阈值且 ConfirmMode != "none" → 入队二次确认
-	if mode == "auto_clean" && len(orphans) > stableThreshold && confirmMode != "none" && submitter != nil {
+	// auto_clean 模式：需二次确认且 ConfirmMode != "none" → 入队
+	if mode == "auto_clean" && verdict == CleanupConfirm && confirmMode != "none" && submitter != nil {
 		batch := DeferredCleanupBatch{
 			RequestID:       GenerateCleanupRequestID(),
 			TaskID:          taskID,
@@ -949,8 +950,8 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 				sseServer.EmitLog(taskID, "error", "对账入队失败: "+serr.Error())
 			}
 		} else {
-			logger.S().Infof("[cleanupOrphanStrms] 孤儿 %d 个超稳定阈值 %d，ConfirmMode=%s，已延迟 (requestID=%s taskID=%s)",
-				len(orphans), stableThreshold, confirmMode, reqID, taskID)
+			logger.S().Infof("[cleanupOrphanStrms] 已入队待确认: %s (requestID=%s taskID=%s)",
+				reason, reqID, taskID)
 			if sseServer != nil {
 				sseServer.EmitLog(taskID, "warn", fmt.Sprintf(
 					"对账清理：孤儿 %d 个超稳定阈值，已入队待二次确认 (requestID=%s)", len(orphans), reqID))

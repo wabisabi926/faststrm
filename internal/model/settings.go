@@ -72,11 +72,23 @@ func (c *CookieInspectSettings) EffectiveIntervalHours() int {
 }
 
 // CleanupSettings STRM 清理对账配置（参考 MoviePilot p115strmhelper full_sync_remove_unless_* + cleanup_confirm_mode）
+//
+// 三重保护（任一超限即进入保护态，只停删除不停生成）：
+//   - MaxRatio  比例上限：待删数 / 本地总数
+//   - MaxThreshold 绝对上限：待删数
+//   - MaxDirs   目录数上限：待删涉及的目录数
+//
+// 为什么不再只用单阈值：默认 10 个的绝对阈值在大库里形同虚设——
+// 网盘移走 11 个文件就会整批拒绝，自动清理基本失效；而单纯调大又失去防误删能力。
 type CleanupSettings struct {
-	// MaxThreshold 单次清理最大删除数阈值，超过则拒绝执行（防误删大批量）
-	// 对齐 full_sync_remove_unless_max_threshold，默认 10
+	// MaxThreshold 单次清理删除数绝对上限，超过则进入保护态
+	// 语义变更（v1.4.3）：由「硬拒绝阈值」改为「绝对上限」，默认 1000
 	MaxThreshold int `json:"maxThreshold"`
-	// StableThreshold 稳定阈值，超过此值但在 MaxThreshold 以内，需二次确认
+	// MaxRatio 单次清理删除比例上限（0-1），默认 0.10；<=0 时使用默认值
+	MaxRatio float64 `json:"maxRatio"`
+	// MaxDirs 单次清理涉及目录数上限，默认 20；<=0 时使用默认值
+	MaxDirs int `json:"maxDirs"`
+	// StableThreshold 稳定阈值，超过此值但未触发保护时，需二次确认
 	// 对齐 full_sync_remove_unless_stable_threshold，默认 5
 	StableThreshold int `json:"stableThreshold"`
 	// ConfirmMode 二次确认模式：none 立即删除 / plugin_ui 插件内确认 / telegram 通知按钮确认
@@ -372,8 +384,10 @@ func DefaultSettings() *Settings {
 			MoveOutRemoveLocalStrm:      true,   // P0-7 默认移出映射时删除旧STRM
 		},
 		Cleanup: CleanupSettings{
-			MaxThreshold:       10, // 单次最多删 10 个，超过拒绝
-			StableThreshold:    5,  // 5-10 需二次确认
+			MaxThreshold:       1000, // 绝对上限：大库一次清理上千个孤儿属正常
+			MaxRatio:           0.10, // 比例上限 10%
+			MaxDirs:            20,   // 涉及目录数上限
+			StableThreshold:    5,    // 超过 5 个需二次确认
 			ConfirmMode:        "none",
 			RemoveStrm:         true,
 			RemoveEmptyDirs:    false,

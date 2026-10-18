@@ -19,6 +19,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -760,21 +761,14 @@ func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Se
 		RemovedRelatedFiles: []string{},
 	}
 
-	// ====== P0 双阈值 + 二次确认 ======
+	// ====== 三重保护 + 二次确认（比例 + 绝对 + 目录数）======
 	cleanup := settings.Cleanup
-	maxThreshold := cleanup.MaxThreshold
-	if maxThreshold <= 0 {
-		maxThreshold = 10 // 默认值保护
-	}
-	stableThreshold := cleanup.StableThreshold
-	if stableThreshold < 0 {
-		stableThreshold = 5
-	}
+	maxAbs, maxRatio, maxDirs, stableThreshold := task.EffectiveCleanupLimits(cleanup)
 	confirmMode := cleanup.ConfirmMode
 	if confirmMode == "" {
 		confirmMode = "none"
 	}
-	resp.AppliedMaxThreshold = maxThreshold
+	resp.AppliedMaxThreshold = maxAbs
 	resp.AppliedStableThreshold = stableThreshold
 	resp.AppliedConfirmMode = confirmMode
 
@@ -791,10 +785,20 @@ func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Se
 	resp.TotalStaleCount = totalStale
 
 	// DryRun 模式下不做阈值拦截，直接走原模拟流程
-	if !body.DryRun && totalStale > maxThreshold && action != "delete_all" {
-		resp.ThresholdError = fmt.Sprintf("待删 %d 个超过最大阈值 %d，已拒绝执行。请在 settings.cleanup.maxThreshold 调高或在 UI 重新筛选", totalStale, maxThreshold)
-		logger.S().Warnf("[strmCleanup] 拒绝执行: 待删 %d 超过 MaxThreshold %d", totalStale, maxThreshold)
-		return resp
+	if !body.DryRun && action != "delete_all" {
+		verdict, reason := task.EvaluateCleanup(task.CleanupInput{
+			Candidates: totalStale,
+			Cfg:        cleanup,
+		})
+		if verdict == task.CleanupProtected {
+			resp.ThresholdError = fmt.Sprintf("%s，已拒绝执行。可在 settings.cleanup 调整 maxRatio/maxThreshold/maxDirs，或在 UI 重新筛选后分批删除", reason)
+			logger.S().Warnf("[strmCleanup] 进入保护态，拒绝执行: %s", reason)
+			return resp
+		}
+		if verdict == task.CleanupConfirm && confirmMode == "none" {
+			logger.S().Infof("[strmCleanup] 待删 %d 个超过稳定阈值 %d（ratio上限 %.0f%%, abs上限 %d, dirs上限 %d），ConfirmMode=none 直接执行",
+				totalStale, stableThreshold, maxRatio*100, maxAbs, maxDirs)
+		}
 	}
 
 	// 稳定阈值拦截：超过 StableThreshold 且开启了二次确认 → 入队待删
