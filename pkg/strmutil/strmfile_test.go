@@ -15,6 +15,10 @@ func TestStrmFileName(t *testing.T) {
 		{"noext", "noext.strm"},
 		{"dir/movie.mkv", "dir/movie.strm"},
 		{"movie:1.mkv", "movie：1.strm"}, // 云端文件名直接传入也要清理
+		// ISO：先清理非法字符，再保留 .iso 双扩展名（Emby 靠它识别原盘容器）
+		{"复仇者联盟:终局之战.iso", "复仇者联盟：终局之战.iso.strm"},
+		{"movie?[2020]*.iso", "movie_[2020]_.iso.strm"},
+		{"原盘 [导演剪辑版] (2009).ISO", "原盘 [导演剪辑版] (2009).iso.strm"},
 	}
 	for _, c := range cases {
 		if got := StrmFileName(c.in); got != c.want {
