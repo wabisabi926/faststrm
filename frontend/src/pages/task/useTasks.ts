@@ -118,7 +118,6 @@ export function useTasks(): UseTasksResult {
         targetPath: t.targetPath || '',
         strmType: t.strmType || '',
         strmPrefix: t.strmPrefix || '',
-        removeExtraFiles: t.removeExtraFiles ?? false,
         // 使用状态映射将后端状态转换为前端状态
         status: STATUS_MAP[(t.runtime?.status || t.status || "") as keyof typeof STATUS_MAP] || "pending",
         error: t.runtime?.error ?? null,

@@ -32,6 +32,11 @@ export type Settings = {
   // 全局 STRM 生成设置
   strmPrefix?: string;
   enablePathEncoding?: boolean;
+  // 清理：删除孤儿 STRM 时的连带动作
+  cleanup?: {
+    removeRelatedFiles?: boolean;
+    removeEmptyDirs?: boolean;
+  };
   // STRM 智能路由策略配置（v1.2.3+ 始终生效，后端自动决策）
   strm?: {
     forceProxyUaTokens?: string[];

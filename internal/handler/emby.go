@@ -428,6 +428,7 @@ type settingsPostBody struct {
 	Emby               *model.EmbySettings     `json:"emby"`
 	Telegram           *model.TelegramSettings `json:"telegram"`
 	LifeMonitor        *LifeMonitorPatch       `json:"lifeMonitor"`
+	Cleanup            *model.CleanupSettings  `json:"cleanup"`
 }
 
 // containsAsterisk 判定是否是脱敏值（含 *）
@@ -470,6 +471,12 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 		// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
 		settings.EnablePathEncoding = body.EnablePathEncoding
+
+		// ====== Cleanup：只接受两个「连带动作」开关，阈值等保持后端值 ======
+		if body.Cleanup != nil {
+			settings.Cleanup.RemoveRelatedFiles = body.Cleanup.RemoveRelatedFiles
+			settings.Cleanup.RemoveEmptyDirs = body.Cleanup.RemoveEmptyDirs
+		}
 
 		// ====== Download 嵌套对象 ======
 		if body.Download != nil {

@@ -352,3 +352,73 @@ P3c 的另外两项经复核**不需要改**：
 ### P4（待办）
 
 删除路径级清理实现（`removeExtraFiles`，~104 行）。建议观察一个版本：确认 P3b 的路径判定在真实改名/移动场景下没有误判后再删。
+
+---
+
+## 14. 最终方案：清理只留一套，完全对齐 p115strmhelper
+
+### 14.1 p115 的模型（唯一参考）
+
+p115 只有**一套**清理：`remove_unless_strm`。生成时顺手扫本地 `.strm`，与云端树差集，删掉云端已不存在的，配 4 个开关：
+
+| p115 配置 | 默认 | 作用 |
+|---|---|---|
+| `full_sync_remove_unless_strm` | false | 总开关 |
+| `full_sync_remove_unless_file` | false | 连带删同名 nfo/jpg/srt |
+| `full_sync_remove_unless_dir` | false | 删完后清理空目录 |
+| `full_sync_remove_unless_stable_threshold` | 5 | 超过则进二次确认 |
+| `full_sync_cleanup_confirm_mode` | none | none / 插件内确认 / Telegram |
+
+### 14.2 faststrm 收敛后的模型
+
+| 能力 | 对应 faststrm 配置 | 现状 |
+|---|---|---|
+| 总开关（关 / 仅记录 / 自动） | `cleanup.fullSyncCleanupOrphans` | 已有（P3a 已加设置页下拉） |
+| 连带删关联文件 | `cleanup.removeRelatedFiles` | 字段已有，**auto_clean 路径未生效** |
+| 清理空目录 | `cleanup.removeEmptyDirs` | 字段已有，**未实现** |
+| 二次确认阈值 | `cleanup.stableThreshold` | 已有 |
+| 确认方式 | `cleanup.confirmMode` | 已有 |
+| 路径级清理 | 任务级 `removeExtraFiles` | **删除**（P4） |
+
+即：**删掉路径级那一套，把 pickcode 级补齐成 p115 的完整形态**。用户只需要理解一个词：孤儿 STRM 清理。
+
+### 14.3 四种场景的行为（最终形态）
+
+| 场景 | 谁处理 | 结果 |
+|---|---|---|
+| 监控开着，云端改名/移动 | 生活事件（`os.Rename`） | 旧 STRM 被搬到新路径，无重复 |
+| 监控没开，云端改名/移动 | 清理：pickcode 在、路径不符 | 旧 STRM 删除，新 STRM 由本次生成 |
+| 云端删除影片 | 清理：pickcode 不在云端集合 | 删 STRM（+ 可选关联文件、空目录） |
+| 你手动放的海报/字幕/手写 STRM | 无人处理 | **永不触碰**（非 faststrm STRM 直接跳过） |
+
+### 14.4 实施清单
+
+| # | 内容 | 改动 |
+|---|---|---|
+| P4a | 删除路径级实现 `removeExtraFiles` + 任务级 `removeExtraFiles` 字段 + 任务对话框勾选框 + handler 入参 | -130 行 |
+| P4b | `auto_clean` 路径补齐：删 STRM 后按 `removeRelatedFiles` 删同名 nfo/jpg/png/srt/ass/sub，按 `removeEmptyDirs` 向上删空目录（不越过 targetPath） | +40 行（复用 `strmutil` 新抽的两个函数） |
+| P4c | 设置页：清理区补两个勾选（关联文件 / 空目录） | +20 行 |
+| P4d | 测试：关联文件删除、空目录清理、不越界、用户文件不被删 | +80 行 |
+
+### 14.5 与 p115 的唯一差异
+
+p115 的清理默认 **关**，本方案默认 **开**（`auto_clean`）。理由：p115 的全量同步本身默认也是关的（`timing_full_sync_strm=false`），而 faststrm 的任务是用户主动建的，之前默认就带清理。要严格对齐就改一个默认值，其余不变。
+
+### 14.6 迁移
+
+- 任务级 `removeExtraFiles` 字段保留解析但不再生效（旧 tasks.json 不报错），前端不再展示。
+- 已迁移的 `.cleanup-path-disabled` 标记文件可以保留，P4 之后它没有作用。
+
+### 14.7 实施记录（P4 已完成）
+
+| 项 | 结果 |
+|---|---|
+| 路径级清理下线 | 删除 `removeExtraFiles`（~110 行）+ 调用块（41 行）+ 任务字段/接口入参/前端勾选框；`task.RemoveExtraFiles`、`persistedTask.removeExtraFiles` 全部移除（旧 tasks.json 里的字段被忽略，不报错） |
+| 连带删关联文件 | 新增 `strmutil.DeleteRelatedFiles`（扩展名白名单，按最后扩展名匹配，支持 `movie.zh.srt`）；`auto_clean` 与 monitor 删除事件共用 |
+| 清理空目录 | 新增 `removeEmptyParentsUpTo`，向上删到 targetPath 为止，不越界 |
+| 默认值 | `cleanup.removeRelatedFiles` 默认 **true**；`removeEmptyDirs` 默认 false |
+| 迁移 | `cleanupDefaultsV2` 标记字段：首次启动补默认值并写标记，之后尊重用户手动开关（避免每次启动反复覆盖） |
+| 设置页 | 「孤儿 STRM 清理」下拉 + 「同时删除同名 nfo/海报/字幕」+「删完后清理空目录」 |
+| 安全边界 | 关联文件只删 `.nfo/.jpg/.jpeg/.png/.webp/.srt/.ass/.ssa/.sub/.vtt/.sup`，绝不碰视频；monitor 的 `deleteRelatedFiles` 也改成白名单（原来会删同前缀的任何文件，包括 `.mkv`） |
+
+测试：`related_test.go`（白名单、`.mkv` 保留、多段后缀）+ `cleanup_related_test.go`（连带删除、关闭时保留、空目录回收不越界）+ 设置迁移测试。

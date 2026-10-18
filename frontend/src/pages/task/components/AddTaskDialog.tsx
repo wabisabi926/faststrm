@@ -43,7 +43,6 @@ export const taskFormSchema = z.object({
   targetPath: z.string().optional(),
   strmType: z.string().optional(),
   strmPrefix: z.string().optional(),
-  removeExtraFiles: z.boolean().optional(),
 });
 
 export type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -122,7 +121,6 @@ export function AddTaskDialog({
       targetPath: "",
       strmType: "local",
       strmPrefix: "",
-      removeExtraFiles: false,
     },
   });
 
@@ -287,34 +285,6 @@ export function AddTaskDialog({
                       >
                         <FolderOpen className="w-4 h-4" />
                       </Button>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Remove Extra Files */}
-            <FormField
-              control={form.control}
-              name="removeExtraFiles"
-              render={({ field }) => (
-                <FormItem>
-                  <HelpLabel help="开启后，任务执行时会删除本地存在但远程不存在的文件">
-                    删除多余文件
-                  </HelpLabel>
-                  <FormControl>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="removeExtraFiles"
-                        checked={field.value || false}
-                        onChange={(e) => field.onChange(e.target.checked)}
-                        className="rounded border-gray-300"
-                      />
-                      <label htmlFor="removeExtraFiles" className="text-sm">
-                        启用删除本地多余文件功能
-                      </label>
                     </div>
                   </FormControl>
                   <FormMessage />

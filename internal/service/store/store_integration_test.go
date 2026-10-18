@@ -191,7 +191,6 @@ func TestPhase3_StoreIntegration(t *testing.T) {
 		// Upsert: update (保留创建时间)
 		first := mustFind(t, ts, "t_001")
 		first.TargetPath = "/mnt/nas/strm/alice_v2"
-		first.RemoveExtraFiles = true
 		if err := ts.UpsertTask(*first); err != nil {
 			t.Fatalf("Upsert update err: %v", err)
 		}

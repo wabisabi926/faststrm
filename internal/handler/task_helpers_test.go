@@ -301,7 +301,7 @@ func TestUpsertTaskRequest_ToTask_EmptyRequestNilExisting(t *testing.T) {
 	if got.Schedule != nil {
 		t.Fatalf("Schedule should be nil for empty request")
 	}
-	if got.RemoveExtraFiles || got.EnablePathEncoding {
+	if got.EnablePathEncoding {
 		t.Fatalf("bool flags should all be false")
 	}
 }
@@ -316,7 +316,6 @@ func TestUpsertTaskRequest_ToTask_FullRequestNilExisting(t *testing.T) {
 		TargetPath:    "/data/target",
 		StrmType:      "remote",
 		StrmPrefix:    "PREFIX_",
-		RemoveExtra:   ptrBool("on"),
 		EnableEnc:     ptrBool("TRUE"),
 		ScheduleMode:  "interval",
 		ScheduleValue: "120",
@@ -347,9 +346,6 @@ func TestUpsertTaskRequest_ToTask_FullRequestNilExisting(t *testing.T) {
 	}
 	if got.StrmPrefix != "PREFIX_" {
 		t.Fatalf("StrmPrefix = %q, want 'PREFIX_'", got.StrmPrefix)
-	}
-	if !got.RemoveExtraFiles {
-		t.Fatalf("RemoveExtraFiles should be true")
 	}
 	if !got.EnablePathEncoding {
 		t.Fatalf("EnablePathEncoding should be true")
@@ -392,7 +388,6 @@ func TestUpsertTaskRequest_ToTask_PartialOverridesExisting(t *testing.T) {
 		TargetPath:         "/old/target",
 		StrmType:           "local",
 		StrmPrefix:         "OLD_",
-		RemoveExtraFiles:   true,
 		EnablePathEncoding: false,
 		Schedule: &task.TaskSchedule{
 			Enabled:         true,
@@ -439,10 +434,6 @@ func TestUpsertTaskRequest_ToTask_PartialOverridesExisting(t *testing.T) {
 	}
 
 	// bool 标志——req 里未传（nil 指针）=保留 existing 原值，避免编辑没改这字段被归零
-	// RemoveExtraFiles: existing=true，req.RemoveExtra=nil → 保留 true
-	if !got.RemoveExtraFiles {
-		t.Fatalf("RemoveExtraFiles should remain true (req nil preserves existing true)")
-	}
 	// EnablePathEncoding: existing=false，req.EnableEnc=nil → 保留 false
 	if got.EnablePathEncoding {
 		t.Fatalf("EnablePathEncoding should remain false (req nil preserves existing false)")

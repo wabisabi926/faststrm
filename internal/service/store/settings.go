@@ -125,6 +125,19 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		changed = true
 		logger.S().Infof("[SettingsStore] 迁移: 孤儿 STRM 清理默认开启（%s）", out.Download.FullSyncCleanupOrphans)
 	}
+	// 清理默认值一次性迁移（带标记，避免每次启动覆盖用户选择）：
+	//   - 整个 cleanup 块缺失 → 补齐默认值（含 RemoveRelatedFiles=true）
+	//   - 已有 cleanup 但两个连带动作都是关 → 打开关联文件删除（用户从未配置过）
+	if !out.CleanupDefaultsV2 {
+		if out.Cleanup.MaxThreshold == 0 && out.Cleanup.MaxRatio == 0 && out.Cleanup.MaxDirs == 0 {
+			out.Cleanup = def.Cleanup
+		} else if !out.Cleanup.RemoveRelatedFiles && !out.Cleanup.RemoveEmptyDirs {
+			out.Cleanup.RemoveRelatedFiles = true
+		}
+		out.CleanupDefaultsV2 = true
+		changed = true
+		logger.S().Infof("[SettingsStore] 迁移: 清理默认值已更新（删 STRM 时连带删同名 nfo/海报/字幕）")
+	}
 	// v1.4.3 强制代理格式改为可配置：旧配置没有该字段，补默认值写回，
 	// 让用户能在 settings.json 里看到并调整（例如把 .ts 移除）。
 	if len(out.Strm.ForceProxyFormats) == 0 {

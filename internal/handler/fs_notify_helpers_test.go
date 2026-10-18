@@ -215,13 +215,6 @@ func TestFillUpsertFromBody(t *testing.T) {
 		if u.StrmPrefix != "/prefix" {
 			t.Fatalf("StrmPrefix: got %q, want %q", u.StrmPrefix, "/prefix")
 		}
-		if u.RemoveExtra == nil || !*u.RemoveExtra {
-			var got any = u.RemoveExtra
-			if u.RemoveExtra != nil {
-				got = *u.RemoveExtra
-			}
-			t.Fatalf("RemoveExtra: got %v, want *true", got)
-		}
 		if u.EnableEnc == nil || !*u.EnableEnc {
 			var got any = u.EnableEnc
 			if u.EnableEnc != nil {

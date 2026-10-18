@@ -284,7 +284,6 @@ type UpsertTaskRequest struct {
 	Schedule       *task.TaskSchedule `json:"schedule,omitempty"` // 嵌套 schedule 对象（前端 TaskScheduleDialog 发）
 	StrmType       string             `json:"strmType" form:"strmType"`
 	StrmPrefix     string             `json:"strmPrefix" form:"strmPrefix"`
-	RemoveExtra    *bool              `json:"removeExtraFiles" form:"-"`
 	EnableEnc      *bool              `json:"enablePathEncoding" form:"-"`
 	AccountCookie  string             `json:"cookie" form:"cookie"` // 兼容旧前端
 	AccountAccount string             `json:"account_" form:"account_"`
@@ -370,7 +369,6 @@ func fillUpsertFromBody(r *http.Request, req *UpsertTaskRequest) {
 	req.ScheduleMode = r.FormValue("scheduleMode")
 	req.ScheduleValue = r.FormValue("scheduleValue")
 	req.StrmPrefix = r.FormValue("strmPrefix")
-	req.RemoveExtra = ptrBool(r.FormValue("removeExtraFiles"))
 	req.EnableEnc = ptrBool(r.FormValue("enablePathEncoding"))
 	req.StrmPrefix = r.FormValue("strmPrefix")
 }
@@ -411,10 +409,7 @@ func (req *UpsertTaskRequest) toTask(existing *task.Task) task.Task {
 	if req.StrmPrefix != "" {
 		t.StrmPrefix = req.StrmPrefix
 	}
-	// 三字段 nil = 请求未传，保留 existing；非 nil = 显式覆盖
-	if req.RemoveExtra != nil {
-		t.RemoveExtraFiles = *req.RemoveExtra
-	}
+	// nil = 请求未传，保留 existing；非 nil = 显式覆盖
 	if req.EnableEnc != nil {
 		t.EnablePathEncoding = *req.EnableEnc
 	}

@@ -579,50 +579,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		}
 	}
 
-	// ---- 11) removeExtraFiles：清理本地多余文件 ----
-	if task.RemoveExtraFiles {
-		rt.SetState(task.ID, func(s *RuntimeState) {
-			s.Stage = StageCleanup
-			s.StageDetail = "正在清理本地多余文件..."
-		})
-		sseServer.EmitProgress(sse.ProgressPayload{
-			TaskID:         task.ID,
-			OverallPercent: "95.00",
-			Stage:          StageCleanup,
-			StageDetail:    "正在清理本地多余文件...",
-		})
-		sseServer.EmitLog(task.ID, "info", "scanning for extra files to remove")
-		outcome, derr := removeExtraFiles(ctx, deps.CleanupSubmitter, task.ID, task.TargetPath, fileEntries, settings)
-		switch {
-		case derr != nil:
-			sseServer.EmitLog(task.ID, "warn", "removeExtraFiles err: "+derr.Error())
-		case outcome.Verdict == CleanupProtected:
-			// 保护态：只停删除，不停生成。必须明确告知原因，
-			// 否则用户只会看到「任务成功但什么都没删」，无从判断。
-			sseServer.EmitLog(task.ID, "warn", "清理进入保护态，本次未删除任何文件："+outcome.Reason)
-			sseServer.EmitLog(task.ID, "info", "如需强制清理，请到 Web UI 清理页手动执行")
-			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = 0 })
-		case outcome.RequestID != "":
-			// 延迟清理批次已入队，等待用户二次确认（Web UI / Telegram）
-			sseServer.EmitLog(task.ID, "warn",
-				fmt.Sprintf("检测到孤儿文件需要二次确认，已延迟删除 (requestID=%s)：%s", outcome.RequestID, outcome.Reason))
-			sseServer.EmitLog(task.ID, "info",
-				"请到 Web UI 清理页 /api/strmCleanup/pending 或 Telegram 按钮确认")
-			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = 0 })
-		default:
-			rt.SetState(task.ID, func(s *RuntimeState) { s.DeletedFiles = outcome.Deleted })
-			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("removed %d extra files", outcome.Deleted))
-			// Emby 刷库（删除后刷新整个目标目录，对齐 MoviePilot full_sync_media_server_refresh）
-			if deps.EmbyRefresh != nil && outcome.Deleted > 0 {
-				if rerr := deps.EmbyRefresh.RefreshOnDelete(ctx, task.TargetPath); rerr != nil {
-					logger.S().Debugf("[Task] Emby 刷库安排失败 path=%s: %v", task.TargetPath, rerr)
-				}
-			}
-		}
-	}
-
 	// ---- 11.8) P1-3 DB 幽灵记录清理 ----
-	// removeExtraFiles 后（或用户手动删除本地 STRM）files 表可能残留已失效 file_id → path 映射，
+	// 用户手动删除本地 STRM 后，files 表可能残留已失效 file_id → path 映射，
 	// 导致 302 模式 pickcode 反查返回错误指向。此处基于 task.TargetPath 做范围扫描：
 	//   遍历 DB 中该 account 条目 → 按 LifeMonitor.PathMappings 换算 localPath →
 	//   若 localPath 落在 TargetPath 范围内且本地文件不存在 → 判定幽灵并清理 DB 记录。

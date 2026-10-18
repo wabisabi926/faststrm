@@ -241,6 +241,39 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             网盘里已删除的影片，其本地 STRM 会按此策略处理。只检查 STRM 文件内容里的 pickcode，
             不会删除你自己放进去的海报、字幕或其他文件；超过保护阈值时会先进入待确认队列。
           </p>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="cleanup-remove-related"
+              checked={data.cleanup?.removeRelatedFiles ?? true}
+              onCheckedChange={(checked) =>
+                setData({
+                  ...data,
+                  cleanup: { ...(data.cleanup || {}), removeRelatedFiles: checked === true },
+                })
+              }
+            />
+            <label htmlFor="cleanup-remove-related" className="text-sm cursor-pointer">
+              同时删除同名的 nfo / 海报 / 字幕
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            只删 .nfo/.jpg/.png/.srt/.ass 等元数据与字幕，<span className="font-medium">绝不会删 .mkv/.mp4 等视频文件</span>。
+          </p>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="cleanup-remove-empty-dirs"
+              checked={data.cleanup?.removeEmptyDirs ?? false}
+              onCheckedChange={(checked) =>
+                setData({
+                  ...data,
+                  cleanup: { ...(data.cleanup || {}), removeEmptyDirs: checked === true },
+                })
+              }
+            />
+            <label htmlFor="cleanup-remove-empty-dirs" className="text-sm cursor-pointer">
+              删完后清理空目录
+            </label>
+          </div>
         </div>
 
         {/* STRM 路由策略配置（始终生效，后端智能路由自动决定 proxy/redirect） */}

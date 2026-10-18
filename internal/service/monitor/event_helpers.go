@@ -543,41 +543,11 @@ func (m *Monitor) downloadRelatedFile(
 	return nil
 }
 
-// deleteRelatedFiles 删除与 STRM 同名的相关文件（.nfo/.jpg/.srt 等）
-// 匹配规则：同目录下、文件名以 STRM stem 为前缀、且后缀为扩展名（.xxx）
-// 对齐 TS cleanRelatedFiles + moveOrRenameRelatedAssets 的安全匹配逻辑
+// deleteRelatedFiles 删除 STRM 同名的关联文件（nfo/海报/字幕）。
+// 实现在 pkg/strmutil，带扩展名白名单：只删元数据与字幕，绝不碰 .mkv/.mp4 等视频文件
+// （用户可能把真实文件与 STRM 放在同一目录）。
 func deleteRelatedFiles(strmPath string) int {
-	dir := filepath.Dir(strmPath)
-	base := filepath.Base(strmPath)
-	stem := strings.TrimSuffix(base, ".strm")
-	if stem == "" {
-		return 0
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0
-	}
-	deleted := 0
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == base {
-			continue // 跳过 STRM 文件本身
-		}
-		// 同名前缀匹配 + 安全校验：rest 必须为空或以 . 开头（扩展名形式）
-		// 避免 "movie" 误匹配到 "movie_trailer.mp4" 等非关联文件
-		if strings.HasPrefix(name, stem) {
-			rest := strings.TrimPrefix(name, stem)
-			if rest == "" || strings.HasPrefix(rest, ".") {
-				if err := os.Remove(filepath.Join(dir, name)); err == nil {
-					deleted++
-				}
-			}
-		}
-	}
-	return deleted
+	return strmutil.DeleteRelatedFiles(strmPath, strmutil.DefaultRelatedExts)
 }
 
 // appendLog 追加事件处理日志

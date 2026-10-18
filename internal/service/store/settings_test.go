@@ -73,3 +73,32 @@ func TestReadSettings_MigratesCleanupDefaults(t *testing.T) {
 		t.Errorf("用户显式关闭不应被覆盖, got %q", got)
 	}
 }
+
+// TestReadSettings_CleanupRelatedDefaults 清理连带动作的一次性迁移：
+// 老配置补齐 RemoveRelatedFiles=true 并写入标记；标记存在后尊重用户手动关闭。
+func TestReadSettings_CleanupRelatedDefaults(t *testing.T) {
+	// 1) 完全没有 cleanup 块 → 补默认（含连带删关联文件）
+	dir1 := t.TempDir()
+	writeSettings(t, dir1, `{"download":{}}`)
+	s1, err := NewSettingsStore("test_salt", dir1).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if !s1.Cleanup.RemoveRelatedFiles {
+		t.Error("缺 cleanup 块时应补为连带删除关联文件")
+	}
+	if !s1.CleanupDefaultsV2 {
+		t.Error("应写入迁移标记")
+	}
+
+	// 2) 用户显式关闭 + 标记已存在 → 不得覆盖
+	dir2 := t.TempDir()
+	writeSettings(t, dir2, `{"cleanupDefaultsV2":true,"cleanup":{"maxThreshold":1000,"maxRatio":0.1,"maxDirs":20,"removeRelatedFiles":false}}`)
+	s2, err := NewSettingsStore("test_salt", dir2).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if s2.Cleanup.RemoveRelatedFiles {
+		t.Error("标记存在时不应覆盖用户手动关闭")
+	}
+}

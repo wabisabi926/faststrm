@@ -692,119 +692,6 @@ func downloadFileWithProgress(
 	return nil
 }
 
-// removeExtraFiles 扫描 targetPath，删除不在 fileEntries 相对路径清单里的本地多余文件
-// 对齐 MoviePilot full_sync_remove_unless_strm + cleanup_confirm_mode：
-//   - MaxThreshold：超过此数量则拒绝执行（防误删大批量）
-//   - StableThreshold：超过此数量但未超 MaxThreshold 时，若 ConfirmMode != "none" 则延迟删除
-//   - ConfirmMode："none" 立即删除 / "plugin_ui" 插件内确认 / "telegram" 通知按钮确认
-//
-// ctx 用于 SubmitDeferredBatch 调用（持久化到 SQLite 时透传）。
-// submitter 为 nil 时退化为立即删除（用于单元测试或未启用持久化场景）。
-// taskID 仅用于批次关联日志，可空。
-// 返回：(已删除数, 延迟批次ID, 误差)。延迟批次ID 非空时表示已入队待二次确认，未执行删除。
-func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, taskID, targetPath string, entries []*fileItem, s *model.Settings) (CleanupOutcome, error) {
-	keep := make(map[string]struct{}, len(entries))
-	for _, e := range entries {
-		// 保留 strm 文件（.iso 文件需保留双扩展名 game.iso.strm）
-		sp := filepath.Join(targetPath, replaceRelPathExtToStrm(e.RelPath))
-		keep[filepath.Clean(sp)] = struct{}{}
-		// 保留真实下载文件
-		dp := filepath.Join(targetPath, strmutil.SanitizeRelPath(e.RelPath))
-		keep[filepath.Clean(dp)] = struct{}{}
-	}
-
-	// 第一遍扫描：收集待删文件路径（同时统计本地文件总数，供比例阈值判定）
-	var toDelete []string
-	localTotal := 0
-	err := filepath.Walk(targetPath, func(p string, info os.FileInfo, werr error) error {
-		if werr != nil {
-			return werr
-		}
-		if info.IsDir() {
-			return nil
-		}
-		clean := filepath.Clean(p)
-		if strings.HasPrefix(filepath.Base(clean), ".") {
-			return nil
-		}
-		localTotal++
-		if _, ok := keep[clean]; ok {
-			return nil
-		}
-		toDelete = append(toDelete, clean)
-		return nil
-	})
-	if err != nil {
-		return CleanupOutcome{}, err
-	}
-
-	if len(toDelete) == 0 {
-		return CleanupOutcome{Verdict: CleanupAllow}, nil
-	}
-
-	// 三重保护判定（比例 + 绝对 + 目录数），替代原「单阈值 10 个」硬拒绝
-	cleanup := s.Cleanup
-	verdict, reason := EvaluateCleanup(CleanupInput{
-		Candidates: len(toDelete),
-		TotalLocal: localTotal,
-		Dirs:       countUniqueDirs(toDelete),
-		Cfg:        cleanup,
-	})
-	confirmMode := cleanup.ConfirmMode
-	if confirmMode == "" {
-		confirmMode = "none"
-	}
-
-	// 保护态：只停删除不停生成，明确告知原因（原实现是静默返回 0，用户无从判断）
-	if verdict == CleanupProtected {
-		logger.S().Warnf("[removeExtraFiles] 进入清理保护态，本次不删除任何文件: %s (taskID=%s)",
-			reason, taskID)
-		return CleanupOutcome{Verdict: CleanupProtected, Reason: reason}, nil
-	}
-
-	// 延迟确认模式：需二次确认且 ConfirmMode != "none" 且 submitter 已注入
-	if verdict == CleanupConfirm && confirmMode != "none" {
-		if submitter == nil {
-			// 未注入持久化提交器，退化为立即删除并记录警告
-			logger.S().Warnf("[removeExtraFiles] ConfirmMode=%s 但 submitter 未注入，退化为立即删除 %d 个文件 (taskID=%s)",
-				confirmMode, len(toDelete), taskID)
-		} else {
-			batch := DeferredCleanupBatch{
-				RequestID:       GenerateCleanupRequestID(),
-				TaskID:          taskID,
-				TargetPath:      targetPath,
-				Paths:           toDelete,
-				RemoveStrm:      cleanup.RemoveStrm,
-				RemoveRelated:   cleanup.RemoveRelatedFiles,
-				RemoveEmptyDirs: cleanup.RemoveEmptyDirs,
-				ConfirmMode:     confirmMode,
-				CreatedAt:       time.Now(),
-			}
-			reqID, serr := submitter.SubmitDeferredBatch(ctx, batch)
-			if serr != nil {
-				logger.S().Errorf("[removeExtraFiles] SubmitDeferredBatch failed (taskID=%s): %v，退化为立即删除",
-					taskID, serr)
-			} else {
-				logger.S().Infof("[removeExtraFiles] 已入队待确认: %s (requestID=%s taskID=%s)",
-					reason, reqID, taskID)
-				return CleanupOutcome{Verdict: CleanupConfirm, RequestID: reqID, Reason: reason}, nil
-			}
-		}
-	}
-
-	// 立即删除模式
-	var deleted int
-	for _, p := range toDelete {
-		logger.S().Infof("[removeExtraFiles] delete %s", p)
-		if rerr := os.Remove(p); rerr != nil {
-			logger.S().Warnf("[removeExtraFiles] remove %s failed: %v", p, rerr)
-			continue
-		}
-		deleted++
-	}
-	return CleanupOutcome{Deleted: deleted, Verdict: verdict, Reason: reason}, nil
-}
-
 // normalizeExt 确保扩展名前有 "."
 func normalizeExt(ext string) string {
 	if ext == "" {
@@ -827,7 +714,7 @@ func normalizeExt(ext string) string {
 // mode: "off"(跳过) / "mark_only"(仅日志) / "auto_clean"(软删 + 超阈值二次确认)
 // 返回：(孤儿数, 延迟批次ID, error)。延迟批次ID 非空表示已入队待二次确认。
 
-func cleanupOrphanStrms( //nolint:cyclop // complexity: 53（缺口 2 失败目录保护 + 路径不符判定）
+func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 + 路径不符判定 + 连带删关联文件/空目录）
 	ctx context.Context,
 	submitter CleanupBatchSubmitter,
 	sseServer *sse.Server,
@@ -1012,6 +899,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 53（缺口 2 失败目�
 	// auto_clean 直接硬删（不再生成 .deleted.bak 备份）
 	if mode == "auto_clean" {
 		deleted := 0
+		relatedDeleted := 0
 		for _, p := range orphans {
 			if derr := strmutil.DeleteStrmFile(p); derr != nil {
 				logger.S().Warnf("[cleanupOrphanStrms] 硬删孤儿 STRM 失败 %s: %v", p, derr)
@@ -1022,6 +910,16 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 53（缺口 2 失败目�
 			}
 			deleted++
 			logger.S().Infof("[cleanupOrphanStrms] 硬删孤儿 STRM %s", p)
+			// 连带清理关联文件（默认开）：只删白名单扩展名（nfo/jpg/srt 等），绝不碰视频文件
+			if cleanup.RemoveRelatedFiles {
+				relatedDeleted += strmutil.DeleteRelatedFiles(p, strmutil.DefaultRelatedExts)
+			}
+			if cleanup.RemoveEmptyDirs {
+				removeEmptyParentsUpTo(filepath.Dir(p), targetPath)
+			}
+		}
+		if relatedDeleted > 0 && sseServer != nil {
+			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：连带删除 %d 个关联文件（nfo/海报/字幕）", relatedDeleted))
 		}
 		if sseServer != nil {
 			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：已硬删 %d/%d 个孤儿 STRM", deleted, len(orphans)))
@@ -1058,4 +956,20 @@ func sameLocalPath(a, b string) bool {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
+}
+
+// removeEmptyParentsUpTo 从 dir 开始向上删除空目录，直到 targetPath（不含）。
+// os.Remove 在目录非空时失败，正好作为停止条件；不会越过 targetPath 删到用户其它目录。
+func removeEmptyParentsUpTo(dir, targetPath string) {
+	stop := filepath.Clean(targetPath)
+	cur := filepath.Clean(dir)
+	for cur != "" && cur != stop {
+		if !strings.HasPrefix(cur, stop+string(filepath.Separator)) {
+			return
+		}
+		if err := os.Remove(cur); err != nil {
+			return
+		}
+		cur = filepath.Dir(cur)
+	}
 }

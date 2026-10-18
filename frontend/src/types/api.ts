@@ -40,7 +40,6 @@ export interface TaskApiResponse {
   targetPath?: string;
   strmType?: string;
   strmPrefix?: string;
-  removeExtraFiles?: boolean;
   status?: string;
   runtime?: TaskRuntimeApi;
   schedule?: TaskScheduleApi;

@@ -12,21 +12,23 @@ import (
 // Settings 对应 settings.json 顶层结构
 // 对齐 docs/配置项参考.md
 type Settings struct {
-	UserAgent          string                `json:"user-agent"`
-	InternalToken      string                `json:"internalToken"`
-	StrmExtensions     []string              `json:"strmExtensions"`
-	DownloadExtensions []string              `json:"downloadExtensions"`
-	MediaMountPath     []string              `json:"mediaMountPath"`
-	StrmPrefix         string                `json:"strmPrefix"`
-	EnablePathEncoding bool                  `json:"enablePathEncoding"`
-	Download           DownloadSettings      `json:"download"`
-	Strm               StrmSettings          `json:"strm"`
-	RateLimit          RateLimitSettings     `json:"rateLimit"`
-	Emby               EmbySettings          `json:"emby"`
-	Telegram           TelegramSettings      `json:"telegram"`
-	LifeMonitor        LifeMonitorSettings   `json:"lifeMonitor"`
-	Cleanup            CleanupSettings       `json:"cleanup"`
-	CookieInspect      CookieInspectSettings `json:"cookieInspect"`
+	UserAgent          string              `json:"user-agent"`
+	InternalToken      string              `json:"internalToken"`
+	StrmExtensions     []string            `json:"strmExtensions"`
+	DownloadExtensions []string            `json:"downloadExtensions"`
+	MediaMountPath     []string            `json:"mediaMountPath"`
+	StrmPrefix         string              `json:"strmPrefix"`
+	EnablePathEncoding bool                `json:"enablePathEncoding"`
+	Download           DownloadSettings    `json:"download"`
+	Strm               StrmSettings        `json:"strm"`
+	RateLimit          RateLimitSettings   `json:"rateLimit"`
+	Emby               EmbySettings        `json:"emby"`
+	Telegram           TelegramSettings    `json:"telegram"`
+	LifeMonitor        LifeMonitorSettings `json:"lifeMonitor"`
+	// CleanupDefaultsV2 标记「清理默认值已迁移」，避免每次启动反复覆盖用户的选择
+	CleanupDefaultsV2 bool                  `json:"cleanupDefaultsV2"`
+	Cleanup           CleanupSettings       `json:"cleanup"`
+	CookieInspect     CookieInspectSettings `json:"cookieInspect"`
 }
 
 // RateLimitSettings 115 API 限流配置（按「账号 × 用途」分桶）
@@ -338,7 +340,6 @@ func DefaultSettings() *Settings {
 			StrmGenerateBlacklist: []string{}, // 默认空黑名单
 			OverwriteMode:         "always",   // 默认始终覆盖（与 MoviePilot 默认行为一致）
 			// 孤儿 STRM 清理：只按 STRM 内容里的 pickcode 对账，不会碰用户自己的文件。
-			// 路径级清理（RemoveExtraFiles）默认关闭，需在任务里显式开启。
 			FullSyncCleanupOrphans: "auto_clean",
 		},
 		Strm: StrmSettings{
@@ -406,7 +407,7 @@ func DefaultSettings() *Settings {
 			ConfirmMode:        "none",
 			RemoveStrm:         true,
 			RemoveEmptyDirs:    false,
-			RemoveRelatedFiles: false,
+			RemoveRelatedFiles: true,
 		},
 		CookieInspect: CookieInspectSettings{
 			Enabled:       boolPtr(true), // 默认开启主动巡检

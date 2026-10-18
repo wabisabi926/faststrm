@@ -73,7 +73,6 @@ type Task struct {
 	StrmType           string        `json:"strmType,omitempty"` // STRM 类型（如 "local"、"remote" 等）
 	StrmPrefix         string        `json:"strmPrefix,omitempty"`
 	EnablePathEncoding bool          `json:"enablePathEncoding,omitempty"`
-	RemoveExtraFiles   bool          `json:"removeExtraFiles,omitempty"`
 	Schedule           *TaskSchedule `json:"schedule,omitempty"`
 	CreatedAt          int64         `json:"createdAt,omitempty"`
 	UpdatedAt          int64         `json:"updatedAt,omitempty"`
