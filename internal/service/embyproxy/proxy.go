@@ -34,6 +34,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
@@ -735,30 +736,76 @@ func (p *Proxy) forceDirectPlay(data map[string]interface{}, req *http.Request) 
 // ISO/原盘 seek 格式识别
 // ============================================================
 
-// seekRequiredContainers Emby Container 字段中需要 byte-range seek 的容器（原盘/直播流）
-var seekRequiredContainers = map[string]bool{
-	"iso":    true,
-	"bdmv":   true,
-	"bdav":   true,
-	"dvd":    true,
-	"bluray": true,
-	"m2ts":   true,
-	"ts":     true,
-	"vob":    true,
-	"ifo":    true,
-	"bup":    true,
+// ============================================================
+// 强制代理格式（原盘 / 需要 byte-range seek 的容器）
+// ============================================================
+
+// forceProxyFormats 当前生效的强制代理格式集合，元素同时包含
+// 「无点形式」（用于匹配 Emby 的 Container 字段，如 "iso"）
+// 与「带点形式」（用于匹配文件名扩展名，如 ".iso"）。
+//
+// 为什么做成可配置：原实现把列表硬编码在代码里，其中 .ts 属于常见录播格式
+// 而非原盘，命中后几十 GB 的文件会全部走服务端代理，白白消耗服务器带宽。
+// 现在默认值保持不变（不改变现有行为），但允许用户在 settings.json 的
+// strm.forceProxyFormats 中按需移除。
+var forceProxyFormats atomic.Value // map[string]struct{}
+
+func init() {
+	forceProxyFormats.Store(buildForceProxySet(nil))
 }
 
-// seekRequiredExts 文件名扩展名中需要 byte-range seek 的格式（含点号，小写）
-var seekRequiredExts = map[string]bool{
-	".iso":  true,
-	".bdmv": true,
-	".bdav": true,
-	".ts":   true,
-	".m2ts": true,
-	".vob":  true,
-	".ifo":  true,
-	".bup":  true,
+// buildForceProxySet 把配置中的格式列表规范化为查找集合。
+// 空列表回落内置默认值；每个格式同时写入带点与不带点两种键。
+func buildForceProxySet(formats []string) map[string]struct{} {
+	src := formats
+	if len(src) == 0 {
+		src = model.DefaultForceProxyFormats
+	}
+	set := make(map[string]struct{}, len(src)*2)
+	for _, f := range src {
+		f = strings.ToLower(strings.TrimSpace(f))
+		f = strings.TrimPrefix(f, ".")
+		if f == "" {
+			continue
+		}
+		set[f] = struct{}{}
+		set["."+f] = struct{}{}
+	}
+	return set
+}
+
+// SetForceProxyFormats 覆盖强制代理格式列表（空表示使用默认值）。
+// 由 server 启动装配与 Emby 设置保存时调用，对后续请求立即生效。
+func SetForceProxyFormats(formats []string) {
+	forceProxyFormats.Store(buildForceProxySet(formats))
+	if len(formats) == 0 {
+		logger.S().Infof("[EmbyProxy] 强制代理格式: 使用默认 %v", model.DefaultForceProxyFormats)
+		return
+	}
+	logger.S().Infof("[EmbyProxy] 强制代理格式: %v", formats)
+}
+
+// isSeekRequiredFormat 判断 STRM 源是否需要代理流（而非 302）。
+// 依据：Emby 的 Container 字段，或文件名扩展名。
+func isSeekRequiredFormat(container, name string) bool {
+	set, _ := forceProxyFormats.Load().(map[string]struct{})
+	if set == nil {
+		set = buildForceProxySet(nil)
+	}
+	if c := strings.ToLower(strings.TrimSpace(container)); c != "" {
+		if _, ok := set[c]; ok {
+			return true
+		}
+	}
+	if name != "" {
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != "" {
+			if _, ok := set[ext]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // resolveFileNameFromStrmURL 从 STRM URL 解析文件名，对齐 STRM 层 pickOneFileName 兜底逻辑：
@@ -1030,23 +1077,6 @@ func (p *Proxy) servePatchedJS(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(patched))
-}
-
-// isSeekRequiredFormat 判断 STRM 源是否需要代理流（而非 302）。
-// 依据：Emby 的 Container 字段，或文件名扩展名。
-func isSeekRequiredFormat(container, name string) bool {
-	if c := strings.ToLower(strings.TrimSpace(container)); c != "" {
-		if seekRequiredContainers[c] {
-			return true
-		}
-	}
-	if name != "" {
-		ext := strings.ToLower(filepath.Ext(name))
-		if seekRequiredExts[ext] {
-			return true
-		}
-	}
-	return false
 }
 
 // disableWriteDeadline 清除当前响应的写截止时间。

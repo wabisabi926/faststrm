@@ -127,6 +127,10 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// 限流参数装配：按「账号 × 用途」分桶，扫描与播放互不抢占配额。
 	// 必须在任何 115 请求发生前调用，否则已创建的令牌桶会固化旧额度。
 	applyRateLimits(initSettings)
+	// 强制代理格式（原盘/TS 等）：可配置，空则回落内置默认值
+	if initSettings != nil {
+		embyproxy.SetForceProxyFormats(initSettings.Strm.ForceProxyFormats)
+	}
 	embyRefresh := emby.NewMediaServerRefresh(embyClient, embySettingsFn)
 
 	// 提前创建 cleanupInteraction（先用 nil bot，等 notifyDeps.TelegramBot 就绪后通过 SetBot 注入）

@@ -146,6 +146,20 @@ type StrmSettings struct {
 	//   支持变量：{filename} {stem} {ext}
 	//   示例："[{account}] {stem}.strm"
 	StrmFilenameTemplate string `json:"strmFilenameTemplate"`
+	// ForceProxyFormats 需要服务端代理流（而非 302 直连）的格式列表。
+	// 支持容器名或扩展名，大小写不敏感、点号可省略（如 "iso" / ".ts" 等价）。
+	//
+	// 背景：这类格式在 302 之后由客户端直连 115 CDN 时，可能因 CDN 的 UA 绑定
+	// 或签名过期导致 Range 请求被拒，因此改由服务端代理转发以保证 seek 正常。
+	//
+	// 默认值为原盘类格式 + ts/m2ts；空则使用内置默认值。
+	// 注意：.ts 是常见的录播格式而非原盘，若带宽紧张可把它从列表中移除。
+	ForceProxyFormats []string `json:"forceProxyFormats"`
+}
+
+// DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）
+var DefaultForceProxyFormats = []string{
+	"iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "ts", "vob", "ifo", "bup",
 }
 
 // EmbySettings emby 子项
@@ -333,6 +347,7 @@ func DefaultSettings() *Settings {
 			ForceProxyUaTokens:           []string{},
 			AccountProxyConcurrencyLimit: 8,
 			RedirectCheckTimeoutMs:       5000,
+			ForceProxyFormats:            append([]string{}, DefaultForceProxyFormats...),
 		},
 		RateLimit: RateLimitSettings{
 			API115Qpm:    60,  // 扫描/目录类，保守

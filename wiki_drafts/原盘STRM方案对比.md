@@ -97,10 +97,10 @@ return DecisionResult{Decision: DecisionRedirect, Reason: "default_redirect"}
 
 用户照着文档排查会得出错误结论。**建议改文档，不改代码**（当前代码行为更优：直连客户端可省服务器带宽）。
 
-### 补充 2：`.ts` 被过度列入强制代理格式（建议做成可配置）
+### 补充 2：`.ts` 被过度列入强制代理格式（✅ 已做，改为可配置）
 
 ```go
-// internal/service/embyproxy/proxy.go:752-762
+// 改前（internal/service/embyproxy/proxy.go）
 var seekRequiredExts = map[string]bool{
 	".iso": true, ".bdmv": true, ".bdav": true,
 	".ts": true, ".m2ts": true, ".vob": true, ".ifo": true, ".bup": true,
@@ -109,7 +109,17 @@ var seekRequiredExts = map[string]bool{
 
 `.ts` 是常见的**录播/直播录制**格式，不是原盘。命中后所有 TS 文件都走服务端代理，白白消耗服务器带宽（TS 文件动辄几十 GB）。
 
-建议：把这份清单提到 `settings.strm.forceProxyFormats`，默认值保持现状（不改变现有行为），让用户能按需移除 `.ts`。
+**已实现**：列表提取为 `settings.strm.forceProxyFormats`，默认值与原硬编码完全一致（不改变现有行为）。
+用户把 `ts` 从列表里删掉后，TS 文件即走 302 直连 CDN。
+
+```json
+"strm": {
+  "forceProxyFormats": ["iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "vob", "ifo", "bup"]
+}
+```
+
+匹配规则：大小写不敏感、点号可省略（`"iso"` 与 `".iso"` 等价），同时匹配 Emby 的 Container 字段与文件名扩展名。
+配置为空时回落内置默认值；保存 Emby 设置时热生效，无需重启。
 
 ### 补充 3：BDMV 目录可选生成"主视频流"STRM（需确认）
 
@@ -141,3 +151,31 @@ var seekRequiredExts = map[string]bool{
 **faststrm 的原盘能力已经是三者最强**：双扩展名 + BDMV 跳过 + 反代强制 DirectPlay + 代理流 Range，这套组合 p115strmhelper 和 LitePan 都没有完整实现。
 
 本轮建议只做**补充 1（文档修正）**，补充 2/3 等确认后再排期。
+
+---
+
+## 8. 关于补充 3（BDMV 主视频流）的评估结论：暂不做
+
+| 维度 | 评估 |
+|---|---|
+| 真实收益 | 中。让 BDMV 原盘在 Emby 里"看得见"，但播的是无菜单的单条 m2ts |
+| 实现成本 | 中高。当前是单遍 DFS，遇到 `BDMV/STREAM` 直接 `continue`；要生成父目录级 STRM，必须先探到 STREAM 再回溯父目录，等于把扫描改成两阶段 |
+| 误判风险 | 中。"体积最大的 m2ts"未必是主片（多版本原盘、演唱会花絮、导演剪辑版并存时会串） |
+| 一致性风险 | 高。生成 `{目录名}.strm` 后 Emby 会把它当电影刮削，若刮削源匹配到花絮，会污染媒体库 |
+| 三家现状 | 都不做（faststrm 跳过、p115strmhelper 明确提示"不支持"、LitePan 会生成上百个 m2ts） |
+
+**结论：不做自动生成。** 现有"跳过"行为是经过权衡的正确选择，不该为了"看得见"引入误判。
+
+### 替代方案（成本极低，建议做）
+
+现状真正的问题不是"没生成"，而是**用户不知道为什么原盘不见了**。
+
+`listAllFilesRecursive` 其实已经统计了 `bdmvSkipped` 计数并打了日志
+（`跳过 N 个 BDMV/STREAM 原盘视频流（不生成 STRM）`），但这个信息：
+- 只在服务端日志里，Web UI 的任务详情看不到
+- 没有进任务结果/通知
+
+建议后续把它提升为**任务结果里的显式提示**（例如"本次跳过 3 个 BDMV 原盘目录"），
+让用户知道"这是设计行为，不是 bug"，并指引他去转 ISO 或手动指定主视频流。
+
+成本约 20 行，无行为风险，解决的是信息缺失而非功能缺失。

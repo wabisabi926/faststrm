@@ -257,6 +257,8 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 					}
 				}
 				forceProxyUaTokens := settings.Strm.ForceProxyUaTokens
+				// 强制代理格式热更新（空则回落内置默认值）
+				embyproxy.SetForceProxyFormats(settings.Strm.ForceProxyFormats)
 				if err := mgr.Restart(host, em.ProxyPort, em.URL, forceProxyUaTokens); err != nil {
 					logger.S().Warnf("[EmbyProxy] 热重启失败: %v", err)
 				} else {
