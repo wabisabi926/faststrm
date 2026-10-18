@@ -133,6 +133,19 @@ func (c *simpleLRU[V]) DeleteBySuffix(suffix string) int {
 	return count
 }
 
+// Delete 删除指定 key 的缓存条目，返回是否命中
+func (c *simpleLRU[V]) Delete(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.items[key]
+	if !ok {
+		return false
+	}
+	c.order.Remove(el)
+	delete(c.items, key)
+	return true
+}
+
 // Clear 清空全部缓存，返回清除数量
 func (c *simpleLRU[V]) Clear() int {
 	c.mu.Lock()
@@ -542,6 +555,21 @@ func ResolveDownloadUrl(
 	cacheExpires := computeCdnURLCacheExpires(meta.URL, URLCacheTTL)
 	urlCache.SetWithExpires(cacheKey, meta, cacheExpires)
 	return meta, nil
+}
+
+// InvalidateDownloadURL 主动失效 (账号, pickcode, UA) 的直链缓存与负缓存。
+//
+// 使用场景：代理流发现上游返回 401/403/404 等「链接可能已过期」的状态码时，
+// 先失效缓存再重新取链，否则会从缓存里拿回同一个已失效的 URL。
+func InvalidateDownloadURL(accountName, pickcode, userAgent string) {
+	pickcode = strings.ToLower(pickcode)
+	ua := userAgent
+	if ua == "" {
+		ua = "NoUA"
+	}
+	cacheKey := accountName + ":" + pickcode + "|" + ua
+	urlCache.Delete(cacheKey)
+	urlNegativeCache.Delete(cacheKey)
 }
 
 // computeCdnURLCacheExpires 从 CDN URL 解析 t 参数，计算缓存过期时间

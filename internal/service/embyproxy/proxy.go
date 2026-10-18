@@ -1148,6 +1148,43 @@ func (p *Proxy) proxyStreamToStrm(w http.ResponseWriter, r *http.Request, strmUR
 // 把这次 302 缓存过久，签名过期后起播必然失败。因此把可缓存时长收敛为
 // 「min(反代缓存 TTL, CDN 签名剩余有效期)」；无法解析签名时直接 no-store（不缓存）。
 // 对齐 QMediaSync redirectCacheExpiresAt「以签名到期为准」的策略。
+// CDN 签名相关的时间余量
+const (
+	// cdnSignatureSafetyMargin 缓存过期时间相对 CDN 签名到期时间的安全余量。
+	// 提前 60s 失效，避免客户端拿到「还剩几秒」的链接后起播失败。
+	cdnSignatureSafetyMargin = 60 * time.Second
+	// minCacheTTLForExpiringURL 已过期/即将过期链接的最短缓存时间。
+	// 不设为 0 是为了避免同一请求在极端情况下反复回源。
+	minCacheTTLForExpiringURL = 5 * time.Second
+)
+
+// cdnSignatureRemain 返回 CDN 直链签名（t 参数）的剩余可用时长，已扣除安全余量。
+// ok=false 表示 URL 不含 t 参数（无法判断剩余有效期），调用方应按原默认策略处理。
+func cdnSignatureRemain(finalURL string, now time.Time) (time.Duration, bool) {
+	parsed, err := url.Parse(finalURL)
+	if err != nil {
+		return 0, false
+	}
+	tStr := parsed.Query().Get("t")
+	if tStr == "" {
+		return 0, false
+	}
+	t, err := strconv.ParseInt(tStr, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	remain := time.Unix(t, 0).Sub(now) - cdnSignatureSafetyMargin
+	if remain < minCacheTTLForExpiringURL {
+		remain = minCacheTTLForExpiringURL
+	}
+	return remain, true
+}
+
+// mediaRedirectCacheControl 下发 302 的 Cache-Control。
+//
+// 关键：最终直链是带签名的短时 URL（t 参数），若客户端或中间缓存把这次 302
+// 缓存得比签名寿命更久，签名过期后再次起播必然失败。
+// 因此把可缓存时长收敛为 min(反代缓存 TTL, 签名剩余有效期 - 安全余量)。
 func mediaRedirectCacheControl(finalURL string) string {
 	parsed, err := url.Parse(finalURL)
 	if err != nil {
@@ -1465,9 +1502,16 @@ func (p *Proxy) cachePlaybackURL(key playbackCacheKey, finalURL string) {
 		delete(p.playbackURLCache, oldest)
 	}
 
+	// 缓存时长按 CDN 签名收敛：签名比默认 TTL 更早到期时以签名为准，
+	// 否则会出现「缓存里还是有效链接、实际 CDN 已拒绝」的窗口期。
+	ttl := playbackURLCacheTTL
+	if remain, ok := cdnSignatureRemain(finalURL, now); ok && remain < ttl {
+		ttl = remain
+	}
+
 	p.playbackURLCache[key] = playbackCacheEntry{
 		finalURL: finalURL,
-		expiry:   now.Add(playbackURLCacheTTL),
+		expiry:   now.Add(ttl),
 	}
 	p.playbackCacheOrder = append(p.playbackCacheOrder, key)
 }

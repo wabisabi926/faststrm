@@ -231,7 +231,15 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		case strm.DecisionProxy:
 			proxyCountInc(accountName)
 			defer proxyCountDec(accountName)
-			handleProxy(w, r, cdnURL, account.Cookie, userAgent, finalName)
+			handleProxy(w, r, cdnURL, account.Cookie, userAgent, finalName, func(ctx context.Context) (string, error) {
+				// 先失效缓存，否则会拿回同一个已失效的 URL
+				strm.InvalidateDownloadURL(accountName, pickcode, userAgent)
+				meta, rerr := strm.ResolveDownloadUrl(ctx, opts.Client115, pickcode, accountName, account.Cookie, userAgent)
+				if rerr != nil {
+					return "", rerr
+				}
+				return meta.URL, nil
+			})
 		default:
 			doRedirect(w, finalName, cdnURL)
 		}
@@ -355,6 +363,11 @@ func doRedirect(w http.ResponseWriter, fileName, cdnURL string) {
 
 // ==================== handleProxy 流式代理 ====================
 
+// handleProxy 以代理流方式转发 115 CDN 内容（支持 Range）。
+//
+// refresh 非空时，若上游返回「链接可能已过期」的状态码（401/403/404/408/429/5xx），
+// 会调用 refresh 重新取链并重试一次——115 CDN 直链带签名（t 参数），
+// 播放中途过期会导致客户端播放中断，自动换链可避免用户手动重开。
 func handleProxy(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -362,6 +375,7 @@ func handleProxy(
 	cookie string,
 	userAgent string,
 	fileName string,
+	refresh func(context.Context) (string, error),
 ) {
 	// 构造转发头
 	reqHeaders := map[string]string{
@@ -394,24 +408,45 @@ func handleProxy(
 		cancel(fmt.Errorf("client disconnected: %w", r.Context().Err()))
 	}()
 
-	reqCtx, reqCancel := context.WithCancelCause(ctx)
-	defer reqCancel(nil)
-	req, err := http.NewRequestWithContext(reqCtx, r.Method, cdnURL, nil)
-	if err != nil {
-		logger.S().Warnf("[STRM][proxy] new request failed: %v", err)
-		http.Error(w, "Upstream init failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	for k, v := range reqHeaders {
-		req.Header.Set(k, v)
+	// fetch 发起一次上游请求。每次重试都重建请求对象，避免复用已关闭的 body。
+	fetch := func(target string) (*http.Response, error) {
+		req, rerr := http.NewRequestWithContext(ctx, r.Method, target, nil)
+		if rerr != nil {
+			return nil, rerr
+		}
+		for k, v := range reqHeaders {
+			req.Header.Set(k, v)
+		}
+		return getProxyHTTPClient().Do(req)
 	}
 
-	upstream, err := getProxyHTTPClient().Do(req)
+	upstream, err := fetch(cdnURL)
 	connTimer.Stop()
 	if err != nil {
 		logger.S().Warnf("[STRM][proxy] upstream fetch failed: %v", err)
 		http.Error(w, "Upstream fetch failed: "+err.Error(), http.StatusBadGateway)
 		return
+	}
+
+	// 链接过期自动刷新：此时尚未向客户端写任何响应头，可以安全地换链重试。
+	if refresh != nil && shouldRefreshUpstream(upstream.StatusCode) {
+		_, _ = io.Copy(io.Discard, io.LimitReader(upstream.Body, 4096))
+		_ = upstream.Body.Close()
+		newURL, rerr := refresh(ctx)
+		if rerr != nil {
+			logger.S().Warnf("[STRM][proxy] 直链已失效(status=%d)且刷新失败: %v", upstream.StatusCode, rerr)
+			http.Error(w, "Upstream link expired and refresh failed", http.StatusBadGateway)
+			return
+		}
+		logger.S().Infof("[STRM][proxy] 直链已失效(status=%d)，已刷新并重试一次", upstream.StatusCode)
+		connTimer.Reset(strm.ConnectTimeout)
+		upstream, err = fetch(newURL)
+		connTimer.Stop()
+		if err != nil {
+			logger.S().Warnf("[STRM][proxy] 刷新后重试失败: %v", err)
+			http.Error(w, "Upstream retry failed: "+err.Error(), http.StatusBadGateway)
+			return
+		}
 	}
 	defer upstream.Body.Close()
 
@@ -469,6 +504,17 @@ func handleProxy(
 			}
 		}
 	}
+}
+
+// shouldRefreshUpstream 判断上游状态码是否可能由「直链过期」引起。
+// 115 CDN 签名过期通常表现为 403/404，也可能是 401/429 或 5xx。
+func shouldRefreshUpstream(status int) bool {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+		http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return true
+	}
+	return status >= 500
 }
 
 // totalSizeFromCdn 是 HEAD 响应 Content-Length 的兜底 helper：
