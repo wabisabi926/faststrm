@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // Settings 对应 settings.json 顶层结构
@@ -523,11 +525,9 @@ func RenderStrmFilenameTemplate(template, fileName, ext, stem, account string) s
 		"{account}", account,
 	)
 	name := r.Replace(template)
-	// 清理文件名非法字符（最小 Windows 非法字符）
-	name = strings.ReplaceAll(name, ":", "：")
-	for _, c := range []string{"<", ">", "\"", "|", "?", "*"} {
-		name = strings.ReplaceAll(name, c, "_")
-	}
+	// 清理文件名非法字符：统一走 strmutil（冒号转全角、其余特殊字符转下划线），
+	// 与任务侧/监控侧的目录段清理保持同一套规则
+	name = strmutil.SanitizeFileName(name)
 	// 强制 .strm 后缀，若已有则不重复
 	if !strings.EqualFold(filepath.Ext(name), ".strm") {
 		name = name + ".strm"

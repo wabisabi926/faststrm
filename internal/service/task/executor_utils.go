@@ -154,8 +154,12 @@ func getStrmFileName(fileName string) string {
 
 // getRelPathStrmSuffix 基于相对路径（含扩展名）生成对应的 .strm 相对路径
 // 等价于替换文件名为 getStrmFileName(name)
+//
+// 入参是「云端相对路径」，返回是「本地相对路径」：目录段与文件名都会做非法字符清理，
+// 保证写入、增量判定、路径级清理三处拿到完全一致的本地路径。
 func replaceRelPathExtToStrm(relPath string) string {
-	dir, name := filepath.Split(relPath)
+	local := strmutil.SanitizeRelPath(relPath)
+	dir, name := filepath.Split(local)
 	return filepath.Join(dir, getStrmFileName(name))
 }
 
@@ -176,7 +180,8 @@ func resolveStrmRelPath(template, account string, f *fileItem) string {
 	if newName == "" {
 		newName = getStrmFileName(relName)
 	}
-	return filepath.Join(relDir, newName)
+	// 目录段来自云端路径，同样需要清理（模板只负责文件名）
+	return strmutil.SanitizeRelPath(filepath.Join(relDir, newName))
 }
 
 // localArtifactExists 判断增量跳过候选的本地产物是否仍存在
@@ -188,7 +193,7 @@ func localArtifactExists(task *Task, strmTemplate string, f *fileItem) bool {
 	case kindStrm:
 		rel = resolveStrmRelPath(strmTemplate, task.Account, f)
 	case kindDownload:
-		rel = f.RelPath
+		rel = strmutil.SanitizeRelPath(f.RelPath)
 	default:
 		return true
 	}
@@ -630,7 +635,7 @@ func runDownloads(
 				return nil
 			default:
 			}
-			savePath := filepath.Join(saveDir, f.RelPath)
+			savePath := filepath.Join(saveDir, strmutil.SanitizeRelPath(f.RelPath))
 			if err := ensureDir(filepath.Dir(savePath)); err != nil {
 				sseServer.EmitLog(taskID, "error", "mkdir "+filepath.Dir(savePath)+": "+err.Error())
 				return nil
@@ -775,7 +780,7 @@ func removeExtraFiles(ctx context.Context, submitter CleanupBatchSubmitter, task
 		sp := filepath.Join(targetPath, replaceRelPathExtToStrm(e.RelPath))
 		keep[filepath.Clean(sp)] = struct{}{}
 		// 保留真实下载文件
-		dp := filepath.Join(targetPath, e.RelPath)
+		dp := filepath.Join(targetPath, strmutil.SanitizeRelPath(e.RelPath))
 		keep[filepath.Clean(dp)] = struct{}{}
 	}
 
@@ -880,23 +885,6 @@ func normalizeExt(ext string) string {
 		return ext
 	}
 	return "." + ext
-}
-
-// sanitizeCloudRelPath 清理云端相对路径（/ 分隔）中的 Windows 非法字符，
-// 等价于 monitor.sanitizePathParts，避免 task 循环引用 monitor。
-func sanitizeCloudRelPath(rel string) string {
-	if rel == "" {
-		return ""
-	}
-	parts := strings.Split(rel, "/")
-	for i, part := range parts {
-		part = strings.ReplaceAll(part, ":", "：")
-		for _, c := range []string{"<", ">", "\"", "|", "?", "*"} {
-			part = strings.ReplaceAll(part, c, "_")
-		}
-		parts[i] = part
-	}
-	return strings.Join(parts, string(filepath.Separator))
 }
 
 // ==================== P0-1/P0-2 孤儿 STRM 对账清理 ====================

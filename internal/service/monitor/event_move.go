@@ -248,7 +248,7 @@ func (m *Monitor) findLocalStrmByFileName(account, fileName string, fileCategory
 		}
 		// 文件夹：在 LocalPath 下查找同名目录
 		if fileCategory == 0 {
-			candidate := filepath.Join(mp.LocalPath, fileName)
+			candidate := filepath.Join(mp.LocalPath, strmutil.SanitizeFileName(fileName))
 			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 				return candidate
 			}

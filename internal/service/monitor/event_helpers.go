@@ -315,6 +315,9 @@ func (m *Monitor) deleteOldStrmAtLocalPath(
 //   - 普通文件：movie.mkv → movie.strm
 //   - ISO 镜像保留双扩展名：game.iso → game.iso.strm
 func getStrmFileName(fileName string) string {
+	// 事件里的文件名来自云端，可能含 Windows 非法字符：与 task 侧共用同一套清理规则，
+	// 保证事件生成/删除/重命名定位到与全量生成完全相同的本地路径。
+	fileName = strmutil.SanitizeFileName(fileName)
 	ext := strings.ToLower(filepath.Ext(fileName))
 	if ext == "" {
 		return fileName + ".strm"
@@ -399,23 +402,10 @@ func isMediaFile(fileName string, extensions []string) bool {
 }
 
 // sanitizePathParts 清理路径中的非法字符（Windows 平台）
-// 对齐 TS sanitizePathParts
+// 实现已统一到 pkg/strmutil.SanitizeRelPath，与 task 全量生成共用同一套规则；
+// 否则同一个文件会被事件侧与全量侧写到两个不同路径。
 func sanitizePathParts(relativePath string) string {
-	if relativePath == "" {
-		return ""
-	}
-	// 统一使用 / 作为分隔符进行分割（云端路径用 /）
-	parts := strings.Split(relativePath, "/")
-	for i, part := range parts {
-		// 冒号替换为全角冒号
-		part = strings.ReplaceAll(part, ":", "：")
-		// Windows 非法字符替换为下划线
-		for _, c := range []string{"<", ">", "\"", "|", "?", "*"} {
-			part = strings.ReplaceAll(part, c, "_")
-		}
-		parts[i] = part
-	}
-	return strings.Join(parts, string(filepath.Separator))
+	return strmutil.SanitizeRelPath(relativePath)
 }
 
 // generateStrmContent 生成 .strm 文件内容（URL 到 115 文件）

@@ -22,6 +22,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/sse"
 	"github.com/wabisabi926/faststrm/pkg/concurrency"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // taskCompleteThreshold 任务完成判定阈值（99.995%）
@@ -773,7 +774,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 					if len(key) > bestPrefixLen {
 						bestPrefixLen = len(key)
 						rel := cloudPath[len(norm):]
-						bestLocal = filepath.Join(mp.LocalPath, sanitizeCloudRelPath(rel))
+						bestLocal = filepath.Join(mp.LocalPath, strmutil.SanitizeRelPath(rel))
 					}
 				}
 			}

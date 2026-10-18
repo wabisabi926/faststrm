@@ -3,7 +3,6 @@ package task
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -134,36 +133,6 @@ func TestReplaceRelPathExtToStrm(t *testing.T) {
 			got := replaceRelPathExtToStrm(c.input)
 			if got != c.want {
 				t.Fatalf("replaceRelPathExtToStrm(%q) = %q, want %q", c.input, got, c.want)
-			}
-		})
-	}
-}
-
-func TestSanitizeCloudRelPath(t *testing.T) {
-	cases := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"empty", "", ""},
-		{"plain", "movie.mkv", "movie.mkv"},
-		{"with colon", "movie:123.mkv", "movie：123.mkv"},
-		{"with angle brackets", "movie<>test.mkv", "movie__test.mkv"},
-		{"with pipe", "movie|test.mkv", "movie_test.mkv"},
-		{"with question mark", "movie?.mkv", "movie_.mkv"},
-		{"with asterisk", "movie*.mkv", "movie_.mkv"},
-		{"with quotes", "movie\"test.mkv", "movie_test.mkv"},
-		{"multiple replacements", "a:b<c>d|e?.mkv", "a：b_c_d_e_.mkv"},
-		{"with slashes", "dir/movie.mkv", filepath.Join("dir", "movie.mkv")},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := sanitizeCloudRelPath(c.input)
-			// On Windows, filepath.Separator is \, on Linux it's /
-			// Normalize for comparison
-			wantNormalized := strings.ReplaceAll(c.want, "/", string(filepath.Separator))
-			if got != wantNormalized {
-				t.Fatalf("sanitizeCloudRelPath(%q) = %q, want %q", c.input, got, wantNormalized)
 			}
 		})
 	}
