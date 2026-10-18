@@ -325,6 +325,36 @@ func RemoveFilePathEntryBatch(db *sql.DB, account string, fileIDs []string) (int
 
 // ==================== P0-2 folders 表 CRUD ====================
 
+// FolderPath folders 表的一行：目录 cid → 云端绝对路径 + 父目录 cid。
+type FolderPath struct {
+	Path     string
+	ParentID int64
+}
+
+// ListFolderEntries 读取账号下全部目录缓存（cid → 路径），
+// 供 cur=0 全量清单做 pid→路径翻译（一次查询，避免逐个 pid 打 115 接口）。
+func ListFolderEntries(db *sql.DB, account string) (map[int64]FolderPath, error) {
+	rows, err := db.Query(`SELECT file_id, path, parent_id FROM folders WHERE account = ?`, account)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int64]FolderPath, 1024)
+	for rows.Next() {
+		var (
+			fileID   int64
+			path     string
+			parentID int64
+		)
+		if err := rows.Scan(&fileID, &path, &parentID); err != nil {
+			return nil, err
+		}
+		out[fileID] = FolderPath{Path: path, ParentID: parentID}
+	}
+	return out, rows.Err()
+}
+
 // UpsertFolderEntry 插入或更新文件夹记录（对齐参考项目 process_life_dir_item）
 func UpsertFolderEntry(db *sql.DB, account string, e FilePathEntry) error {
 	fileID, path, fileName, parentID, _, updateTime, err := normalizeEntry(&e)

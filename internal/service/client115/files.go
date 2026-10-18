@@ -30,6 +30,9 @@ type RequestOptions struct {
 	// 账号维度不在这里传：由 Cookie 中的 UID 自动派生（rate.AccountKeyFromCookie），
 	// 这样所有既有调用点都无需改动签名。
 	Limiter rate.LimiterType
+	// Timeout 单次请求超时；0 表示沿用 Client.HTTP 的默认超时。
+	// cur=0 全量清单首页需要服务端递归展开整棵子树，必须放宽到 60s 以上。
+	Timeout time.Duration
 }
 
 func (c *Client) buildCommonHeaders(opt RequestOptions) map[string]string {
@@ -64,6 +67,10 @@ const (
 	requestRetryBaseDelay = 500 * time.Millisecond
 	// requestRetryMaxDelay 单次退避上限
 	requestRetryMaxDelay = 8 * time.Second
+
+	// fullListRequestTimeout cur=0 全量清单单页请求超时。
+	// 首页需要服务端递归展开整棵子树，默认 15s 在大库上必然超时。
+	fullListRequestTimeout = 90 * time.Second
 )
 
 // isIdempotentMethod 仅幂等方法参与自动重试，避免副操作被重复执行
@@ -114,6 +121,7 @@ func (c *Client) doHTTPOnce(
 	urlStr string,
 	body string,
 	headers map[string]string,
+	timeout time.Duration,
 ) ([]byte, int, error) {
 	var reqBody io.Reader
 	if body != "" {
@@ -128,7 +136,14 @@ func (c *Client) doHTTPOnce(
 		req.Header.Set(k, v)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	// 单次请求超时覆盖：只影响本次调用，不改共享 Client
+	client := c.HTTP
+	if timeout > 0 {
+		clone := *c.HTTP
+		clone.Timeout = timeout
+		client = &clone
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -180,7 +195,7 @@ func (c *Client) request115(
 		if err := c.acquireAPI(ctx, opt.Cookie, limiterType); err != nil {
 			return nil, err
 		}
-		data, _, err := c.doHTTPOnce(ctx, method, urlStr, body, headers)
+		data, _, err := c.doHTTPOnce(ctx, method, urlStr, body, headers, opt.Timeout)
 		return data, err
 	}
 
@@ -201,7 +216,7 @@ func (c *Client) request115(
 			return nil, err
 		}
 
-		data, status, err := c.doHTTPOnce(ctx, method, urlStr, body, headers)
+		data, status, err := c.doHTTPOnce(ctx, method, urlStr, body, headers, opt.Timeout)
 		if err != nil {
 			// 父级 ctx 取消/超时为终止性错误，不再重试
 			if ctx.Err() != nil {
@@ -453,6 +468,140 @@ func (c *Client) FsFiles(
 		}
 	}
 	return &resp, nil
+}
+
+// ==================== fs_files 全量清单（cur=0） ====================
+
+// FullListEntry 全量清单条目。
+//
+// cur=0 让服务端递归展开整棵子树，只返回文件（show_dir=0），条目自带父目录 pid。
+// 这条返回路径与普通列目录不完全一致，字段做了多别名兜底：
+// web 短名（fid/n/pc/s/pid）与 Open/旧版长名（file_id/file_name/pick_code/size_byte）。
+type FullListEntry struct {
+	FID      int64
+	PID      int64
+	Name     string
+	PickCode string
+	Size     int64
+	SHA      string
+	AID      int64 // 7/120 = 回收站，需过滤
+}
+
+// UnmarshalJSON 兼容短名/长名两套字段。
+// 用结构体而非 map，避免百万级条目解析时的额外分配。
+func (e *FullListEntry) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Fid      flexInt `json:"fid"`
+		FileID   flexInt `json:"file_id"`
+		Pid      flexInt `json:"pid"`
+		ParentID flexInt `json:"parent_id"`
+		Cid      flexInt `json:"cid"` // 文件条目的 cid 即父目录 id
+		N        string  `json:"n"`
+		Fn       string  `json:"fn"`
+		FileName string  `json:"file_name"`
+		Pc       string  `json:"pc"`
+		PickCode string  `json:"pick_code"`
+		Pickcode string  `json:"pickcode"`
+		S        flexInt `json:"s"`
+		Size     flexInt `json:"size"`
+		SizeByte flexInt `json:"size_byte"`
+		Sha      string  `json:"sha"`
+		Sha1     string  `json:"sha1"`
+		Aid      flexInt `json:"aid"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	e.FID = firstNonZeroInt64(int64(raw.Fid), int64(raw.FileID))
+	e.PID = firstNonZeroInt64(int64(raw.Pid), int64(raw.ParentID), int64(raw.Cid))
+	e.Name = firstNonEmpty(raw.N, raw.Fn, raw.FileName)
+	e.PickCode = firstNonEmpty(raw.Pc, raw.PickCode, raw.Pickcode)
+	e.Size = firstNonZeroInt64(int64(raw.S), int64(raw.Size), int64(raw.SizeByte))
+	e.SHA = firstNonEmpty(raw.Sha, raw.Sha1)
+	e.AID = int64(raw.Aid)
+	return nil
+}
+
+// FsFilesAllResp cur=0 全量清单响应
+type FsFilesAllResp struct {
+	State  bool            `json:"state"`
+	Data   []FullListEntry `json:"data"`
+	Count  flexInt         `json:"count"`
+	ErrNo  flexInt         `json:"errno,omitempty"`
+	ErrMsg string          `json:"errmsg,omitempty"`
+	Error  string          `json:"error,omitempty"`
+}
+
+// FsFilesAll 拉取 cur=0 全量文件清单的一页。
+//
+// 与 FsFiles 的区别（对齐 p115strmhelper 的 iter_files 参数）：
+//   - cur=0         服务端递归展开整棵子树
+//   - show_dir=0    只返回文件，不返回目录（目录结构靠条目的 pid 还原）
+//   - count_folders=0 / fc_mix=1  不统计目录、文件与目录混排
+//
+// 注意：count 的语义/时效在 web API 上并不完全可靠，调用方**不要**用它做分页终止条件，
+// 只在结束时做「实得 < count」的完整性校验。
+func (c *Client) FsFilesAll(
+	ctx context.Context,
+	cid string,
+	limit int,
+	offset int,
+	cookie string,
+) (*FsFilesAllResp, error) {
+	if cookie == "" {
+		return nil, fmt.Errorf("cookie is empty")
+	}
+	if cid == "" {
+		cid = "0"
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+
+	params := url.Values{}
+	params.Set("aid", "1")
+	params.Set("cid", cid)
+	params.Set("o", "user_ptime")
+	params.Set("asc", "0")
+	params.Set("offset", strconv.Itoa(offset))
+	params.Set("show_dir", "0")
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("cur", "0")
+	params.Set("count_folders", "0")
+	params.Set("fc_mix", "1")
+	params.Set("snap", "0")
+	params.Set("natsort", "1")
+	params.Set("record_open_time", "1")
+	params.Set("format", "json")
+	params.Set("virtual", "1")
+
+	endpoint := "https://webapi.115.com/files?" + params.Encode()
+	body, err := c.request115(ctx, http.MethodGet, endpoint, "", RequestOptions{
+		Cookie:           cookie,
+		UseCommonHeaders: true,
+		// 首页要让服务端递归展开整棵树，默认 15s 不够
+		Timeout: fullListRequestTimeout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fs_files_all request: %w", err)
+	}
+	var resp FsFilesAllResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse fs_files_all response: %w (body=%s)", err, truncate(body, 512))
+	}
+	if !resp.State && (int64(resp.ErrNo) != 0 || resp.ErrMsg != "" || resp.Error != "") {
+		return nil, newAPIError(int(resp.ErrNo), firstNonEmpty(resp.ErrMsg, resp.Error))
+	}
+	return &resp, nil
+}
+
+func firstNonZeroInt64(vs ...int64) int64 {
+	for _, v := range vs {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 // FsDirGetID 根据路径获取目录 ID

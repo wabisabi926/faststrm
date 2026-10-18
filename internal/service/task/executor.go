@@ -293,7 +293,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		StageDetail:    "开始扫描云端目录...",
 	})
 	var scanStats ScanStats
-	fileEntries, err := listAllFilesRecursive(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist, task.ID, rt, sseServer, deps.SQLiteDB, task.Account, &scanStats)
+	fileEntries, err := scanAllFiles(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist, task.ID, rt, sseServer, deps.SQLiteDB, task.Account, &scanStats)
 	if err != nil {
 		msg := "list files failed: " + err.Error()
 		histSuccess = false
