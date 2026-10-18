@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/skip2/go-qrcode"
+
+	"github.com/wabisabi926/faststrm/internal/service/rate"
 )
 
 // ==================== 常量 ====================
@@ -104,6 +106,10 @@ type QrCodeStatusResp struct {
 type Client struct {
 	HTTP      *http.Client
 	UserAgent string
+	// DefaultLimiter 该客户端发起请求时的默认限流用途。
+	// 零值等价于 rate.TypeAPI115（扫描/目录类）。
+	// 生活事件客户端会设置为 rate.TypeLife，使其与扫描互不抢占配额。
+	DefaultLimiter rate.LimiterType
 }
 
 // NewClient 创建 115 API 客户端

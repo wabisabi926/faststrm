@@ -24,6 +24,12 @@ type RequestOptions struct {
 	Cookie           string
 	UseCommonHeaders bool
 	ExtraHeaders     map[string]string
+	// Limiter 限流用途：区分「扫描/目录」与「播放取直链」。
+	// 零值等价于 rate.TypeAPI115。
+	//
+	// 账号维度不在这里传：由 Cookie 中的 UID 自动派生（rate.AccountKeyFromCookie），
+	// 这样所有既有调用点都无需改动签名。
+	Limiter rate.LimiterType
 }
 
 func (c *Client) buildCommonHeaders(opt RequestOptions) map[string]string {
@@ -86,10 +92,15 @@ func retryBackoffDelay(attempt int) time.Duration {
 	return d
 }
 
-// acquireAPI 获取一个 115 API 令牌（重试时每次尝试都需重新过限流）
-func (c *Client) acquireAPI(ctx context.Context) error {
-	lim := rate.GetRegistry().GetLimiter("global", rate.TypeAPI115)
-	if err := lim.Acquire(ctx); err != nil {
+// acquireAPI 获取一个 115 API 令牌（重试时每次尝试都需重新过限流）。
+//
+// 限流维度 = 账号（从 cookie 的 UID 派生）× 用途（t）。
+// 这样扫描列目录不会占用播放取直链的配额，避免大库扫描期间播放被饿死。
+func (c *Client) acquireAPI(ctx context.Context, cookie string, t rate.LimiterType) error {
+	if t == "" {
+		t = rate.TypeAPI115
+	}
+	if err := rate.GetRegistry().Acquire(ctx, rate.AccountKeyFromCookie(cookie), t); err != nil {
 		return fmt.Errorf("rate limited: %w", err)
 	}
 	return nil
@@ -158,9 +169,15 @@ func (c *Client) request115(
 		}
 	}
 
+	// 限流用途：显式指定 > 客户端默认 > TypeAPI115
+	limiterType := opt.Limiter
+	if limiterType == "" {
+		limiterType = c.DefaultLimiter
+	}
+
 	// 非幂等：单次调用，不重试、不判定状态码（保持原行为）
 	if !isIdempotentMethod(method) {
-		if err := c.acquireAPI(ctx); err != nil {
+		if err := c.acquireAPI(ctx, opt.Cookie, limiterType); err != nil {
 			return nil, err
 		}
 		data, _, err := c.doHTTPOnce(ctx, method, urlStr, body, headers)
@@ -180,7 +197,7 @@ func (c *Client) request115(
 			}
 		}
 
-		if err := c.acquireAPI(ctx); err != nil {
+		if err := c.acquireAPI(ctx, opt.Cookie, limiterType); err != nil {
 			return nil, err
 		}
 
@@ -256,6 +273,8 @@ func (c *Client) GetDownloadUrlWebFull(
 		Cookie:           cookie,
 		UseCommonHeaders: false,
 		ExtraHeaders:     headers,
+		// 播放取直链走独立配额：大库扫描期间不受扫描限流影响
+		Limiter: rate.TypePlayback,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("115 download API request: %w", err)

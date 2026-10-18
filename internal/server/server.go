@@ -19,6 +19,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/emby"
 	"github.com/wabisabi926/faststrm/internal/service/embyproxy"
 	"github.com/wabisabi926/faststrm/internal/service/notify"
+	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/internal/service/runtime"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/internal/service/task"
@@ -123,6 +124,9 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	if initSettings != nil && initSettings.Emby.URL != "" && initSettings.Emby.APIKey != "" {
 		embyClient = emby.NewClient(initSettings.Emby.URL, initSettings.Emby.APIKey)
 	}
+	// 限流参数装配：按「账号 × 用途」分桶，扫描与播放互不抢占配额。
+	// 必须在任何 115 请求发生前调用，否则已创建的令牌桶会固化旧额度。
+	applyRateLimits(initSettings)
 	embyRefresh := emby.NewMediaServerRefresh(embyClient, embySettingsFn)
 
 	// 提前创建 cleanupInteraction（先用 nil bot，等 notifyDeps.TelegramBot 就绪后通过 SetBot 注入）
@@ -306,4 +310,37 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 
 	server.Start()
 	return nil
+}
+
+// applyRateLimits 把 settings 中的限流参数装配到全局 Registry。
+//
+// 规则：未配置（0）的项回落到 Registry 内置默认值，
+// 这样老版本 settings.json（没有 rateLimit 段）升级后行为等价于新默认值。
+// GlobalCapQpm 传负数表示显式关闭全进程兜底。
+func applyRateLimits(s *model.Settings) {
+	lim := rate.Limits{
+		API115QPM:    rate.RegistryDefaultAPI115QPM,
+		PlaybackQPM:  rate.RegistryDefaultPlaybackQPM,
+		LifeQPM:      rate.RegistryDefaultLifeQPM,
+		GlobalCapQPM: rate.RegistryDefaultGlobalCapQPM,
+	}
+	if s != nil {
+		if v := s.RateLimit.API115Qpm; v > 0 {
+			lim.API115QPM = v
+		}
+		if v := s.RateLimit.PlaybackQpm; v > 0 {
+			lim.PlaybackQPM = v
+		}
+		if v := s.RateLimit.LifeQpm; v > 0 {
+			lim.LifeQPM = v
+		}
+		if v := s.RateLimit.GlobalCapQpm; v < 0 {
+			lim.GlobalCapQPM = 0 // 负数 = 关闭兜底
+		} else if v > 0 {
+			lim.GlobalCapQPM = v
+		}
+	}
+	rate.GetRegistry().Configure(lim)
+	logger.S().Infof("[RateLimit] 分桶限流已装配: api115=%d/min playback=%d/min life=%d/min globalCap=%d/min",
+		lim.API115QPM, lim.PlaybackQPM, lim.LifeQPM, lim.GlobalCapQPM)
 }

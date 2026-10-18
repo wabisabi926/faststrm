@@ -20,6 +20,9 @@ type Limiter struct {
 
 // NewLimiter 创建令牌桶限流器
 // maxTokensPerMinute: 每分钟最大令牌数（如 60 = 每秒 1 次）
+//
+// 注意：此构造函数的突发容量等于整分钟额度（60 QPM 的桶可一次性放行 60 个请求）。
+// 对「需要严格平滑」的场景（如全局兜底桶）应改用 NewLimiterBurst 显式限制突发。
 func NewLimiter(maxTokensPerMinute int) *Limiter {
 	if maxTokensPerMinute <= 0 {
 		maxTokensPerMinute = 60
@@ -27,6 +30,33 @@ func NewLimiter(maxTokensPerMinute int) *Limiter {
 	return &Limiter{
 		tokens:         float64(maxTokensPerMinute),
 		maxTokens:      float64(maxTokensPerMinute),
+		refillRate:     float64(maxTokensPerMinute) / 60.0,
+		lastRefillTime: time.Now(),
+	}
+}
+
+// NewLimiterBurst 创建带显式突发容量的令牌桶。
+//
+// burst 表示桶容量（瞬时最多放行多少个），refillRate 仍按 qpm/60 每秒补充。
+// 为什么要单独提供：NewLimiter 的桶容量等于整分钟额度，一个突发就能吃掉整分钟配额，
+// 在多账号/多类型共用一个兜底桶时会让其他调用方长时间拿不到令牌。
+// 实践中 burst 取 qpm/4 左右即可兼顾吞吐与平滑。
+func NewLimiterBurst(maxTokensPerMinute, burst int) *Limiter {
+	if maxTokensPerMinute <= 0 {
+		maxTokensPerMinute = 60
+	}
+	if burst <= 0 {
+		burst = maxTokensPerMinute / 4
+	}
+	if burst <= 0 {
+		burst = 1
+	}
+	if burst > maxTokensPerMinute {
+		burst = maxTokensPerMinute
+	}
+	return &Limiter{
+		tokens:         float64(burst),
+		maxTokens:      float64(burst),
 		refillRate:     float64(maxTokensPerMinute) / 60.0,
 		lastRefillTime: time.Now(),
 	}

@@ -122,11 +122,13 @@ func TestPhase4_RateIntegration(t *testing.T) {
 			t.Errorf("different type should NOT be same Limiter")
 		}
 
-		// SetDefaults → 新 account 应该拿新默认 api115QPM=30
+		// SetDefaults → 新 account 应该拿新默认 api115QPM=30。
+		// 注意：桶容量（突发）为 QPM/4，避免一个突发吃掉整分钟配额；
+		// 因此这里断言的是 burst 而非 QPM 本身。
 		r.SetDefaults(30, 0, 2)
 		lNew := r.GetLimiter("u_new", TypeAPI115)
-		if n := lNew.AvailableTokens(); n != 30 {
-			t.Errorf("new api115 QPM after SetDefaults want 30, got %d", n)
+		if n, want := lNew.AvailableTokens(), 30/4; n != want {
+			t.Errorf("new api115 burst after SetDefaults want %d (qpm 30 / 4), got %d", want, n)
 		}
 
 		// Bottleneck：相同 (u2,proxy) → 同一个；新默认 concurrent=2

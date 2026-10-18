@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -146,9 +147,18 @@ func NewLifeClient(cookie string) *LifeClient {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		fsClient:     NewClient(cookie),
+		fsClient:     newLifeFsClient(cookie),
 		pathCacheTTL: 5 * time.Minute,
 	}
+}
+
+// newLifeFsClient 构造生活事件专用的底层 client。
+// 关键点：DefaultLimiter 设为 TypeLife，使生活事件轮询与目录扫描分属不同配额桶，
+// 避免大库扫描期间生活事件被饿死（表现为监控停滞、事件积压）。
+func newLifeFsClient(cookie string) *Client {
+	c := NewClient(cookie)
+	c.DefaultLimiter = rate.TypeLife
+	return c
 }
 
 // FsClient 暴露底层 fs client（供 monitor 层调用 FsFiles 做网盘存在性校验等）

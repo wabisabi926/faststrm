@@ -20,11 +20,30 @@ type Settings struct {
 	RemoveExtraFiles   bool                  `json:"removeExtraFiles"`
 	Download           DownloadSettings      `json:"download"`
 	Strm               StrmSettings          `json:"strm"`
+	RateLimit          RateLimitSettings     `json:"rateLimit"`
 	Emby               EmbySettings          `json:"emby"`
 	Telegram           TelegramSettings      `json:"telegram"`
 	LifeMonitor        LifeMonitorSettings   `json:"lifeMonitor"`
 	Cleanup            CleanupSettings       `json:"cleanup"`
 	CookieInspect      CookieInspectSettings `json:"cookieInspect"`
+}
+
+// RateLimitSettings 115 API 限流配置（按「账号 × 用途」分桶）
+//
+// 背景：扫描列目录与播放取直链曾共用一个 60 次/分的全局桶，
+// 大库全量扫描时播放取直链会被饿死（表现为播放转圈、超时）。
+// 分桶后扫描与播放互不影响；GlobalCapQpm 作为多账号叠加时的风控兜底。
+//
+// 注意：本配置在服务启动时生效，修改后需重启（令牌桶会按新额度重建）。
+type RateLimitSettings struct {
+	// API115Qpm 扫描/目录/元数据等常规调用，每账号每分钟，默认 60
+	API115Qpm int `json:"api115Qpm"`
+	// PlaybackQpm 播放取直链，每账号每分钟，默认 120
+	PlaybackQpm int `json:"playbackQpm"`
+	// LifeQpm 生活事件轮询，每账号每分钟，默认 60
+	LifeQpm int `json:"lifeQpm"`
+	// GlobalCapQpm 全进程兜底上限，默认 300；负数表示关闭兜底
+	GlobalCapQpm int `json:"globalCapQpm"`
 }
 
 // CookieInspectSettings 115 账号 Cookie 主动巡检配置。
@@ -183,21 +202,24 @@ type AccountAlertsSettings struct {
 
 // LifeMonitorSettings lifeMonitor 子项
 type LifeMonitorSettings struct {
-	Enabled               bool                 `json:"enabled"`
-	Accounts              []string             `json:"accounts"`
-	PollInterval          int                  `json:"pollInterval"`
-	PathMappings          []MonitorPathMapping `json:"pathMappings"`
-	RemoveEmptyDirs       bool                 `json:"removeEmptyDirs"`
-	EventTypes            EventTypesSettings   `json:"eventTypes"`
-	StrmPrefix            string               `json:"strmPrefix"`
-	EnablePathEncoding    bool                 `json:"enablePathEncoding"`
-	MinFileSize           int64                `json:"minFileSize"`           // 生活监控 最小文件大小阈值（字节），默认0不限制
-	StrmGenerateBlacklist []string             `json:"strmGenerateBlacklist"` // 生活监控 独立黑名单关键词列表；空则继承全局 Download.StrmGenerateBlacklist
-	OverwriteMode         string               `json:"overwriteMode"`         // 生活监控 STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空则继承全局
-	FirstPullMode         string               `json:"firstPullMode"`
-	MoveMediaMode         string               `json:"moveMediaMode"`
-	AutoDownloadMetadata  bool                 `json:"autoDownloadMetadata"` // 生活监控 STRM 创建后是否自动占位同名 nfo/jpg/png/srt 等关联资源（空则继承全局 Download.AutoDownloadMetadata）
-	DownloadExtensions    []string             `json:"downloadExtensions"`   // 生活监控 关联资源扩展名；空则继承全局 Download.DownloadExtensions
+	Enabled            bool                 `json:"enabled"`
+	Accounts           []string             `json:"accounts"`
+	PollInterval       int                  `json:"pollInterval"`
+	PathMappings       []MonitorPathMapping `json:"pathMappings"`
+	RemoveEmptyDirs    bool                 `json:"removeEmptyDirs"`
+	EventTypes         EventTypesSettings   `json:"eventTypes"`
+	StrmPrefix         string               `json:"strmPrefix"`
+	EnablePathEncoding bool                 `json:"enablePathEncoding"`
+	// StrmExtensions 生活监控生成 STRM 的视频扩展名；空则继承全局 StrmExtensions
+	// （继承在 server 层装配时完成，见 wire.go 的 lifeSettingsFn）
+	StrmExtensions        []string `json:"strmExtensions"`
+	MinFileSize           int64    `json:"minFileSize"`           // 生活监控 最小文件大小阈值（字节），默认0不限制
+	StrmGenerateBlacklist []string `json:"strmGenerateBlacklist"` // 生活监控 独立黑名单关键词列表；空则继承全局 Download.StrmGenerateBlacklist
+	OverwriteMode         string   `json:"overwriteMode"`         // 生活监控 STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空则继承全局
+	FirstPullMode         string   `json:"firstPullMode"`
+	MoveMediaMode         string   `json:"moveMediaMode"`
+	AutoDownloadMetadata  bool     `json:"autoDownloadMetadata"` // 生活监控 STRM 创建后是否自动占位同名 nfo/jpg/png/srt 等关联资源（空则继承全局 Download.AutoDownloadMetadata）
+	DownloadExtensions    []string `json:"downloadExtensions"`   // 生活监控 关联资源扩展名；空则继承全局 Download.DownloadExtensions
 	// P1-4 高级模板（空则继承全局 StrmSettings 模板，仍为空则走默认拼接）
 	StrmUrlTemplate      string `json:"strmUrlTemplate"`
 	StrmFilenameTemplate string `json:"strmFilenameTemplate"`
@@ -299,6 +321,12 @@ func DefaultSettings() *Settings {
 			ForceProxyUaTokens:           []string{},
 			AccountProxyConcurrencyLimit: 8,
 			RedirectCheckTimeoutMs:       5000,
+		},
+		RateLimit: RateLimitSettings{
+			API115Qpm:    60,  // 扫描/目录类，保守
+			PlaybackQpm:  120, // 播放取直链，给足配额保证秒开
+			LifeQpm:      60,  // 生活事件轮询
+			GlobalCapQpm: 300, // 多账号叠加时的风控兜底
 		},
 		Emby: EmbySettings{
 			NotifyMediaAdded:     true,
