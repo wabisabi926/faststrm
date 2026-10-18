@@ -341,6 +341,13 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				"如需在 Emby 中播放原盘，请将其转为 ISO，或手动为 BDMV/STREAM 下的主视频流建立 STRM。",
 			scanStats.BdmvSkipped))
 	}
+	// 失败目录提示（缺口 2）：这些目录的内容未知，本次生成不全 + 清理已保护，
+	// 显式告知用户重跑，避免"为什么少了几个文件"的困惑。
+	if len(scanStats.FailedDirs) > 0 {
+		sseServer.EmitLog(task.ID, "warn", fmt.Sprintf(
+			"本次扫描有 %d 个目录列目录失败（已重试仍未成功）：其下文件本次未生成 STRM，且其下存量 STRM 已跳过清理对账（防止误删）。建议稍后重跑本任务: %v",
+			len(scanStats.FailedDirs), scanStats.FailedDirs))
+	}
 
 	// ---- P2-3 增量同步：基于 files 表 snapshot 跳过未变更条目 ----
 	// 执行顺序：必须在写回 filePathDb 之前取 snapshot，否则 upsert 覆盖后无差异可识别。
@@ -424,7 +431,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			sseServer.EmitLog(task.ID, "info", "增量对账清理：开始扫描本地孤儿 STRM")
 			cloudPickcodes := buildCloudPickcodeSet(fileEntries)
 			orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
-				task.ID, task.TargetPath, cloudPickcodes, mode, settings.Cleanup, deps.EmbyRefresh)
+				task.ID, task.TargetPath, cloudPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh)
 			if cerr != nil {
 				sseServer.EmitLog(task.ID, "warn", "增量对账清理失败: "+cerr.Error())
 				logger.S().Warnf("[Task] 增量对账清理失败 task=%s: %v", task.ID, cerr)
@@ -469,7 +476,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			// 合并：DB 历史 pickcode + 本次云端最新 pickcode，避免误删
 			cloudPickcodes := mergePickcodeSets(snapPickcodes, buildCloudPickcodeSet(fileEntries))
 			orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
-				task.ID, task.TargetPath, cloudPickcodes, mode, settings.Cleanup, deps.EmbyRefresh)
+				task.ID, task.TargetPath, cloudPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh)
 			if cerr != nil {
 				sseServer.EmitLog(task.ID, "warn", "全量预扫清理失败: "+cerr.Error())
 				logger.S().Warnf("[Task] 全量预扫清理失败 task=%s: %v", task.ID, cerr)
@@ -576,6 +583,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		pool := concurrency.NewPool(strmWorkers)
 		skipped := new(int64)
 		writeFailed := new(int64)
+		writeUnchanged := new(int64)
 		for _, f := range strmFiles {
 			f := f
 			pool.Submit(func() error {
@@ -600,14 +608,18 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("mkdir %s: %v", filepath.Dir(savePath), cerr))
 					return nil
 				}
-				// 原子写入：先写 tmp 再 rename，避免并发读到半截文件
-				if cerr = writeStrmFile(savePath, content); cerr != nil {
+				// 原子写入：先写 tmp 再 rename，避免并发读到半截文件。
+				// 内容未变时跳过写盘，且不触发 Emby 刷库（防假重扫）。
+				unchanged, werr := writeStrmFile(savePath, content)
+				if werr != nil {
 					atomic.AddInt64(writeFailed, 1)
-					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("write %s: %v", savePath, cerr))
+					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("write %s: %v", savePath, werr))
 					return nil
 				}
-				// Emby 刷库（带防抖，对齐 MoviePilot mediaserver_helper.refresh_mediaserver）
-				if deps.EmbyRefresh != nil {
+				if unchanged {
+					atomic.AddInt64(writeUnchanged, 1)
+				} else if deps.EmbyRefresh != nil {
+					// Emby 刷库（带防抖，对齐 MoviePilot mediaserver_helper.refresh_mediaserver）
 					if rerr := deps.EmbyRefresh.RefreshOnCreate(ctx, savePath); rerr != nil {
 						logger.S().Debugf("[Task] Emby 刷库安排失败 path=%s: %v", savePath, rerr)
 					}
@@ -631,6 +643,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		pool.Wait()
 		if overwriteNever && skipped != nil && *skipped > 0 {
 			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("overwrite=never：已跳过 %d 个已存在 STRM 文件", *skipped))
+		}
+		if writeUnchanged != nil && *writeUnchanged > 0 {
+			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("内容未变化跳过写盘 %d 个（不触发 Emby 刷库）", *writeUnchanged))
 		}
 		if writeFailed != nil && *writeFailed > 0 {
 			// 写入失败此前只打日志、不计数，导致任务显示成功但实际漏了一批文件。

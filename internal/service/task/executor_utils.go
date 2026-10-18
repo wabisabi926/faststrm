@@ -23,6 +23,10 @@ import (
 	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
+// scanRetryWait 列目录失败后的重试等待窗口（给 115 侧恢复时间）。
+// 包级变量以便测试注入短等待。
+var scanRetryWait = 20 * time.Second
+
 // resolvedStrm 合并 settings + 任务覆盖后的最终 STRM 配置
 type resolvedStrm struct {
 	StrmPrefix         string
@@ -237,13 +241,20 @@ func idString(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
-// writeStrmFile 原子写入 STRM 文件（先写 tmp 再 rename）
-func writeStrmFile(strmPath, content string) error {
-	tmpPath := strmPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
-		return err
+// writeStrmFile 原子写入 STRM 文件（先写 tmp 再 rename）。
+// 读-比较-写：磁盘内容与待写内容一致时跳过写入，unchanged=true。
+// 调用方应据此跳过下游刷库等动作——否则 mtime 变化会让 Emby
+// 文件监视器把未变更的 STRM 当作更新，触发媒体库假重扫。
+// 注意：跳过写入≠跳过生成，调用方的清理对账清单仍需包含该文件。
+func writeStrmFile(strmPath, content string) (unchanged bool, err error) {
+	if existing, rerr := os.ReadFile(strmPath); rerr == nil && string(existing) == content {
+		return true, nil
 	}
-	return os.Rename(tmpPath, strmPath)
+	tmpPath := strmPath + ".tmp"
+	if werr := os.WriteFile(tmpPath, []byte(content), 0o600); werr != nil {
+		return false, werr
+	}
+	return false, os.Rename(tmpPath, strmPath)
 }
 
 // buildStrmContent 生成 .strm 文件内容
@@ -304,6 +315,11 @@ type ScanStats struct {
 	Matched int
 	// BdmvSkipped 因位于 BDMV/STREAM 而跳过的视频流数量
 	BdmvSkipped int
+	// FailedDirs 列目录最终失败（含重试）的目录相对路径。
+	// 这些目录的内容未知，调用方必须：
+	//  1) 在清理对账时跳过其前缀下的本地 STRM（防止误判孤儿而清库）
+	//  2) 在任务结果中告知用户，建议重跑
+	FailedDirs []string
 }
 
 // listAllFilesRecursive 递归遍历目录，返回所有需要处理的文件（带 Kind 分类）
@@ -313,7 +329,7 @@ type ScanStats struct {
 // pickcode 校验：STRM 文件必须是 17 位字母数字的有效 pickcode
 // 新增：taskID/rt/sseServer 用于扫描阶段的进度心跳广播（大库场景下避免 UI 显示 0% 卡死）
 // 新增：sqliteDB/account 用于顺手维护 folders 表（目录 → cid），供生活事件按 parent_id 离线反查
-func listAllFilesRecursive( //nolint:cyclop // complexity: 30
+func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败容忍+重试轮后）
 	ctx context.Context,
 	c115 *client115.Client,
 	cookie string,
@@ -388,152 +404,204 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 		}
 	}()
 
+	// ---- 失败容忍（缺口 2）----
+	// 列目录失败不再中断整个任务：记入 pendingRetry 继续扫，
+	// 全部扫完后等待恢复窗口统一重试一轮；仍失败的进 failedDirs，
+	// 由调用方做清理保护（防误判孤儿清库）。根目录失败仍是致命错误。
+	pendingRetry := make([]stackEntry, 0, 8)
+	failedDirs := make([]string, 0, 4)
+
 	defer func() {
-		logger.S().Infof("[listAllFilesRecursive] done dirs=%d files=%d matched=%d totalOut=%d", dirCount, fileCount, matchCount, len(out))
+		logger.S().Infof("[listAllFilesRecursive] done dirs=%d files=%d matched=%d totalOut=%d failedDirs=%d", dirCount, fileCount, matchCount, len(out), len(failedDirs))
 		if bdmvSkipped > 0 {
 			logger.S().Infof("[listAllFilesRecursive] 跳过 %d 个 BDMV/STREAM 原盘视频流（不生成 STRM）", bdmvSkipped)
+		}
+		if len(failedDirs) > 0 {
+			logger.S().Warnf("[listAllFilesRecursive] %d 个目录列目录最终失败（其下 STRM 本次不参与清理对账）: %v", len(failedDirs), failedDirs)
 		}
 		if stats != nil {
 			stats.Dirs = dirCount
 			stats.Files = fileCount
 			stats.Matched = matchCount
 			stats.BdmvSkipped = bdmvSkipped
+			stats.FailedDirs = failedDirs
 		}
 	}()
-	for len(stk) > 0 {
-		top := stk[len(stk)-1]
-		stk = stk[:len(stk)-1]
-		if _, seen := cidSeen[top.cid]; seen {
-			continue
-		}
-		cidSeen[top.cid] = struct{}{}
 
-		// P1-1：全量扫描顺手维护 folders 表（目录 cid → 云端路径），对齐参考项目 parent_id_paths 目录路径库。
-		// 生活事件的 parent_id 就是父目录自身的 cid，该表命中后事件路径反查可完全离线完成（零 115 接口）。
-		if sqliteDB != nil && account != "" {
-			dirPath := strings.TrimRight(originPath, "/")
-			if top.relPath != "" {
-				dirPath = strings.TrimRight(originPath, "/") + "/" + top.relPath
-			}
-			if dirPath != "" {
-				parentID := ""
-				if top.parentCID > 0 {
-					parentID = strconv.FormatInt(top.parentCID, 10)
-				}
-				if ferr := db.UpsertFolderEntry(sqliteDB, account, db.FilePathEntry{
-					FileID:   strconv.FormatInt(top.cid, 10),
-					Path:     dirPath,
-					FileName: filepath.Base(dirPath),
-					ParentID: parentID,
-				}); ferr != nil {
-					logger.S().Warnf("[listAllFilesRecursive] 写 folders 表失败 cid=%d path=%s: %v", top.cid, dirPath, ferr)
-				}
-			}
-		}
+	const retryRounds = 1
+	// 包级变量便于测试注入短等待
+	retryWait := scanRetryWait
 
-		var offset int
-		expectedCount := 0
-		pageMatched := 0
-		for page := 0; ; page++ {
-			resp, err := c115.FsFiles(ctx, strconv.FormatInt(top.cid, 10), 1000, offset, cookie)
-			if err != nil {
-				logger.S().Errorf("[listAllFilesRecursive] cid=%d relPath=%s FsFiles err: %v", top.cid, top.relPath, err)
-				return nil, err
-			}
-			if !resp.State {
-				logger.S().Errorf("[listAllFilesRecursive] cid=%d relPath=%s state=false", top.cid, top.relPath)
-				return nil, fmt.Errorf("fs_files state=false cid=%d", top.cid)
-			}
-			if len(resp.Data) == 0 {
-				break
-			}
-			if resp.Count > 0 {
-				expectedCount = resp.Count
-			}
-			logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q page=%d offset=%d returned=%d count=%d", top.cid, top.relPath, page, offset, len(resp.Data), resp.Count)
-			for _, e := range resp.Data {
-				logger.S().Infof("[listAllFilesRecursive] entry name=%q cid=%v fid=%v fc=%v size=%d pickcode=%q isDir=%v", e.Name, e.CID, e.FID, e.FC, e.Size, e.PickCode, e.IsDir)
-				relName := e.Name
-				if top.relPath != "" {
-					relName = top.relPath + "/" + e.Name
-				}
-				cloudPath := originPath
-				if relName != "" {
-					cloudPath = strings.TrimRight(originPath, "/") + "/" + relName
-				}
-				// BDMV 原盘：跳过 BDMV/STREAM 层级（含其目录本身，不再向下遍历），
-				// 避免一个蓝光原盘被拆成上百个 m2ts STRM。ISO 原盘不受影响。
-				if model.IsBdmvStreamPath(cloudPath) {
-					bdmvSkipped++
-					continue
-				}
-				// isDir 判断：FsFiles 已经基于 cid/fid 做了可靠判定，这里直接复用，不再用 fc 覆盖。
-				isDir := e.IsDir
-				if isDir {
-					cid, ok := anyToInt64(e.CID)
-					if !ok || cid <= 0 {
-						// 解析失败不能再静默 cid=0：那会把整棵子树悄悄丢掉（大库漏生成的直接原因之一）。
-						logger.S().Warnf("[listAllFilesRecursive] 目录 cid 解析失败，跳过整棵子树: cid=%v name=%q relPath=%q", e.CID, e.Name, relName)
-						continue
-					}
-					stk = append(stk, stackEntry{cid: cid, relPath: relName, parentCID: top.cid})
-					dirCount++
-					continue
-				}
-				fileCount++
-				ext := strings.ToLower(filepath.Ext(e.Name))
-				kind := kindSkip
-				if _, ok := strmExts[ext]; ok {
-					// STRM：pickcode 必须有效（17位字母数字），并通过 shouldGenerateStrm（黑名单 + 最小文件大小）
-					if !isValidPickcode(e.PickCode) {
-						logger.S().Warnf("[listAllFilesRecursive] 跳过无效pickcode的媒体文件: %q pickcode=%q", e.Name, e.PickCode)
-						continue
-					}
-					if reason, pass := shouldGenerateStrm(e.Name, e.Size, minFileSize, blacklist, blMatcher); !pass {
-						logger.S().Warnf("[listAllFilesRecursive] 跳过%s的媒体文件: %q", reason, e.Name)
-						continue
-					}
-					kind = kindStrm
-				} else if _, ok := downloadExts[ext]; ok {
-					kind = kindDownload
-				}
-				if kind == kindSkip {
-					continue
-				}
-				pageMatched++
-				matchCount++
-				out = append(out, &fileItem{
-					CloudPath: cloudPath,
-					RelPath:   relName,
-					Name:      e.Name,
-					PickCode:  e.PickCode,
-					Size:      e.Size,
-					Ext:       ext,
-					Kind:      kind,
-					FID:       idString(e.FID),
-					ParentID:  strconv.FormatInt(top.cid, 10),
-				})
-			}
-			// 翻页：优先用 count 判定是否还有下一页。
-			// 仅靠 len<limit 判定，会在 115 未按 limit 返回（单页封顶小于 1000）时提前退出，导致大库漏生成。
-			offset += len(resp.Data)
-			if resp.Count > 0 {
-				if offset >= resp.Count {
-					break
-				}
+	for round := 0; ; round++ {
+		for len(stk) > 0 {
+			top := stk[len(stk)-1]
+			stk = stk[:len(stk)-1]
+			if _, seen := cidSeen[top.cid]; seen {
 				continue
 			}
-			if len(resp.Data) < 1000 {
-				break
+			cidSeen[top.cid] = struct{}{}
+
+			// P1-1：全量扫描顺手维护 folders 表（目录 cid → 云端路径），对齐参考项目 parent_id_paths 目录路径库。
+			// 生活事件的 parent_id 就是父目录自身的 cid，该表命中后事件路径反查可完全离线完成（零 115 接口）。
+			if sqliteDB != nil && account != "" {
+				dirPath := strings.TrimRight(originPath, "/")
+				if top.relPath != "" {
+					dirPath = strings.TrimRight(originPath, "/") + "/" + top.relPath
+				}
+				if dirPath != "" {
+					parentID := ""
+					if top.parentCID > 0 {
+						parentID = strconv.FormatInt(top.parentCID, 10)
+					}
+					if ferr := db.UpsertFolderEntry(sqliteDB, account, db.FilePathEntry{
+						FileID:   strconv.FormatInt(top.cid, 10),
+						Path:     dirPath,
+						FileName: filepath.Base(dirPath),
+						ParentID: parentID,
+					}); ferr != nil {
+						logger.S().Warnf("[listAllFilesRecursive] 写 folders 表失败 cid=%d path=%s: %v", top.cid, dirPath, ferr)
+					}
+				}
 			}
+
+			var offset int
+			expectedCount := 0
+			pageMatched := 0
+			for page := 0; ; page++ {
+				resp, err := c115.FsFiles(ctx, strconv.FormatInt(top.cid, 10), 1000, offset, cookie)
+				if err != nil || !resp.State {
+					isRoot := top.cid == rootCID && top.relPath == ""
+					kind := "err"
+					detail := ""
+					if err != nil {
+						detail = err.Error()
+					} else {
+						kind = "state=false"
+					}
+					if isRoot {
+						// 根目录失败无法定位扫描范围，保持致命错误
+						logger.S().Errorf("[listAllFilesRecursive] 根目录列目录失败(kind=%s) cid=%d relPath=%s: %s", kind, top.cid, top.relPath, detail)
+						return nil, fmt.Errorf("fs_files root list failed (kind=%s): %s", kind, detail)
+					}
+					// 非根目录：容忍失败，稍后重试（从 cidSeen 摘除以便重试入队）
+					logger.S().Warnf("[listAllFilesRecursive] 目录列目录失败(kind=%s, round=%d) cid=%d relPath=%s: %s，稍后重试", kind, round, top.cid, top.relPath, detail)
+					delete(cidSeen, top.cid)
+					pendingRetry = append(pendingRetry, top)
+					break
+				}
+				if len(resp.Data) == 0 {
+					break
+				}
+				if resp.Count > 0 {
+					expectedCount = resp.Count
+				}
+				logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q page=%d offset=%d returned=%d count=%d", top.cid, top.relPath, page, offset, len(resp.Data), resp.Count)
+				for _, e := range resp.Data {
+					logger.S().Infof("[listAllFilesRecursive] entry name=%q cid=%v fid=%v fc=%v size=%d pickcode=%q isDir=%v", e.Name, e.CID, e.FID, e.FC, e.Size, e.PickCode, e.IsDir)
+					relName := e.Name
+					if top.relPath != "" {
+						relName = top.relPath + "/" + e.Name
+					}
+					cloudPath := originPath
+					if relName != "" {
+						cloudPath = strings.TrimRight(originPath, "/") + "/" + relName
+					}
+					// BDMV 原盘：跳过 BDMV/STREAM 层级（含其目录本身，不再向下遍历），
+					// 避免一个蓝光原盘被拆成上百个 m2ts STRM。ISO 原盘不受影响。
+					if model.IsBdmvStreamPath(cloudPath) {
+						bdmvSkipped++
+						continue
+					}
+					// isDir 判断：FsFiles 已经基于 cid/fid 做了可靠判定，这里直接复用，不再用 fc 覆盖。
+					isDir := e.IsDir
+					if isDir {
+						cid, ok := anyToInt64(e.CID)
+						if !ok || cid <= 0 {
+							// 解析失败不能再静默 cid=0：那会把整棵子树悄悄丢掉（大库漏生成的直接原因之一）。
+							logger.S().Warnf("[listAllFilesRecursive] 目录 cid 解析失败，跳过整棵子树: cid=%v name=%q relPath=%q", e.CID, e.Name, relName)
+							continue
+						}
+						stk = append(stk, stackEntry{cid: cid, relPath: relName, parentCID: top.cid})
+						dirCount++
+						continue
+					}
+					fileCount++
+					ext := strings.ToLower(filepath.Ext(e.Name))
+					kind := kindSkip
+					if _, ok := strmExts[ext]; ok {
+						// STRM：pickcode 必须有效（17位字母数字），并通过 shouldGenerateStrm（黑名单 + 最小文件大小）
+						if !isValidPickcode(e.PickCode) {
+							logger.S().Warnf("[listAllFilesRecursive] 跳过无效pickcode的媒体文件: %q pickcode=%q", e.Name, e.PickCode)
+							continue
+						}
+						if reason, pass := shouldGenerateStrm(e.Name, e.Size, minFileSize, blacklist, blMatcher); !pass {
+							logger.S().Warnf("[listAllFilesRecursive] 跳过%s的媒体文件: %q", reason, e.Name)
+							continue
+						}
+						kind = kindStrm
+					} else if _, ok := downloadExts[ext]; ok {
+						kind = kindDownload
+					}
+					if kind == kindSkip {
+						continue
+					}
+					pageMatched++
+					matchCount++
+					out = append(out, &fileItem{
+						CloudPath: cloudPath,
+						RelPath:   relName,
+						Name:      e.Name,
+						PickCode:  e.PickCode,
+						Size:      e.Size,
+						Ext:       ext,
+						Kind:      kind,
+						FID:       idString(e.FID),
+						ParentID:  strconv.FormatInt(top.cid, 10),
+					})
+				}
+				// 翻页：优先用 count 判定是否还有下一页。
+				// 仅靠 len<limit 判定，会在 115 未按 limit 返回（单页封顶小于 1000）时提前退出，导致大库漏生成。
+				offset += len(resp.Data)
+				if resp.Count > 0 {
+					if offset >= resp.Count {
+						break
+					}
+					continue
+				}
+				if len(resp.Data) < 1000 {
+					break
+				}
+			}
+			// 每目录对账：累计返回条目数与 API 的 count 不一致时告警，便于现场定位漏扫
+			if expectedCount > 0 && offset < expectedCount {
+				logger.S().Warnf("[listAllFilesRecursive] cid=%d relPath=%q 分页未取全: returned=%d count=%d（疑似漏扫）", top.cid, top.relPath, offset, expectedCount)
+			}
+			logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q pageMatched=%d returned=%d count=%d", top.cid, top.relPath, pageMatched, offset, expectedCount)
 		}
-		// 每目录对账：累计返回条目数与 API 的 count 不一致时告警，便于现场定位漏扫
-		if expectedCount > 0 && offset < expectedCount {
-			logger.S().Warnf("[listAllFilesRecursive] cid=%d relPath=%q 分页未取全: returned=%d count=%d（疑似漏扫）", top.cid, top.relPath, offset, expectedCount)
+
+		// ---- 重试轮控制：扫完全量后，对失败目录统一重试 ----
+		if len(pendingRetry) == 0 {
+			return out, nil
 		}
-		logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q pageMatched=%d returned=%d count=%d", top.cid, top.relPath, pageMatched, offset, expectedCount)
+		if round >= retryRounds {
+			for _, e := range pendingRetry {
+				failedDirs = append(failedDirs, e.relPath)
+			}
+			return out, nil
+		}
+		logger.S().Infof("[listAllFilesRecursive] %d 个目录列目录失败，等待 %s 后重试一轮", len(pendingRetry), retryWait)
+		select {
+		case <-ctx.Done():
+			for _, e := range pendingRetry {
+				failedDirs = append(failedDirs, e.relPath)
+			}
+			return out, nil
+		case <-time.After(retryWait):
+		}
+		stk = append(stk, pendingRetry...)
+		pendingRetry = pendingRetry[:0]
 	}
-	return out, nil
+	// unreachable：for round 循环只在内部 return
 }
 
 // runDownloads 真实下载文件：并发 + 进度上报 + SSE 广播
@@ -842,12 +910,13 @@ func sanitizeCloudRelPath(rel string) string {
 // mode: "off"(跳过) / "mark_only"(仅日志) / "auto_clean"(软删 + 超阈值二次确认)
 // 返回：(孤儿数, 延迟批次ID, error)。延迟批次ID 非空表示已入队待二次确认。
 
-func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
+func cleanupOrphanStrms( //nolint:cyclop // complexity: 47（缺口 2 失败目录保护后）
 	ctx context.Context,
 	submitter CleanupBatchSubmitter,
 	sseServer *sse.Server,
 	taskID, targetPath string,
 	cloudPickcodes map[string]struct{},
+	failedDirPrefixes []string,
 	mode string,
 	cleanup model.CleanupSettings,
 	embyRefresh StrmRefresher,
@@ -864,6 +933,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 	// 第一遍扫描：收集孤儿 STRM 路径（同时统计本地 STRM 总数，供比例阈值判定）
 	var orphans []string
 	strmTotal := 0
+	failedSkipped := 0
 	werr := filepath.Walk(targetPath, func(p string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
@@ -884,6 +954,23 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 			return nil
 		}
 		strmTotal++
+		// 失败目录保护（缺口 2）：位于列目录失败目录（及其子目录）下的 STRM，
+		// 其云端内容未知（pickcode 集合不含它们），按孤儿删除有误判风险，
+		// 本次对账跳过，等下次扫描成功后再对账。
+		if len(failedDirPrefixes) > 0 {
+			relDir := filepath.ToSlash(filepath.Dir(p))
+			if rel, rerr := filepath.Rel(targetPath, relDir); rerr == nil && rel != "." {
+				relSlash := filepath.ToSlash(rel)
+				for _, pfx := range failedDirPrefixes {
+					pfx = strings.Trim(pfx, "/")
+					if pfx != "" && (relSlash == pfx || strings.HasPrefix(relSlash, pfx+"/")) {
+						failedSkipped++
+						logger.S().Debugf("[cleanupOrphanStrms] 跳过失败目录下的 STRM（本次不对账）: %s", p)
+						return nil
+					}
+				}
+			}
+		}
 		// 提取 pickcode
 		pc, perr := strmutil.ExtractPickcode(p)
 		if perr != nil {
@@ -904,7 +991,15 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 38
 	}
 
 	if len(orphans) == 0 {
+		if failedSkipped > 0 && sseServer != nil {
+			sseServer.EmitLog(taskID, "info", fmt.Sprintf(
+				"对账清理：%d 个 STRM 位于列目录失败的目录下，本次跳过对账（防止误删）", failedSkipped))
+		}
 		return 0, "", nil
+	}
+	if failedSkipped > 0 && sseServer != nil {
+		sseServer.EmitLog(taskID, "info", fmt.Sprintf(
+			"对账清理：%d 个 STRM 位于列目录失败的目录下，本次跳过对账（防止误删）", failedSkipped))
 	}
 
 	// 三重保护判定（比例 + 绝对 + 目录数）
