@@ -15,6 +15,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/concurrency"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 	"github.com/wabisabi926/faststrm/pkg/strmutil"
@@ -435,9 +436,18 @@ func generateStrmContent(cloudPath, strmPrefix string, enablePathEncoding bool, 
 		}
 	}
 	prefix := strings.TrimRight(strmPrefix, "/")
-	// 兜底：prefix 为空时使用默认值
-	if prefix == "" {
-		prefix = "http://127.0.0.1:8090"
+	// 前缀不可用（空 / 回环 / 0.0.0.0）时先用本机内网 IP 兜底。
+	// 历史实现直接回落到 http://127.0.0.1:8090，结果只有本机能播，用户很难定位原因。
+	if strm.IsUnusablePrefix(prefix) {
+		if p, source := strm.ResolveStrmPrefix([]string{prefix}, 0); p != "" {
+			logger.S().Warnf("[Monitor] STRM 前缀不可用(%q)，已改用本机内网地址 %s（source=%s）cloudPath=%s",
+				prefix, p, source, cloudPath)
+			prefix = p
+		} else {
+			logger.S().Warnf("[Monitor] STRM 前缀不可用(%q) 且无法探测内网地址，跳过生成 cloudPath=%s；请在设置中配置可访问的 STRM 前缀",
+				prefix, cloudPath)
+			return ""
+		}
 	}
 	// pickcode 为空无法生成
 	if pickcode == "" {
@@ -507,6 +517,18 @@ func getRootDirs(mappings []model.MonitorPathMapping) map[string]bool {
 		}
 	}
 	return roots
+}
+
+// resolvedStrmExtensions 返回生活监控生效的 STRM 视频扩展名列表。
+//
+// 优先使用 LifeMonitor.StrmExtensions（由 server 层从全局 settings.StrmExtensions 继承），
+// 为空时回落内置默认值。历史实现直接硬编码 model.DefaultStrmExtensions，
+// 导致用户自定义扩展名对生活事件完全无效。
+func resolvedStrmExtensions(config model.LifeMonitorSettings) []string {
+	if len(config.StrmExtensions) > 0 {
+		return config.StrmExtensions
+	}
+	return model.DefaultStrmExtensions
 }
 
 // buildDownloadExtSet 规范化 DownloadExtensions 为带 "." 前缀、小写的扩展名集合

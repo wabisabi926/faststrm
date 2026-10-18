@@ -17,6 +17,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/concurrency"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 	"github.com/wabisabi926/faststrm/pkg/strmutil"
@@ -25,6 +26,7 @@ import (
 // resolvedStrm 合并 settings + 任务覆盖后的最终 STRM 配置
 type resolvedStrm struct {
 	StrmPrefix         string
+	StrmPrefixSource   string // 前缀来源：configured / auto_lan_ip / unresolved（用于日志与报错）
 	EnablePathEncoding bool
 	StrmExtensions     map[string]struct{}
 	DownloadExtensions map[string]struct{}
@@ -51,21 +53,19 @@ func resolveStrmSettings(task *Task, s *model.Settings, baseURL, publicBaseURL s
 		}
 	}
 
-	// strmPrefix：任务覆盖 > 全局 > 默认（publicBaseURL 或 baseURL）
-	prefix := s.StrmPrefix
-	if task.StrmPrefix != "" {
-		prefix = task.StrmPrefix
-	}
-	if prefix == "" {
-		if publicBaseURL != "" {
-			prefix = publicBaseURL
-		} else if baseURL != "" {
-			prefix = baseURL
-		} else {
-			prefix = "http://127.0.0.1:8090"
-		}
-	}
-	r.StrmPrefix = strings.TrimRight(prefix, "/")
+	// strmPrefix：任务覆盖 > 全局 > publicBaseURL > baseURL > 本机内网 IP 兜底
+	//
+	// 关键：回环地址（0.0.0.0 / 127.0.0.1 / localhost）会被跳过。
+	// 历史行为是直接把 baseURL（默认 http://0.0.0.0:8090）写进 STRM，
+	// 导致除本机外的设备全部无法播放，且用户很难定位原因。
+	prefix, source := strm.ResolveStrmPrefix([]string{
+		task.StrmPrefix,
+		s.StrmPrefix,
+		publicBaseURL,
+		baseURL,
+	}, strm.PortFromBaseURL(baseURL))
+	r.StrmPrefix = prefix
+	r.StrmPrefixSource = source
 
 	// enablePathEncoding
 	r.EnablePathEncoding = s.EnablePathEncoding

@@ -10,6 +10,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/notify"
 	"github.com/wabisabi926/faststrm/internal/service/runtime"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
@@ -112,9 +113,15 @@ func initPhase6Deps(
 		if life.StrmPrefix == "" {
 			life.StrmPrefix = s.StrmPrefix
 		}
-		// 全局前缀仍为空则使用默认值
-		if life.StrmPrefix == "" {
-			life.StrmPrefix = "http://127.0.0.1:8090"
+		// 仍不可用（空 / 回环 / 0.0.0.0）时，用本机内网 IP 兜底，
+		// 避免写入 http://127.0.0.1:8090 这类只有本机能播的地址。
+		// 与任务侧共用同一套解析逻辑，保证两边生成的前缀一致。
+		if strm.IsUnusablePrefix(life.StrmPrefix) {
+			prefix, source := strm.ResolveStrmPrefix([]string{life.StrmPrefix}, strm.PortFromBaseURL(execDeps.BaseURL))
+			if source == "auto_lan_ip" {
+				logger.S().Warnf("[LifeMonitor] STRM 前缀未配置，已自动使用内网地址 %s", prefix)
+			}
+			life.StrmPrefix = prefix
 		}
 		// Enable302/EnablePathEncoding：以全局为准（life 未单独开关的场景）
 		// 若 life 自身未显式设置，继承全局
@@ -124,6 +131,12 @@ func initPhase6Deps(
 		// 黑名单关键词：life 自身未设置（空切片）时，继承全局 Download.StrmGenerateBlacklist
 		if len(life.StrmGenerateBlacklist) == 0 {
 			life.StrmGenerateBlacklist = s.Download.StrmGenerateBlacklist
+		}
+		// STRM 扩展名：life 自身未设置时继承全局。
+		// 修复历史问题：监控侧曾硬编码 model.DefaultStrmExtensions，
+		// 导致用户在全局配置的自定义扩展名对生活事件完全无效。
+		if len(life.StrmExtensions) == 0 {
+			life.StrmExtensions = s.StrmExtensions
 		}
 		// OverwriteMode：life 自身未设置（空字符串）时，继承全局 Download.OverwriteMode
 		if life.OverwriteMode == "" {

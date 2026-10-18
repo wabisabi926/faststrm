@@ -229,6 +229,29 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	}
 	resolved := resolveStrmSettings(task, settings, deps.BaseURL, deps.PublicBaseURL)
 
+	// 5.1) STRM 前缀硬校验
+	//
+	// 回环前缀（0.0.0.0 / 127.0.0.1 / localhost）写进 STRM 后，除本机外任何设备都无法播放。
+	// 历史行为是静默写入 0.0.0.0，用户只能通过"播放失败"反推原因，排查成本极高。
+	// 这里改为扫描前直接失败并给出可操作的修复指引。
+	if resolved.StrmPrefix == "" {
+		msg := "STRM 前缀不可用：未配置前缀且无法自动探测到内网地址，生成的 STRM 将无法被其他设备播放。" +
+			"请在「设置 → STRM 前缀」中填写本机局域网地址（如 http://192.168.1.10:8090）后重试"
+		histSuccess = false
+		histErrMsg = msg
+		sseServer.EmitLog(task.ID, "error", msg)
+		rt.SetState(task.ID, func(s *RuntimeState) { s.Status = StatusFailed; s.Error = msg; s.EndedAt = time.Now().UnixMilli() })
+		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
+		if deps.Notifier != nil {
+			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
+		}
+		return ExecuteResult{Success: true, TaskID: task.ID, Message: "aborted: strm prefix unusable"}
+	}
+	if resolved.StrmPrefixSource == "auto_lan_ip" {
+		sseServer.EmitLog(task.ID, "warn", fmt.Sprintf(
+			"未配置 STRM 前缀，已自动使用本机内网地址 %s；若需跨网段或外网播放，请手动配置为对外地址", resolved.StrmPrefix))
+	}
+
 	// 6) 取 cid + exportDirParse → 拿到根 pickcode
 	sseServer.EmitLog(task.ID, "info",
 		fmt.Sprintf("Task starting: account=%s origin=%s target=%s", task.Account, task.OriginPath, task.TargetPath))

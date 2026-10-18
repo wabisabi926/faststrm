@@ -563,9 +563,7 @@ func (m *Monitor) preProcessEventWithSource( //nolint:cyclop // complexity: 34
 	}
 
 	// —— 扩展名 / 黑名单 / pickcode / 文件大小
-	ext, extOK := mediaExtensionMatch(event.FileName, model.DefaultStrmExtensions)
-	// 如果用户 settings.StrmExtensions 非空（通过 config 传不到 monitor里，Phase 2 会修）
-	// 这里先用默认，后面 settingsFn 会覆盖。为保持测试独立，Phase 1 先用默认兜底。
+	ext, extOK := mediaExtensionMatch(event.FileName, resolvedStrmExtensions(config))
 	pick := strings.ToLower(strings.TrimSpace(event.PickCode))
 	validPick := validatePickcode(pick)
 	underMin := false

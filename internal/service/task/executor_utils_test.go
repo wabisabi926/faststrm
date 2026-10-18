@@ -21,11 +21,15 @@ func TestResolveStrmSettings_Default(t *testing.T) {
 		TargetPath: "/out",
 	}
 	s := model.DefaultSettings()
-	r := resolveStrmSettings(task, s, "http://localhost:8090", "")
+	// baseURL 用可用的局域网地址：回环地址会被 ResolveStrmPrefix 跳过（见下方专项用例）
+	r := resolveStrmSettings(task, s, "http://192.168.1.10:8090", "")
 
 	// Prefix fallback to baseURL (account appended later in buildStrmContent)
-	if !strings.HasPrefix(r.StrmPrefix, "http://localhost:8090") {
+	if !strings.HasPrefix(r.StrmPrefix, "http://192.168.1.10:8090") {
 		t.Fatalf("expect http prefix baseURL, got: %s", r.StrmPrefix)
+	}
+	if r.StrmPrefixSource != "configured" {
+		t.Fatalf("expect source=configured, got: %s", r.StrmPrefixSource)
 	}
 	// Extensions
 	if len(r.StrmExtensions) == 0 {
@@ -47,6 +51,27 @@ func TestResolveStrmSettings_Default(t *testing.T) {
 	}
 	if !strings.Contains(out, "pickcode=abcdefghij1234567") {
 		t.Fatalf("buildStrmContent should contain pickcode param, got: %s", out)
+	}
+}
+
+func TestResolveStrmSettings_SkipsLoopbackBaseURL(t *testing.T) {
+	task := &Task{Account: "acc1", OriginPath: "/影视", TargetPath: "/out"}
+	s := model.DefaultSettings()
+
+	// 默认部署下 SERVER_HOST=0.0.0.0，baseURL 会是回环地址；
+	// 这类前缀写进 STRM 后其他设备无法播放，必须被跳过。
+	for _, bad := range []string{
+		"http://0.0.0.0:8090",
+		"http://127.0.0.1:8090",
+		"http://localhost:8090",
+	} {
+		r := resolveStrmSettings(task, s, bad, "")
+		if r.StrmPrefixSource == "configured" {
+			t.Fatalf("loopback baseURL %q should be skipped, got prefix=%q", bad, r.StrmPrefix)
+		}
+		if strings.Contains(r.StrmPrefix, "0.0.0.0") || strings.Contains(r.StrmPrefix, "127.0.0.1") {
+			t.Fatalf("resolved prefix must not be loopback, got %q (base=%q)", r.StrmPrefix, bad)
+		}
 	}
 }
 

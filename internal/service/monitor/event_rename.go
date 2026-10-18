@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -192,7 +191,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 	newStrmPath := filepath.Join(newLocalDir, getStrmFileName(event.FileName))
 
 	// ===== 非媒体扩展名分支（对齐 L1220-1241）=====
-	if !isMediaFile(event.FileName, model.DefaultStrmExtensions) {
+	if !isMediaFile(event.FileName, resolvedStrmExtensions(config)) {
 		if !config.RenameAutoRelatedFiles {
 			m.appendLog(ctx, account, "rename", true, cloudPath, mapping.localPath,
 				"跳过: 非媒体扩展名且未开启 RenameAutoRelatedFiles")

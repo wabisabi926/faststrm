@@ -40,8 +40,8 @@ func (m *Monitor) createStrmForSingleFile(
 ) (strmPathOut string, errOut error) {
 	config := m.settingsFn()
 
-	// 1. 扩展名检查
-	if !isMediaFile(in.FileName, model.DefaultStrmExtensions) {
+	// 1. 扩展名检查（使用用户配置的扩展名，空则回落默认）
+	if !isMediaFile(in.FileName, resolvedStrmExtensions(config)) {
 		return "", nil // 非媒体静默跳过
 	}
 	// 2. pickcode 严格校验（对齐 MoviePilot len=17 && isalnum）
@@ -210,7 +210,7 @@ func (m *Monitor) handleCreateEvent(
 	// 同名空目录、且 FsFiles(文件ID) 返回空 → 一个 STRM 都生成不了且无日志报错。
 	// 仅当"目录名带媒体扩展名"（正常目录几乎不会）时才额外校验一次，避免多余 API 调用。
 	isFolder := event.FileCategory == 0
-	if isFolder && lifeClient != nil && isMediaFile(event.FileName, model.DefaultStrmExtensions) {
+	if isFolder && lifeClient != nil && isMediaFile(event.FileName, resolvedStrmExtensions(m.settingsFn())) {
 		if empty, ferr := folderIsEmpty(ctx, lifeClient, event.FileID); ferr == nil && empty {
 			logger.S().Warnf("[Monitor] create: 目录事件疑似单文件误标 name=%s fid=%s → 回退按单文件处理",
 				event.FileName, event.FileID)
@@ -423,7 +423,7 @@ func (m *Monitor) handleCreateFolderRecursive(
 			relLocal := sanitizePathParts(relFromRoot)
 			localParentDir := filepath.Join(rootLocalPath, filepath.Dir(relLocal))
 
-			if isMediaFile(entry.Name, model.DefaultStrmExtensions) {
+			if isMediaFile(entry.Name, resolvedStrmExtensions(config)) {
 				in := singleFileCreateInput{
 					CloudPath: entryCloudPath,
 					FileName:  entry.Name,
