@@ -107,3 +107,6 @@ wiki_drafts/*.html
 
 # ==== TRAE 工作区文件：全部忽略（IDE 本地文件，不进仓库）====
 .trae/
+
+# ==== WorkBuddy AI 工作区记忆（本地临时文件，不进仓库）====
+.workbuddy-ai/
