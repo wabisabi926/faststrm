@@ -379,7 +379,7 @@ func TestListAllFilesRecursive_SkipsBdmvStream(t *testing.T) {
 	out, err := listAllFilesRecursive(
 		context.Background(), newMockClient(rt), "cookie", 100, "电影/沙丘",
 		map[string]struct{}{".mkv": {}, ".m2ts": {}}, map[string]struct{}{},
-		0, nil, "", nil, nil, nil, "",
+		0, nil, "", nil, nil, nil, "", nil,
 	)
 	if err != nil {
 		t.Fatalf("listAllFilesRecursive: %v", err)
@@ -407,16 +407,21 @@ func TestListAllFilesRecursive_TargetInsideBdmvStream(t *testing.T) {
 			`{"n":"00000.m2ts","fid":33,"pc":"abcdefghij1234567","s":30000000000,"cid":300}]}`,
 	}}
 
+	var stats ScanStats
 	out, err := listAllFilesRecursive(
 		context.Background(), newMockClient(rt), "cookie", 300, "电影/沙丘/BDMV/STREAM",
 		map[string]struct{}{".m2ts": {}}, map[string]struct{}{},
-		0, nil, "", nil, nil, nil, "",
+		0, nil, "", nil, nil, nil, "", &stats,
 	)
 	if err != nil {
 		t.Fatalf("listAllFilesRecursive: %v", err)
 	}
 	if len(out) != 0 {
 		t.Fatalf("任务目标本身位于 BDMV/STREAM 时不应产出任何条目, got %d", len(out))
+	}
+	// 统计必须回传，供任务日志向用户说明"原盘未生成"是设计行为
+	if stats.BdmvSkipped != 1 {
+		t.Fatalf("stats.BdmvSkipped = %d, want 1", stats.BdmvSkipped)
 	}
 }
 
@@ -430,7 +435,7 @@ func TestListAllFilesRecursive_StandaloneM2tsKept(t *testing.T) {
 	out, err := listAllFilesRecursive(
 		context.Background(), newMockClient(rt), "cookie", 100, "电影",
 		map[string]struct{}{".m2ts": {}}, map[string]struct{}{},
-		0, nil, "", nil, nil, nil, "",
+		0, nil, "", nil, nil, nil, "", nil,
 	)
 	if err != nil {
 		t.Fatalf("listAllFilesRecursive: %v", err)
@@ -476,7 +481,7 @@ func TestListAllFilesRecursive_WritesFoldersTable(t *testing.T) {
 	_, err := listAllFilesRecursive(
 		context.Background(), newMockClient(rt), "cookie", 100, "电影/沙丘",
 		map[string]struct{}{".mkv": {}}, map[string]struct{}{},
-		0, nil, "", nil, nil, sqldb, "acc1",
+		0, nil, "", nil, nil, sqldb, "acc1", nil,
 	)
 	if err != nil {
 		t.Fatalf("listAllFilesRecursive: %v", err)

@@ -307,7 +307,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		Stage:          StageScanning,
 		StageDetail:    "开始扫描云端目录...",
 	})
-	fileEntries, err := listAllFilesRecursive(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist, task.ID, rt, sseServer, deps.SQLiteDB, task.Account)
+	var scanStats ScanStats
+	fileEntries, err := listAllFilesRecursive(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist, task.ID, rt, sseServer, deps.SQLiteDB, task.Account, &scanStats)
 	if err != nil {
 		msg := "list files failed: " + err.Error()
 		histSuccess = false
@@ -331,6 +332,15 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	rt.SetState(task.ID, func(s *RuntimeState) { s.TotalFiles = totalFiles })
 	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Total files: %d (strm=%d, download=%d)",
 		totalFiles, countKind(fileEntries, kindStrm), countKind(fileEntries, kindDownload)))
+	// BDMV 原盘目录提示：这类目录按设计不生成 STRM（一部原盘会拆成上百个 m2ts，
+	// 无差别生成会污染媒体库）。但用户通常不知道"原盘消失"是设计行为而非 bug，
+	// 因此在这里显式告知，并给出可操作的建议。
+	if scanStats.BdmvSkipped > 0 {
+		sseServer.EmitLog(task.ID, "info", fmt.Sprintf(
+			"本次跳过 %d 个 BDMV/STREAM 原盘视频流：原盘目录按设计不生成 STRM（避免上百个 m2ts 碎片污染媒体库）。"+
+				"如需在 Emby 中播放原盘，请将其转为 ISO，或手动为 BDMV/STREAM 下的主视频流建立 STRM。",
+			scanStats.BdmvSkipped))
+	}
 
 	// ---- P2-3 增量同步：基于 files 表 snapshot 跳过未变更条目 ----
 	// 执行顺序：必须在写回 filePathDb 之前取 snapshot，否则 upsert 覆盖后无差异可识别。

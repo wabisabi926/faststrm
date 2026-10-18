@@ -294,6 +294,18 @@ func urlPathEncode(s string) string {
 	return sb.String()
 }
 
+// ScanStats 扫描阶段统计信息（供任务日志/结果展示）
+type ScanStats struct {
+	// Dirs 遍历的目录数
+	Dirs int
+	// Files 见到的文件数
+	Files int
+	// Matched 命中 STRM/下载扩展名的文件数
+	Matched int
+	// BdmvSkipped 因位于 BDMV/STREAM 而跳过的视频流数量
+	BdmvSkipped int
+}
+
 // listAllFilesRecursive 递归遍历目录，返回所有需要处理的文件（带 Kind 分类）
 // minFileSize：仅对 STRM 文件生效；0 表示不限制。
 // blacklist：STRM 文件名黑名单关键词列表（空 = 不启用）。
@@ -316,6 +328,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 	sseServer *sse.Server,
 	sqliteDB *sql.DB,
 	account string,
+	stats *ScanStats,
 ) ([]*fileItem, error) {
 	type stackEntry struct {
 		cid       int64
@@ -379,6 +392,12 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 30
 		logger.S().Infof("[listAllFilesRecursive] done dirs=%d files=%d matched=%d totalOut=%d", dirCount, fileCount, matchCount, len(out))
 		if bdmvSkipped > 0 {
 			logger.S().Infof("[listAllFilesRecursive] 跳过 %d 个 BDMV/STREAM 原盘视频流（不生成 STRM）", bdmvSkipped)
+		}
+		if stats != nil {
+			stats.Dirs = dirCount
+			stats.Files = fileCount
+			stats.Matched = matchCount
+			stats.BdmvSkipped = bdmvSkipped
 		}
 	}()
 	for len(stk) > 0 {
