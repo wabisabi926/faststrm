@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// stringToInt64 必须严格解析：历史实现靠「跳过非数字字符」提取数字，
+// 会把群聊的负 ID（-100123…）变成正数，消息全部发不出去。
 func TestStringToInt64(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -12,17 +14,19 @@ func TestStringToInt64(t *testing.T) {
 		want  int64
 	}{
 		{"pure digits", "123", 123},
-		{"digits with prefix", "abc123", 123},
-		{"digits with suffix", "123xyz", 123},
-		{"digits in middle", "abc789xyz", 789},
+		{"group chat negative id", "-1001234567890", -1001234567890},
+		{"with spaces", " -100 ", -100},
+		{"digits with prefix", "abc123", 0},
+		{"digits with suffix", "123xyz", 0},
+		{"digits in middle", "abc789xyz", 0},
 		{"no digits", "no digits here", 0},
 		{"empty string", "", 0},
 		{"single digit", "5", 5},
-		{"multiple digit groups", "a1b2c3", 123}, // 连续拼接: 1,2,3 -> 123
+		{"multiple digit groups", "a1b2c3", 0},
 		{"zero", "0", 0},
 		{"long digits", "9999999999", 9999999999},
-		{"with minus", "-5", 5},   // 跳过 '-' 只取数字
-		{"with dot", "3.14", 314}, // 跳过 '.' 只取数字
+		{"with minus", "-5", -5},
+		{"with dot", "3.14", 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

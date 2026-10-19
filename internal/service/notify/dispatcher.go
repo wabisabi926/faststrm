@@ -142,7 +142,7 @@ func (d *Dispatcher) ApplySettings(tg model.TelegramSettings) {
 				logger.S().Errorf("[Telegram] 重建 Bot 失败: %v", err)
 			}
 		} else {
-			d.tg.UpdateCredentials(tg.BotToken, tg.ChatID)
+			d.tg.UpdateCredentials(tg.BotToken, tg.ChatID, tg.ProxyURL)
 		}
 	}
 	d.botToken = tg.BotToken
@@ -430,7 +430,8 @@ func (d *Dispatcher) buildInlineKeyboard(n *Notification) [][]InlineKeyboardButt
 			return [][]InlineKeyboardButton{
 				{
 					{Text: "🔄 刷新 Emby 媒体库", CallbackData: "refresh_emby:" + kind},
-					{Text: "🔍 查看详情", CallbackData: "detail_strm:" + n.Metadata["cloud_path"]},
+					// 路径换成短 ID：callback_data 上限 64 字节，中文路径直接拼必然超限
+					{Text: "🔍 查看详情", CallbackData: "detail_strm:" + RegisterDetailPath(n.Metadata["cloud_path"])},
 				},
 			}
 		}

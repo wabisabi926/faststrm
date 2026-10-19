@@ -392,8 +392,8 @@ func BuildSTRMMenu() (string, [][]InlineKeyboardButton) {
 	text := "📁 <b>STRM 文件操作</b>\n\n" +
 		"选择要执行的操作：\n\n" +
 		"• 🔍 <b>全量同步</b> — 扫描云端与本地差异，补生成/删除 STRM\n" +
-		"• 🧹 <b>清理孤儿</b> — 扫描本地存在但云端已删除的 STRM\n\n" +
-		"⚠️ 全量同步会暂停监控，完成后自动恢复。"
+		"• 🧹 <b>清理孤儿</b> — 随全量扫描对账，清理云端已删除的 STRM\n\n" +
+		"⚠️ 全量同步会扫描整棵目录树，大库耗时较长；任务在后台执行。"
 
 	buttons := [][]InlineKeyboardButton{
 		{
@@ -508,7 +508,7 @@ func (h *CommandHandler) RouteMenuCallback(ctx context.Context, cq CallbackQuery
 		path := strings.TrimPrefix(data, callbackEmbyRefresh)
 		return h.handleEmbyRefreshByPath(ctx, chatID, messageID, path)
 	case data == "emby_refresh_path":
-		return h.bot.EditMessageText(ctx, chatID, messageID, "请在 Web UI 触发路径刷库操作。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "请在 Web UI 触发路径刷库操作。", "HTML")
 
 	// ===== STRM 通知内联按钮（来自 dispatcher.buildInlineKeyboard） =====
 	case strings.HasPrefix(data, callbackStrmRefreshEmby):
@@ -524,10 +524,10 @@ func (h *CommandHandler) RouteMenuCallback(ctx context.Context, cq CallbackQuery
 	case data == callbackStrmCleanup:
 		return h.handleCleanupSTRM(ctx, chatID, messageID)
 	case data == "task_create":
-		return h.bot.EditMessageText(ctx, chatID, messageID, "请在 Web UI 创建新任务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "请在 Web UI 创建新任务。", "HTML")
 
 	default:
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("✅ 已处理: %s\n\n点击下方按钮返回菜单。", data), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("✅ 已处理: %s\n\n点击下方按钮返回菜单。", data), "HTML")
 	}
 	return nil
 }
@@ -537,13 +537,13 @@ func (h *CommandHandler) RouteMenuCallback(ctx context.Context, cq CallbackQuery
 // ShowMainMenuForChat 发送主菜单到指定 chatID（用于 /start 命令）
 func (h *CommandHandler) ShowMainMenuForChat(ctx context.Context, chatID string) error {
 	text, buttons := BuildMainMenu()
-	return h.bot.SendMessageWithButtons(ctx, chatID, text, buttons)
+	return h.tg().SendMessageWithButtons(ctx, chatID, text, buttons)
 }
 
 // showMainMenu 显示主菜单（编辑现有消息）
 func (h *CommandHandler) showMainMenu(ctx context.Context, chatID string, messageID int64) error {
 	text, buttons := BuildMainMenu()
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
 // showStatusMenu 显示系统状态
@@ -558,7 +558,7 @@ func (h *CommandHandler) showStatusMenu(ctx context.Context, chatID string, mess
 		status = h.buildDefaultStatus()
 	}
 	text, buttons := BuildStatusMenu(status)
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
 // showMonitorMenu 显示监控菜单
@@ -573,7 +573,7 @@ func (h *CommandHandler) showMonitorMenu(ctx context.Context, chatID string, mes
 		status = map[string]any{"monitors": []map[string]any{}}
 	}
 	text, buttons := BuildMonitorMenu(status)
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
 // showTasksMenu 显示任务菜单
@@ -588,7 +588,7 @@ func (h *CommandHandler) showTasksMenu(ctx context.Context, chatID string, messa
 		}
 	}
 	text, buttons := BuildTasksMenu(running, scheduled)
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
 // showEmbyMenu 显示 Emby 菜单
@@ -603,49 +603,49 @@ func (h *CommandHandler) showEmbyMenu(ctx context.Context, chatID string, messag
 		status = map[string]any{"connected": false}
 	}
 	text, buttons := BuildEmbyMenu(status)
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
 // showSTRMMenu 显示 STRM 菜单
 func (h *CommandHandler) showSTRMMenu(ctx context.Context, chatID string, messageID int64) error {
 	text, buttons := BuildSTRMMenu()
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
 // showHelpMenu 显示帮助
 func (h *CommandHandler) showHelpMenu(ctx context.Context, chatID string, messageID int64) error {
 	text, buttons := BuildHelpMenu()
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
 // ==================== 操作处理方法 ====================
 
 func (h *CommandHandler) handleStartMonitor(ctx context.Context, chatID string, messageID int64, account string) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	if err := h.menuActions.StartMonitor(ctx, account); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 启动监控失败: %v", err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 启动监控失败: %v", err), "HTML")
 	}
 	return h.showMonitorMenu(ctx, chatID, messageID)
 }
 
 func (h *CommandHandler) handleStopMonitor(ctx context.Context, chatID string, messageID int64, account string) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	if err := h.menuActions.StopMonitor(ctx, account); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 停止监控失败: %v", err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 停止监控失败: %v", err), "HTML")
 	}
 	return h.showMonitorMenu(ctx, chatID, messageID)
 }
 
 func (h *CommandHandler) handleStopAllMonitors(ctx context.Context, chatID string, messageID int64) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	if err := h.menuActions.StopAllMonitors(ctx); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 停止全部监控失败: %v", err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 停止全部监控失败: %v", err), "HTML")
 	}
 	return h.showMonitorMenu(ctx, chatID, messageID)
 }
@@ -656,12 +656,12 @@ func (h *CommandHandler) handleMonitorDetail(ctx context.Context, chatID string,
 	buttons := [][]InlineKeyboardButton{
 		{{Text: "🔙 返回监控菜单", CallbackData: callbackMenuMonitor}},
 	}
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
 func (h *CommandHandler) handleToggleEvent(ctx context.Context, chatID string, messageID int64, eventType, state string) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	enabled := state == "on"
 	eventLabels := map[string]string{
@@ -676,39 +676,39 @@ func (h *CommandHandler) handleToggleEvent(ctx context.Context, chatID string, m
 	}
 
 	if err := h.menuActions.ToggleMonitorEvent(ctx, "", eventType, enabled); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 切换 %s 事件失败: %v", label, err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 切换 %s 事件失败: %v", label, err), "HTML")
 	}
 	return h.showMonitorMenu(ctx, chatID, messageID)
 }
 
 func (h *CommandHandler) handleExecuteTask(ctx context.Context, chatID string, messageID int64, taskID string) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	result, err := h.menuActions.ExecuteTask(ctx, taskID)
 	if err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 执行任务失败: %v", err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 执行任务失败: %v", err), "HTML")
 	}
 	msg := "✅ 任务已触发\n"
 	if m, ok := result["message"].(string); ok && m != "" {
 		msg += m
 	}
-	return h.bot.EditMessageText(ctx, chatID, messageID, msg, "HTML")
+	return h.tg().EditMessageText(ctx, chatID, messageID, msg, "HTML")
 }
 
 func (h *CommandHandler) handleCancelTask(ctx context.Context, chatID string, messageID int64, taskID string) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	if err := h.menuActions.CancelTask(ctx, taskID); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 取消任务失败: %v", err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 取消任务失败: %v", err), "HTML")
 	}
 	return h.showTasksMenu(ctx, chatID, messageID)
 }
 
 func (h *CommandHandler) handleEmbyRefresh(ctx context.Context, chatID string, messageID int64, libType string) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	labels := map[string]string{
 		"movie": "电影库",
@@ -721,43 +721,43 @@ func (h *CommandHandler) handleEmbyRefresh(ctx context.Context, chatID string, m
 	}
 
 	if err := h.menuActions.RefreshEmbyLibrary(ctx, libType); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 刷新 %s 失败: %v", label, err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 刷新 %s 失败: %v", label, err), "HTML")
 	}
-	return h.bot.EditMessageText(ctx, chatID, messageID,
+	return h.tg().EditMessageText(ctx, chatID, messageID,
 		fmt.Sprintf("✅ <b>%s</b> 刷新已触发\n\n刷新完成后 Emby 会自动通知入库。", label), "HTML")
 }
 
 func (h *CommandHandler) handleEmbyRefreshByPath(ctx context.Context, chatID string, messageID int64, path string) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	if err := h.menuActions.RefreshEmbyByPath(ctx, path); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 刷新路径失败: %v", err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 刷新路径失败: %v", err), "HTML")
 	}
-	return h.bot.EditMessageText(ctx, chatID, messageID,
+	return h.tg().EditMessageText(ctx, chatID, messageID,
 		fmt.Sprintf("✅ 路径刷库已触发: <code>%s</code>", path), "HTML")
 }
 
 func (h *CommandHandler) handleFullSync(ctx context.Context, chatID string, messageID int64) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	if err := h.menuActions.RunFullSync(ctx); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 全量同步失败: %v", err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 全量同步失败: %v", err), "HTML")
 	}
-	return h.bot.EditMessageText(ctx, chatID, messageID,
-		"✅ <b>全量同步已触发</b>\n\n同步过程会暂停监控，完成后自动恢复。请稍候查看日志。", "HTML")
+	return h.tg().EditMessageText(ctx, chatID, messageID,
+		"✅ <b>全量同步已触发</b>\n\n任务在后台执行，完成后会推送通知；进度可在 Web UI 或 /status 查看。", "HTML")
 }
 
 func (h *CommandHandler) handleCleanupSTRM(ctx context.Context, chatID string, messageID int64) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	if err := h.menuActions.RunCleanup(ctx); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 清理孤儿失败: %v", err), "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 清理孤儿失败: %v", err), "HTML")
 	}
-	return h.bot.EditMessageText(ctx, chatID, messageID,
-		"✅ <b>孤儿扫描已完成</b>\n\n发现的孤儿 STRM 文件列表已生成，请在 Web UI 确认后手动清理。", "HTML")
+	return h.tg().EditMessageText(ctx, chatID, messageID,
+		"✅ <b>清理任务已触发</b>\n\n将在后台执行全量扫描，并按「孤儿 STRM 清理」策略对账；超过保护阈值时会转入待确认队列。", "HTML")
 }
 
 // ==================== 辅助函数 ====================
@@ -766,7 +766,7 @@ func (h *CommandHandler) handleCleanupSTRM(ctx context.Context, chatID string, m
 // kind: movie / tv / series
 func (h *CommandHandler) handleStrmRefreshEmby(ctx context.Context, chatID string, messageID int64, kind string) error {
 	if h.menuActions == nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
 	labels := map[string]string{
 		"movie":  "电影库",
@@ -778,19 +778,24 @@ func (h *CommandHandler) handleStrmRefreshEmby(ctx context.Context, chatID strin
 		label = kind
 	}
 	if err := h.menuActions.RefreshEmbyLibrary(ctx, kind); err != nil {
-		return h.bot.EditMessageText(ctx, chatID, messageID,
+		return h.tg().EditMessageText(ctx, chatID, messageID,
 			fmt.Sprintf("❌ 刷新 %s 失败: %v", label, err), "HTML")
 	}
-	return h.bot.EditMessageText(ctx, chatID, messageID,
+	return h.tg().EditMessageText(ctx, chatID, messageID,
 		fmt.Sprintf("✅ <b>%s</b> 刷新已触发\n\n刷新完成后 Emby 会自动通知入库。", label), "HTML")
 }
 
 // handleStrmDetail 处理 STRM 通知中的"查看详情"按钮
-func (h *CommandHandler) handleStrmDetail(ctx context.Context, chatID string, messageID int64, cloudPath string) error {
+func (h *CommandHandler) handleStrmDetail(ctx context.Context, chatID string, messageID int64, ref string) error {
+	// ref 是新格式的短 ID；兼容旧消息里直接塞的完整路径
+	cloudPath := ref
+	if p, ok := LookupDetailPath(ref); ok {
+		cloudPath = p
+	}
 	text := fmt.Sprintf("🔍 <b>STRM 详情</b>\n\n"+
 		"<b>云端路径:</b> <code>%s</code>\n\n"+
 		"💡 在 Web UI 中可查看完整事件日志和文件详情。",
-		cloudPath)
+		EscapeHTML(cloudPath))
 
 	buttons := [][]InlineKeyboardButton{
 		{
@@ -801,7 +806,7 @@ func (h *CommandHandler) handleStrmDetail(ctx context.Context, chatID string, me
 			{Text: "🔙 返回主菜单", CallbackData: callbackMenuMain},
 		},
 	}
-	return h.bot.EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 func (h *CommandHandler) buildDefaultStatus() map[string]any {
 	accounts := h.accounts.List()

@@ -136,14 +136,29 @@ func (a *menuActionsAdapter) ToggleMonitorEvent(ctx context.Context, account, ev
 	return nil
 }
 
-// ExecuteTask 执行指定任务
+// ExecuteTask 执行指定任务（异步）
+// 任务可能跑几分钟，同步执行会阻塞 Telegram 轮询循环 / webhook 请求，
+// 这里立即返回「已触发」，结果由任务自身的完成通知推送。
 func (a *menuActionsAdapter) ExecuteTask(ctx context.Context, taskID string) (map[string]any, error) {
-	result := task.ExecuteTask(ctx, taskID, a.execDeps)
+	go a.runTaskAsync(taskID)
 	return map[string]any{
-		"success": result.Success,
-		"message": result.Message,
-		"taskId":  result.TaskID,
+		"success": true,
+		"taskId":  taskID,
+		"message": "任务已在后台执行，完成后会推送通知",
 	}, nil
+}
+
+// runTaskAsync 后台执行任务并记录失败原因（任务完成/失败由 dispatcher 通知）
+func (a *menuActionsAdapter) runTaskAsync(taskID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.S().Errorf("[TG] 后台任务 %s panic: %v", taskID, r)
+		}
+	}()
+	res := task.ExecuteTask(context.Background(), taskID, a.execDeps)
+	if !res.Success {
+		logger.S().Warnf("[TG] 后台任务 %s 未成功: reason=%s msg=%s", taskID, res.Reason, res.Message)
+	}
 }
 
 // CancelTask 取消指定任务
@@ -254,13 +269,31 @@ func (a *menuActionsAdapter) GetEmbyStatus() (map[string]any, error) {
 	return a.embyRefresh.GetStatus(), nil
 }
 
-// RunFullSync 全量同步（占位实现）
+// RunFullSync 全量同步：异步触发第一个任务（与 Web UI 手动执行等价）
 func (a *menuActionsAdapter) RunFullSync(ctx context.Context) error {
-	return nil
+	return a.triggerFirstTask()
 }
 
-// RunCleanup 清理孤儿（占位实现）
+// RunCleanup 清理孤儿：随全量扫描执行，异步触发第一个任务
 func (a *menuActionsAdapter) RunCleanup(ctx context.Context) error {
+	return a.triggerFirstTask()
+}
+
+// triggerFirstTask 异步触发第一个任务。Bot 的「全量同步 / 清理孤儿」按钮共用：
+// 二者本质都是跑一次全量扫描，清理策略由设置中的 fullSyncCleanupOrphans 决定。
+func (a *menuActionsAdapter) triggerFirstTask() error {
+	if a.tasksStore == nil {
+		return fmt.Errorf("任务存储未初始化")
+	}
+	tasks, err := a.tasksStore.ReadTasks()
+	if err != nil {
+		return fmt.Errorf("读取任务失败: %w", err)
+	}
+	if len(tasks) == 0 {
+		return fmt.Errorf("暂无任务，请先在 Web UI 创建任务")
+	}
+	t := tasks[0]
+	go a.runTaskAsync(t.ID)
 	return nil
 }
 

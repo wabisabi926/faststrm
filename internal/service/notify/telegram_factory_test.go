@@ -73,7 +73,7 @@ func TestTelegramBotUpdateCredentials(t *testing.T) {
 	bot := &TelegramBot{token: "initial_token", chatID: "-100999"}
 
 	// 更新非空值
-	bot.UpdateCredentials("new_token_xyz", "-100888")
+	bot.UpdateCredentials("new_token_xyz", "-100888", "")
 	if bot.BotToken() != "new_token_xyz" {
 		t.Fatalf("expected BotToken=new_token_xyz, got %s", bot.BotToken())
 	}
@@ -82,7 +82,7 @@ func TestTelegramBotUpdateCredentials(t *testing.T) {
 	}
 
 	// 空 token 不应覆盖旧值
-	bot.UpdateCredentials("", "-100777")
+	bot.UpdateCredentials("", "-100777", "")
 	if bot.BotToken() != "new_token_xyz" {
 		t.Fatalf("empty token should not overwrite, got %s", bot.BotToken())
 	}
@@ -91,7 +91,7 @@ func TestTelegramBotUpdateCredentials(t *testing.T) {
 	}
 
 	// 空 chatID 不应覆盖旧值
-	bot.UpdateCredentials("another_token", "")
+	bot.UpdateCredentials("another_token", "", "")
 	if bot.BotToken() != "another_token" {
 		t.Fatalf("expected BotToken=another_token, got %s", bot.BotToken())
 	}

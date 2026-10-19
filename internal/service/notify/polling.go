@@ -59,15 +59,17 @@ func (m *PollingManager) Start(ctx context.Context, handler UpdateHandler) error
 	u.Limit = 100
 
 	m.updates = c.GetUpdatesChan(u)
+	// 传局部变量给消费协程：避免 Stop 置空 m.updates 时与之产生数据竞争
+	updatesCh := m.updates
 
 	logger.S().Info("[Telegram] Polling started (GetUpdatesChan: timeout=60, limit=100)")
 
-	go m.consume(ctx, handler)
+	go m.consume(ctx, handler, updatesCh)
 	return nil
 }
 
 // consume 从 UpdatesChannel 消费 update，分发给 handler
-func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler) {
+func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler, updates tgbotapi.UpdatesChannel) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -78,7 +80,7 @@ func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler) {
 			m.markStopped()
 			m.drainChannel()
 			return
-		case update, ok := <-m.updates:
+		case update, ok := <-updates:
 			if !ok {
 				// channel 被关闭（可能是 Stop 调用 c.StopReceiving）
 				m.markStopped()
@@ -95,21 +97,24 @@ func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler) {
 
 // drainChannel 排空 channel（防止 goroutine 泄漏）
 func (m *PollingManager) drainChannel() {
-	if m.updates == nil {
+	m.mu.Lock()
+	ch := m.updates
+	m.updates = nil
+	m.mu.Unlock()
+	if ch == nil {
 		return
 	}
-	// tgbotapi v5 的 UpdatesChannel 只有 Clear() 方法，没有 StopReceiving
+	// tgbotapi v5 的 UpdatesChannel 只有 Clear() 方法
 	// 清空残留的 update，防止底层 goroutine 阻塞
-	m.updates.Clear()
-	m.updates = nil
+	ch.Clear()
 }
 
 // Stop 信号通知轮询 goroutine 退出，并标记 running=false
 // 多次调用安全（不会重复关闭 channel）
 func (m *PollingManager) Stop() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if !m.running {
+		m.mu.Unlock()
 		return
 	}
 	select {
@@ -119,6 +124,17 @@ func (m *PollingManager) Stop() {
 		close(m.stopCh)
 	}
 	m.running = false
+	updates := m.updates
+	m.updates = nil
+	m.mu.Unlock()
+
+	// 关闭底层 getUpdates goroutine。只关自己的 stopCh 不够：旧轮询仍会继续
+	// 长轮询并消费 update，与新轮询抢消息（表现为丢命令/丢按钮回调）。
+	// StopUpdates 会丢弃该 BotAPI 实例（shutdownChannel 已永久关闭），Start 时自动重建。
+	m.bot.StopUpdates()
+	if updates != nil {
+		updates.Clear()
+	}
 	logger.S().Info("Telegram polling stopped")
 }
 

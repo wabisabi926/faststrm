@@ -4,11 +4,15 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -153,16 +157,26 @@ func buildProxyClient(proxyURL string) (*http.Client, error) {
 	return nil, fmt.Errorf("unsupported proxy scheme: %s", u.Scheme)
 }
 
-// UpdateCredentials 热更新凭据（Token / ChatID 变更时重建底层 client）
-func (b *TelegramBot) UpdateCredentials(botToken, chatID string) {
+// UpdateCredentials 热更新凭据（Token / ChatID / 代理变更时重建底层 client）
+func (b *TelegramBot) UpdateCredentials(botToken, chatID, proxyURL string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	needRebuild := false
 	if botToken != "" && botToken != b.token {
 		b.token = botToken
-		b.client = nil // 触发下次懒加载
+		needRebuild = true
+	}
+	// 代理变更同样必须重建：否则保存设置后仍走旧代理（或仍直连）
+	if proxyURL != b.proxyURL {
+		b.proxyURL = proxyURL
+		b.hasProxy = proxyURL != ""
+		needRebuild = true
 	}
 	if chatID != "" {
 		b.chatID = chatID
+	}
+	if needRebuild {
+		b.client = nil // 触发下次懒加载
 	}
 }
 
@@ -218,6 +232,19 @@ func (b *TelegramBot) Underlying() (*tgbotapi.BotAPI, error) {
 	return b.client, nil
 }
 
+// StopUpdates 停止底层 getUpdates 协程并丢弃该 BotAPI 实例。
+// 只操作已存在的 client，不做懒加载——Stop 可能在保存设置的 HTTP 请求里调用，
+// 若此处触发重建会发起网络请求（代理不可达时最长阻塞 60s）。
+func (b *TelegramBot) StopUpdates() {
+	b.mu.Lock()
+	c := b.client
+	b.client = nil
+	b.mu.Unlock()
+	if c != nil {
+		c.StopReceivingUpdates()
+	}
+}
+
 // ==================== 基础接口（与外部 API 签名保持一致） ====================
 
 func (b *TelegramBot) GetMe(ctx context.Context) (*tgbotapi.User, error) {
@@ -256,6 +283,9 @@ func (b *TelegramBot) GetWebhookInfo(ctx context.Context) (*tgbotapi.WebhookInfo
 }
 
 // SetWebhook 设置 webhook（外部 handler 调用）
+// secretToken 非空时用原始 API 调用补传 secret_token：tgbotapi v5.5.1 的
+// WebhookConfig 没有该字段，若只走标准请求，Telegram 不会带上
+// X-Telegram-Bot-Api-Secret-Token 头，入站校验会把所有更新拒掉（401）。
 func (b *TelegramBot) SetWebhook(ctx context.Context, webhookURL, secretToken string) error {
 	c, err := b.Underlying()
 	if err != nil {
@@ -265,9 +295,37 @@ func (b *TelegramBot) SetWebhook(ctx context.Context, webhookURL, secretToken st
 	if err != nil {
 		return err
 	}
-	_ = secretToken // tgbotapi v5 WebhookConfig 无 SecretToken 字段，忽略
-	_, err = c.Request(cfg)
-	return err
+	if secretToken == "" {
+		_, err = c.Request(cfg)
+		return err
+	}
+
+	form := url.Values{}
+	form.Set("url", webhookURL)
+	form.Set("secret_token", secretToken)
+	endpoint := "https://api.telegram.org/bot" + b.BotToken() + "/setWebhook"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("build setWebhook request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return fmt.Errorf("setWebhook request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var out struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if uerr := json.Unmarshal(body, &out); uerr != nil {
+		return fmt.Errorf("setWebhook parse: %w", uerr)
+	}
+	if !out.OK {
+		return fmt.Errorf("setWebhook failed: %s", out.Description)
+	}
+	return nil
 }
 
 // GetUpdates 兼容调用方（polling.go 会被重写，但保留兼容接口）
@@ -360,11 +418,9 @@ func (b *TelegramBot) SendNotificationWithRetry(text string) error {
 	if err := b.ensureClient(); err != nil {
 		return err
 	}
-	cid := b.ChatID()
-	if cid == "" {
+	if b.ChatID() == "" {
 		return fmt.Errorf("chat id is empty")
 	}
-	_ = cid
 	return b.SendMessageWithRetry(text)
 }
 
@@ -574,7 +630,8 @@ func FormatMessage(title, content string, metadata map[string]string) string {
 	sb.Grow(len(title) + len(content) + len(metadata)*32 + 32)
 	fmt.Fprintf(&sb, "<b>%s</b>\n", title)
 	if content != "" {
-		fmt.Fprintf(&sb, "%s\n", content)
+		// 正文来自片名/路径等用户数据，必须转义，否则 '&' '<' '>' 会让 Telegram 400
+		fmt.Fprintf(&sb, "%s\n", EscapeHTML(content))
 	}
 
 	if len(metadata) > 0 {
@@ -600,7 +657,8 @@ func FormatMessage(title, content string, metadata map[string]string) string {
 		})
 		for _, k := range keys {
 			if v := metadata[k]; v != "" {
-				fmt.Fprintf(&sb, "<b>%s：</b> %s\n", k, v)
+				// metadata 的值都是路径/账号/大小等纯文本，统一转义保证 HTML parse 安全
+				fmt.Fprintf(&sb, "<b>%s：</b> %s\n", k, EscapeHTML(v))
 			}
 		}
 		sb.WriteString("\n")
@@ -627,15 +685,23 @@ func toTGInlineMarkup(buttons [][]InlineKeyboardButton) *tgbotapi.InlineKeyboard
 }
 
 func stringToInt64(s string) int64 {
-	var v int64
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c < '0' || c > '9' {
-			continue
-		}
-		v = v*10 + int64(c-'0')
+	// 必须保留负号：Telegram 群/超级群的 chat_id 是负数（如 -1001234567890），
+	// 旧实现过滤非数字字符会把群 ID 变成正数，导致群聊消息全部发送失败。
+	v, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0
 	}
 	return v
+}
+
+// EscapeHTML 转义 Telegram HTML parse mode 中的特殊字符。
+// 片名/路径里常见的 '&'（如 "Fast & Furious"）、'<'、'>' 不转义会让 Telegram
+// 返回 400 "can't parse entities"，整条通知发送失败。
+func EscapeHTML(s string) string {
+	if !strings.ContainsAny(s, "&<>") {
+		return s
+	}
+	return html.EscapeString(s)
 }
 
 func truncateRunes(s string, max int) string {

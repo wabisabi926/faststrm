@@ -242,7 +242,8 @@ func (i *StrmCleanupInteraction) NotifyTelegramPending(ctx context.Context, batc
 	if len(batch.SamplePaths) > 0 {
 		sb.WriteString("\n<b>预览（前 5 个）:</b>\n")
 		for _, p := range batch.SamplePaths {
-			sb.WriteString("  • <code>" + p + "</code>\n")
+			// 路径含 '&' '<' '>' 时不转义会让 Telegram 返回 400，确认消息发不出去
+			sb.WriteString("  • <code>" + notify.EscapeHTML(p) + "</code>\n")
 		}
 	}
 	sb.WriteString(fmt.Sprintf("\n⏰ %s", time.Now().Format("2006-01-02 15:04:05")))

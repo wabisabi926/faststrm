@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wabisabi926/faststrm/internal/service/store"
@@ -14,6 +15,7 @@ import (
 
 // CommandHandler Bot 命令处理器，依赖 store 层读取配置/任务/账号
 type CommandHandler struct {
+	botMu          sync.RWMutex
 	bot            *TelegramBot
 	settings       *store.SettingsStore
 	tasks          *store.TasksStore
@@ -49,7 +51,16 @@ func NewCommandHandler(bot *TelegramBot, settings *store.SettingsStore, tasks *s
 
 // ReplaceBot 热更新内部 TelegramBot 引用（保存配置 / 换 BotToken 后调用）
 func (h *CommandHandler) ReplaceBot(bot *TelegramBot) {
+	h.botMu.Lock()
 	h.bot = bot
+	h.botMu.Unlock()
+}
+
+// tg 返回当前 TelegramBot（并发安全：ReplaceBot 与消息处理可能并发）
+func (h *CommandHandler) tg() *TelegramBot {
+	h.botMu.RLock()
+	defer h.botMu.RUnlock()
+	return h.bot
 }
 
 // SetMenuActions 注入菜单动作接口实现
@@ -103,29 +114,25 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 
 	logger.S().Debugf("[Telegram Polling] Message from %s (%d): %s", username, userID, text)
 
+	// ACL 前置：非命令消息也要校验，避免任何人私聊 bot 都能拿到功能列表
+	if !h.authorizeUser(ctx, userID) {
+		reply := fmt.Sprintf("❌ <b>访问被拒绝</b>\n\n你没有使用此 Bot 的权限，请联系管理员。\n\n你的 User ID: <code>%d</code>", userID)
+		return h.tg().SendMessage(ctx, chatID, reply, "HTML")
+	}
+
 	if !strings.HasPrefix(text, "/") {
 		reply := fmt.Sprintf("👋 你好 %s！\n\nFastStrm Bot 支持以下操作：\n\n"+
 			"• /start — 打开主菜单\n"+
 			"• /status — 查看系统状态\n"+
 			"• /scan — 打开 STRM 操作菜单\n"+
-			"• /cleanup — 打开 STRM 操作菜单\n"+
+			"• /cleanup — 直接清理孤儿 STRM\n"+
 			"• /accounts — 查看账号列表\n"+
 			"• /help — 显示所有命令\n\n"+
 			"输入 /start 打开操作菜单。", username)
-		return h.bot.SendMessage(ctx, chatID, reply, "HTML")
+		return h.tg().SendMessage(ctx, chatID, reply, "HTML")
 	}
 
 	cmd := strings.SplitN(text, " ", 2)[0]
-
-	// ACL 检查
-	allowed, err := h.allowedUsers(ctx)
-	if err != nil {
-		logger.S().Warnf("read telegram allowed users failed: %v", err)
-	}
-	if !h.IsUserAllowed(userID, allowed) {
-		reply := fmt.Sprintf("❌ <b>访问被拒绝</b>\n\n你没有使用此 Bot 的权限，请联系管理员。\n\n你的 User ID: <code>%d</code>", userID)
-		return h.bot.SendMessage(ctx, chatID, reply, "HTML")
-	}
 
 	switch cmd {
 	case "/start":
@@ -137,11 +144,11 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 	case "/scan":
 		return h.handleScanMenu(ctx, chatID)
 	case "/cleanup":
-		return h.handleScanMenu(ctx, chatID)
+		return h.handleCleanupDirect(ctx, chatID)
 	case "/accounts":
 		return h.handleAccounts(ctx, chatID)
 	default:
-		return h.bot.SendMessage(ctx, chatID, fmt.Sprintf("❓ 未知命令: %s\n\n输入 /help 查看所有可用命令。", cmd), "HTML")
+		return h.tg().SendMessage(ctx, chatID, fmt.Sprintf("❓ 未知命令: %s\n\n输入 /help 查看所有可用命令。", cmd), "HTML")
 	}
 }
 
@@ -154,21 +161,30 @@ func (h *CommandHandler) HandleCallbackQuery(ctx context.Context, cq CallbackQue
 	chatID := fmt.Sprintf("%d", cq.Message.Chat.ID)
 	logger.S().Debugf("[Telegram Polling] Callback query: %s", cq.Data)
 
-	if err := h.bot.AnswerCallbackQuery(ctx, cq.ID, "处理中..."); err != nil {
-		logger.S().Warnf("answerCallbackQuery failed: %v", err)
+	var userID int64
+	if cq.From != nil {
+		userID = cq.From.ID
+	}
+	// 按钮会触发任务执行/删除等动作，必须与命令同级做 ACL；
+	// 配置了 chatId 时还要求来自该会话，防止 bot 被拉进其他群后被人点按钮。
+	if !h.authorizeCallback(ctx, chatID, userID) {
+		logger.S().Warnf("[Telegram] 拒绝未授权的按钮回调 user=%d chat=%s data=%s", userID, chatID, cq.Data)
+		_ = h.tg().AnswerCallbackQuery(ctx, cq.ID, "无权限")
+		return nil
 	}
 
-	menuPrefixes := []string{"menu_", "mon_", "task_", "emby_", "strm_", "task_exec", "task_cancel", "mon_event:", "mon_detail:"}
-	for _, prefix := range menuPrefixes {
-		if strings.HasPrefix(cq.Data, prefix) {
-			return h.RouteMenuCallback(ctx, cq)
-		}
+	if err := h.tg().AnswerCallbackQuery(ctx, cq.ID, "处理中..."); err != nil {
+		logger.S().Warnf("answerCallbackQuery failed: %v", err)
 	}
 
 	// P0 STRM 清理待删队列的 TG 按钮回调
 	// 格式：cleanup_confirm|{request_id}|{y|n}
 	if strings.HasPrefix(cq.Data, "cleanup_confirm|") {
 		return h.handleCleanupConfirmCallback(ctx, chatID, cq)
+	}
+
+	if isMenuCallbackData(cq.Data) {
+		return h.RouteMenuCallback(ctx, cq)
 	}
 
 	switch cq.Data {
@@ -181,26 +197,49 @@ func (h *CommandHandler) HandleCallbackQuery(ctx context.Context, cq CallbackQue
 	case "accounts":
 		return h.handleAccounts(ctx, chatID)
 	default:
-		return h.bot.SendMessage(ctx, chatID, fmt.Sprintf("✅ 已处理: %s", cq.Data), "HTML")
+		return h.tg().SendMessage(ctx, chatID, fmt.Sprintf("✅ 已处理: %s", cq.Data), "HTML")
 	}
+}
+
+// isMenuCallbackData 判断 callback_data 是否属于菜单/通知按钮，交给 RouteMenuCallback 处理。
+// 新增按钮前缀时必须同步这里，否则会落到 default 被当成「✅ 已处理」而不执行任何动作。
+func isMenuCallbackData(data string) bool {
+	prefixes := []string{
+		"menu_", "mon_", "task_", "emby_", "strm_", "task_exec", "task_cancel",
+		"mon_event:", "mon_detail:",
+		// 通知内联按钮（dispatcher.buildInlineKeyboard）
+		"refresh_emby:", "detail_strm:",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(data, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleCleanupConfirmCallback 处理 STRM 清理待删队列的 TG 按钮回调
 // callback_data 格式：cleanup_confirm|{request_id}|{y|n}
 func (h *CommandHandler) handleCleanupConfirmCallback(ctx context.Context, chatID string, cq CallbackQuery) error {
 	if h.cleanupHandler == nil {
-		return h.bot.SendMessage(ctx, chatID, "⚠️ 清理待删队列未启用（settings.cleanup.confirmMode 未开启或 SQLite 不可用）", "HTML")
+		return h.tg().SendMessage(ctx, chatID, "⚠️ 清理待删队列未启用（settings.cleanup.confirmMode 未开启或 SQLite 不可用）", "HTML")
 	}
 	requestID, approve, ok := parseCleanupCallbackData(cq.Data)
 	if !ok {
-		return h.bot.SendMessage(ctx, chatID, "⚠️ 无效的清理回调数据: "+cq.Data, "HTML")
+		return h.tg().SendMessage(ctx, chatID, "⚠️ 无效的清理回调数据: "+EscapeHTML(cq.Data), "HTML")
 	}
 	msg, err := h.cleanupHandler.HandleTelegramCallback(ctx, requestID, approve)
 	if err != nil {
 		msg = fmt.Sprintf("❌ 处理清理回调失败: %v", err)
 		logger.S().Errorf("[Telegram] cleanup callback %s approve=%v failed: %v", requestID, approve, err)
 	}
-	return h.bot.SendMessage(ctx, chatID, msg, "HTML")
+	// 直接改写原消息：结果就地展示，同时移除「确认/取消」按钮，避免重复点击
+	if cq.Message != nil && cq.Message.MessageID != 0 {
+		if eerr := h.tg().EditMessageText(ctx, chatID, int64(cq.Message.MessageID), msg, "HTML"); eerr == nil {
+			return nil
+		}
+	}
+	return h.tg().SendMessage(ctx, chatID, msg, "HTML")
 }
 
 // parseCleanupCallbackData 解析 cleanup_confirm|{request_id}|{y|n} 格式的 callback_data
@@ -223,7 +262,7 @@ func (h *CommandHandler) handleHelp(ctx context.Context, chatID, username string
 		"• /start — 打开主菜单（6 大子菜单）\n" +
 		"• /status — 查看系统状态概览\n" +
 		"• /scan — 打开 STRM 操作菜单（全量同步/清理孤儿）\n" +
-		"• /cleanup — 打开 STRM 操作菜单\n" +
+		"• /cleanup — 直接清理孤儿 STRM\n" +
 		"• /accounts — 查看账号列表及 Cookie 状态\n" +
 		"• /help — 显示此帮助\n\n" +
 		"<b>🗂 主菜单介绍</b>\n" +
@@ -241,18 +280,30 @@ func (h *CommandHandler) handleHelp(ctx context.Context, chatID, username string
 		"通过主菜单 → 监控控制 → 选择账号 → 启动/停止。\n" +
 		"可控制创建/删除/移动/重命名事件类型。\n\n" +
 		"<b>💡 提示</b>\n" +
-		"• 全量同步会暂停监控，完成后自动恢复\n" +
+		"• 全量同步在后台执行，完成后会推送通知\n" +
 		"• Cookie 过期请在 Web UI 扫码刷新"
 	if username != "" {
 		text = fmt.Sprintf("👋 <b>你好 %s！</b>\n\n", username) + text
 	}
-	return h.bot.SendMessage(ctx, chatID, text, "HTML")
+	return h.tg().SendMessage(ctx, chatID, text, "HTML")
 }
 
-// handleScanMenu 发送 STRM 操作菜单（/scan /cleanup 命令直接跳转到此菜单）
+// handleScanMenu 发送 STRM 操作菜单（/scan 命令直接跳转到此菜单）
 func (h *CommandHandler) handleScanMenu(ctx context.Context, chatID string) error {
 	text, buttons := BuildSTRMMenu()
-	return h.bot.SendMessageWithButtons(ctx, chatID, text, buttons)
+	return h.tg().SendMessageWithButtons(ctx, chatID, text, buttons)
+}
+
+// handleCleanupDirect /cleanup 直接给出清理入口（不再多套一层菜单）
+func (h *CommandHandler) handleCleanupDirect(ctx context.Context, chatID string) error {
+	text := "🧹 <b>清理孤儿 STRM</b>\n\n" +
+		"按 STRM 内容里的 pickcode 与云端清单对账，清理云端已删除、或改名/移动后残留的本地 STRM。\n\n" +
+		"清理策略遵循设置页「孤儿 STRM 清理」；孤儿数量/占比超阈值时会转入待确认队列，不会直接删除。"
+	buttons := [][]InlineKeyboardButton{
+		{{Text: "🧹 开始清理", CallbackData: callbackStrmCleanup}},
+		{{Text: "🔙 返回主菜单", CallbackData: callbackMenuMain}},
+	}
+	return h.tg().SendMessageWithButtons(ctx, chatID, text, buttons)
 }
 
 // handleStatus 显示完整系统状态（账号 + 监控 + 任务 + Emby + 事件开关）
@@ -361,14 +412,14 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 	}
 
 	sb.WriteString(fmt.Sprintf("\n<b>⏰ %s</b>", nowFormatted()))
-	return h.bot.SendMessage(ctx, chatID, sb.String(), "HTML")
+	return h.tg().SendMessage(ctx, chatID, sb.String(), "HTML")
 }
 
 // handleAccounts 列出已配置账号及其 Cookie 状态
 func (h *CommandHandler) handleAccounts(ctx context.Context, chatID string) error {
 	accounts := h.accounts.List()
 	if len(accounts) == 0 {
-		return h.bot.SendMessage(ctx, chatID, "👥 <b>账号列表</b>\n\n暂无账号，请在 Web UI 添加。", "HTML")
+		return h.tg().SendMessage(ctx, chatID, "👥 <b>账号列表</b>\n\n暂无账号，请在 Web UI 添加。", "HTML")
 	}
 
 	var sb strings.Builder
@@ -387,7 +438,7 @@ func (h *CommandHandler) handleAccounts(ctx context.Context, chatID string) erro
 		sb.WriteString(fmt.Sprintf("\u00a0\u00a0\u00a0Cookie: %s\n\n", cookieState))
 	}
 	sb.WriteString("💡 Cookie 过期时可在 Web UI 账号管理页扫码刷新。")
-	return h.bot.SendMessage(ctx, chatID, sb.String(), "HTML")
+	return h.tg().SendMessage(ctx, chatID, sb.String(), "HTML")
 }
 
 // allowedUsers 从 settings 读取 Telegram allowedUsers 列表
@@ -397,6 +448,33 @@ func (h *CommandHandler) allowedUsers(ctx context.Context) ([]int64, error) {
 		return nil, err
 	}
 	return s.Telegram.AllowedUsers, nil
+}
+
+// authorizeUser 用户级 ACL（allowedUsers 为空表示允许所有用户）
+func (h *CommandHandler) authorizeUser(ctx context.Context, userID int64) bool {
+	allowed, err := h.allowedUsers(ctx)
+	if err != nil {
+		logger.S().Warnf("read telegram allowed users failed: %v", err)
+	}
+	return h.IsUserAllowed(userID, allowed)
+}
+
+// authorizeCallback 按钮回调鉴权：用户 ACL + 会话白名单。
+// 配置了 telegram.chatId 时，只接受来自该会话的回调——否则把 bot 拉进任意群的人
+// 都能点击菜单按钮触发任务执行 / 清理 / 刷库。
+func (h *CommandHandler) authorizeCallback(ctx context.Context, chatID string, userID int64) bool {
+	if !h.authorizeUser(ctx, userID) {
+		return false
+	}
+	s, err := h.settings.ReadSettings()
+	if err != nil {
+		return false
+	}
+	if want := strings.TrimSpace(s.Telegram.ChatID); want != "" && want != chatID {
+		logger.S().Warnf("[Telegram] 拒绝非配置会话的回调: chat=%s want=%s", chatID, want)
+		return false
+	}
+	return true
 }
 
 // nowFormatted 返回当前时间的格式化字符串

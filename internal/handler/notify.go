@@ -345,7 +345,7 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 // 避免下一轮通知 / 按钮回调仍然用旧 BotToken / ChatID。
 func applyTelegramHotUpdates(deps NotifyDeps, newTg model.TelegramSettings) {
 	if deps.TelegramBot != nil {
-		deps.TelegramBot.UpdateCredentials(newTg.BotToken, newTg.ChatID)
+		deps.TelegramBot.UpdateCredentials(newTg.BotToken, newTg.ChatID, newTg.ProxyURL)
 	}
 	if deps.Dispatcher != nil {
 		deps.Dispatcher.ApplySettings(newTg)
@@ -358,7 +358,8 @@ func applyTelegramHotUpdates(deps NotifyDeps, newTg model.TelegramSettings) {
 	}
 	botForCmd := deps.TelegramBot
 	if botForCmd == nil && newTg.BotToken != "" {
-		botForCmd = notify.NewTelegramBot(newTg.BotToken, newTg.ChatID)
+		// 必须走 botFromSettings：直接 NewTelegramBot 会丢掉 proxyUrl
+		botForCmd = deps.botFromSettings(newTg)
 	}
 	if botForCmd != nil {
 		deps.CommandHandler.ReplaceBot(botForCmd)
