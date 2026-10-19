@@ -298,13 +298,13 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		}
 
 		newTg := model.TelegramSettings{
-			BotToken:     req.BotToken,
-			ChatID:       req.ChatID,
-			WebhookURL:   req.WebhookURL,
-			ProxyURL:     req.ProxyURL,
-			Enabled:      true,
-			AutoPolling:  true,
-			AllowedUsers: old.AllowedUsers,
+			BotToken:      req.BotToken,
+			ChatID:        req.ChatID,
+			WebhookURL:    req.WebhookURL,
+			ProxyURL:      req.ProxyURL,
+			Enabled:       true,
+			AutoPolling:   true,
+			AllowedUsers:  old.AllowedUsers,
 			AccountAlerts: old.AccountAlerts,
 			// secret 默认沿用旧值（GET 不回传明文，前端留空即保留）
 			WebhookSecretToken: old.WebhookSecretToken,

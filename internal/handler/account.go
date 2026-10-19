@@ -42,7 +42,7 @@ type CreateAccountRequest struct {
 }
 
 // CreateAccount POST /api/account 新建账号
-func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc {
+func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc { //nolint:cyclop // complexity: 26，与 UpdateAccount 同级，校验分支为主
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req CreateAccountRequest
 
