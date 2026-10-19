@@ -30,6 +30,10 @@ const CleanupCallbackPrefix = "cleanup_confirm"
 // MaxSamplePaths TG 通知预览的最大路径数
 const MaxSamplePaths = 5
 
+// BatchMaxAge 待删批次有效期。超过该时长的批次自动作废：
+// 扫描结果反映的是当时的云端状态，隔天再确认删除可能误删已恢复/已改名的文件。
+const BatchMaxAge = 24 * time.Hour
+
 // ==================== 数据结构 ====================
 
 // CleanupBatch 待删批次
@@ -131,9 +135,15 @@ func (i *StrmCleanupInteraction) AppendBatch(ctx context.Context, batch CleanupB
 }
 
 // ListBatches 列出所有待确认批次（按创建时间倒序）
+// 顺带清理超过 BatchMaxAge 的过期批次，避免 Web UI / TG 里出现早已失效的确认项
 func (i *StrmCleanupInteraction) ListBatches(ctx context.Context) ([]CleanupBatch, error) {
 	if i.db == nil {
 		return nil, fmt.Errorf("db not initialized")
+	}
+	cutoff := time.Now().Add(-BatchMaxAge).UnixMilli()
+	if _, err := i.db.ExecContext(ctx,
+		`DELETE FROM cleanup_pending_batches WHERE created_at < ?`, cutoff); err != nil {
+		logger.S().Warnf("[CleanupInteraction] 清理过期批次失败: %v", err)
 	}
 	rows, err := i.db.QueryContext(ctx,
 		`SELECT request_id, created_at, paths_json, sample_paths_json, path_count, remove_strm, remove_empty_dirs, remove_related_files
@@ -313,6 +323,11 @@ func (i *StrmCleanupInteraction) HandleTelegramCallback(ctx context.Context, req
 		}
 		if batch == nil {
 			return "⚠️ 待删批次不存在或已被处理（可能已通过 Web UI 执行/取消）", nil
+		}
+		// 过期校验：超过有效期的批次作废，需要重新扫描
+		if age := time.Since(time.UnixMilli(batch.CreatedAt)); age > BatchMaxAge {
+			logger.S().Infof("[CleanupInteraction] 批次 %s 已过期（age=%s），作废", requestID, age.Truncate(time.Minute))
+			return fmt.Sprintf("⌛ <b>待删批次已过期（超过 24 小时）</b>\n\n扫描结果已不能反映当前云端状态，为避免误删已作废。\n请重新执行「清理孤儿 → 扫描」获取最新结果。"), nil
 		}
 		resp := executePendingBatch(ctx, *batch)
 		logger.S().Infof("[CleanupInteraction] TG callback 确认删除 %s: deleted=%d failed=%d dirs=%d duration=%dms",

@@ -782,7 +782,8 @@ func (h *CommandHandler) handleExecuteTask(ctx context.Context, chatID string, m
 	if m, ok := result["message"].(string); ok && m != "" {
 		msg += m
 	}
-	return h.tg().EditMessageText(ctx, chatID, messageID, msg, "HTML")
+	buttons := [][]InlineKeyboardButton{{{Text: "🔙 返回任务菜单", CallbackData: callbackTaskList}}}
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, msg, buttons)
 }
 
 func (h *CommandHandler) handleCancelTask(ctx context.Context, chatID string, messageID int64, taskID string) error {
@@ -812,8 +813,9 @@ func (h *CommandHandler) handleEmbyRefresh(ctx context.Context, chatID string, m
 	if err := h.menuActions.RefreshEmbyLibrary(ctx, libType); err != nil {
 		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 刷新 %s 失败: %v", label, err), "HTML")
 	}
-	return h.tg().EditMessageText(ctx, chatID, messageID,
-		fmt.Sprintf("✅ <b>%s</b> 刷新已触发\n\n刷新完成后 Emby 会自动通知入库。", label), "HTML")
+	msg := fmt.Sprintf("✅ <b>%s</b> 刷新已触发\n\n刷新完成后 Emby 会自动通知入库。", label)
+	buttons := [][]InlineKeyboardButton{{{Text: "🔙 返回 Emby 菜单", CallbackData: callbackMenuEmby}}}
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, msg, buttons)
 }
 
 func (h *CommandHandler) handleEmbyRefreshByPath(ctx context.Context, chatID string, messageID int64, path string) error {
@@ -823,8 +825,9 @@ func (h *CommandHandler) handleEmbyRefreshByPath(ctx context.Context, chatID str
 	if err := h.menuActions.RefreshEmbyByPath(ctx, path); err != nil {
 		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 刷新路径失败: %v", err), "HTML")
 	}
-	return h.tg().EditMessageText(ctx, chatID, messageID,
-		fmt.Sprintf("✅ 路径刷库已触发: <code>%s</code>", path), "HTML")
+	msg := fmt.Sprintf("✅ 路径刷库已触发: <code>%s</code>", path)
+	buttons := [][]InlineKeyboardButton{{{Text: "🔙 返回 Emby 菜单", CallbackData: callbackMenuEmby}}}
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, msg, buttons)
 }
 
 // showSyncTaskPicker 全量同步：列出全部任务供选择
@@ -851,8 +854,9 @@ func (h *CommandHandler) handleSyncRun(ctx context.Context, chatID string, messa
 	if err := h.menuActions.RunTaskByID(ctx, taskID); err != nil {
 		return h.tg().EditMessageText(ctx, chatID, messageID, "❌ 触发失败: "+EscapeHTML(err.Error()), "HTML")
 	}
-	return h.tg().EditMessageText(ctx, chatID, messageID,
-		"✅ <b>任务已触发</b>\n\n后台执行中，完成后会推送通知；进度可在 Web UI 或 /status 查看。", "HTML")
+	msg := "✅ <b>任务已触发</b>\n\n后台执行中，完成后会推送通知；进度可在 Web UI 或 /status 查看。"
+	buttons := [][]InlineKeyboardButton{{{Text: "🔙 返回 STRM 菜单", CallbackData: callbackMenuSTRM}}}
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, msg, buttons)
 }
 
 // handleSyncAll 按顺序执行全部任务（异步）
@@ -863,8 +867,9 @@ func (h *CommandHandler) handleSyncAll(ctx context.Context, chatID string, messa
 	if err := h.menuActions.RunAllTasksSequential(ctx); err != nil {
 		return h.tg().EditMessageText(ctx, chatID, messageID, "❌ 触发失败: "+EscapeHTML(err.Error()), "HTML")
 	}
-	return h.tg().EditMessageText(ctx, chatID, messageID,
-		"✅ <b>已开始按顺序执行全部任务</b>\n\n一个完成后自动执行下一个；账号正在跑任务时会跳过并记录。全部结束后推送汇总。", "HTML")
+	msg := "✅ <b>已开始按顺序执行全部任务</b>\n\n一个完成后自动执行下一个；账号正在跑任务时会跳过并记录。全部结束后推送汇总。"
+	buttons := [][]InlineKeyboardButton{{{Text: "🔙 返回 STRM 菜单", CallbackData: callbackMenuSTRM}}}
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, msg, buttons)
 }
 
 // showCleanupMappingPicker 清理孤儿：列出可扫描的路径映射
@@ -892,8 +897,9 @@ func (h *CommandHandler) handleCleanupScan(ctx context.Context, chatID string, m
 	if err := h.menuActions.ScanCleanupMappingAsync(ctx, idx); err != nil {
 		return h.tg().EditMessageText(ctx, chatID, messageID, "❌ 扫描失败: "+EscapeHTML(err.Error()), "HTML")
 	}
-	return h.tg().EditMessageText(ctx, chatID, messageID,
-		"🔍 <b>已开始扫描</b>\n\n只对账不生成，完成后会发送结果；如有失效 STRM，会附「确认删除 / 取消」按钮。", "HTML")
+	msg := "🔍 <b>已开始扫描</b>\n\n只对账不生成，完成后会发送结果；如有失效 STRM，会附「确认删除 / 取消」按钮。"
+	buttons := [][]InlineKeyboardButton{{{Text: "🔙 返回 STRM 菜单", CallbackData: callbackMenuSTRM}}}
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, msg, buttons)
 }
 
 // ==================== 辅助函数 ====================
@@ -917,8 +923,9 @@ func (h *CommandHandler) handleStrmRefreshEmby(ctx context.Context, chatID strin
 		return h.tg().EditMessageText(ctx, chatID, messageID,
 			fmt.Sprintf("❌ 刷新 %s 失败: %v", label, err), "HTML")
 	}
-	return h.tg().EditMessageText(ctx, chatID, messageID,
-		fmt.Sprintf("✅ <b>%s</b> 刷新已触发\n\n刷新完成后 Emby 会自动通知入库。", label), "HTML")
+	msg := fmt.Sprintf("✅ <b>%s</b> 刷新已触发\n\n刷新完成后 Emby 会自动通知入库。", label)
+	buttons := [][]InlineKeyboardButton{{{Text: "🔙 返回主菜单", CallbackData: callbackMenuMain}}}
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, msg, buttons)
 }
 
 // handleStrmDetail 处理 STRM 通知中的"查看详情"按钮

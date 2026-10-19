@@ -1,12 +1,19 @@
 // Package notify 的 polling 子模块：长轮询管理器。
-// 使用 tgbotapi/v5 的 GetUpdatesChan 替代手写轮询循环，
-// 一次性缓冲 100 条 update，命令响应从 30s 级降到 1s 级。
+//
+// 自持 getUpdates 循环（不再用 tgbotapi 的 GetUpdatesChan）：
+//   - 能拿到错误信息，识别 409 冲突（同一 Token 被多个实例轮询）
+//   - 失败指数退避，避免网络抖动时刷屏
+//   - 停止时不再需要 StopReceivingUpdates（该调用会永久关闭底层 shutdownChannel，
+//     导致同一 BotAPI 无法重新轮询）
 package notify
 
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -16,13 +23,13 @@ import (
 // UpdateHandler 处理单个 Telegram Update 的回调函数类型
 type UpdateHandler func(ctx context.Context, update Update) error
 
-// PollingManager 长轮询管理器，使用 GetUpdatesChan + goroutine 控制
+// PollingManager 长轮询管理器
 type PollingManager struct {
-	bot     *TelegramBot
-	stopCh  chan struct{}
-	mu      sync.Mutex
-	running bool
-	updates tgbotapi.UpdatesChannel // GetUpdatesChan 返回的 channel
+	bot      *TelegramBot
+	stopCh   chan struct{}
+	mu       sync.Mutex
+	running  bool
+	conflict atomic.Bool // 是否检测到 409（多实例抢同一 Token）
 }
 
 // NewPollingManager 创建轮询管理器
@@ -33,8 +40,7 @@ func NewPollingManager(bot *TelegramBot) *PollingManager {
 	}
 }
 
-// Start 启动长轮询 goroutine，使用 GetUpdatesChan（timeout=60, limit=100）
-// 已在运行时返回错误
+// Start 启动长轮询 goroutine
 func (m *PollingManager) Start(ctx context.Context, handler UpdateHandler) error {
 	m.mu.Lock()
 	if m.running {
@@ -46,95 +52,107 @@ func (m *PollingManager) Start(ctx context.Context, handler UpdateHandler) error
 	m.running = true
 	m.mu.Unlock()
 
-	// 获取底层 BotAPI 实例
 	c, err := m.bot.Underlying()
 	if err != nil {
 		m.markStopped()
 		return fmt.Errorf("get bot api for polling: %w", err)
 	}
 
-	// 使用 GetUpdatesChan：timeout=60（长轮询），limit=100（批量拉取）
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	u.Limit = 100
-
-	m.updates = c.GetUpdatesChan(u)
-	// 传局部变量给消费协程：避免 Stop 置空 m.updates 时与之产生数据竞争
-	updatesCh := m.updates
-
-	logger.S().Info("[Telegram] Polling started (GetUpdatesChan: timeout=60, limit=100)")
-
-	go m.consume(ctx, handler, updatesCh)
+	m.conflict.Store(false)
+	logger.S().Info("[Telegram] Polling started (getUpdates: timeout=30, limit=100)")
+	go m.consume(ctx, handler, c)
 	return nil
 }
 
-// consume 从 UpdatesChannel 消费 update，分发给 handler
-func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler, updates tgbotapi.UpdatesChannel) {
+// consume 长轮询循环
+func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler, c *tgbotapi.BotAPI) {
+	offset := 0
+	backoff := time.Second
+
 	for {
 		select {
 		case <-ctx.Done():
 			m.markStopped()
-			m.drainChannel()
 			return
 		case <-m.stopCh:
 			m.markStopped()
-			m.drainChannel()
 			return
-		case update, ok := <-updates:
-			if !ok {
-				// channel 被关闭（可能是 Stop 调用 c.StopReceiving）
+		default:
+		}
+
+		cfg := tgbotapi.NewUpdate(offset)
+		cfg.Timeout = 30
+		cfg.Limit = 100
+		updates, err := c.GetUpdates(cfg)
+		if err != nil {
+			// 409：同一 Bot Token 被另一个实例（或 webhook）占用
+			if isPollingConflict(err) {
+				if m.conflict.CompareAndSwap(false, true) {
+					logger.S().Errorf("[Telegram] 检测到 409 冲突：同一 Bot Token 可能被另一个实例轮询，"+
+						"或 Webhook 与轮询同时启用。请停掉重复实例 / 关闭其中一个接收方式。(%v)", err)
+				}
+			} else {
+				logger.S().Warnf("[Telegram] getUpdates 失败: %v（%v 后重试）", err, backoff)
+			}
+			select {
+			case <-ctx.Done():
 				m.markStopped()
 				return
+			case <-m.stopCh:
+				m.markStopped()
+				return
+			case <-time.After(backoff):
 			}
-			if handler != nil {
-				if herr := handler(ctx, update); herr != nil {
-					logger.S().Errorf("update handler failed: %v", herr)
-				}
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+
+		backoff = time.Second
+		m.conflict.Store(false)
+		for _, u := range updates {
+			if u.UpdateID >= offset {
+				offset = u.UpdateID + 1
+			}
+			if handler == nil {
+				continue
+			}
+			if herr := handler(ctx, u); herr != nil {
+				logger.S().Errorf("update handler failed: %v", herr)
 			}
 		}
 	}
 }
 
-// drainChannel 排空 channel（防止 goroutine 泄漏）
-func (m *PollingManager) drainChannel() {
-	m.mu.Lock()
-	ch := m.updates
-	m.updates = nil
-	m.mu.Unlock()
-	if ch == nil {
-		return
+// isPollingConflict 判断是否为 409 冲突（多实例抢同一 Token / 与 Webhook 冲突）
+func isPollingConflict(err error) bool {
+	if err == nil {
+		return false
 	}
-	// tgbotapi v5 的 UpdatesChannel 只有 Clear() 方法
-	// 清空残留的 update，防止底层 goroutine 阻塞
-	ch.Clear()
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "409") ||
+		strings.Contains(s, "conflict") ||
+		strings.Contains(s, "terminated by other getupdates")
 }
 
-// Stop 信号通知轮询 goroutine 退出，并标记 running=false
-// 多次调用安全（不会重复关闭 channel）
+// ConflictDetected 是否检测到 409 冲突（供状态页展示）
+func (m *PollingManager) ConflictDetected() bool { return m.conflict.Load() }
+
+// Stop 通知轮询 goroutine 退出
 func (m *PollingManager) Stop() {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	if !m.running {
-		m.mu.Unlock()
 		return
 	}
 	select {
 	case <-m.stopCh:
-		// 已关闭（防御性，正常不会走到）
+		// 已关闭（防御性）
 	default:
 		close(m.stopCh)
 	}
 	m.running = false
-	updates := m.updates
-	m.updates = nil
-	m.mu.Unlock()
-
-	// 关闭底层 getUpdates goroutine。只关自己的 stopCh 不够：旧轮询仍会继续
-	// 长轮询并消费 update，与新轮询抢消息（表现为丢命令/丢按钮回调）。
-	// StopUpdates 会丢弃该 BotAPI 实例（shutdownChannel 已永久关闭），Start 时自动重建。
-	m.bot.StopUpdates()
-	if updates != nil {
-		updates.Clear()
-	}
 	logger.S().Info("Telegram polling stopped")
 }
 

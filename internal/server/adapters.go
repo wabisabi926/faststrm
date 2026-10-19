@@ -163,17 +163,147 @@ func (a *menuActionsAdapter) ExecuteTask(ctx context.Context, taskID string) (ma
 	}, nil
 }
 
-// runTaskAsync 后台执行任务并记录失败原因（任务完成/失败由 dispatcher 通知）
+// runTaskAsync 后台执行任务并记录失败原因（任务完成/失败由 dispatcher 通知）。
+// 同时启动进度回执：定期编辑同一条 TG 消息展示阶段与进度。
 func (a *menuActionsAdapter) runTaskAsync(taskID string) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.S().Errorf("[TG] 后台任务 %s panic: %v", taskID, r)
 		}
 	}()
+	a.startProgressWatch(taskID)
 	res := task.ExecuteTask(context.Background(), taskID, a.execDeps)
 	if !res.Success {
 		logger.S().Warnf("[TG] 后台任务 %s 未成功: reason=%s msg=%s", taskID, res.Reason, res.Message)
 	}
+}
+
+// ==================== 任务进度回执 ====================
+
+const (
+	// progressWatchInterval 进度回执更新间隔。Telegram 编辑消息有频率限制，不能太密
+	progressWatchInterval = 45 * time.Second
+	// progressWatchMaxAge 监听上限，防止任务状态异常导致 goroutine 泄漏
+	progressWatchMaxAge = 2 * time.Hour
+)
+
+// startProgressWatch 发送一条进度消息并周期性编辑它，直到任务从 Runtime 消失。
+// 单独 goroutine，不阻塞任务执行；失败（发不出/编辑不了）时静默放弃。
+func (a *menuActionsAdapter) startProgressWatch(taskID string) {
+	if a.cmdHandler == nil || a.taskRuntime == nil {
+		return
+	}
+	bot := a.cmdHandler.CurrentBot()
+	if bot == nil {
+		return
+	}
+	chatID := bot.ChatID()
+	if chatID == "" {
+		return
+	}
+	taskName := a.taskNameByID(taskID)
+	if taskName == "" {
+		taskName = taskID
+	}
+
+	msgID, err := bot.SendMessageReturningID(context.Background(), chatID,
+		progressText(taskName, nil), "HTML")
+	if err != nil {
+		logger.S().Warnf("[TG] 进度消息发送失败 task=%s: %v", taskID, err)
+		return
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.S().Errorf("[TG] 进度监听 panic task=%s: %v", taskID, r)
+			}
+		}()
+		start := time.Now()
+		ticker := time.NewTicker(progressWatchInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+			}
+			state := a.taskRuntime.GetState(taskID)
+			if state == nil {
+				return // 任务已结束，结果通知由 dispatcher 负责
+			}
+			if time.Since(start) > progressWatchMaxAge {
+				logger.S().Warnf("[TG] 进度监听超时退出 task=%s", taskID)
+				return
+			}
+			if err := bot.EditMessageText(context.Background(), chatID, msgID,
+				progressText(taskName, state), "HTML"); err != nil {
+				// "message is not modified" 已在 EditMessageText 内部（ignoreEditNoop）忽略，
+				// 走到这里说明消息被删/不可编辑，放弃监听
+				logger.S().Debugf("[TG] 进度消息编辑失败 task=%s: %v", taskID, err)
+				return
+			}
+		}
+	}()
+}
+
+// progressText 渲染进度消息。含已运行时长（每次编辑内容都不同，天然规避
+// "message is not modified"），阶段详情存在时一并展示。
+func progressText(taskName string, state *task.RuntimeState) string {
+	var sb strings.Builder
+	sb.WriteString("⏳ <b>" + notify.EscapeHTML(taskName) + "</b> 运行中…\n\n")
+	if state == nil {
+		sb.WriteString("启动中…")
+		return sb.String()
+	}
+	elapsed := time.Since(time.UnixMilli(state.StartedAt)).Truncate(time.Second)
+	line := ""
+	if state.TotalFiles > 0 {
+		pct := float64(state.DownloadedFiles) / float64(state.TotalFiles) * 100
+		line = fmt.Sprintf("%.0f%% (%d/%d)", pct, state.DownloadedFiles, state.TotalFiles)
+	} else if state.Stage != "" {
+		line = stageLabel(state.Stage)
+	} else {
+		line = string(state.Status)
+	}
+	if state.StageDetail != "" {
+		line += "\n" + notify.EscapeHTML(state.StageDetail)
+	}
+	sb.WriteString(fmt.Sprintf("%s\n已运行 %s", line, elapsed))
+	return sb.String()
+}
+
+// stageLabel 阶段常量转中文
+func stageLabel(stage string) string {
+	labels := map[string]string{
+		task.StageStarting:   "启动中",
+		task.StageScanning:   "扫描目录",
+		task.StageCleanup:    "清理文件",
+		task.StageWritingDB:  "写回数据库",
+		task.StageGenerating: "生成 STRM",
+		task.StageFinalizing: "收尾处理",
+		task.StageCompleted:  "已完成",
+		task.StageFailed:     "失败",
+	}
+	if l, ok := labels[stage]; ok {
+		return l
+	}
+	return stage
+}
+
+// taskNameByID 查任务名（查不到返回空）
+func (a *menuActionsAdapter) taskNameByID(taskID string) string {
+	if a.tasksStore == nil {
+		return ""
+	}
+	tasks, err := a.tasksStore.ReadTasks()
+	if err != nil {
+		return ""
+	}
+	for _, t := range tasks {
+		if t.ID == taskID {
+			return t.Name
+		}
+	}
+	return ""
 }
 
 // CancelTask 取消指定任务

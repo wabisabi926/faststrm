@@ -142,13 +142,13 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 		return h.ShowMainMenuForChat(ctx, chatID)
 	case "/help":
 		return h.handleHelp(ctx, chatID, username)
-	case "/status":
+	case "/status", "/st":
 		return h.handleStatus(ctx, chatID)
-	case "/scan":
+	case "/scan", "/sync":
 		return h.handleScanMenu(ctx, chatID)
-	case "/cleanup":
+	case "/cleanup", "/clean":
 		return h.handleCleanupDirect(ctx, chatID)
-	case "/accounts":
+	case "/accounts", "/acc":
 		return h.handleAccounts(ctx, chatID)
 	default:
 		return h.tg().SendMessage(ctx, chatID, fmt.Sprintf("❓ 未知命令: %s\n\n输入 /help 查看所有可用命令。", cmd), "HTML")
@@ -265,10 +265,10 @@ func (h *CommandHandler) handleHelp(ctx context.Context, chatID, username string
 	text := "❓ <b>FastStrm Bot 帮助</b>\n\n" +
 		"<b>📋 命令列表</b>\n" +
 		"• /start — 打开主菜单（6 大子菜单）\n" +
-		"• /status — 查看系统状态概览\n" +
-		"• /scan — 打开 STRM 操作菜单（全量同步/清理孤儿）\n" +
-		"• /cleanup — 直接清理孤儿 STRM\n" +
-		"• /accounts — 查看账号列表及 Cookie 状态\n" +
+		"• /status (/st) — 查看系统状态概览\n" +
+		"• /scan (/sync) — 打开 STRM 操作菜单（全量同步/清理孤儿）\n" +
+		"• /cleanup (/clean) — 直接清理孤儿 STRM\n" +
+		"• /accounts (/acc) — 查看账号列表及 Cookie 状态\n" +
 		"• /help — 显示此帮助\n\n" +
 		"<b>🗂 主菜单介绍</b>\n" +
 		"通过 /start 打开，包含 6 个子菜单：\n" +

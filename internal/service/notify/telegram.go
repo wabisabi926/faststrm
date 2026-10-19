@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -232,19 +233,6 @@ func (b *TelegramBot) Underlying() (*tgbotapi.BotAPI, error) {
 	return b.client, nil
 }
 
-// StopUpdates 停止底层 getUpdates 协程并丢弃该 BotAPI 实例。
-// 只操作已存在的 client，不做懒加载——Stop 可能在保存设置的 HTTP 请求里调用，
-// 若此处触发重建会发起网络请求（代理不可达时最长阻塞 60s）。
-func (b *TelegramBot) StopUpdates() {
-	b.mu.Lock()
-	c := b.client
-	b.client = nil
-	b.mu.Unlock()
-	if c != nil {
-		c.StopReceivingUpdates()
-	}
-}
-
 // ==================== 基础接口（与外部 API 签名保持一致） ====================
 
 func (b *TelegramBot) GetMe(ctx context.Context) (*tgbotapi.User, error) {
@@ -357,12 +345,19 @@ func (b *TelegramBot) SendMessage(ctx context.Context, chatID, text, parseMode s
 		return err
 	}
 	// 4096 rune 保护（超限分段发送）
-	for _, chunk := range splitTextByRunes(text, 4096) {
+	chunks := splitTextByRunes(text, 4096)
+	// 多段消息可能把 HTML 标签切断（<b> 跨段）→ 400 can't parse entities。
+	// 这种情况下统一降级为纯文本，宁可丢样式也不丢消息。
+	plain := len(chunks) > 1
+	for _, chunk := range chunks {
+		if plain {
+			chunk = stripHTMLTags(chunk)
+		}
 		msg := tgbotapi.NewMessage(stringToInt64(chatID), chunk)
-		if parseMode != "" {
+		if parseMode != "" && !plain {
 			msg.ParseMode = parseMode
 		}
-		if _, e := c.Send(msg); e != nil {
+		if e := b.sendWithRetry429(c, msg); e != nil {
 			return fmt.Errorf("send message: %w", e)
 		}
 	}
@@ -379,6 +374,25 @@ func (b *TelegramBot) SendNotification(ctx context.Context, text string) error {
 		return fmt.Errorf("chat id is empty")
 	}
 	return b.SendNotificationWithRetry(text)
+}
+
+// SendMessageReturningID 发送单条消息并返回 messageID（供后续编辑实现进度回执）。
+// 与分段发送的 SendMessage 不同：进度消息短且需要拿到 ID，不分段、不带重试，
+// 失败时调用方直接放弃本次进度监听即可。
+func (b *TelegramBot) SendMessageReturningID(ctx context.Context, chatID, text, parseMode string) (int64, error) {
+	c, err := b.Underlying()
+	if err != nil {
+		return 0, err
+	}
+	msg := tgbotapi.NewMessage(stringToInt64(chatID), text)
+	if parseMode != "" {
+		msg.ParseMode = parseMode
+	}
+	sent, err := c.Send(msg)
+	if err != nil {
+		return 0, err
+	}
+	return int64(sent.MessageID), nil
 }
 
 // SendMessageWithRetry 带指数退避重试（QMS 同款逻辑）
@@ -427,14 +441,76 @@ func (b *TelegramBot) SendNotificationWithRetry(text string) error {
 // sendWithClient 按 4096 rune 分段 Send
 func (b *TelegramBot) sendWithClient(c *tgbotapi.BotAPI, text string) error {
 	cid := stringToInt64(b.ChatID())
-	for _, chunk := range splitTextByRunes(text, 4096) {
+	chunks := splitTextByRunes(text, 4096)
+	// 多段时降级纯文本：分段可能切断 HTML 标签，导致整条消息 400
+	plain := len(chunks) > 1
+	for _, chunk := range chunks {
+		if plain {
+			chunk = stripHTMLTags(chunk)
+		}
 		msg := tgbotapi.NewMessage(cid, chunk)
-		msg.ParseMode = "HTML"
-		if _, err := c.Send(msg); err != nil {
+		if !plain {
+			msg.ParseMode = "HTML"
+		}
+		if err := b.sendWithRetry429(c, msg); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// sendWithRetry429 发送单条消息；遇到 429（限流）按 retry_after 等待后重试。
+// Telegram 对单聊约 1 条/秒、全局 30 条/秒，批量通知时 429 很常见。
+func (b *TelegramBot) sendWithRetry429(c *tgbotapi.BotAPI, msg tgbotapi.MessageConfig) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		_, err := c.Send(msg)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		wait := telegramRetryAfter(err)
+		if wait <= 0 {
+			return err
+		}
+		logger.S().Warnf("[Telegram] 触发限流，等待 %ds 后重试（第 %d 次）", wait, attempt+1)
+		time.Sleep(time.Duration(wait) * time.Second)
+	}
+	return lastErr
+}
+
+// telegramRetryAfter 解析 429 的 retry_after（秒）；非限流错误返回 0。
+func telegramRetryAfter(err error) int {
+	if err == nil {
+		return 0
+	}
+	s := strings.ToLower(err.Error())
+	if !strings.Contains(s, "429") && !strings.Contains(s, "too many requests") {
+		return 0
+	}
+	if i := strings.Index(s, "retry after "); i >= 0 {
+		n := 0
+		for _, c := range s[i+len("retry after "):] {
+			if c < '0' || c > '9' {
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		if n > 0 {
+			return n
+		}
+	}
+	return 3
+}
+
+// stripHTMLTags 去掉 HTML 标签并还原实体（多段消息降级纯文本时使用）。
+var htmlTagRe = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
+
+func stripHTMLTags(s string) string {
+	if !strings.Contains(s, "<") {
+		return html.UnescapeString(s)
+	}
+	return html.UnescapeString(htmlTagRe.ReplaceAllString(s, ""))
 }
 
 // SendPhoto URL 或本地路径发送图片；caption 1024 rune 截断保护；失败返回 err
@@ -550,7 +626,7 @@ func (b *TelegramBot) EditMessageText(ctx context.Context, chatID string, messag
 		cfg.ParseMode = parseMode
 	}
 	_, err = c.Send(cfg)
-	return err
+	return ignoreEditNoop(err)
 }
 
 // EditMessageTextWithButtons 编辑消息文本+按钮
@@ -564,7 +640,7 @@ func (b *TelegramBot) EditMessageTextWithButtons(ctx context.Context, chatID str
 	cfg.ParseMode = "HTML"
 	cfg.ReplyMarkup = toTGInlineMarkup(buttons)
 	_, err = c.Send(cfg)
-	return err
+	return ignoreEditNoop(err)
 }
 
 // EditMessageReplyMarkup 仅编辑按钮
@@ -575,6 +651,20 @@ func (b *TelegramBot) EditMessageReplyMarkup(ctx context.Context, chatID string,
 	}
 	cfg := tgbotapi.NewEditMessageReplyMarkup(stringToInt64(chatID), int(messageID), *toTGInlineMarkup(buttons))
 	_, err = c.Send(cfg)
+	return ignoreEditNoop(err)
+}
+
+// ignoreEditNoop 忽略「内容未变化」这类无意义错误：
+// 用户连点同一个菜单时 Telegram 会返回 400 message is not modified，
+// 当成失败会污染日志，且让调用方误以为操作没生效。
+func ignoreEditNoop(err error) error {
+	if err == nil {
+		return nil
+	}
+	s := strings.ToLower(err.Error())
+	if strings.Contains(s, "message is not modified") {
+		return nil
+	}
 	return err
 }
 
@@ -586,13 +676,19 @@ func (b *TelegramBot) SendMessageWithButtons(ctx context.Context, chatID string,
 	}
 	// 仅第一段带按钮（保持与旧实现一致）
 	chunks := splitTextByRunes(text, 4096)
+	plain := len(chunks) > 1
 	for i, chunk := range chunks {
+		if plain {
+			chunk = stripHTMLTags(chunk)
+		}
 		msg := tgbotapi.NewMessage(stringToInt64(chatID), chunk)
-		msg.ParseMode = "HTML"
+		if !plain {
+			msg.ParseMode = "HTML"
+		}
 		if i == 0 {
 			msg.ReplyMarkup = toTGInlineMarkup(buttons)
 		}
-		if _, e := c.Send(msg); e != nil {
+		if e := b.sendWithRetry429(c, msg); e != nil {
 			return fmt.Errorf("send message with buttons: %w", e)
 		}
 	}
