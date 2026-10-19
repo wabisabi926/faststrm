@@ -77,13 +77,21 @@ func RegisterRoutes(
 		return middleware.CORS(jwtMW(h))
 	}
 
+	// 账号改名/删除的引用联动（任务、生活监控映射、文件索引、运行中监控）
+	accountCascade := &handler.AccountCascadeDeps{
+		TasksStore:    tasksStore,
+		SettingsStore: settingsStore,
+		SQLiteDB:      execDeps.SQLiteDB,
+		Monitor:       lifeMonitorDeps.Monitor,
+	}
+
 	// ---- 账号管理 ----
 	protectedRoutes := []rest.Route{
 		// 账号管理
 		{Method: http.MethodGet, Path: "/api/account", Handler: corsJWT(handler.ListAccounts(accountStore))},
 		{Method: http.MethodPost, Path: "/api/account", Handler: corsJWT(handler.CreateAccount(accountStore))},
-		{Method: http.MethodPut, Path: "/api/account", Handler: corsJWT(handler.UpdateAccount(accountStore))},
-		{Method: http.MethodDelete, Path: "/api/account", Handler: corsJWT(handler.DeleteAccount(accountStore))},
+		{Method: http.MethodPut, Path: "/api/account", Handler: corsJWT(handler.UpdateAccount(accountStore, accountCascade))},
+		{Method: http.MethodDelete, Path: "/api/account", Handler: corsJWT(handler.DeleteAccount(accountStore, accountCascade))},
 
 		// 扫码登录
 		{Method: http.MethodGet, Path: "/api/account/qrcode/token", Handler: corsJWT(handler.GetQrcodeTokenHandler(client))},

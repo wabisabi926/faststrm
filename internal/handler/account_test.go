@@ -259,7 +259,7 @@ func TestUpdateAccount_OriginalNameLookup(t *testing.T) {
 	}
 	r := httptest.NewRequest(http.MethodPut, "/api/account", jsonBody(t, req))
 	r.Header.Set("Content-Type", "application/json")
-	UpdateAccount(s).ServeHTTP(w, r)
+	UpdateAccount(s, nil).ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200 (body=%s)", w.Code, w.Body.String())
@@ -286,7 +286,7 @@ func TestUpdateAccount_WithoutOriginalName_FallsBackToName(t *testing.T) {
 	req := UpdateAccountRequest{Name: "a", AccountType: "115", Cookie: "UID=2"}
 	r := httptest.NewRequest(http.MethodPut, "/api/account", jsonBody(t, req))
 	r.Header.Set("Content-Type", "application/json")
-	UpdateAccount(s).ServeHTTP(w, r)
+	UpdateAccount(s, nil).ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", w.Code)
@@ -314,7 +314,7 @@ func TestUpdateAccount_StatusSemantics(t *testing.T) {
 	}
 	r := httptest.NewRequest(http.MethodPut, "/api/account", jsonBody(t, req))
 	r.Header.Set("Content-Type", "application/json")
-	UpdateAccount(s).ServeHTTP(w, r)
+	UpdateAccount(s, nil).ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200 (body=%s)", w.Code, w.Body.String())
 	}
@@ -331,7 +331,7 @@ func TestUpdateAccount_StatusSemantics(t *testing.T) {
 	req2 := UpdateAccountRequest{Name: "a", AccountType: "115", Cookie: unchanged, URL: "http://x"}
 	r2 := httptest.NewRequest(http.MethodPut, "/api/account", jsonBody(t, req2))
 	r2.Header.Set("Content-Type", "application/json")
-	UpdateAccount(s).ServeHTTP(w2, r2)
+	UpdateAccount(s, nil).ServeHTTP(w2, r2)
 	if w2.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200 (body=%s)", w2.Code, w2.Body.String())
 	}
@@ -346,7 +346,7 @@ func TestUpdateAccount_NotFound(t *testing.T) {
 	req := UpdateAccountRequest{Name: "nope", AccountType: "115", Cookie: "UID=1"}
 	r := httptest.NewRequest(http.MethodPut, "/api/account", jsonBody(t, req))
 	r.Header.Set("Content-Type", "application/json")
-	UpdateAccount(s).ServeHTTP(w, r)
+	UpdateAccount(s, nil).ServeHTTP(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", w.Code)
 	}
@@ -358,7 +358,7 @@ func TestUpdateAccount_EmptyName(t *testing.T) {
 	req := UpdateAccountRequest{Name: ""}
 	r := httptest.NewRequest(http.MethodPut, "/api/account", jsonBody(t, req))
 	r.Header.Set("Content-Type", "application/json")
-	UpdateAccount(s).ServeHTTP(w, r)
+	UpdateAccount(s, nil).ServeHTTP(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", w.Code)
 	}
@@ -372,7 +372,7 @@ func TestDeleteAccount_MissingName(t *testing.T) {
 	s := newTestAccountStore(t)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/api/account", nil)
-	DeleteAccount(s).ServeHTTP(w, r)
+	DeleteAccount(s, nil).ServeHTTP(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", w.Code)
 	}
@@ -382,7 +382,7 @@ func TestDeleteAccount_NotExists(t *testing.T) {
 	s := newTestAccountStore(t)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/api/account?name=nope", nil)
-	DeleteAccount(s).ServeHTTP(w, r)
+	DeleteAccount(s, nil).ServeHTTP(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", w.Code)
 	}
@@ -393,7 +393,7 @@ func TestDeleteAccount_Success(t *testing.T) {
 	_ = s.Upsert(&model.AccountInfo{Name: "delme", AccountType: "115", Cookie: "UID=1"})
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/api/account?name=delme", nil)
-	DeleteAccount(s).ServeHTTP(w, r)
+	DeleteAccount(s, nil).ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Errorf("status: got %d, want 200", w.Code)
 	}

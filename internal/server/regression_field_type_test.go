@@ -331,7 +331,7 @@ func TestRegression_AccountCRUDLifecycle(t *testing.T) {
 
 	// 更新账号
 	t.Run("update_account", func(t *testing.T) {
-		code, raw := doReq(handler.UpdateAccount(accountStore), "PUT", "/api/account",
+		code, raw := doReq(handler.UpdateAccount(accountStore, nil), "PUT", "/api/account",
 			map[string]string{
 				"name":        "test-115",
 				"accountType": "115",
@@ -348,7 +348,7 @@ func TestRegression_AccountCRUDLifecycle(t *testing.T) {
 
 	// 删除账号
 	t.Run("delete_account", func(t *testing.T) {
-		code, raw := doReq(handler.DeleteAccount(accountStore), "DELETE", "/api/account?name=test-115", nil, "")
+		code, raw := doReq(handler.DeleteAccount(accountStore, nil), "DELETE", "/api/account?name=test-115", nil, "")
 		if code != 200 {
 			t.Fatalf("want 200, got %d, body=%s", code, raw)
 		}
@@ -389,7 +389,7 @@ func TestRegression_ErrorResponses(t *testing.T) {
 	})
 
 	t.Run("update_nonexistent_account", func(t *testing.T) {
-		code, raw := doReq(handler.UpdateAccount(accountStore), "PUT", "/api/account",
+		code, raw := doReq(handler.UpdateAccount(accountStore, nil), "PUT", "/api/account",
 			map[string]string{"name": "nonexistent", "cookie": "x"}, "")
 		if code != 404 {
 			t.Fatalf("want 404, got %d", code)
@@ -399,7 +399,7 @@ func TestRegression_ErrorResponses(t *testing.T) {
 	})
 
 	t.Run("delete_missing_name_param", func(t *testing.T) {
-		code, raw := doReq(handler.DeleteAccount(accountStore), "DELETE", "/api/account", nil, "")
+		code, raw := doReq(handler.DeleteAccount(accountStore, nil), "DELETE", "/api/account", nil, "")
 		if code != 400 {
 			t.Fatalf("want 400, got %d", code)
 		}

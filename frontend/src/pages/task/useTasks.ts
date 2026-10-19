@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import axiosInstance from "@/lib/axios";
+import { useTaskEventStream } from "@/lib/sse";
 import type { TaskApiResponse } from "@/types/api";
 import {
   type Task,
@@ -69,6 +70,37 @@ export function useTasks(): UseTasksResult {
     // 依赖为 setState + axios 单例，引用稳定；故意不写依赖避免重复加载
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // SSE 实时事件：任务结束（完成/失败/取消）自动刷新列表，替代手动刷新；
+  // progress 事件实时合并阶段与详情到运行中任务（数字进度仍以 REST runtime 为准）
+  useTaskEventStream(null, {
+    onComplete: () => {
+      void fetchTasks();
+    },
+    onCancel: () => {
+      void fetchTasks();
+    },
+    onError: () => {
+      void fetchTasks();
+    },
+    onProgress: (e) => {
+      setData((prev) =>
+        prev.map((t) =>
+          t.id === e.taskId && t.status === "processing"
+            ? {
+                ...t,
+                runtime: {
+                  ...t.runtime,
+                  stage: e.stage ?? t.runtime?.stage,
+                  stageDetail: e.stageDetail ?? t.runtime?.stageDetail,
+                  error: e.error || t.runtime?.error,
+                },
+              }
+            : t
+        )
+      );
+    },
+  });
 
   // 检查账户是否有任务正在运行或启动
   const isAccountBusy = (accountName: string) => {

@@ -53,6 +53,25 @@ func ValidateCookie(cookie string) ValidateCookieResult {
 	}
 }
 
+// CookieField 提取 cookie 中指定字段的值（字段名大小写不敏感，如 UID/CID/SEID/KID）。
+// 不存在时返回空字符串。
+func CookieField(cookie, field string) string {
+	for _, p := range strings.Split(cookie, ";") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		eqIdx := strings.Index(p, "=")
+		if eqIdx <= 0 {
+			continue
+		}
+		if strings.EqualFold(p[:eqIdx], field) {
+			return p[eqIdx+1:]
+		}
+	}
+	return ""
+}
+
 // ProbeAccount 通过权威探测接口验证 cookie 是否存活。
 //
 // 判定只看 HTTP 状态与结构化 state/errno，不再依赖错误文案关键词：

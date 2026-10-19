@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import axiosInstance from "@/lib/axios";
+import { useTaskEventStream } from "@/lib/sse";
 
 interface Progress {
   filePath?: string;
@@ -86,51 +87,119 @@ export default function DownloadProgressPage() {
   }, [executionId]);
 
   useEffect(() => {
-    const loadLiveLogs = async () => {
-      // 历史 execution 模式：走 history 接口
-      if (executionId) {
-        await loadHistoryLogs();
-        return;
-      }
-      setConnectionStatus("加载中...");
-      try {
-        // 后端 /api/taskLog/:taskId 返回一次性纯文本行（非 SSE 流）：
-        // 行内容可能是 Progress JSON（文件进度），也可能是普通日志文本
-        const response = await axiosInstance.get(
-          `/api/taskLog/${encodeURIComponent(taskId ?? "")}`
-        );
-        const text: string = typeof response.data === "string" ? response.data : "";
-        const lines = text.split("\n").filter((l) => l.trim() !== "");
+    // 历史 execution 模式：走 history 接口（SSE 缓冲只覆盖运行中任务的最近 500 帧）
+    if (executionId) {
+      void loadHistoryLogs();
+      return;
+    }
+    setConnectionStatus("连接中...");
+    // 实时模式走 SSE（useTaskEventStream 见下方 effect）；
+    // 若 4 秒内未建立连接（SSE 不可用），降级为一次性 REST 拉取
+    const fallbackTimer = setTimeout(() => {
+      setConnectionStatus((prev) => {
+        if (prev === "连接中...") {
+          void loadLiveLogsREST();
+          return "已加载（非实时）";
+        }
+        return prev;
+      });
+    }, 4000);
+    return () => clearTimeout(fallbackTimer);
+    // 依赖为 setState + axios 单例，引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, executionId]);
 
-        const parsed: Progress[] = [];
-        const raw: string[] = [];
-        for (const line of lines) {
-          try {
-            const obj = JSON.parse(line);
-            if (obj && typeof obj === "object" && ("filePath" in obj || "error" in obj)) {
-              parsed.push(obj as Progress);
-              continue;
-            }
-          } catch {
-            // 非 JSON 行
+  // 实时模式：SSE 订阅该任务，服务端连接时重放最近 500 帧，之后增量推送
+  const { connected: sseConnected } = useTaskEventStream(
+    executionId ? undefined : (taskId ?? null),
+    {
+      onProgress: (e) => {
+        setConnectionStatus("实时同步中");
+        if (!e.filePath) return;
+        setLogs((prev) => {
+          const idx = prev.findIndex((l) => l.filePath === e.filePath);
+          const item: Progress = {
+            filePath: e.filePath,
+            percent: e.percent,
+            overallPercent: e.overallPercent,
+            done: e.done,
+            error: e.error || undefined,
+          };
+          if (idx !== -1) {
+            const updated = [...prev];
+            updated[idx] = { ...updated[idx], ...item };
+            return updated;
           }
-          raw.push(line);
-        }
+          return [...prev, item];
+        });
+      },
+      onLog: (e) => {
+        setConnectionStatus("实时同步中");
+        setRawLines((prev) => {
+          if (prev.includes(e.message)) return prev; // 重放帧与增量可能重叠，简单去重
+          return [...prev, e.message];
+        });
+      },
+      onComplete: (e) => {
+        setTaskStatus(STATUS_LABEL[e.status] ?? "开始");
+        setConnectionStatus("任务已结束");
+      },
+      onError: () => {
+        setTaskStatus("失败");
+        setConnectionStatus("任务已结束");
+      },
+      onCancel: () => {
+        setTaskStatus("已取消");
+        setConnectionStatus("任务已结束");
+      },
+    }
+  );
 
-        setLogs(parsed);
-        setRawLines(raw);
-        setConnectionStatus("已加载");
-        if (lines.length === 0) {
-          setTaskStatus("不存在");
-        }
-      } catch (error) {
-        console.error("加载任务日志失败:", error);
-        setConnectionStatus("加载日志失败");
+  // SSE 连接状态同步到展示文案
+  useEffect(() => {
+    if (executionId) return;
+    setConnectionStatus((prev) => {
+      if (sseConnected && (prev === "连接中..." || prev === "已加载（非实时）")) {
+        return "实时同步中";
       }
-    };
+      return prev;
+    });
+  }, [sseConnected, executionId]);
 
-    loadLiveLogs();
-  }, [taskId, executionId, loadHistoryLogs]);
+  // SSE 不可用时的兜底：一次性拉取纯文本日志
+  const loadLiveLogsREST = useCallback(async () => {
+    try {
+      const response = await axiosInstance.get(
+        `/api/taskLog/${encodeURIComponent(taskId ?? "")}`
+      );
+      const text: string = typeof response.data === "string" ? response.data : "";
+      const lines = text.split("\n").filter((l) => l.trim() !== "");
+
+      const parsed: Progress[] = [];
+      const raw: string[] = [];
+      for (const line of lines) {
+        try {
+          const obj = JSON.parse(line);
+          if (obj && typeof obj === "object" && ("filePath" in obj || "error" in obj)) {
+            parsed.push(obj as Progress);
+            continue;
+          }
+        } catch {
+          // 非 JSON 行
+        }
+        raw.push(line);
+      }
+
+      setLogs((prev) => (prev.length >= parsed.length ? prev : parsed));
+      setRawLines((prev) => (prev.length >= raw.length ? prev : raw));
+      if (lines.length === 0) {
+        setTaskStatus("不存在");
+      }
+    } catch (error) {
+      console.error("加载任务日志失败:", error);
+      setConnectionStatus("加载日志失败");
+    }
+  }, [taskId]);
 
   const cancelTask = async () => {
     if (isCancelling) return;

@@ -86,6 +86,27 @@ func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc {
 			return
 		}
 
+		// 同一 115 账号（cookie UID 相同）禁止以新名字重复添加：
+		// STRM 播放地址按账户名寻址，重复添加会诱导用户切换到新账户名，
+		// 导致旧账户名下的全部 STRM 因「账号不存在」而无法播放。
+		if req.AccountType == "115" {
+			if uid := client115.CookieField(req.Cookie, "UID"); uid != "" {
+				for _, acc := range accountStore.List() {
+					if acc.AccountType != "115" || acc.Cookie == "" {
+						continue
+					}
+					if client115.CookieField(acc.Cookie, "UID") == uid {
+						httpx.WriteJson(w, http.StatusConflict, map[string]any{
+							"error":        fmt.Sprintf("该 115 账号已存在（账户名：%s）。请直接更新已有账户的 Cookie，避免已生成的 STRM 失效", acc.Name),
+							"code":         "duplicate_uid",
+							"existingName": acc.Name,
+						})
+						return
+					}
+				}
+			}
+		}
+
 		// 格式完整不代表 Cookie 存活：格式校验仅用于判定「缺字段=invalid」，
 		// 其余一律先记 unknown，等权威探测/监控给出有效结论，避免假阳性。
 		status := model.CookieStatusUnknown
@@ -139,7 +160,8 @@ type UpdateAccountRequest struct {
 }
 
 // UpdateAccount PUT /api/account 更新账号
-func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc { //nolint:cyclop // complexity: 32
+// cascade 非 nil 且发生改名时，同步任务 / 生活监控 / SQLite 分区中的账户引用。
+func UpdateAccount(accountStore *store.AccountStore, cascade *AccountCascadeDeps) http.HandlerFunc { //nolint:cyclop // complexity: 32
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req UpdateAccountRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -262,12 +284,29 @@ func UpdateAccount(accountStore *store.AccountStore) http.HandlerFunc { //nolint
 			logger.S().Warnf("flush account after update: %v", err)
 		}
 
+		// 改名成功后的引用联动：任务 / 生活监控 / SQLite 账号分区 / 监控运行时。
+		// 只做改名分支（lookupName != req.Name）；仅改 Cookie 不涉及名字引用，无需联动。
+		var cascadeResult map[string]any
+		if lookupName != req.Name && cascade != nil {
+			cascadeResult = CascadeAccountRename(lookupName, req.Name, cascade)
+		}
+
+		if cascadeResult != nil {
+			httpx.OkJson(w, map[string]any{
+				"message": "账号已更新，引用配置已同步",
+				"account": acc,
+				"cascade": cascadeResult,
+			})
+			return
+		}
 		httpx.OkJson(w, acc)
 	}
 }
 
-// DeleteAccount DELETE /api/account?name=xxx 删除账号
-func DeleteAccount(accountStore *store.AccountStore) http.HandlerFunc {
+// DeleteAccount DELETE /api/account?name=xxx[&force=1] 删除账号
+// 默认做引用检查：任务 / 生活监控 / SQLite 索引仍在引用时返回 409 + 引用详情，
+// 需要显式传 force=1 才会真正删除，防止误删导致已生成的 STRM 与监控大面积失效。
+func DeleteAccount(accountStore *store.AccountStore, cascade *AccountCascadeDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
 		if name == "" {
@@ -278,6 +317,20 @@ func DeleteAccount(accountStore *store.AccountStore) http.HandlerFunc {
 		if !accountStore.Has(name) {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "账户不存在"})
 			return
+		}
+
+		force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+		if !force {
+			refs := CollectAccountRefs(name, cascade)
+			if refs.HasRefs() {
+				httpx.WriteJson(w, http.StatusConflict, map[string]any{
+					"error": fmt.Sprintf("账号 %q 仍被引用，删除后相关 STRM 将无法播放、监控将报错", name),
+					"code":  "account_in_use",
+					"refs":  refs,
+					"hint":  "可先修改相关任务 / 生活监控配置，或传 force=1 确认强制删除",
+				})
+				return
+			}
 		}
 
 		if err := accountStore.Delete(name); err != nil {

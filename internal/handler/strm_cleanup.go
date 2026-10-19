@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,9 @@ type StaleStrm struct {
 	Content string `json:"content,omitempty"`
 	// Truncated P3：true 表示文件 > 512 字节，前端可提示"查看完整"
 	Truncated bool `json:"truncated,omitempty"`
+	// Reason 失效原因：not_in_cloud（云端已无对应文件）/ account_missing（STRM 引用的账号已不存在）。
+	// 账号失效优先标记（更可操作：删文件后需用现有账号重建）。
+	Reason string `json:"reason,omitempty"`
 }
 
 type MissingStrm struct {
@@ -90,6 +94,10 @@ type MappingScanResult struct {
 	StaleStrms          []StaleStrm   `json:"staleStrms"`
 	MissingStrms        []MissingStrm `json:"missingStrms"`
 	Error               string        `json:"error,omitempty"`
+	// ErrorCode 结构化错误码：account_not_found（账号不存在/无 Cookie，云端比对已跳过）/
+	// cloud_dir_failed（云端目录获取失败）/ cloud_walk_failed（云端遍历失败）等。
+	// 前端可据此做差异化提示；Error 字段保持人类可读文案兼容旧渲染。
+	ErrorCode string `json:"errorCode,omitempty"`
 	// DbRecordCount 该路径映射下 SQLite files 表真实记录数（=云路径前缀精确匹配）
 	// 未开启 sqlite 时为 0（前端可通过是否提供过 reconcile 结果判断语义）
 	DbRecordCount int `json:"dbRecordCount,omitempty"`
@@ -369,8 +377,18 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 	cookie, ok := accountMap[m.Account]
 	if !ok || cookie == "" {
 		// P2：即使账号/云端不可用，仍先 Walk 本地，把 localStrmCount / associatedFileCount 填上（避免空场景下 2 个计数都为 0 误导）
-		result.LocalStrmCount, result.AssociatedFileCount = countLocalByRoot(m.LocalPath)
-		result.Error = fmt.Sprintf("account %s not found or no cookie", m.Account)
+		localStrmFiles := listLocalStrmFiles(m.LocalPath)
+		result.LocalStrmCount = len(localStrmFiles)
+		_, assocCount := countLocalByRoot(m.LocalPath)
+		result.AssociatedFileCount = assocCount
+		result.ErrorCode = "account_not_found"
+		// 云端比对无法进行，但本地仍能扫出「引用了失效账号」的 STRM（改名/删除账号后的典型残留）
+		mergeAccountMismatch(&result, m.LocalPath, localStrmFiles, accountMap)
+		if len(result.StaleStrms) > 0 {
+			result.Error = fmt.Sprintf("账号 %q 不存在或无 Cookie（云端比对已跳过）；已检出 %d 个 STRM 引用的账号已失效，可清理后用现有账号重建", m.Account, len(result.StaleStrms))
+		} else {
+			result.Error = fmt.Sprintf("账号 %q 不存在或无 Cookie（云端比对已跳过）", m.Account)
+		}
 		return result
 	}
 
@@ -384,6 +402,8 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 
 	cid, err := client.FsDirGetID(ctx, m.CloudPath, cookie)
 	if err != nil {
+		result.ErrorCode = "cloud_dir_failed"
+		mergeAccountMismatch(&result, m.LocalPath, localStrmFiles, accountMap)
 		if err.Error() == "parse dir id: nil" {
 			result.Error = fmt.Sprintf("路径不存在或无权限：%s", m.CloudPath)
 		} else {
@@ -542,6 +562,82 @@ func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, dep
 		return scanMapping(ctx, m, deps, accountMap)
 	}
 	return scanMappingFromCache(m, entry)
+}
+
+// strmAccountFromContent 从 STRM 内容（播放 URL）中解析 account 查询参数。
+// 非 URL、缺少 scheme 或没有该参数时返回空字符串（无法判定，不作为失效依据）。
+func strmAccountFromContent(content string) string {
+	s := strings.TrimSpace(content)
+	if s == "" {
+		return ""
+	}
+	// 只取第一行，容忍文件末尾换行
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme == "" {
+		return ""
+	}
+	return u.Query().Get("account")
+}
+
+// collectAccountMismatchStrms 扫描本地 STRM 内容，找出引用了「已不存在账号」的文件。
+// validAccounts 为当前存在的账户名集合；返回按 RelPath 升序排列的失效项（reason=account_missing）。
+// 成本：每个 STRM 读前 256 字节（播放 URL 约 150 字节内），仅解析 query，无网络访问。
+func collectAccountMismatchStrms(localPath string, localFiles map[string]os.FileInfo, validAccounts map[string]struct{}) []StaleStrm {
+	result := make([]StaleStrm, 0)
+	for rel, info := range localFiles {
+		content, truncated := readStrmHead(filepath.Join(localPath, rel), 256)
+		if content == "" {
+			continue
+		}
+		acc := strmAccountFromContent(content)
+		if acc == "" {
+			continue
+		}
+		if _, ok := validAccounts[acc]; ok {
+			continue
+		}
+		result = append(result, StaleStrm{
+			RelPath:   rel,
+			Size:      info.Size(),
+			Content:   content,
+			Truncated: truncated,
+			Reason:    "account_missing",
+		})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].RelPath < result[j].RelPath })
+	return result
+}
+
+// mergeAccountMismatch 把「引用失效账号」的 STRM 合并进扫描结果（去重，账号失效原因优先），
+// 并统一按 RelPath 排序。所有扫描路径（正常 / 云端失败 / 账号缺失 / 缓存）都调用它，
+// 保证「账号改名/删除导致的坏 STRM」在任何情况下都能被扫出来。
+func mergeAccountMismatch(result *MappingScanResult, localPath string, localFiles map[string]os.FileInfo, accountMap map[string]string) {
+	if len(localFiles) == 0 {
+		return
+	}
+	valid := make(map[string]struct{}, len(accountMap))
+	for name := range accountMap {
+		valid[name] = struct{}{}
+	}
+	mismatch := collectAccountMismatchStrms(localPath, localFiles, valid)
+	if len(mismatch) > 0 {
+		index := make(map[string]int, len(result.StaleStrms))
+		for i, s := range result.StaleStrms {
+			index[s.RelPath] = i
+		}
+		for _, mm := range mismatch {
+			if i, ok := index[mm.RelPath]; ok {
+				// 双重失效：账号失效比「云端不存在」更可操作，覆盖标记
+				result.StaleStrms[i].Reason = mm.Reason
+				continue
+			}
+			result.StaleStrms = append(result.StaleStrms, mm)
+		}
+	}
+	sort.Slice(result.StaleStrms, func(i, j int) bool { return result.StaleStrms[i].RelPath < result.StaleStrms[j].RelPath })
 }
 
 // readStrmHead P3：读取本地 .strm 文件前 maxBytes 字节，返回 (content, truncated)
