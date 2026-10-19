@@ -1231,8 +1231,10 @@ func buildStrmForMissing(m MappingScanResult, miss MissingStrm, settings *model.
 	if tmpl != "" {
 		ext := strings.ToLower(filepath.Ext(fileName))
 		stemForTmpl := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-		// 云端完整路径 = 映射根 + 相对路径（RelPath 相对 LocalPath，与 CloudPath 一一对应）
-		cloudPath := strings.TrimRight(m.CloudPath, "/") + "/" + miss.RelPath
+		// 云端完整路径 = 映射根 + 相对路径。miss.RelPath 是本地形态（OS 分隔符、'：' 全角字符），
+		// 必须先逐段反推为云端形态（'/' 分隔、':' ASCII），才能与生成侧 f.CloudPath 同形态；
+		// 否则 {file_path}/{file_path_raw}/{file_path_strict} 会渲染出混合形态的路径。
+		cloudPath := strings.TrimRight(m.CloudPath, "/") + "/" + strmutil.LocalRelToCloudRel(miss.RelPath)
 		content = model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
 			Template:  tmpl,
 			Prefix:    prefix,

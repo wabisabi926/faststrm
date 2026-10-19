@@ -10,6 +10,9 @@ tmp/config/.salt
 config/*.json
 config/.salt
 config/.jwt_secret
+# 配置备份（本地运行时产物，不进仓库）
+config/*.bak*
+**/config/*.bak*
 !.config/*.sample.json
 !.config/*.example.json
 !**/config/*.sample.json

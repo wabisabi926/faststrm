@@ -103,6 +103,23 @@ func LocalNameToCloudName(name string) string {
 	return strings.ReplaceAll(name, "：", ":")
 }
 
+// LocalRelToCloudRel 把本地相对路径反推为云端相对路径：分隔符统一为 '/'，逐段还原可逆字符。
+//
+// 与 SanitizeRelPath 互为逆方向：后者是「云端 → 本地」（'/' 分隔 → OS 分隔、':' → '：'），
+// 这里只做可逆部分（OS 分隔 → '/'、'：' → ':'），用于「已有本地相对路径、要拼出云端路径」的场景
+// （如清理页为漏项重建 STRM 时的 {file_path} 模板变量，必须与生成侧 f.CloudPath 同形态）。
+// '_' << '/' 不可逆，原样保留（与云端转义结果本就一致）。
+func LocalRelToCloudRel(localRel string) string {
+	if localRel == "" {
+		return ""
+	}
+	parts := strings.Split(strings.ReplaceAll(localRel, "\\", "/"), "/")
+	for i := range parts {
+		parts[i] = LocalNameToCloudName(parts[i])
+	}
+	return strings.Join(parts, "/")
+}
+
 // SanitizeRelPath 逐段清理云端相对路径，返回当前平台的本地相对路径。
 //
 // 这是「云端路径 → 本地路径」的唯一入口：task（全量/增量生成）与 monitor（事件生成）

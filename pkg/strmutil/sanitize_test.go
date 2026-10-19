@@ -154,3 +154,19 @@ func TestLocalNameToCloudName(t *testing.T) {
 		}
 	}
 }
+
+// TestLocalRelToCloudRel 本地相对路径 → 云端相对路径：分隔符统一为 '/'，逐段还原全角冒号。
+func TestLocalRelToCloudRel(t *testing.T) {
+	cases := map[string]string{
+		"":          "",
+		"movie.mkv": "movie.mkv",
+		`电影\复仇者联盟：终局之战.mkv`:   "电影/复仇者联盟:终局之战.mkv",   // Windows 分隔符 → '/'，'：' → ':'
+		"电影/复仇者联盟：终局之战.mkv":   "电影/复仇者联盟:终局之战.mkv",   // '/' 已是云端分隔符，保持不变
+		`国语次时代_台_粤音轨\片：名.mkv`: "国语次时代_台_粤音轨/片:名.mkv", // '_' 不可逆，原样保留
+	}
+	for in, want := range cases {
+		if got := LocalRelToCloudRel(in); got != want {
+			t.Errorf("LocalRelToCloudRel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
