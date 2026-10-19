@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/wabisabi926/faststrm/internal/model"
@@ -81,6 +82,39 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	return &out, nil
 }
 
+// normalizeExtensions 规范化扩展名列表：去空白、去前导点、小写、去重（保留首次出现顺序）。
+// 存储层统一为「无点小写」（如 "mp4"），与 model.DefaultStrmExtensions 一致；
+// 匹配侧（task.normalizeExt / monitor.isMediaFile / mediaExtensionMatch）本就兼容带点与大小写。
+func normalizeExtensions(list []string) ([]string, bool) {
+	if len(list) == 0 {
+		return list, false
+	}
+	out := make([]string, 0, len(list))
+	seen := make(map[string]struct{}, len(list))
+	changed := false
+	for _, raw := range list {
+		ext := strings.ToLower(strings.TrimSpace(raw))
+		ext = strings.TrimPrefix(ext, ".")
+		if ext == "" {
+			changed = true
+			continue
+		}
+		if _, dup := seen[ext]; dup {
+			changed = true
+			continue
+		}
+		seen[ext] = struct{}{}
+		out = append(out, ext)
+		if ext != raw {
+			changed = true
+		}
+	}
+	if len(out) != len(list) {
+		changed = true
+	}
+	return out, changed
+}
+
 // applyDefaults 为缺失字段填充默认值，返回是否发生变更（changed）。
 // 独立成函数以控制 ReadSettings 的圈复杂度（cyclop 上限 25）。
 func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
@@ -96,11 +130,21 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 	}
 
 	if len(out.StrmExtensions) == 0 {
-		out.StrmExtensions = def.StrmExtensions
+		out.StrmExtensions = append([]string{}, def.StrmExtensions...)
 		changed = true
 	} else {
-		// v1.1.1 新增 "iso" 扩展名：对老用户 settings.json 做定向追加（不破坏用户已有自定义）
-		if !sliceContains(out.StrmExtensions, "iso") {
+		// 规范化：去空白、去前导点、小写、去重。
+		// 历史 settings.json 里 ".iso"×N 与 "iso" 并存会被重复处理，也让匹配/展示出现歧义。
+		if norm, normChanged := normalizeExtensions(out.StrmExtensions); normChanged {
+			out.StrmExtensions = norm
+			changed = true
+			logger.S().Infof("[SettingsStore] 迁移: STRM 扩展名已规范化去重: %v", out.StrmExtensions)
+		}
+		if len(out.StrmExtensions) == 0 {
+			out.StrmExtensions = append([]string{}, def.StrmExtensions...)
+			changed = true
+		} else if !sliceContains(out.StrmExtensions, "iso") {
+			// v1.1.1 新增 "iso" 扩展名：对老用户 settings.json 做定向追加（不破坏用户已有自定义）
 			out.StrmExtensions = append(out.StrmExtensions, "iso")
 			changed = true
 		}
@@ -149,7 +193,11 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		changed = true
 	}
 	if len(out.DownloadExtensions) == 0 {
-		out.DownloadExtensions = def.DownloadExtensions
+		out.DownloadExtensions = append([]string{}, def.DownloadExtensions...)
+		changed = true
+	} else if norm, normChanged := normalizeExtensions(out.DownloadExtensions); normChanged {
+		// 关联文件扩展名同样规范化去重（".JPG"/".jpg" 并存会重复统计）
+		out.DownloadExtensions = norm
 		changed = true
 	}
 	if len(out.Strm.ForceProxyUaTokens) == 0 && len(def.Strm.ForceProxyUaTokens) > 0 {
@@ -179,6 +227,14 @@ func (s *SettingsStore) SaveSettings(cfg *model.Settings) error {
 func (s *SettingsStore) saveLocked(cfg *model.Settings) error {
 	if cfg == nil {
 		cfg = model.DefaultSettings()
+	}
+	// 落盘前统一规范化扩展名：去点、小写、去重。
+	// 这样即使用户从 UI 或手工编辑写入 ".ISO, iso, .iso"，settings.json 也只会保留一份 "iso"。
+	if norm, changed := normalizeExtensions(cfg.StrmExtensions); changed {
+		cfg.StrmExtensions = norm
+	}
+	if norm, changed := normalizeExtensions(cfg.DownloadExtensions); changed {
+		cfg.DownloadExtensions = norm
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

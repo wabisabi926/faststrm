@@ -3,12 +3,16 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/monitor"
 	"github.com/wabisabi926/faststrm/internal/service/store"
@@ -18,6 +22,7 @@ import (
 // LifeMonitorDeps 生活监控相关 handler 依赖
 type LifeMonitorDeps struct {
 	SettingsStore    *store.SettingsStore
+	AccountStore     *store.AccountStore
 	Monitor          *monitor.Monitor
 	LifeEventLogRepo *db.LifeEventLogRepo
 }
@@ -62,6 +67,39 @@ type lifeMonitorRequest struct {
 	Account string          `json:"account"`
 	Config  json.RawMessage `json:"config"`
 	Updates json.RawMessage `json:"updates"`
+}
+
+// validateLifeMonitorAccounts 保存前校验监控配置里的账户引用。
+// 账户改名/删除后 settings.json 可能残留旧名字：监控会每轮刷新报错且永不产生事件，
+// 因此保存时直接拒绝并列出缺失账户，让用户先修正配置（账号改名联动会自动同步）。
+func validateLifeMonitorAccounts(cfg model.LifeMonitorSettings, accountStore *store.AccountStore) string {
+	if accountStore == nil {
+		return ""
+	}
+	missing := make([]string, 0)
+	seen := make(map[string]struct{})
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || accountStore.Has(name) {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		missing = append(missing, name)
+	}
+	for _, a := range cfg.Accounts {
+		add(a)
+	}
+	for _, pm := range cfg.PathMappings {
+		add(pm.Account)
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	sort.Strings(missing)
+	return fmt.Sprintf("生活监控引用了不存在的账户：%s（账户可能已改名或删除，请先修正配置，否则监控会持续报错）", strings.Join(missing, "、"))
 }
 
 // HandleLifeMonitorPOST POST /api/lifeMonitor 按动作执行监控操作
@@ -144,6 +182,10 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid config"})
 				return
 			}
+			if msg := validateLifeMonitorAccounts(merged, deps.AccountStore); msg != "" {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": msg})
+				return
+			}
 			settings.LifeMonitor = merged
 			if err := deps.SettingsStore.SaveSettings(settings); err != nil {
 				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
@@ -189,6 +231,10 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 			// 在现有结构上 unmarshal updates：仅覆盖 updates 中存在的字段
 			if err := json.Unmarshal(req.Updates, &merged); err != nil {
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid updates"})
+				return
+			}
+			if msg := validateLifeMonitorAccounts(merged, deps.AccountStore); msg != "" {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": msg})
 				return
 			}
 			settings.LifeMonitor = merged

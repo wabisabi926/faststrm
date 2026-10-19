@@ -17,12 +17,12 @@ func TestScanMappingFromCache_EmptyEntry(t *testing.T) {
 		CloudPath: "/test",
 		LocalPath: "/tmp/test",
 	}
-	result := scanMappingFromCache(m, nil)
+	result := scanMappingFromCache(m, nil, nil)
 	if result.Error == "" {
 		t.Error("expected error for nil entry")
 	}
 
-	result2 := scanMappingFromCache(m, &store.StrmCacheEntry{})
+	result2 := scanMappingFromCache(m, &store.StrmCacheEntry{}, nil)
 	if result2.Error == "" {
 		t.Error("expected error for empty entry")
 	}
@@ -55,7 +55,7 @@ func TestScanMappingFromCache_WithMatch(t *testing.T) {
 		LocalPath: localPath,
 	}
 
-	result := scanMappingFromCache(m, entry)
+	result := scanMappingFromCache(m, entry, nil)
 
 	// Should have found 3 local STRMs
 	if result.LocalStrmCount != 3 {
@@ -81,6 +81,42 @@ func TestScanMappingFromCache_WithMatch(t *testing.T) {
 	}
 }
 
+// 账号改名/删除后残留在本地的 STRM：缓存扫描也必须标出 account_missing
+// （STRM 内容里已包含账户名，本地即可判定，不依赖云端请求）。
+func TestScanMappingFromCache_AccountMismatch(t *testing.T) {
+	root := t.TempDir()
+	localPath := filepath.Join(root, "media")
+	_ = os.MkdirAll(localPath, 0o755)
+
+	// gone 已不存在；current 仍有效
+	_ = os.WriteFile(filepath.Join(localPath, "old.strm"),
+		[]byte("http://127.0.0.1:8090/api/play?account=gone&pickcode=pc1"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
+	_ = os.WriteFile(filepath.Join(localPath, "ok.strm"),
+		[]byte("http://127.0.0.1:8090/api/play?account=current&pickcode=pc2"), 0o644) //nolint:gosec // G306 — 测试夹具，权限不敏感
+
+	entry := &store.StrmCacheEntry{
+		UUID:       "test-uuid",
+		TaskID:     "task-001",
+		LocalPaths: []string{filepath.Join(localPath, "ok.strm")},
+	}
+	m := MappingScanRequest{Account: "current", CloudPath: "/test", LocalPath: localPath}
+	result := scanMappingFromCache(m, entry, map[string]string{"current": "UID=1"})
+
+	if len(result.StaleStrms) != 1 {
+		t.Fatalf("StaleStrms count: got %d, want 1 (%+v)", len(result.StaleStrms), result.StaleStrms)
+	}
+	stale := result.StaleStrms[0]
+	if stale.RelPath != "old.strm" {
+		t.Errorf("RelPath: got %s, want old.strm", stale.RelPath)
+	}
+	if stale.Reason != "account_missing" {
+		t.Errorf("Reason: got %q, want account_missing", stale.Reason)
+	}
+	if len(result.MissingStrms) != 0 {
+		t.Errorf("MissingStrms count: got %d, want 0", len(result.MissingStrms))
+	}
+}
+
 func TestScanMappingFromCache_MissingStrms(t *testing.T) {
 	root := t.TempDir()
 	localPath := filepath.Join(root, "media")
@@ -103,7 +139,7 @@ func TestScanMappingFromCache_MissingStrms(t *testing.T) {
 		LocalPath: localPath,
 	}
 
-	result := scanMappingFromCache(m, entry)
+	result := scanMappingFromCache(m, entry, nil)
 
 	if result.LocalStrmCount != 1 {
 		t.Errorf("LocalStrmCount: got %d, want 1", result.LocalStrmCount)
@@ -140,7 +176,7 @@ func TestScanMappingFromCache_Subdirs(t *testing.T) {
 		LocalPath: localPath,
 	}
 
-	result := scanMappingFromCache(m, entry)
+	result := scanMappingFromCache(m, entry, nil)
 
 	if result.LocalStrmCount != 1 {
 		t.Errorf("LocalStrmCount: got %d, want 1", result.LocalStrmCount)
@@ -168,7 +204,7 @@ func TestScanMappingFromCache_NoLocalDir(t *testing.T) {
 		LocalPath: "/nonexistent",
 	}
 
-	result := scanMappingFromCache(m, entry)
+	result := scanMappingFromCache(m, entry, nil)
 
 	if result.LocalStrmCount != 0 {
 		t.Errorf("LocalStrmCount: got %d, want 0", result.LocalStrmCount)
@@ -224,7 +260,7 @@ func TestScanMappingFromCache_AllMatch(t *testing.T) {
 		LocalPath: localPath,
 	}
 
-	result := scanMappingFromCache(m, entry)
+	result := scanMappingFromCache(m, entry, nil)
 
 	if result.LocalStrmCount != 2 {
 		t.Errorf("LocalStrmCount: got %d, want 2", result.LocalStrmCount)

@@ -16,7 +16,7 @@ import {
 import { ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import axiosInstance from "@/lib/axios";
+import axiosInstance, { axios } from "@/lib/axios";
 import { 
   Edit, 
   Trash2, 
@@ -50,12 +50,28 @@ type AccountStatus = {
   message?: string;
 };
 
+// 后端 DeleteAccount 引用检查返回的引用详情（与 handler.AccountRefs JSON 对应）
+type AccountRefs = {
+  tasks?: string[];
+  monitorAccounts?: boolean;
+  monitorMappings?: number;
+  dbFileRecords?: number;
+  dbFolderRecords?: number;
+};
+
+type PendingDeleteRefs = {
+  name: string;
+  refs: AccountRefs;
+};
+
 export default function AccountPage() {
   const [data, setData] = useState<Account[]>([]);
   const [statusMap, setStatusMap] = useState<Record<string, AccountStatus>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<string | null>(null);
+  // 删除被引用账号时，后端返回 409 + 引用详情；非空表示当前弹窗处于「二次确认强制删除」状态
+  const [pendingDeleteRefs, setPendingDeleteRefs] = useState<PendingDeleteRefs | null>(null);
   const isMobile = useIsMobile();
 
   const fetchAccounts = useCallback(async () => {
@@ -105,12 +121,24 @@ export default function AccountPage() {
     }
   }, [data.length]);
 
-  const handleDelete = async (name: string) => {
+  const handleDelete = async (name: string, force = false) => {
     try {
-      await axiosInstance.delete(`/api/account?name=${encodeURIComponent(name)}`);
+      await axiosInstance.delete(
+        `/api/account?name=${encodeURIComponent(name)}${force ? "&force=1" : ""}`
+      );
       toast.success("删除成功");
+      setDeleteDialogOpen(null);
+      setPendingDeleteRefs(null);
       fetchAccounts();
-    } catch {
+    } catch (err) {
+      const data = axios.isAxiosError(err)
+        ? (err.response?.data as { code?: string; refs?: AccountRefs } | undefined)
+        : undefined;
+      // 后端默认拒绝删除仍被引用的账号：展示引用详情，二次确认后才强制删除。
+      if (data?.code === "account_in_use" && !force) {
+        setPendingDeleteRefs({ name, refs: data.refs ?? {} });
+        return;
+      }
       toast.error("删除失败");
     }
   };
@@ -200,12 +228,34 @@ export default function AccountPage() {
       cell: ({ row }) => {
         const account = row.original;
         const status = statusMap[account.name];
-        
+
+        // 更新 Cookie 入口始终可见（115 账户）：换号/重新登录后要沿用同一账户名，
+        // 否则已生成的 STRM 会因「账号不存在」而无法播放。
+        const updateCookieBtn =
+          account.accountType === "115" ? (
+            <UpdateCookieDialog
+              accountName={account.name}
+              onSuccess={() => {
+                fetchAccounts();
+                setTimeout(() => checkStatus([account.name]), 1000);
+              }}
+              trigger={
+                <Button variant="outline" size="sm" className="h-7 text-xs">
+                  <RefreshCw className="w-3 h-3 mr-1" />
+                  更新Cookie
+                </Button>
+              }
+            />
+          ) : null;
+
         if (!status) {
           return (
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span className="text-xs">检测中...</span>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="text-xs">检测中...</span>
+              </div>
+              {updateCookieBtn}
             </div>
           );
         }
@@ -240,26 +290,8 @@ export default function AccountPage() {
                 </span>
               )}
             </div>
-            {/* 异常且为 115 类型时显示"更新Cookie"按钮 */}
-            {status.status === "error" && account.accountType === "115" && (
-              <UpdateCookieDialog
-                accountName={account.name}
-                onSuccess={() => {
-                  fetchAccounts();
-                  setTimeout(() => checkStatus([account.name]), 1000);
-                }}
-                trigger={
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="h-7 text-xs"
-                  >
-                    <RefreshCw className="w-3 h-3 mr-1" />
-                    更新Cookie
-                  </Button>
-                }
-              />
-            )}
+            {/* 更新 Cookie 入口始终可见（仅 115）：异常时可换 Cookie，正常时也可换号重登 */}
+            {updateCookieBtn}
           </div>
         );
       },
@@ -290,7 +322,10 @@ export default function AccountPage() {
               size="sm"
               className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-500/10"
               title="删除账户"
-              onClick={() => setDeleteDialogOpen(account.name)}
+              onClick={() => {
+                setPendingDeleteRefs(null);
+                setDeleteDialogOpen(account.name);
+              }}
             >
               <Trash2 className="w-4 h-4" />
             </Button>
@@ -345,7 +380,6 @@ export default function AccountPage() {
   };
 
   const renderMobileCard = (account: Account) => {
-    const status = statusMap[account.name];
     return (
       <Card key={account.name} className="py-0 shadow-sm">
         <CardContent className="p-3 space-y-3">
@@ -367,7 +401,7 @@ export default function AccountPage() {
           <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/50">
             <div className="flex items-center gap-2 flex-wrap">
               {renderStatus(account)}
-              {status?.status === "error" && account.accountType === "115" && (
+              {account.accountType === "115" && (
                 <UpdateCookieDialog
                   accountName={account.name}
                   onSuccess={() => {
@@ -397,7 +431,10 @@ export default function AccountPage() {
                 variant="ghost"
                 size="sm"
                 className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-500/10"
-                onClick={() => setDeleteDialogOpen(account.name)}
+                onClick={() => {
+                  setPendingDeleteRefs(null);
+                  setDeleteDialogOpen(account.name);
+                }}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
@@ -451,26 +488,59 @@ export default function AccountPage() {
         <DataTable columns={columns} data={data} />
       )}
 
-      {/* Delete confirmation dialog */}
-      <Dialog 
-        open={!!deleteDialogOpen} 
-        onOpenChange={(open) => setDeleteDialogOpen(open ? deleteDialogOpen : null)}
+      {/* Delete confirmation dialog（被引用时二次确认强制删除） */}
+      <Dialog
+        open={!!deleteDialogOpen}
+        onOpenChange={(open) => {
+          setDeleteDialogOpen(open ? deleteDialogOpen : null);
+          if (!open) setPendingDeleteRefs(null);
+        }}
       >
         <DialogContent className="max-w-[95vw] sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>确认删除</DialogTitle>
+            <DialogTitle>{pendingDeleteRefs ? "账户仍被引用" : "确认删除"}</DialogTitle>
             <DialogDescription>
-              你确定要删除账户 &ldquo;{deleteDialogOpen}&rdquo; 吗？此操作无法撤销。
-              <br />
-              <span className="text-sm text-gray-500 mt-2 block">
-                账户类型: {data.find(a => a.name === deleteDialogOpen)?.accountType}
-              </span>
+              {pendingDeleteRefs
+                ? `账户 "${pendingDeleteRefs.name}" 仍被以下配置引用。删除后相关 STRM 将无法播放、生活监控会持续报错。`
+                : `你确定要删除账户 "${deleteDialogOpen}" 吗？此操作无法撤销。`}
+              {!pendingDeleteRefs && (
+                <>
+                  <br />
+                  <span className="text-sm text-gray-500 mt-2 block">
+                    账户类型: {data.find((a) => a.name === deleteDialogOpen)?.accountType}
+                  </span>
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
+          {pendingDeleteRefs && (
+            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              {(pendingDeleteRefs.refs.tasks?.length ?? 0) > 0 && (
+                <li>
+                  任务 {pendingDeleteRefs.refs.tasks?.length} 个：
+                  {pendingDeleteRefs.refs.tasks?.slice(0, 3).join("、")}
+                  {(pendingDeleteRefs.refs.tasks?.length ?? 0) > 3 ? " 等" : ""}
+                </li>
+              )}
+              {pendingDeleteRefs.refs.monitorAccounts && <li>生活监控账号列表</li>}
+              {(pendingDeleteRefs.refs.monitorMappings ?? 0) > 0 && (
+                <li>生活监控路径映射 {pendingDeleteRefs.refs.monitorMappings} 条</li>
+              )}
+              {(pendingDeleteRefs.refs.dbFileRecords ?? 0) > 0 && (
+                <li>索引库文件记录 {pendingDeleteRefs.refs.dbFileRecords} 条</li>
+              )}
+              {(pendingDeleteRefs.refs.dbFolderRecords ?? 0) > 0 && (
+                <li>索引库目录记录 {pendingDeleteRefs.refs.dbFolderRecords} 条</li>
+              )}
+            </ul>
+          )}
           <DialogFooter className="gap-2">
-            <Button 
+            <Button
               variant="outline"
-              onClick={() => setDeleteDialogOpen(null)}
+              onClick={() => {
+                setDeleteDialogOpen(null);
+                setPendingDeleteRefs(null);
+              }}
             >
               取消
             </Button>
@@ -478,12 +548,11 @@ export default function AccountPage() {
               variant="destructive"
               onClick={() => {
                 if (deleteDialogOpen) {
-                  handleDelete(deleteDialogOpen);
-                  setDeleteDialogOpen(null);
+                  void handleDelete(deleteDialogOpen, Boolean(pendingDeleteRefs));
                 }
               }}
             >
-              删除
+              {pendingDeleteRefs ? "仍要强制删除" : "删除"}
             </Button>
           </DialogFooter>
         </DialogContent>

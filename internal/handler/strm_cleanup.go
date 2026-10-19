@@ -416,7 +416,10 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 	// 否则带子目录的本地 strm（如 片名/电影.strm）会与扁平的云端列表对不上而被误判全部失效
 	cloudItems := make([]cloudWalkItem, 0, 32)
 	if err := walkCloudTree(ctx, client, cookie, cid, "", &cloudItems); err != nil {
+		result.ErrorCode = "cloud_walk_failed"
 		result.Error = fmt.Sprintf("list cloud files: %v", err)
+		// 云端遍历失败也要做本地账号引用检查：账号改名/删除导致的坏 STRM 不依赖云端结果。
+		mergeAccountMismatch(&result, m.LocalPath, localStrmFiles, accountMap)
 		return result
 	}
 	result.RemoteFileCount = len(cloudItems)
@@ -446,6 +449,7 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 				Size:      info.Size(),
 				Content:   content,
 				Truncated: truncated,
+				Reason:    "not_in_cloud",
 			})
 		}
 	}
@@ -464,10 +468,14 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 		}
 	}
 
+	// 账号改名/删除后残留的 STRM：内容引用的账户已不存在。
+	// 正常云端比对路径也必须合并，不能只在云端失败时才检出。
+	mergeAccountMismatch(&result, m.LocalPath, localStrmFiles, accountMap)
+
 	return result
 }
 
-func scanMappingFromCache(m MappingScanRequest, entry *store.StrmCacheEntry) MappingScanResult {
+func scanMappingFromCache(m MappingScanRequest, entry *store.StrmCacheEntry, accountMap map[string]string) MappingScanResult {
 	result := MappingScanResult{
 		Account:   m.Account,
 		CloudPath: m.CloudPath,
@@ -478,6 +486,7 @@ func scanMappingFromCache(m MappingScanRequest, entry *store.StrmCacheEntry) Map
 	localFiles := listLocalStrmFiles(m.LocalPath)
 	if entry == nil || len(entry.LocalPaths) == 0 {
 		result.Error = "empty cache"
+		mergeAccountMismatch(&result, m.LocalPath, localFiles, accountMap)
 		return result
 	}
 	cachedSet := make(map[string]struct{}, len(entry.LocalPaths))
@@ -504,6 +513,7 @@ func scanMappingFromCache(m MappingScanRequest, entry *store.StrmCacheEntry) Map
 				Size:      size,
 				Content:   content,
 				Truncated: truncated,
+				Reason:    "not_in_cloud",
 			})
 		}
 	}
@@ -517,6 +527,8 @@ func scanMappingFromCache(m MappingScanRequest, entry *store.StrmCacheEntry) Map
 			})
 		}
 	}
+	// 缓存路径同样做账号引用检查（本地内容即可判定，无需云端请求）。
+	mergeAccountMismatch(&result, m.LocalPath, localFiles, accountMap)
 	return result
 }
 
@@ -561,7 +573,7 @@ func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, dep
 		r.Error = fmt.Sprintf("cache expired, fallback to network scan (ttl=%s)", ttl.Round(time.Second))
 		return scanMapping(ctx, m, deps, accountMap)
 	}
-	return scanMappingFromCache(m, entry)
+	return scanMappingFromCache(m, entry, accountMap)
 }
 
 // strmAccountFromContent 从 STRM 内容（播放 URL）中解析 account 查询参数。
@@ -615,7 +627,9 @@ func collectAccountMismatchStrms(localPath string, localFiles map[string]os.File
 // 并统一按 RelPath 排序。所有扫描路径（正常 / 云端失败 / 账号缺失 / 缓存）都调用它，
 // 保证「账号改名/删除导致的坏 STRM」在任何情况下都能被扫出来。
 func mergeAccountMismatch(result *MappingScanResult, localPath string, localFiles map[string]os.FileInfo, accountMap map[string]string) {
-	if len(localFiles) == 0 {
+	// accountMap 为 nil 表示调用方无法提供「当前有效账户」集合（例如缓存扫描单测），
+	// 此时无法判定账号是否失效，跳过以免误报。
+	if len(localFiles) == 0 || accountMap == nil {
 		return
 	}
 	valid := make(map[string]struct{}, len(accountMap))

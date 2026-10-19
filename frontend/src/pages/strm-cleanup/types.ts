@@ -13,6 +13,8 @@ export type StrmPreviewResponse = {
 export type StaleStrm = {
   relPath: string;
   fullPath?: string;
+  /** 失效原因：not_in_cloud=云端已无对应文件；account_missing=STRM 引用的账户已不存在（改名/删除残留） */
+  reason?: "not_in_cloud" | "account_missing";
   /** P3：后端扫描阶段预读 512B；空时保持兼容老字段名 strmContent（同样有值）。truncated=true 时可点"查看完整"调 /preview */
   content?: string;
   /** 兼容字段：与 content 同值，保留给 StaleStrmDialog 现有渲染（s.strmContent || "-"）*/
@@ -48,6 +50,8 @@ export type MappingResult = {
   staleStrms: StaleStrm[];
   missingStrms: MissingStrm[];
   error?: string;
+  /** 结构化扫描错误码：account_not_found（账号不存在/无 Cookie）/ cloud_dir_failed / cloud_walk_failed */
+  errorCode?: string;
   // v1.2.5+：后端每次扫描都查 SQLite 并填此字段；无 sqlite 时缺省 undefined
   dbRecordCount?: number;
 };

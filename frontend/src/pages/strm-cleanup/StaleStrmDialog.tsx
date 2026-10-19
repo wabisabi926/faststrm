@@ -134,7 +134,7 @@ export function StaleStrmDialog({
               </Badge>
             </DialogTitle>
             <DialogDescription>
-              这些 STRM 指向的媒体文件在 115 网盘树中不存在，可能已被删除或移动。点击任意内容单元格可预览 STRM 文件。
+              这些 STRM 指向的媒体文件在 115 网盘树中不存在，或引用的账户已失效（账户改名/删除后的残留），可能已被删除或移动。点击任意内容单元格可预览 STRM 文件。
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center justify-between py-2 text-sm">
@@ -217,7 +217,20 @@ export function StaleStrmDialog({
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                         {s.localPath}
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{s.relPath}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="truncate">{s.relPath}</span>
+                          {s.reason === "account_missing" && (
+                            <Badge
+                              variant="destructive"
+                              className="shrink-0 text-[10px] px-1.5 py-0"
+                              title="STRM 内容引用的账户已不存在（通常由账户改名/删除导致）：删除后用现有账户重新生成即可"
+                            >
+                              账号失效
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell className="font-mono text-xs">
                         <div className="flex items-center gap-2 min-w-0">
                           <button

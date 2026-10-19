@@ -177,6 +177,7 @@ func initPhase6Deps(
 
 	lifeMonitorDeps := handler.LifeMonitorDeps{
 		SettingsStore:    settingsStore,
+		AccountStore:     accountStore,
 		Monitor:          mon,
 		LifeEventLogRepo: lifeEventLogRepo,
 	}

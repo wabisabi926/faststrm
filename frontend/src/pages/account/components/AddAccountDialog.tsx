@@ -95,7 +95,30 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
         // 编辑 → PUT，传递 originalName 用于后端查找
         const payload = { ...values, originalName: account.name };
         response = await axiosInstance.put("/api/account", payload);
-        toast("账号更新成功");
+        const cascade = (
+          response.data as
+            | {
+                cascade?: {
+                  tasksUpdated?: number;
+                  monitorConfigUpdated?: boolean;
+                  dbRecordsRenamed?: Record<string, number>;
+                };
+              }
+            | undefined
+        )?.cascade;
+        if (cascade) {
+          const synced: string[] = [];
+          if (cascade.tasksUpdated) synced.push(`${cascade.tasksUpdated} 个任务`);
+          if (cascade.monitorConfigUpdated) synced.push("生活监控配置");
+          if (cascade.dbRecordsRenamed) synced.push("索引库记录");
+          toast.success(
+            synced.length > 0
+              ? `账号已改名，已同步 ${synced.join("、")}；旧 STRM 请到清理页扫描后重建`
+              : "账号已更新"
+          );
+        } else {
+          toast("账号更新成功");
+        }
       } else {
         // 新增 → POST
         response = await axiosInstance.post("/api/account", values);
@@ -113,7 +136,43 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
       console.error("提交失败详情:", err);
       let errorMsg = "操作失败";
       if (axios.isAxiosError(err)) {
-        errorMsg = (err.response?.data as { error?: string } | undefined)?.error || err.message || errorMsg;
+        const data = err.response?.data as
+          | { error?: string; code?: string; existingName?: string }
+          | undefined;
+        // 同一 115 账号（UID 相同）已存在：引导直接更新已有账户的 Cookie。
+        // 若用新名字再建一份，旧账户名下已生成的 STRM 会全部失效。
+        if (data?.code === "duplicate_uid" && data.existingName) {
+          const cookie = form.getValues("cookie") || "";
+          const confirmed = window.confirm(
+            `该 115 账号已存在（账户名：${data.existingName}）。\n\n` +
+              `为避免已生成的 STRM 失效，请直接更新已有账户的 Cookie。\n` +
+              `是否立即更新「${data.existingName}」的登录状态？`
+          );
+          if (confirmed && cookie) {
+            try {
+              await axiosInstance.put("/api/account", {
+                name: data.existingName,
+                originalName: data.existingName,
+                accountType: "115",
+                cookie,
+              });
+              toast.success(`已更新账户「${data.existingName}」的 Cookie`);
+              onSuccess?.();
+              setOpen(false);
+              form.reset();
+              setCookieMode("qrcode");
+              return;
+            } catch (updateErr) {
+              const msg = axios.isAxiosError(updateErr)
+                ? (updateErr.response?.data as { error?: string } | undefined)?.error ||
+                  updateErr.message
+                : "更新失败";
+              toast.error(msg);
+              return;
+            }
+          }
+        }
+        errorMsg = data?.error || err.message || errorMsg;
       } else if (err instanceof Error) {
         errorMsg = err.message || errorMsg;
       }
@@ -139,14 +198,14 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
     // 获取当前表单值
     const currentValues = form.getValues();
     console.log("当前表单值:", currentValues);
-    
-    // 如果账户名称为空，自动生成一个默认名称
-    if (!currentValues.name) {
-      const defaultName = `115账户-${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/[\/:\s]/g, '-')}`;
-      form.setValue("name", defaultName, { shouldValidate: false });
-      console.log("设置默认账户名称:", defaultName);
+
+    // 账户名会写入 STRM 播放地址：不再自动生成「115账户-时间戳」名字。
+    // 历史默认名是 STRM 大面积失效的根因之一（改名/重登后名字漂移）。
+    if (!currentValues.name.trim()) {
+      toast.success("扫码登录成功，请填写账户名称后点击「保存」");
+      return;
     }
-    
+
     toast.success("扫码登录成功，正在保存...");
 
     // 延迟 500ms 让状态更新后再提交表单
@@ -312,8 +371,14 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
 
                 <Alert>
                   <Info className="h-4 w-4" />
-                  <AlertDescription>
-                    如果希望使用 302 重定向功能，推荐将账户名称与 openlist、cd2 的 115 账户用户名保持一致，这样可以保证正确回源。
+                  <AlertDescription className="space-y-1">
+                    <p>
+                      如果希望使用 302 重定向功能，推荐将账户名称与 openlist、cd2 的 115 账户用户名保持一致，这样可以保证正确回源。
+                    </p>
+                    <p className="text-muted-foreground">
+                      账户名会写入已生成的 STRM 播放地址：改名会自动同步任务、生活监控与索引库，
+                      但旧 STRM 内容不会被重写，需到「STRM 清理」页扫描并重建。
+                    </p>
                   </AlertDescription>
                 </Alert>
               </>

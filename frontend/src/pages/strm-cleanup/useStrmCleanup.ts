@@ -158,6 +158,7 @@ export function useStrmCleanup(
         mappingId: `${idPrefix}-${idx}`,
       })),
       error: m.error,
+      errorCode: m.errorCode,
     }));
     const totalRemote = raw.totalRemoteFiles ?? normalizedMappings.reduce((s, m) => s + m.remoteFileCount, 0);
     const totalLocal = raw.totalLocalStrms ?? normalizedMappings.reduce((s, m) => s + m.localStrmCount, 0);

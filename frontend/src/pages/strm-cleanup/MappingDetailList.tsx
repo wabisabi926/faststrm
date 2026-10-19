@@ -33,7 +33,9 @@ export function MappingDetailList({ mappings }: MappingDetailListProps) {
                 {m.cloudPath} → {m.localPath}
               </span>
               {m.error ? (
-                <Badge variant="destructive">失败</Badge>
+                <Badge variant="destructive">
+                  {m.errorCode === "account_not_found" ? "账号失效" : "失败"}
+                </Badge>
               ) : (
                 <Badge>完成</Badge>
               )}
@@ -69,7 +71,15 @@ export function MappingDetailList({ mappings }: MappingDetailListProps) {
               <span className="text-amber-600 break-all">漏生成：{m.missingStrms.length}</span>
             </div>
             {m.error && (
-              <div className="text-xs text-destructive break-all">错误：{m.error}</div>
+              <div className="text-xs text-destructive break-all">
+                错误：{m.error}
+                {m.errorCode === "account_not_found" && (
+                  <span className="mt-1 block text-muted-foreground">
+                    提示：该映射引用的账户已不存在（通常由账户改名/删除导致）。请改用现有账户重建路径映射；
+                    旧 STRM 可在下方「失效 STRM」中统一清理。
+                  </span>
+                )}
+              </div>
             )}
           </div>
         ))}

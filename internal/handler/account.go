@@ -196,6 +196,12 @@ func UpdateAccount(accountStore *store.AccountStore, cascade *AccountCascadeDeps
 			return
 		}
 
+		// 改名为已存在的账户会在下面的 Delete+Upsert 中静默覆盖对方，必须在改名分支前拦截。
+		if lookupName != req.Name && accountStore.Has(req.Name) {
+			httpx.WriteJson(w, http.StatusConflict, map[string]string{"error": "账户名称已存在，请换一个名称"})
+			return
+		}
+
 		// 验证新 cookie 格式（仅记录警告，不阻止更新）
 		cookieChanged := req.Cookie != "" && req.Cookie != acc.Cookie
 		if cookieChanged {
