@@ -348,7 +348,7 @@ func sanitizePathParts(relativePath string) string {
 // 统一输出：{prefix}/api/strm?account=xxx&pickcode=xxx&file_name=xxx
 // P1-4：customTemplate 非空时优先用 model.RenderStrmUrlTemplate。
 // 对齐 TS generateStrmContent
-func generateStrmContent(cloudPath, strmPrefix string, enablePathEncoding bool, account, pickcode, fileName string, customTemplate ...string) string {
+func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName string, customTemplate ...string) string {
 	// —— P1-4 高级模板优先 ——
 	if len(customTemplate) > 0 && customTemplate[0] != "" {
 		ext := strings.ToLower(filepath.Ext(fileName))

@@ -32,7 +32,6 @@ var scanRetryWait = 20 * time.Second
 type resolvedStrm struct {
 	StrmPrefix         string
 	StrmPrefixSource   string // 前缀来源：configured / auto_lan_ip / unresolved（用于日志与报错）
-	EnablePathEncoding bool
 	StrmExtensions     map[string]struct{}
 	DownloadExtensions map[string]struct{}
 }
@@ -72,11 +71,7 @@ func resolveStrmSettings(task *Task, s *model.Settings, baseURL, publicBaseURL s
 	r.StrmPrefix = prefix
 	r.StrmPrefixSource = source
 
-	// enablePathEncoding
-	r.EnablePathEncoding = s.EnablePathEncoding
-	if task.EnablePathEncoding {
-		r.EnablePathEncoding = true
-	}
+	// enablePathEncoding 已下线：STRM 统一 pickcode 式 URL，file_name 始终编码，无需再解析
 
 	return r
 }

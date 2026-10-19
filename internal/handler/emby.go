@@ -417,11 +417,11 @@ type LifeMonitorPatch struct {
 // settingsPostBody 前端 Settings 页提交的嵌套 JSON 结构
 // 与 model.Settings 的 JSON 标签对齐，兼容 React SPA 的保存格式
 type settingsPostBody struct {
-	UserAgent          string                  `json:"user-agent"`
-	StrmExtensions     []string                `json:"strmExtensions"`
-	DownloadExtensions []string                `json:"downloadExtensions"`
-	MediaMountPath     []string                `json:"mediaMountPath"`
-	StrmPrefix         string                  `json:"strmPrefix"`
+	UserAgent          string   `json:"user-agent"`
+	StrmExtensions     []string `json:"strmExtensions"`
+	DownloadExtensions []string `json:"downloadExtensions"`
+	MediaMountPath     []string `json:"mediaMountPath"`
+	StrmPrefix         string   `json:"strmPrefix"`
 	// Deprecated: URL 路径编码开关已下线（STRM 统一 pickcode 式 URL，file_name 必须编码）。
 	// 保留指针字段仅为兼容旧前端/脚本提交，不再写入 settings。
 	EnablePathEncoding *bool                   `json:"enablePathEncoding"`
@@ -619,9 +619,7 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			if body.LifeMonitor.StrmPrefix != "" {
 				lm.StrmPrefix = body.LifeMonitor.StrmPrefix
 			}
-			if body.LifeMonitor.EnablePathEncoding != nil {
-				lm.EnablePathEncoding = *body.LifeMonitor.EnablePathEncoding
-			}
+			// enablePathEncoding 已下线：旧前端仍可能提交，忽略即可（不再写入配置）
 			if body.LifeMonitor.AutoDownloadMetadata != nil {
 				lm.AutoDownloadMetadata = *body.LifeMonitor.AutoDownloadMetadata
 			}

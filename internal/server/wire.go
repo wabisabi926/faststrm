@@ -123,11 +123,8 @@ func initPhase6Deps(
 			}
 			life.StrmPrefix = prefix
 		}
-		// Enable302/EnablePathEncoding：以全局为准（life 未单独开关的场景）
-		// 若 life 自身未显式设置，继承全局
-		if s.EnablePathEncoding {
-			life.EnablePathEncoding = true
-		}
+		// EnablePathEncoding 已下线（STRM 统一 pickcode 式 URL，file_name 始终编码），
+		// 不再需要全局→life 的继承逻辑
 		// 黑名单关键词：life 自身未设置（空切片）时，继承全局 Download.StrmGenerateBlacklist
 		if len(life.StrmGenerateBlacklist) == 0 {
 			life.StrmGenerateBlacklist = s.Download.StrmGenerateBlacklist

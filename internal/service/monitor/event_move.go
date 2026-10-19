@@ -555,7 +555,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if _, nerr := os.Stat(newStrmPath); nerr == nil {
 			if event.PickCode != "" {
 				if newContent := generateStrmContent(
-					cloudPath, config.StrmPrefix, config.EnablePathEncoding, account, event.PickCode, event.FileName,
+					cloudPath, config.StrmPrefix, account, event.PickCode, event.FileName,
 				); newContent != "" {
 					_ = writeStrmFile(newStrmPath, newContent)
 				}
@@ -610,7 +610,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		// STRM 内容重同步（对齐 L1820-1826: _sync_strm_text_with_event）
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
-				cloudPath, config.StrmPrefix, config.EnablePathEncoding,
+				cloudPath, config.StrmPrefix,
 				account, event.PickCode, event.FileName,
 			); newContent != "" {
 				if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
@@ -677,7 +677,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 			// 同文件 → 仅同步内容（对齐 L1828-1835）
 			if event.PickCode != "" {
 				if newContent := generateStrmContent(
-					cloudPath, config.StrmPrefix, config.EnablePathEncoding, account, event.PickCode, event.FileName,
+					cloudPath, config.StrmPrefix, account, event.PickCode, event.FileName,
 				); newContent != "" {
 					_ = writeStrmFile(newStrmPath, newContent)
 				}
@@ -689,7 +689,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		// 非同文件 → 同步内容 + 删旧 STRM（对齐 L1837-1857）
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
-				cloudPath, config.StrmPrefix, config.EnablePathEncoding,
+				cloudPath, config.StrmPrefix,
 				account, event.PickCode, event.FileName,
 			); newContent != "" {
 				if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
@@ -733,7 +733,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 	if !oldStrmExists && newStrmExists {
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
-				cloudPath, config.StrmPrefix, config.EnablePathEncoding,
+				cloudPath, config.StrmPrefix,
 				account, event.PickCode, event.FileName,
 			); newContent != "" {
 				_ = writeStrmFile(newStrmPath, newContent)

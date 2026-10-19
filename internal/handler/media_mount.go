@@ -47,7 +47,7 @@ func HandleMediaMountSyncGET(deps MediaMountDeps) http.HandlerFunc {
 		for _, t := range tasks {
 			input.Tasks = append(input.Tasks, mediasync.TaskLike{
 				ID: t.ID, Account: t.Account,
-				StrmPrefix: t.StrmPrefix, EnablePathEncoding: t.EnablePathEncoding,
+				StrmPrefix: t.StrmPrefix,
 			})
 		}
 
@@ -99,7 +99,7 @@ func HandleMediaMountSyncPOST(deps MediaMountDeps) http.HandlerFunc {
 		for _, t := range tasks {
 			input.Tasks = append(input.Tasks, mediasync.TaskLike{
 				ID: t.ID, Account: t.Account,
-				StrmPrefix: t.StrmPrefix, EnablePathEncoding: t.EnablePathEncoding,
+				StrmPrefix: t.StrmPrefix,
 			})
 		}
 

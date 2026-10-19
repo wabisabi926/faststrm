@@ -40,10 +40,9 @@ type ComputeInput struct {
 }
 
 type TaskLike struct {
-	ID                 string
-	Account            string
-	StrmPrefix         string
-	EnablePathEncoding bool
+	ID         string
+	Account    string
+	StrmPrefix string
 }
 
 type ComputeResult struct {
@@ -109,35 +108,27 @@ func SourceTagLabel(s MediaMountSourceTag) string {
 }
 
 type ResolvedStrmSettings struct {
-	StrmPrefix         string
-	EnablePathEncoding bool
+	StrmPrefix string
 }
 
 func resolveStrmSettings(account string, task *TaskLike, settings *model.Settings) ResolvedStrmSettings {
 	g := settings
 
 	strmPrefix := g.StrmPrefix
-	enablePathEncoding := g.EnablePathEncoding
 
 	if task != nil {
 		if task.StrmPrefix != "" {
 			strmPrefix = task.StrmPrefix
 		}
-		if task.EnablePathEncoding || task.StrmPrefix != "" {
-			enablePathEncoding = task.EnablePathEncoding
-		}
 	}
 
-	// 统一走 /api/strm（enable302 已废弃）
+	// 统一走 /api/strm（enable302 / enablePathEncoding 均已废弃）
 	trimmed := NormalizePrefix(strmPrefix)
 	if !strings.HasSuffix(trimmed, "/api/strm") {
 		strmPrefix = trimmed + "/api/strm"
 	}
 
-	return ResolvedStrmSettings{
-		StrmPrefix:         strmPrefix,
-		EnablePathEncoding: enablePathEncoding,
-	}
+	return ResolvedStrmSettings{StrmPrefix: strmPrefix}
 }
 
 func collect(entries *[]MediaMountEntry, resultSet *map[string]bool, prefix string, source MediaMountSourceTag, account string, taskID string) {
@@ -191,8 +182,7 @@ func ComputeMediaMountEntries(input ComputeInput) ComputeResult {
 
 	if settings.LifeMonitor.Accounts != nil {
 		lifeOverride := &model.Settings{
-			StrmPrefix:         settings.StrmPrefix,
-			EnablePathEncoding: settings.LifeMonitor.EnablePathEncoding,
+			StrmPrefix: settings.StrmPrefix,
 		}
 		for _, accName := range settings.LifeMonitor.Accounts {
 			if accName == "" {

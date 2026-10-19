@@ -278,7 +278,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 		// 1. 同步新 STRM 内容
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
-				cloudPath, config.StrmPrefix, config.EnablePathEncoding, account, event.PickCode, event.FileName,
+				cloudPath, config.StrmPrefix, account, event.PickCode, event.FileName,
 			); newContent != "" {
 				if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
 					m.appendLog(ctx, account, "rename", false, cloudPath, newStrmPath,
@@ -336,7 +336,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 	// 3. STRM 内容重同步（对齐 L1360: _sync_strm_text_with_event）
 	if event.PickCode != "" {
 		if newContent := generateStrmContent(
-			cloudPath, config.StrmPrefix, config.EnablePathEncoding,
+			cloudPath, config.StrmPrefix,
 			account, event.PickCode, event.FileName,
 		); newContent != "" {
 			if werr := writeStrmFile(newStrmPath, newContent); werr != nil {

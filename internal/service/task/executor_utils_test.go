@@ -77,18 +77,14 @@ func TestResolveStrmSettings_SkipsLoopbackBaseURL(t *testing.T) {
 
 func TestResolveStrmSettings_TaskOverride(t *testing.T) {
 	task := &Task{
-		Account:            "acc2",
-		StrmPrefix:         "https://public.example.com",
-		EnablePathEncoding: true,
+		Account:    "acc2",
+		StrmPrefix: "https://public.example.com",
 	}
 	s := &model.Settings{}
 	r := resolveStrmSettings(task, s, "", "")
 
 	if !strings.HasPrefix(r.StrmPrefix, "https://public.example.com") {
 		t.Fatalf("expect public prefix, got: %s", r.StrmPrefix)
-	}
-	if !r.EnablePathEncoding {
-		t.Fatal("EnablePathEncoding should be overridden to true")
 	}
 
 	// Verify buildStrmContent produces correct URL with account + /api/strm
