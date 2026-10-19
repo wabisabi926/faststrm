@@ -103,6 +103,12 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		accountName := q.Get("account")
 		pickcode := q.Get("pickcode")
 		fileName := q.Get("file_name")
+		// 路径式 URL（/api/strm/电影/.../xxx.iso?account=..&pickcode=..）：
+		// query 不带 file_name，从路径末段取（仅用于显示名 / Content-Disposition，
+		// 播放定位仍靠 pickcode）。r.URL.Path 已由 net/http 解码为 UTF-8。
+		if fileName == "" {
+			fileName = fileNameFromStrmPath(r.URL.Path)
+		}
 		rawMode := strings.ToLower(q.Get("mode"))
 
 		if accountName == "" {
@@ -350,6 +356,31 @@ func pickOneFileName(a, b, cdnURL string) string {
 		return strm.ResolveFileName(name)
 	}
 	return ""
+}
+
+// fileNameFromStrmPath 从路径式 STRM URL 提取文件名（路径末段）。
+//
+// 入参为 r.URL.Path（已解码）。非 /api/strm/ 前缀返回空串。
+// 安全：用 path.Clean 归一化（消除 ".." 穿越）；结果只用于显示名与
+// Content-Disposition，不参与文件系统访问，播放定位仍以 pickcode 为准。
+func fileNameFromStrmPath(p string) string {
+	const prefix = "/api/strm/"
+	if !strings.HasPrefix(p, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(p, prefix)
+	if rest == "" {
+		return ""
+	}
+	cleaned := path.Clean("/" + rest)
+	if cleaned == "/" {
+		return ""
+	}
+	base := path.Base(cleaned)
+	if base == "" || base == "." || base == "/" {
+		return ""
+	}
+	return base
 }
 
 // ==================== doRedirect 302 重定向 ====================
