@@ -86,6 +86,8 @@ export default function LifeEventsPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [successFilter, setSuccessFilter] = useState<string>("all");
   const [autoRefresh, setAutoRefresh] = useState(true);
+  // 默认隐藏「轮询」类型：历史轮询失败记录量大，会把业务事件挤出视野
+  const [showPoll, setShowPoll] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -138,10 +140,30 @@ export default function LifeEventsPage() {
     }
   };
 
+  // 清理历史轮询日志（早期配置残留的失败记录）
+  const handleCleanupPoll = async () => {
+    if (!confirm("确定要删除所有「轮询」类型的历史日志吗？此操作不可恢复。")) return;
+    try {
+      const res = await axiosInstance.delete("/api/lifeEvents?eventType=poll");
+      const removed = res.data?.removed ?? 0;
+      toast.success(`已清理 ${removed} 条轮询日志`);
+      fetchData();
+    } catch {
+      toast.error("清理失败");
+    }
+  };
+
   const accounts = Array.from(new Set(items.map((i) => i.account)));
 
-  const successCount = items.filter((i) => i.success).length;
-  const failCount = items.length - successCount;
+  // 显示集合：类型筛选为「全部」时默认隐藏轮询（除非显式打开）
+  const visibleItems =
+    showPoll || typeFilter === "poll"
+      ? items
+      : items.filter((i) => i.eventType !== "poll");
+  const hiddenPollCount = items.length - visibleItems.length;
+
+  const successCount = visibleItems.filter((i) => i.success).length;
+  const failCount = visibleItems.length - successCount;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -159,6 +181,10 @@ export default function LifeEventsPage() {
           <Button onClick={fetchData} variant="outline">
             <RefreshCw className="h-4 w-4 mr-1" />
             刷新
+          </Button>
+          <Button onClick={handleCleanupPoll} variant="outline">
+            <Trash2 className="h-4 w-4 mr-1" />
+            清理轮询
           </Button>
           <Button onClick={handleClear} variant="outline">
             <Trash2 className="h-4 w-4 mr-1" />
@@ -222,6 +248,21 @@ export default function LifeEventsPage() {
                 <option value="false">失败</option>
               </select>
             </div>
+            <div className="flex items-center gap-1.5">
+              <input
+                id="show-poll"
+                type="checkbox"
+                className="h-4 w-4 rounded border-input"
+                checked={showPoll}
+                onChange={(e) => setShowPoll(e.target.checked)}
+              />
+              <label
+                htmlFor="show-poll"
+                className="text-sm text-muted-foreground cursor-pointer whitespace-nowrap"
+              >
+                显示轮询日志
+              </label>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -229,8 +270,13 @@ export default function LifeEventsPage() {
       {/* 统计 */}
       <div className="flex items-center gap-4 text-sm">
         <span>
-          共 <strong>{items.length}</strong> 条
+          共 <strong>{visibleItems.length}</strong> 条
         </span>
+        {hiddenPollCount > 0 && (
+          <span className="text-xs text-muted-foreground">
+            已隐藏 {hiddenPollCount} 条轮询日志
+          </span>
+        )}
         <span className="flex items-center gap-1 text-green-500">
           <CheckCircle className="h-3.5 w-3.5" />
           成功 {successCount}
@@ -276,7 +322,7 @@ export default function LifeEventsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.map((item) => (
+                  {visibleItems.map((item) => (
                     <TableRow key={item.id} className="hover:bg-muted/50">
                       <TableCell className="text-xs text-muted-foreground font-mono">
                         {formatTime(item.timestamp)}

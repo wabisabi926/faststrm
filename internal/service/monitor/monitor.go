@@ -354,11 +354,17 @@ func (m *Monitor) Status() map[string]AccountMonitorStatus {
 	for _, account := range config.Accounts {
 		if accMon, ok := m.accounts[account]; ok {
 			result[account] = AccountMonitorStatus{
-				Account:      account,
-				Running:      accMon.Running,
-				LastPollTime: accMon.LastPollTime,
-				EventCount:   accMon.EventCount,
-				Error:        accMon.lastErr,
+				Account:             account,
+				Running:             accMon.Running,
+				LastPollTime:        accMon.LastPollTime,
+				EventCount:          accMon.EventCount,
+				Error:               accMon.lastErr,
+				FromID:              accMon.fromID,
+				FromTime:            accMon.fromTime,
+				BackoffUntil:        accMon.backoffUntil,
+				ConsecutiveErrors:   accMon.consecutiveErrors,
+				ConsecutiveFailures: accMon.consecutiveFailures,
+				CookieMarkedInvalid: accMon.cookieMarkedInvalid,
 			}
 		} else {
 			result[account] = AccountMonitorStatus{

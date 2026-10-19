@@ -314,7 +314,7 @@ func HandleLifeEventsGET(deps LifeMonitorDeps) http.HandlerFunc {
 }
 
 // HandleLifeEventsDELETE DELETE /api/lifeEvents 删除日志
-// query: id=xxx / action=cleanup / action=clear
+// query: id=xxx / action=cleanup / action=clear / eventType=poll
 func HandleLifeEventsDELETE(deps LifeMonitorDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if deps.LifeEventLogRepo == nil {
@@ -354,8 +354,22 @@ func HandleLifeEventsDELETE(deps LifeMonitorDeps) http.HandlerFunc {
 			return
 		}
 
+		// 按事件类型清理（用于清掉历史轮询噪音等）：?eventType=poll
+		if eventType := q.Get("eventType"); eventType != "" {
+			removed, err := deps.LifeEventLogRepo.DeleteByEventType(ctx, eventType)
+			if err != nil {
+				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			httpx.OkJson(w, map[string]any{
+				"success": true,
+				"removed": removed,
+			})
+			return
+		}
+
 		if idStr == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "id or action (clear/cleanup) is required"})
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "id or action (clear/cleanup) or eventType is required"})
 			return
 		}
 		id, err := strconv.ParseInt(idStr, 10, 64)

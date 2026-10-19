@@ -213,6 +213,19 @@ func (r *LifeEventLogRepo) DeleteByID(ctx context.Context, id int64) (bool, erro
 	return n > 0, nil
 }
 
+// DeleteByEventType 删除指定事件类型的全部日志（如 poll），返回删除条数。
+// 用于清理历史噪音（早期配置残留的轮询失败记录）。
+func (r *LifeEventLogRepo) DeleteByEventType(ctx context.Context, eventType string) (int64, error) {
+	if r == nil || r.db == nil || eventType == "" {
+		return 0, nil
+	}
+	res, err := r.db.ExecContext(ctx, `DELETE FROM life_event_logs WHERE event_type = ?`, eventType)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // CleanupOld 清理指定时间之前的日志
 func (r *LifeEventLogRepo) CleanupOld(ctx context.Context, beforeMs int64) (int64, error) {
 	if r == nil || r.db == nil {
