@@ -186,7 +186,17 @@ func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...st
 		if strings.EqualFold(ext, ".iso") {
 			stem = stem + ".iso"
 		}
-		if rendered := model.RenderStrmUrlTemplate(urlTemplate[0], r.StrmPrefix, task.Account, f.PickCode, f.Name, ext, stem); rendered != "" {
+		if rendered := model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
+			Template:  urlTemplate[0],
+			Prefix:    r.StrmPrefix,
+			Account:   task.Account,
+			PickCode:  f.PickCode,
+			FileName:  f.Name,
+			Ext:       ext,
+			Stem:      stem,
+			CloudPath: f.CloudPath,
+			FileID:    f.FID,
+		}); rendered != "" {
 			return rendered, nil
 		}
 	}

@@ -22,6 +22,8 @@ export type LifeMonitorConfig = {
   minFileSize?: number;
   firstPullMode?: "latest" | "all" | "last";
   moveMediaMode?: "recreate" | "local_move";
+  // 移出映射（移到非媒体目录）时是否删除本地旧 STRM；默认 true
+  moveOutRemoveLocalStrm?: boolean;
 };
 
 export type Settings = {
@@ -95,6 +97,8 @@ export const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
   minFileSize: 0,
   firstPullMode: "latest",
   moveMediaMode: "local_move",
+  // 移出映射时删除本地旧 STRM（默认开启，符合直觉：移出即清理）
+  moveOutRemoveLocalStrm: true,
 };
 
 // 媒体挂载路径相关类型（在主组件和 BasicSettingsTab 间共享）

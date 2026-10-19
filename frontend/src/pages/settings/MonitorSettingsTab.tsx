@@ -52,6 +52,8 @@ export interface MonitorSettingsTabProps {
   setFirstPullMode: Dispatch<SetStateAction<"latest" | "all" | "last">>;
   moveMediaMode: "recreate" | "local_move";
   setMoveMediaMode: Dispatch<SetStateAction<"recreate" | "local_move">>;
+  moveOutRemoveLocalStrm: boolean;
+  setMoveOutRemoveLocalStrm: Dispatch<SetStateAction<boolean>>;
   pathMappings: PathMapping[];
   setPathMappings: Dispatch<SetStateAction<PathMapping[]>>;
   newMappingAccount: string;
@@ -98,6 +100,8 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
     setFirstPullMode,
     moveMediaMode,
     setMoveMediaMode,
+    moveOutRemoveLocalStrm,
+    setMoveOutRemoveLocalStrm,
     pathMappings,
     setPathMappings,
     newMappingAccount,
@@ -264,6 +268,24 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
             <label htmlFor="remove-empty" className="text-sm cursor-pointer">
               删除文件后自动清理空父目录
             </label>
+          </div>
+
+          {/* Move Out: Remove Local STRM */}
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="move-out-remove-strm"
+              checked={moveOutRemoveLocalStrm}
+              onCheckedChange={(checked) => setMoveOutRemoveLocalStrm(checked === true)}
+              className="mt-0.5"
+            />
+            <div className="space-y-1">
+              <label htmlFor="move-out-remove-strm" className="text-sm cursor-pointer">
+                移出监控目录时删除本地旧 STRM
+              </label>
+              <p className="text-xs text-muted-foreground">
+                文件从映射内移到非媒体目录时，删除旧位置的 STRM 与关联文件；关闭则保留旧 STRM，仅记录日志
+              </p>
+            </div>
           </div>
 
           {/* Min File Size */}

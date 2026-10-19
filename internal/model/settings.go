@@ -483,28 +483,55 @@ func (l *LifeMonitorSettings) RateLimit() time.Duration {
 
 // ==================== P1-4 高级模板渲染 ====================
 
+// StrmURLTemplateVars STRM URL 模板变量集。
+//
+// 变量命名同时兼容两套（对齐 p115strmhelper 便于模板迁移）：
+//   - p115strmhelper 风格：{base_url} {pickcode} {file_id} {file_name} {file_path} {file_stem} {file_suffix}
+//   - faststrm 既有风格：{prefix} {account} {pickcode} {filename} {ext} {stem}
+//
+// 编码约定：account/pickcode/filename/file_name/file_path 自动 URL QueryEscape
+// （file_path 含 '/'，编码后为 %2F，适合放在 query 参数里）；
+// file_path_raw 为不编码的原始路径，适合拼进 URL 路径段（如 /play/{file_path_raw}）。
+// file_id / ext / file_suffix / stem / file_stem 原样输出。
+type StrmURLTemplateVars struct {
+	Template  string
+	Prefix    string // STRM 前缀（服务地址），别名 {base_url}
+	Account   string // 115 账号名
+	PickCode  string // 17 位 pickcode（文件唯一标识，移动/改名不变）
+	FileName  string // 文件名（含扩展名）
+	Ext       string // 带 "." 的小写扩展名；无扩展则为 ""
+	Stem      string // 文件名去扩展名；.iso 文件 stem = "name.iso"
+	CloudPath string // 云端完整路径（相对映射根，形如 "电影/沙丘/x.mkv"）；{file_path} 编码版 / {file_path_raw} 原始版
+	FileID    string // 云端 file_id；未知时为空串
+}
+
 // RenderStrmUrlTemplate 渲染 STRM URL 模板。
-// 支持变量：{prefix} {account} {pickcode} {filename} {ext} {stem}
-// - account/pickcode/filename 自动 URL QueryEscape（安全编码，避免破坏 URL）
-// - ext: 带 "." 的小写扩展名（如 ".mkv", ".iso"）；无扩展则为 ""
-// - stem: 文件名去扩展名；.iso 文件 stem = "name.iso"（保持与默认行为一致）
-// 当 template == "" 时返回空字符串，由调用方回退默认拼接逻辑。
-func RenderStrmUrlTemplate(template, prefix, account, pickcode, fileName, ext, stem string) string {
-	if template == "" {
+// 当 Template == "" 时返回空字符串，由调用方回退默认拼接逻辑。
+func RenderStrmUrlTemplate(v StrmURLTemplateVars) string {
+	if v.Template == "" {
 		return ""
 	}
-	encodedAccount := url.QueryEscape(account)
-	encodedPickcode := url.QueryEscape(pickcode)
-	encodedFileName := url.QueryEscape(fileName)
+	prefix := strings.TrimRight(v.Prefix, "/")
+	encodedAccount := url.QueryEscape(v.Account)
+	encodedPickcode := url.QueryEscape(v.PickCode)
+	encodedFileName := url.QueryEscape(v.FileName)
+	encodedFilePath := url.QueryEscape(v.CloudPath)
 	r := strings.NewReplacer(
-		"{prefix}", strings.TrimRight(prefix, "/"),
+		"{prefix}", prefix,
+		"{base_url}", prefix,
 		"{account}", encodedAccount,
 		"{pickcode}", encodedPickcode,
 		"{filename}", encodedFileName,
-		"{ext}", ext,
-		"{stem}", stem,
+		"{file_name}", encodedFileName,
+		"{ext}", v.Ext,
+		"{file_suffix}", v.Ext,
+		"{stem}", v.Stem,
+		"{file_stem}", v.Stem,
+		"{file_path}", encodedFilePath,
+		"{file_path_raw}", v.CloudPath,
+		"{file_id}", v.FileID,
 	)
-	result := r.Replace(template)
+	result := r.Replace(v.Template)
 	// 确保末尾无多余换行，仅保留模板原有的 "\n"
 	result = strings.TrimRight(result, "\r\n") + "\n"
 	return result

@@ -281,7 +281,8 @@ func (m *Monitor) findLocalStrmByFileName(account, fileName string, fileCategory
 			continue
 		}
 		if fileCategory == 0 {
-			candidate := filepath.Join(dir, fileName)
+			// 本地目录名是落盘形态（'/'→'_'），必须与写入侧用同一套清理规则
+			candidate := filepath.Join(dir, strmutil.SanitizeFileName(fileName))
 			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 				return candidate
 			}
@@ -555,7 +556,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if _, nerr := os.Stat(newStrmPath); nerr == nil {
 			if event.PickCode != "" {
 				if newContent := generateStrmContent(
-					cloudPath, config.StrmPrefix, account, event.PickCode, event.FileName,
+					cloudPath, config.StrmPrefix, account, event.PickCode, event.FileName, event.FileID,
 				); newContent != "" {
 					_ = writeStrmFile(newStrmPath, newContent)
 				}
@@ -611,7 +612,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
 				cloudPath, config.StrmPrefix,
-				account, event.PickCode, event.FileName,
+				account, event.PickCode, event.FileName, event.FileID,
 			); newContent != "" {
 				if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
 					logger.S().Warnf("[Monitor] move 后 STRM 内容重同步失败 %s: %v", newStrmPath, werr)
@@ -677,7 +678,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 			// 同文件 → 仅同步内容（对齐 L1828-1835）
 			if event.PickCode != "" {
 				if newContent := generateStrmContent(
-					cloudPath, config.StrmPrefix, account, event.PickCode, event.FileName,
+					cloudPath, config.StrmPrefix, account, event.PickCode, event.FileName, event.FileID,
 				); newContent != "" {
 					_ = writeStrmFile(newStrmPath, newContent)
 				}
@@ -690,7 +691,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
 				cloudPath, config.StrmPrefix,
-				account, event.PickCode, event.FileName,
+				account, event.PickCode, event.FileName, event.FileID,
 			); newContent != "" {
 				if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
 					m.appendLog(ctx, account, "move", false, cloudPath, newStrmPath,
@@ -734,7 +735,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		if event.PickCode != "" {
 			if newContent := generateStrmContent(
 				cloudPath, config.StrmPrefix,
-				account, event.PickCode, event.FileName,
+				account, event.PickCode, event.FileName, event.FileID,
 			); newContent != "" {
 				_ = writeStrmFile(newStrmPath, newContent)
 			}

@@ -1230,7 +1230,20 @@ func buildStrmForMissing(m MappingScanResult, miss MissingStrm, settings *model.
 	if tmpl != "" {
 		ext := strings.ToLower(filepath.Ext(fileName))
 		stemForTmpl := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-		content = model.RenderStrmUrlTemplate(tmpl, prefix, m.Account, miss.PickCode, fileName, ext, stemForTmpl)
+		// 云端完整路径 = 映射根 + 相对路径（RelPath 相对 LocalPath，与 CloudPath 一一对应）
+		cloudPath := strings.TrimRight(m.CloudPath, "/") + "/" + miss.RelPath
+		content = model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
+			Template:  tmpl,
+			Prefix:    prefix,
+			Account:   m.Account,
+			PickCode:  miss.PickCode,
+			FileName:  fileName,
+			Ext:       ext,
+			Stem:      stemForTmpl,
+			CloudPath: cloudPath,
+			// MissingStrm 无 file_id（云端比对只带 pickcode），模板引用 {file_id} 时为空
+			FileID: "",
+		})
 	}
 	if content == "" {
 		// fallback：默认拼接 {prefix}/api/strm?account=...&pickcode=...

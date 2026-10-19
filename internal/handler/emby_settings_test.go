@@ -127,3 +127,52 @@ func TestStrmSettings_JSONTag(t *testing.T) {
 		t.Fatalf("json tag missing forceProxyUaTokens: %s", string(b))
 	}
 }
+
+// ================================================================
+// HandleSettingsPOST — 移出映射删除本地 STRM 开关
+// 回归：显式 false 必须能关掉；旧前端未提交（nil）时必须保留旧值，不能被重置为默认 true
+// ================================================================
+
+func TestHandleSettingsPOST_MoveOutRemoveLocalStrm(t *testing.T) {
+	ss := newTestSettingsStore(t)
+
+	pre := model.DefaultSettings()
+	pre.LifeMonitor.MoveOutRemoveLocalStrm = true
+	if err := ss.SaveSettings(pre); err != nil {
+		t.Fatalf("save pre settings: %v", err)
+	}
+
+	// 1) 显式提交 false → 必须关掉
+	body := `{"lifeMonitor":{"moveOutRemoveLocalStrm":false}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(EmbyDeps{SettingsStore: ss}).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200, body=%s", w.Code, w.Body.String())
+	}
+	got, err := ss.ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if got.LifeMonitor.MoveOutRemoveLocalStrm {
+		t.Fatal("显式提交 false 后仍为 true")
+	}
+
+	// 2) 旧前端不提交该字段（nil）→ 保留旧值 false，不得被默认值覆盖
+	body2 := `{"lifeMonitor":{"pollInterval":20}}`
+	w2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(body2))
+	r2.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(EmbyDeps{SettingsStore: ss}).ServeHTTP(w2, r2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200, body=%s", w2.Code, w2.Body.String())
+	}
+	got2, err := ss.ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if got2.LifeMonitor.MoveOutRemoveLocalStrm {
+		t.Fatal("未提交该字段时不应被重置为 true（应保留旧值 false）")
+	}
+}

@@ -110,7 +110,7 @@ func (m *Monitor) createStrmForSingleFile(
 	// 5. 生成 STRM URL 内容（P1-4 高级模板优先）
 	content := generateStrmContent(
 		in.CloudPath, config.StrmPrefix,
-		account, in.PickCode, in.FileName,
+		account, in.PickCode, in.FileName, in.FileID,
 		config.StrmUrlTemplate,
 	)
 	if content == "" {

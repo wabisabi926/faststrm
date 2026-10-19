@@ -29,6 +29,8 @@ function buildProps(overrides: Partial<MonitorSettingsTabProps> = {}): MonitorSe
     setFirstPullMode: noop,
     moveMediaMode: "local_move",
     setMoveMediaMode: noop,
+    moveOutRemoveLocalStrm: true,
+    setMoveOutRemoveLocalStrm: noop,
     pathMappings: [{ account: "user-a", cloudPath: "/电影", localPath: "/media/电影" }],
     setPathMappings: noop,
     newMappingAccount: "__all__",

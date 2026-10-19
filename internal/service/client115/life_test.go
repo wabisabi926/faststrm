@@ -532,3 +532,61 @@ func TestPullEvents_EmptyList_Break(t *testing.T) {
 		t.Fatalf("want 0 events, got %d", len(events))
 	}
 }
+
+// ==================== 115 字符引用解码（\x02<码点> → 真实字符） ====================
+
+// toLifeEventItem 必须解码 file_name / file_path 中的 "\x02<码点>" 编码（emoji 等特殊字符），
+// 与任务侧扫描（FsFiles/FullListEntry 解码）保持同一规则，否则同一文件两条链路得到两个名字。
+func TestToLifeEventItem_UnescapesCharRef(t *testing.T) {
+	raw := lifeEventRaw{
+		ID:           "1",
+		Type:         2,
+		FileCategory: 1,
+		UpdateTime:   1000,
+		FileID:       "100",
+		ParentID:     "0",
+		// 对齐 p115client 文档示例："\x02128074" == "👊"
+		FileName: "[\x02128074]0号：优质资源.mkv",
+		FilePath: "/媒体库/[\x02128074]合集/x.mkv",
+		PickCode: "abcdefghij1234567",
+	}
+	item := raw.toLifeEventItem()
+	if want := "[👊]0号：优质资源.mkv"; item.FileName != want {
+		t.Fatalf("FileName = %q, want %q", item.FileName, want)
+	}
+	if want := "/媒体库/[👊]合集/x.mkv"; item.FilePath != want {
+		t.Fatalf("FilePath = %q, want %q", item.FilePath, want)
+	}
+	// 无编码的名字必须原样保留
+	plain := lifeEventRaw{FileName: "普通电影.2023.mkv"}.toLifeEventItem()
+	if plain.FileName != "普通电影.2023.mkv" {
+		t.Fatalf("普通名字不应被改动, got %q", plain.FileName)
+	}
+}
+
+// PullEvents 端到端：behavior_detail 响应里的 file_name 带 "\u0002<码点>" 编码，
+// 返回的 LifeEventItem 必须已解码为真实字符。
+func TestPullEvents_UnescapesCharRefInFileName(t *testing.T) {
+	// JSON 里用 \u0002 转义表示 \x02 控制字符（JSON 规范不允许裸控制字符）
+	trips := []*mockTrip{{
+		Path: "/ios/behavior/detail",
+		BodyString: `{"code":0,"data":{"count":1,"next_page":0,"list":[` +
+			`{"id":"1","type":2,"file_category":1,"update_time":1000,"file_id":"100","parent_id":"0",` +
+			`"file_name":"[\u0002128074]0号：优质资源.mkv","pick_code":"abcdefghij1234567",` +
+			`"file_path":"/媒体库/[\u0002128074]合集/x.mkv"}]}}`,
+	}}
+	lc := newLifeClientWithTrips(t, trips)
+	events, err := lc.PullEvents(context.Background(), "acc1", 0, 0)
+	if err != nil {
+		t.Fatalf("PullEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(events))
+	}
+	if want := "[👊]0号：优质资源.mkv"; events[0].FileName != want {
+		t.Fatalf("FileName = %q, want %q", events[0].FileName, want)
+	}
+	if want := "/媒体库/[👊]合集/x.mkv"; events[0].FilePath != want {
+		t.Fatalf("FilePath = %q, want %q", events[0].FilePath, want)
+	}
+}

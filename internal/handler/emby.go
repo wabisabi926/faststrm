@@ -398,20 +398,22 @@ func HandleSettingsGET(deps EmbyDeps) http.HandlerFunc {
 // LifeMonitorPatch 用于接收前端提交的 LifeMonitor 配置
 // 指针类型字段（*bool）可以区分"未提供"和"显式设置为 false"
 type LifeMonitorPatch struct {
-	Enabled              *bool    `json:"enabled"`
-	Accounts             []string `json:"accounts"`
-	PollInterval         int      `json:"pollInterval"`
-	PathMappings         any      `json:"pathMappings"`
-	RemoveEmptyDirs      *bool    `json:"removeEmptyDirs"`
-	EventTypes           any      `json:"eventTypes"`
-	MinFileSize          int64    `json:"minFileSize"`
-	FirstPullMode        string   `json:"firstPullMode"`
-	MoveMediaMode        string   `json:"moveMediaMode"`
-	StrmPrefix           string   `json:"strmPrefix"`
-	EnablePathEncoding   *bool    `json:"enablePathEncoding"`
-	AutoDownloadMetadata *bool    `json:"autoDownloadMetadata"`
-	DownloadExtensions   []string `json:"downloadExtensions"`
-	NotifyOnlyOnError    *bool    `json:"notifyOnlyOnError"`
+	Enabled         *bool    `json:"enabled"`
+	Accounts        []string `json:"accounts"`
+	PollInterval    int      `json:"pollInterval"`
+	PathMappings    any      `json:"pathMappings"`
+	RemoveEmptyDirs *bool    `json:"removeEmptyDirs"`
+	EventTypes      any      `json:"eventTypes"`
+	MinFileSize     int64    `json:"minFileSize"`
+	FirstPullMode   string   `json:"firstPullMode"`
+	MoveMediaMode   string   `json:"moveMediaMode"`
+	// 移出映射（移到非媒体目录）时是否删除本地旧 STRM；默认 true
+	MoveOutRemoveLocalStrm *bool    `json:"moveOutRemoveLocalStrm"`
+	StrmPrefix             string   `json:"strmPrefix"`
+	EnablePathEncoding     *bool    `json:"enablePathEncoding"`
+	AutoDownloadMetadata   *bool    `json:"autoDownloadMetadata"`
+	DownloadExtensions     []string `json:"downloadExtensions"`
+	NotifyOnlyOnError      *bool    `json:"notifyOnlyOnError"`
 }
 
 // settingsPostBody 前端 Settings 页提交的嵌套 JSON 结构
@@ -615,6 +617,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			}
 			if body.LifeMonitor.MoveMediaMode != "" {
 				lm.MoveMediaMode = body.LifeMonitor.MoveMediaMode
+			}
+			// 移出映射时删除本地旧 STRM（默认 true；nil 表示旧前端未提交，保留旧值）
+			if body.LifeMonitor.MoveOutRemoveLocalStrm != nil {
+				lm.MoveOutRemoveLocalStrm = *body.LifeMonitor.MoveOutRemoveLocalStrm
 			}
 			if body.LifeMonitor.StrmPrefix != "" {
 				lm.StrmPrefix = body.LifeMonitor.StrmPrefix

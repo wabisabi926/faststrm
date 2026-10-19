@@ -190,6 +190,18 @@ func (m *Monitor) deleteOldStrmAssetsAtPath(
 	logger.S().Infof("[Monitor] OTHER_TO_MEDIA 旧STRM已清理 path=%s", oldLocalPath)
 }
 
+// localNameMatches 判断本地目录/文件名是否对应云端名字。
+//
+// 本地落盘名经过 SanitizeFileName（'/'→'_'、':'→'：' 等），云端原始名可能含这些字符，
+// 直接字符串比较会永远不命中；两侧统一用同一套清理规则后再比较。
+// 云端名为空 / "." / "/"（filepath.Base 对空路径的产物）时直接判否，避免误匹配 "_"。
+func localNameMatches(localName, cloudName string) bool {
+	if cloudName == "" || cloudName == "." || cloudName == "/" {
+		return false
+	}
+	return localName == strmutil.SanitizeFileName(cloudName)
+}
+
 // cleanupOldStrmByFileID 清理同 file_id 的旧 STRM 文件
 // 对齐参考项目 create() L1590-1626：DB 中存在同 file_id 但不同路径的旧记录时，删除旧 STRM
 // 搜索策略：
@@ -231,7 +243,9 @@ func (m *Monitor) cleanupOldStrmByFileID(
 					continue
 				}
 				// 目录名匹配旧文件名
-				if entry.Name() == oldFileName || entry.Name() == newFileName {
+				// 本地目录名是落盘形态（'/'→'_' 等），比较前必须用同一套清理规则，
+				// 否则云端原始名含 '/' 时永远匹配不到
+				if localNameMatches(entry.Name(), oldFileName) || localNameMatches(entry.Name(), newFileName) {
 					candidate := filepath.Join(mountDir, entry.Name())
 					// 检查目录下是否有 .strm 文件
 					strmFiles, _ := filepath.Glob(filepath.Join(candidate, "*.strm"))
@@ -346,9 +360,9 @@ func sanitizePathParts(relativePath string) string {
 // generateStrmContent 生成 .strm 文件内容（URL 到 115 文件）
 // 302 模式：{prefix}/api/fs/get?account=xxx&pickcode=xxx&file_name=xxx
 // 统一输出：{prefix}/api/strm?account=xxx&pickcode=xxx&file_name=xxx
-// P1-4：customTemplate 非空时优先用 model.RenderStrmUrlTemplate。
+// P1-4：customTemplate 非空时优先用 model.RenderStrmUrlTemplate（支持 {file_path}/{file_id} 等变量）。
 // 对齐 TS generateStrmContent
-func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName string, customTemplate ...string) string {
+func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName, fileID string, customTemplate ...string) string {
 	// —— P1-4 高级模板优先 ——
 	if len(customTemplate) > 0 && customTemplate[0] != "" {
 		ext := strings.ToLower(filepath.Ext(fileName))
@@ -356,7 +370,17 @@ func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName stri
 		if strings.EqualFold(ext, ".iso") {
 			stem = stem + ".iso"
 		}
-		if rendered := model.RenderStrmUrlTemplate(customTemplate[0], strmPrefix, account, pickcode, fileName, ext, stem); rendered != "" {
+		if rendered := model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
+			Template:  customTemplate[0],
+			Prefix:    strmPrefix,
+			Account:   account,
+			PickCode:  pickcode,
+			FileName:  fileName,
+			Ext:       ext,
+			Stem:      stem,
+			CloudPath: cloudPath,
+			FileID:    fileID,
+		}); rendered != "" {
 			return rendered
 		}
 	}

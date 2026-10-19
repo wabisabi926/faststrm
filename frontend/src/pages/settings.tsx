@@ -63,6 +63,8 @@ export default function SettingsPage() {
   const [minFileSizeMb, setMinFileSizeMb] = useState(""); // MB 输入框显示用
   const [firstPullMode, setFirstPullMode] = useState<"latest" | "all" | "last">("latest");
   const [moveMediaMode, setMoveMediaMode] = useState<"recreate" | "local_move">("local_move");
+  // 移出映射时删除本地旧 STRM（默认开启）
+  const [moveOutRemoveLocalStrm, setMoveOutRemoveLocalStrm] = useState(true);
 
   // New path mapping input
   const [newCloudPath, setNewCloudPath] = useState("");
@@ -134,6 +136,7 @@ export default function SettingsPage() {
         setMinFileSizeMb(loadedMinSize > 0 ? (loadedMinSize / (1024 * 1024)).toString() : "");
         setFirstPullMode(monitor.firstPullMode || "latest");
         setMoveMediaMode(monitor.moveMediaMode || "local_move");
+        setMoveOutRemoveLocalStrm(monitor.moveOutRemoveLocalStrm ?? true);
 
         // Load accounts
         const accountsResp = await axiosInstance.get("/api/account");
@@ -292,6 +295,7 @@ export default function SettingsPage() {
         minFileSize: parseMb(minFileSizeMb),
         firstPullMode,
         moveMediaMode,
+        moveOutRemoveLocalStrm,
         ...lifeMonitorOverride,
       },
     };
@@ -670,6 +674,8 @@ export default function SettingsPage() {
           setFirstPullMode={setFirstPullMode}
           moveMediaMode={moveMediaMode}
           setMoveMediaMode={setMoveMediaMode}
+          moveOutRemoveLocalStrm={moveOutRemoveLocalStrm}
+          setMoveOutRemoveLocalStrm={setMoveOutRemoveLocalStrm}
           pathMappings={pathMappings}
           setPathMappings={setPathMappings}
           newMappingAccount={newMappingAccount}
