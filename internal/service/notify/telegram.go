@@ -409,13 +409,14 @@ func (b *TelegramBot) SendMessageWithRetry(text string) error {
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			wait := time.Duration(attempt*attempt) * time.Second
-			logger.S().Warnf("[Telegram] 重试第 %d 次（等待 %v）: %v", attempt, wait, lastErr)
+			// 逐次重试降为 Debug：网络不通时避免刷屏，最终失败由调用方（sendGuard）节流提示
+			logger.S().Debugf("[Telegram] 重试第 %d 次（等待 %v）: %v", attempt, wait, lastErr)
 			time.Sleep(wait)
 		}
 		sendErr := b.sendWithClient(c, text)
 		if sendErr == nil {
 			if attempt > 0 {
-				logger.S().Infof("[Telegram] 重试发送成功（第 %d 次）", attempt)
+				logger.S().Debugf("[Telegram] 重试发送成功（第 %d 次）", attempt)
 			}
 			return nil
 		}

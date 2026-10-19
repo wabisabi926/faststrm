@@ -26,6 +26,8 @@ type Dispatcher struct {
 	sendCh   chan sendTask
 	sendStop chan struct{}
 	sendOnce sync.Once
+	// tgGuard Telegram 失败节流 + 连续失败退避（网络不通时防刷日志/空转）
+	tgGuard sendGuard
 }
 
 // sendTask 串行队列中的单条发送任务
@@ -189,11 +191,21 @@ func (d *Dispatcher) NotifyWithPhoto(ctx context.Context, caption, photoURL stri
 	return nil
 }
 
+// sendTG 统一 Telegram 文本发送入口：退避期内静默跳过，失败走节流日志。
+func (d *Dispatcher) sendTG(ctx context.Context, content string) {
+	if !d.tgGuard.allow() {
+		return
+	}
+	if err := d.tg.SendNotification(ctx, content); err != nil {
+		d.tgGuard.onFailure(err)
+		return
+	}
+	d.tgGuard.onSuccess()
+}
+
 // dispatchTextDirect 直接发送纯文本（绕过队列，用于队列满时降级）
 func (d *Dispatcher) dispatchTextDirect(ctx context.Context, message string) {
-	if err := d.tg.SendNotification(ctx, message); err != nil {
-		logger.S().Errorf("Failed to send Telegram notification: %v", err)
-	}
+	d.sendTG(ctx, message)
 	d.sendWebhookText(ctx, message)
 }
 
@@ -225,11 +237,14 @@ func (d *Dispatcher) dispatchPhotoDirect(ctx context.Context, caption, photo str
 		defer func() { _ = safeRemoveEmbyTempImage(finalPath) }()
 	}
 
-	if err := d.tg.SendPhotoFromFile(ctx, d.chatID, caption, finalPath); err != nil {
-		// 严格对齐 QMS handlers.go L104-107：SendPhoto 失败不再发纯文本兜底，直接记录错误返回
-		logger.S().Errorf("SendPhotoFromFile 失败，按 QMS 行为不再降级纯文本: %v", err)
-		d.sendWebhookText(ctx, caption)
-		return
+	if d.tgGuard.allow() {
+		if err := d.tg.SendPhotoFromFile(ctx, d.chatID, caption, finalPath); err != nil {
+			// 严格对齐 QMS handlers.go L104-107：SendPhoto 失败不再发纯文本兜底，直接记录错误返回
+			d.tgGuard.onFailure(err)
+			d.sendWebhookText(ctx, caption)
+			return
+		}
+		d.tgGuard.onSuccess()
 	}
 	d.sendWebhookText(ctx, caption)
 }
@@ -365,7 +380,7 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 			if err != nil {
 				logger.S().Warnf("Dispatch photo: 下载图片失败，降级纯文本: %v", err)
 				d.sendWebhookNotification(ctx, n)
-				_ = d.tg.SendNotification(ctx, n.Content)
+				d.sendTG(ctx, n.Content)
 				return
 			}
 			finalPath = p
@@ -374,11 +389,12 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 		if needRemove {
 			defer func() { _ = safeRemoveEmbyTempImage(finalPath) }()
 		}
-		if err := d.tg.SendPhotoFromFile(ctx, d.chatID, n.Content, finalPath); err != nil {
-			// 严格对齐 QMS：图片发送失败不再降级纯文本，只记录错误
-			logger.S().Warnf("Dispatch photo: SendPhotoFromFile 失败，按 QMS 行为不降级纯文本: %v", err)
-			d.sendWebhookNotification(ctx, n)
-			return
+		if d.tgGuard.allow() {
+			if err := d.tg.SendPhotoFromFile(ctx, d.chatID, n.Content, finalPath); err != nil {
+				d.tgGuard.onFailure(err)
+			} else {
+				d.tgGuard.onSuccess()
+			}
 		}
 		d.sendWebhookNotification(ctx, n)
 		return
@@ -389,7 +405,7 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 		if err := d.tg.SendMessageWithButtons(ctx, d.chatID, n.Content, buttons); err != nil {
 			logger.S().Warnf("Dispatch with buttons failed, fallback to text: %v", err)
 			d.sendWebhookNotification(ctx, n)
-			_ = d.tg.SendNotification(ctx, n.Content)
+			d.sendTG(ctx, n.Content)
 			return
 		}
 		d.sendWebhookNotification(ctx, n)
@@ -397,7 +413,7 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 	}
 
 	d.sendWebhookNotification(ctx, n)
-	_ = d.tg.SendNotification(ctx, n.Content)
+	d.sendTG(ctx, n.Content)
 }
 
 func (d *Dispatcher) sendWebhookText(ctx context.Context, message string) {
