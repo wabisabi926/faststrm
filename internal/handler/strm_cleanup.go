@@ -1227,6 +1227,7 @@ func buildStrmForMissing(m MappingScanResult, miss MissingStrm, settings *model.
 	fileName := base
 
 	var content string
+	encodePath := settings.EnablePathEncoding
 	if tmpl != "" {
 		ext := strings.ToLower(filepath.Ext(fileName))
 		stemForTmpl := strings.TrimSuffix(fileName, filepath.Ext(fileName))
@@ -1242,13 +1243,20 @@ func buildStrmForMissing(m MappingScanResult, miss MissingStrm, settings *model.
 			Stem:      stemForTmpl,
 			CloudPath: cloudPath,
 			// MissingStrm 无 file_id（云端比对只带 pickcode），模板引用 {file_id} 时为空
-			FileID: "",
+			FileID:        "",
+			DisableEncode: !encodePath,
 		})
 	}
 	if content == "" {
-		// fallback：默认拼接 {prefix}/api/strm?account=...&pickcode=...
-		content = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s",
-			prefix, url.QueryEscape(m.Account), url.QueryEscape(miss.PickCode))
+		// fallback：与 task/monitor 完全一致的默认格式（含 file_name，编码规则统一）
+		account := m.Account
+		fileNameEnc := fileName
+		if encodePath {
+			account = strmutil.URLPathEncode(account)
+			fileNameEnc = strmutil.URLPathEncode(fileName)
+		}
+		content = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s&file_name=%s",
+			prefix, account, miss.PickCode, fileNameEnc)
 	}
 	return strmPath, content, nil
 }

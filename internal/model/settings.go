@@ -1,7 +1,6 @@
 package model
 
 import (
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -503,6 +502,17 @@ type StrmURLTemplateVars struct {
 	Stem      string // 文件名去扩展名；.iso 文件 stem = "name.iso"
 	CloudPath string // 云端完整路径（相对映射根，形如 "电影/沙丘/x.mkv"）；{file_path} 编码版 / {file_path_raw} 原始版
 	FileID    string // 云端 file_id；未知时为空串
+	// DisableEncode 为 true 时所有变量原样输出（对应设置页「URL 编码」开关关闭）。
+	// 零值 false = 编码（安全默认）。
+	DisableEncode bool
+}
+
+// encode 按开关对模板变量值编码；默认用 URLPathEncode（空格 %20、保留 '/'）。
+func (v StrmURLTemplateVars) encode(s string) string {
+	if v.DisableEncode {
+		return s
+	}
+	return strmutil.URLPathEncode(s)
 }
 
 // RenderStrmUrlTemplate 渲染 STRM URL 模板。
@@ -512,10 +522,10 @@ func RenderStrmUrlTemplate(v StrmURLTemplateVars) string {
 		return ""
 	}
 	prefix := strings.TrimRight(v.Prefix, "/")
-	encodedAccount := url.QueryEscape(v.Account)
-	encodedPickcode := url.QueryEscape(v.PickCode)
-	encodedFileName := url.QueryEscape(v.FileName)
-	encodedFilePath := url.QueryEscape(v.CloudPath)
+	encodedAccount := v.encode(v.Account)
+	encodedPickcode := v.encode(v.PickCode)
+	encodedFileName := v.encode(v.FileName)
+	encodedFilePath := v.encode(v.CloudPath)
 	r := strings.NewReplacer(
 		"{prefix}", prefix,
 		"{base_url}", prefix,

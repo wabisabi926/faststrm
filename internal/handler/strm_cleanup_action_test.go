@@ -320,7 +320,8 @@ func TestBuildStrmForMissing_Fallback(t *testing.T) {
 		PickCode: "pc1234567890",
 	}
 	settings := &model.Settings{
-		StrmPrefix: "http://localhost:8090",
+		StrmPrefix:         "http://localhost:8090",
+		EnablePathEncoding: true,
 		Strm: model.StrmSettings{
 			StrmUrlTemplate: "",
 		},
@@ -335,7 +336,8 @@ func TestBuildStrmForMissing_Fallback(t *testing.T) {
 		t.Errorf("strmPath = %q", strmPath)
 	}
 
-	expected := "http://localhost:8090/api/strm?account=user&pickcode=pc1234567890"
+	// 与 task/monitor 默认格式统一：包含 file_name
+	expected := "http://localhost:8090/api/strm?account=user&pickcode=pc1234567890&file_name=video.mp4"
 	if content != expected {
 		t.Errorf("content = %q, want %q", content, expected)
 	}

@@ -176,3 +176,52 @@ func TestHandleSettingsPOST_MoveOutRemoveLocalStrm(t *testing.T) {
 		t.Fatal("未提交该字段时不应被重置为 true（应保留旧值 false）")
 	}
 }
+
+// ================================================================
+// HandleSettingsPOST — URL 编码开关 + STRM URL 模板
+// 回归：关闭编码必须能保存；旧前端不提交时保留旧值
+// ================================================================
+
+func TestHandleSettingsPOST_EnablePathEncodingAndTemplate(t *testing.T) {
+	ss := newTestSettingsStore(t)
+
+	// 1) 显式关闭编码 + 设置模板
+	body := `{"enablePathEncoding":false,"strm":{"strmUrlTemplate":"{prefix}/api/strm?account={account}&pickcode={pickcode}&file_name={file_name}&file_id={file_id}"}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(EmbyDeps{SettingsStore: ss}).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200, body=%s", w.Code, w.Body.String())
+	}
+	got, err := ss.ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if got.EnablePathEncoding {
+		t.Fatal("显式提交 enablePathEncoding=false 后仍为 true")
+	}
+	if got.Strm.StrmUrlTemplate == "" {
+		t.Fatal("strmUrlTemplate 未保存")
+	}
+
+	// 2) 旧前端不提交这两个字段 → 保留旧值
+	body2 := `{"strm":{"forceProxyUaTokens":["Infuse"]}}`
+	w2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(body2))
+	r2.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(EmbyDeps{SettingsStore: ss}).ServeHTTP(w2, r2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200, body=%s", w2.Code, w2.Body.String())
+	}
+	got2, err := ss.ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if got2.EnablePathEncoding {
+		t.Fatal("未提交 enablePathEncoding 时不应被重置为 true（应保留 false）")
+	}
+	if got2.Strm.StrmUrlTemplate != got.Strm.StrmUrlTemplate {
+		t.Fatal("未提交 strmUrlTemplate 时不应被清空")
+	}
+}

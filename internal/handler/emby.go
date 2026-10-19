@@ -474,7 +474,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 		// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
 
 		// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
-		// enablePathEncoding 已下线：旧客户端仍可能提交，但不再影响任何逻辑，也不回写配置
+		// URL 参数编码开关（默认 true）：关闭后 file_name 等参数原样写入 URL
+		if body.EnablePathEncoding != nil {
+			settings.EnablePathEncoding = *body.EnablePathEncoding
+		}
 
 		// ====== Cleanup：只接受两个「连带动作」开关，阈值等保持后端值 ======
 		if body.Cleanup != nil {
@@ -512,6 +515,11 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 		// ====== STRM 嵌套对象 ======
 		if body.Strm != nil {
+			// STRM URL 模板：设置页「标准 URL + 附加参数勾选」生成的完整模板。
+			// 空串视为未提供（保留旧值），兼容旧前端不发送该字段的情况。
+			if body.Strm.StrmUrlTemplate != "" {
+				settings.Strm.StrmUrlTemplate = body.Strm.StrmUrlTemplate
+			}
 			// 空数组也允许覆盖：用户清空输入框时前端发送 []，必须能清掉旧值
 			if body.Strm.ForceProxyUaTokens != nil {
 				settings.Strm.ForceProxyUaTokens = body.Strm.ForceProxyUaTokens

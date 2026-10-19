@@ -32,6 +32,34 @@ const CLEANUP_MODE_HINTS: Record<string, string> = {
     "直接删除孤儿 STRM。命中保护阈值时会自动停手，或转入待确认队列——可在 Telegram 按钮或清理页「待确认删除批次」中确认；超过 24 小时未确认的批次会自动作废。",
 };
 
+// ==================== STRM URL 标准模板 + 附加参数 ====================
+// 必要参数（account / pickcode / file_name）固定携带，不做选择；
+// 其余变量由用户勾选后追加为 query 参数。
+const STRM_URL_EXTRA_VARS = [
+  { key: "file_path", label: "文件路径" },
+  { key: "file_id", label: "文件 ID" },
+  { key: "file_stem", label: "文件主名" },
+  { key: "file_suffix", label: "扩展名" },
+] as const;
+
+const STRM_URL_STANDARD_TEMPLATE =
+  "{prefix}/api/strm?account={account}&pickcode={pickcode}&file_name={file_name}";
+
+// buildStrmUrlTemplate 按勾选的附加变量生成完整模板字符串
+function buildStrmUrlTemplate(extras: readonly string[]): string {
+  let t = STRM_URL_STANDARD_TEMPLATE;
+  for (const v of STRM_URL_EXTRA_VARS) {
+    if (extras.includes(v.key)) t += `&${v.key}={${v.key}}`;
+  }
+  return t;
+}
+
+// parseStrmUrlExtras 从模板字符串反推已勾选的附加变量
+function parseStrmUrlExtras(tmpl?: string): string[] {
+  if (!tmpl) return [];
+  return STRM_URL_EXTRA_VARS.filter((v) => tmpl.includes(`{${v.key}}`)).map((v) => v.key);
+}
+
 export interface BasicSettingsTabProps {
   data: SettingsType;
   setData: Dispatch<SetStateAction<SettingsType>>;
@@ -85,6 +113,27 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
 
   // 孤儿 STRM 清理策略：未配置时与后端默认值保持一致（auto_clean）
   const cleanupMode = data.download?.fullSyncCleanupOrphans ?? "auto_clean";
+
+  // STRM URL：编码开关（默认开启）+ 附加参数勾选（由模板字符串反推）
+  const pathEncodingEnabled = data.enablePathEncoding !== false;
+  const strmUrlExtras = parseStrmUrlExtras(data.strm?.strmUrlTemplate);
+  const updateStrmUrlExtras = (next: string[]) => {
+    setData({
+      ...data,
+      strm: { ...data.strm, strmUrlTemplate: buildStrmUrlTemplate(next) },
+    });
+  };
+  // 预览：用示例值替换模板变量，直观展示最终 URL
+  const strmUrlPreview = (data.strm?.strmUrlTemplate || STRM_URL_STANDARD_TEMPLATE)
+    .replace("{prefix}", (data.strmPrefix || "http://192.168.1.100:8090").replace(/\/$/, ""))
+    .replace("{account}", "wabisabi926")
+    .replace("{pickcode}", "csj82c47tyb01dm22")
+    .replace("{file_name}", "The.Ordinary.Jackpot.S01E10.Episode.10.1080p.DSNP.WEB-DL.AAC.2.0.H.264-BlackTV.mkv")
+    .replace("{filename}", "The.Ordinary.Jackpot.S01E10.Episode.10.1080p.DSNP.WEB-DL.AAC.2.0.H.264-BlackTV.mkv")
+    .replace("{file_stem}", "The.Ordinary.Jackpot.S01E10.Episode.10.1080p.DSNP.WEB-DL.AAC.2.0.H.264-BlackTV")
+    .replace("{file_suffix}", ".mkv")
+    .replace("{file_path}", "电影/科幻/示例影片.mkv")
+    .replace("{file_id}", "1000123456789");
 
   return (
     <div className="space-y-6">
@@ -156,9 +205,58 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-          {/* 「URL 路径编码」开关已下线：v1.2.2 起 STRM 统一走 pickcode 式 /api/strm，
-              URL 里不再有路径，file_name 必须编码，开关已无意义（后端字段保留仅为兼容旧配置）。 */}
+        <div className="space-y-3 pt-2 border-t">
+          <Label>URL 编码</Label>
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="enable-path-encoding"
+              checked={pathEncodingEnabled}
+              onCheckedChange={(checked) =>
+                setData({ ...data, enablePathEncoding: checked === true })
+              }
+              className="mt-0.5"
+            />
+            <div className="space-y-1">
+              <label htmlFor="enable-path-encoding" className="text-sm cursor-pointer">
+                对 URL 中的账号、文件名等参数做编码（推荐开启）
+              </label>
+              <p className="text-xs text-muted-foreground">
+                关闭后参数原样写入 URL：文件名含 # / &amp; / ? / 空格 等字符时会破坏 URL 解析，仅在确有需要时关闭。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3 pt-2 border-t">
+          <Label>URL 附加参数</Label>
+          <p className="text-xs text-muted-foreground">
+            标准 URL 固定携带 <code>account</code>、<code>pickcode</code>、<code>file_name</code>；以下变量可按需追加为 query 参数。
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {STRM_URL_EXTRA_VARS.map((v) => (
+              <div key={v.key} className="flex items-center gap-2">
+                <Checkbox
+                  id={`strm-extra-${v.key}`}
+                  checked={strmUrlExtras.includes(v.key)}
+                  onCheckedChange={(checked) => {
+                    const next =
+                      checked === true
+                        ? [...strmUrlExtras, v.key]
+                        : strmUrlExtras.filter((k) => k !== v.key);
+                    updateStrmUrlExtras(next);
+                  }}
+                />
+                <label htmlFor={`strm-extra-${v.key}`} className="text-sm cursor-pointer">
+                  {v.label}{" "}
+                  <code className="text-xs text-muted-foreground">{`{${v.key}}`}</code>
+                </label>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-md bg-muted px-3 py-2 space-y-1">
+            <p className="text-xs text-muted-foreground">标准 URL 预览</p>
+            <code className="text-xs break-all">{strmUrlPreview}</code>
+          </div>
         </div>
 
         {/* 全局文件过滤 */}

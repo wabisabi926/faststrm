@@ -1,9 +1,10 @@
 package model
 
 import (
-	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // TestRenderStrmUrlTemplate_NewVars 新增变量（对齐 p115strmhelper）：
@@ -21,8 +22,8 @@ func TestRenderStrmUrlTemplate_NewVars(t *testing.T) {
 		FileID:    "3490000000000000001",
 	})
 	want := "http://nas:8090/play?pc=abcdefghij1234567&fid=3490000000000000001" +
-		"&n=" + url.QueryEscape("流浪地球2.2023.mkv") +
-		"&p=" + url.QueryEscape("电影/科幻/流浪地球2.2023.mkv") +
+		"&n=" + strmutil.URLPathEncode("流浪地球2.2023.mkv") +
+		"&p=" + strmutil.URLPathEncode("电影/科幻/流浪地球2.2023.mkv") +
 		"&s=流浪地球2.2023&x=.mkv\n"
 	if got != want {
 		t.Fatalf("got %q\nwant %q", got, want)
@@ -71,7 +72,7 @@ func TestRenderStrmUrlTemplate_FilePathRaw(t *testing.T) {
 		CloudPath: "电影/科幻/流浪地球2.2023.mkv",
 	})
 	want := "http://nas:8090/play/电影/科幻/流浪地球2.2023.mkv?p=" +
-		url.QueryEscape("电影/科幻/流浪地球2.2023.mkv") + "\n"
+		strmutil.URLPathEncode("电影/科幻/流浪地球2.2023.mkv") + "\n"
 	if got != want {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}

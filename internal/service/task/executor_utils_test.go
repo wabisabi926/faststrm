@@ -157,14 +157,38 @@ func TestCountAndFilterKind(t *testing.T) {
 	}
 }
 
-func TestUrlPathEncode(t *testing.T) {
-	out := urlPathEncode("电影 2024.mp4")
-	// space -> %20, Chinese -> percent encoded as UTF-8 bytes
-	if !strings.Contains(out, "%20") {
-		t.Fatalf("space must be encoded, got: %s", out)
+func TestBuildStrmContent_EncodesFileName(t *testing.T) {
+	// 空格 → %20（不是 '+'）、'/' 保留、中文按 UTF-8 百分号编码
+	f := &fileItem{Name: "电影 2024/合集.mp4", PickCode: "1q2w3e4r5t6y7u8i9"}
+	out, err := buildStrmContent(&Task{Account: "acc 1"}, f, resolvedStrm{StrmPrefix: "http://x:8090"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(out, "/") == false && strings.Contains(out, ".mp4") == false { //nolint:staticcheck // SA9003: 空分支为有意设计
-		// 防御性断言：正常情况下 out 应该包含 "/" 和 ".mp4"
+	if strings.Contains(out, "+") {
+		t.Fatalf("空格不能编码为 '+'（router 不还原），got: %s", out)
+	}
+	if !strings.Contains(out, "%20") {
+		t.Fatalf("空格应编码为 %%，got: %s", out)
+	}
+	if !strings.Contains(out, "电影 2024/合集") && !strings.Contains(out, "%E7%94%B5%E5%BD%B1%202024/%E5%90%88%E9%9B%86") {
+		t.Fatalf("'/' 应保留、中文应百分号编码，got: %s", out)
+	}
+	if !strings.Contains(out, "/") {
+		t.Fatalf("'/' 不应被编码，got: %s", out)
+	}
+}
+
+func TestBuildStrmContent_DisableEncode(t *testing.T) {
+	f := &fileItem{Name: "电影 2024.mp4", PickCode: "1q2w3e4r5t6y7u8i9"}
+	out, err := buildStrmContent(&Task{Account: "acc1"}, f, resolvedStrm{
+		StrmPrefix:    "http://x:8090",
+		DisableEncode: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "file_name=电影 2024.mp4") {
+		t.Fatalf("关闭编码时应原样输出，got: %s", out)
 	}
 }
 

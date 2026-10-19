@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -358,11 +357,11 @@ func sanitizePathParts(relativePath string) string {
 }
 
 // generateStrmContent 生成 .strm 文件内容（URL 到 115 文件）
-// 302 模式：{prefix}/api/fs/get?account=xxx&pickcode=xxx&file_name=xxx
-// 统一输出：{prefix}/api/strm?account=xxx&pickcode=xxx&file_name=xxx
+// 统一输出：{prefix}/api/strm?account=xxx&pickcode=xxx&file_name=<编码后的文件名>
 // P1-4：customTemplate 非空时优先用 model.RenderStrmUrlTemplate（支持 {file_path}/{file_id} 等变量）。
+// encodePath=false 时参数值原样写入（对应设置页「URL 编码」关闭）。
 // 对齐 TS generateStrmContent
-func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName, fileID string, customTemplate ...string) string {
+func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName, fileID string, encodePath bool, customTemplate ...string) string {
 	// —— P1-4 高级模板优先 ——
 	if len(customTemplate) > 0 && customTemplate[0] != "" {
 		ext := strings.ToLower(filepath.Ext(fileName))
@@ -371,15 +370,16 @@ func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName, fil
 			stem = stem + ".iso"
 		}
 		if rendered := model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
-			Template:  customTemplate[0],
-			Prefix:    strmPrefix,
-			Account:   account,
-			PickCode:  pickcode,
-			FileName:  fileName,
-			Ext:       ext,
-			Stem:      stem,
-			CloudPath: cloudPath,
-			FileID:    fileID,
+			Template:      customTemplate[0],
+			Prefix:        strmPrefix,
+			Account:       account,
+			PickCode:      pickcode,
+			FileName:      fileName,
+			Ext:           ext,
+			Stem:          stem,
+			CloudPath:     cloudPath,
+			FileID:        fileID,
+			DisableEncode: !encodePath,
 		}); rendered != "" {
 			return rendered
 		}
@@ -403,12 +403,17 @@ func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName, fil
 		logger.S().Warnf("[Monitor] generateStrmContent: pickcode 为空，跳过生成 cloudPath=%s account=%s", cloudPath, account)
 		return ""
 	}
-	// 对参数进行 URL 编码
-	encodedAccount := url.QueryEscape(account)
+	// 对参数进行 URL 编码（编码开关关闭时原样写入）
+	encodedAccount := account
+	encodedFileName := fileName
+	if encodePath {
+		encodedAccount = strmutil.URLPathEncode(account)
+		encodedFileName = strmutil.URLPathEncode(fileName)
+	}
 	// 统一硬编码 /api/strm（enable302 已废弃）
 	u := fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, encodedAccount, pickcode)
 	if fileName != "" {
-		u += "&file_name=" + url.QueryEscape(fileName)
+		u += "&file_name=" + encodedFileName
 	}
 	return u + "\n"
 }

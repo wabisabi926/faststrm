@@ -34,6 +34,9 @@ type resolvedStrm struct {
 	StrmPrefixSource   string // 前缀来源：configured / auto_lan_ip / unresolved（用于日志与报错）
 	StrmExtensions     map[string]struct{}
 	DownloadExtensions map[string]struct{}
+	// DisableEncode 对应全局「URL 编码」开关关闭：true 时参数值原样写入 URL。
+	// 零值 false = 编码（安全默认）。
+	DisableEncode bool
 }
 
 // resolveStrmSettings 合并全局 settings + 任务级自定义
@@ -71,7 +74,9 @@ func resolveStrmSettings(task *Task, s *model.Settings, baseURL, publicBaseURL s
 	r.StrmPrefix = prefix
 	r.StrmPrefixSource = source
 
-	// enablePathEncoding 已下线：STRM 统一 pickcode 式 URL，file_name 始终编码，无需再解析
+	// URL 参数编码开关（全局设置，默认 true）。关闭后 file_name 等参数原样写入 URL，
+	// 文件名含 '#'/'&'/'?' 等字符会破坏 URL，仅在确有需要时关闭。
+	r.DisableEncode = !s.EnablePathEncoding
 
 	return r
 }
@@ -171,9 +176,8 @@ func writeStrmFile(strmPath, content string) (unchanged bool, err error) {
 }
 
 // buildStrmContent 生成 .strm 文件内容
-// 302 模式：{{StrmPrefix}}/api/fs/get?account=xxx&pickcode=xxx&file_name=URLencode(name)
-// 否则：   {{StrmPrefix}}/api/strm?account=xxx&pickcode=xxx&file_name=URLencode(name)
-// P1-4：urlTemplate 非空时优先用 model.RenderStrmUrlTemplate（变量自动 QueryEscape）
+// 统一模式：{StrmPrefix}/api/strm?account=xxx&pickcode=xxx&file_name=<编码后的文件名>
+// P1-4：urlTemplate 非空时优先用 model.RenderStrmUrlTemplate（变量按「URL 编码」开关处理）
 func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...string) (string, error) {
 	// pickcode 严格校验（对齐 MoviePilot len=17 && isalnum）
 	if !isValidPickcode(f.PickCode) {
@@ -187,15 +191,16 @@ func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...st
 			stem = stem + ".iso"
 		}
 		if rendered := model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
-			Template:  urlTemplate[0],
-			Prefix:    r.StrmPrefix,
-			Account:   task.Account,
-			PickCode:  f.PickCode,
-			FileName:  f.Name,
-			Ext:       ext,
-			Stem:      stem,
-			CloudPath: f.CloudPath,
-			FileID:    f.FID,
+			Template:      urlTemplate[0],
+			Prefix:        r.StrmPrefix,
+			Account:       task.Account,
+			PickCode:      f.PickCode,
+			FileName:      f.Name,
+			Ext:           ext,
+			Stem:          stem,
+			CloudPath:     f.CloudPath,
+			FileID:        f.FID,
+			DisableEncode: r.DisableEncode,
 		}); rendered != "" {
 			return rendered, nil
 		}
@@ -203,29 +208,17 @@ func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...st
 	var u string
 	prefix := strings.TrimRight(r.StrmPrefix, "/")
 	// 统一硬编码 /api/strm（带智能路由 + proxy 模式）
-	u = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, urlPathEncode(task.Account), f.PickCode)
-	if f.Name != "" {
-		u += "&file_name=" + urlPathEncode(f.Name)
+	account := task.Account
+	fileName := f.Name
+	if !r.DisableEncode {
+		account = strmutil.URLPathEncode(account)
+		fileName = strmutil.URLPathEncode(fileName)
+	}
+	u = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, account, f.PickCode)
+	if fileName != "" {
+		u += "&file_name=" + fileName
 	}
 	return u + "\n", nil
-}
-
-// urlPathEncode 对文件名做 URL 编码（保留扩展名点号、兼容中文）
-func urlPathEncode(s string) string {
-	var sb strings.Builder
-	for _, b := range []byte(s) {
-		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
-			(b >= '0' && b <= '9') ||
-			b == '-' || b == '_' || b == '.' || b == '~' || b == '/' {
-			sb.WriteByte(b)
-		} else {
-			const h = "0123456789ABCDEF"
-			sb.WriteByte('%')
-			sb.WriteByte(h[b>>4])
-			sb.WriteByte(h[b&0x0F])
-		}
-	}
-	return sb.String()
 }
 
 // ScanStats 扫描阶段统计信息（供任务日志/结果展示）
