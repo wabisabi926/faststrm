@@ -34,6 +34,7 @@ func initPhase6Deps(
 	embyClient *emby.Client,
 	embyRefresh *emby.MediaServerRefresh,
 	embyProxyManager *embyproxy.Manager,
+	cleanupInteraction *handler.StrmCleanupInteraction,
 ) (handler.NotifyDeps, handler.EmbyDeps, handler.LifeMonitorDeps, *monitor.Monitor) {
 	// 读取启动时配置，用于初始化 TelegramBot
 	initSettings, _ := settingsStore.ReadSettings()
@@ -155,13 +156,21 @@ func initPhase6Deps(
 	// ---------- MenuActions 适配器 ----------
 	if cmdHandler != nil {
 		adapter := &menuActionsAdapter{
-			settingsStore: settingsStore,
-			tasksStore:    tasksStore,
-			accountStore:  accountStore,
-			monitor:       mon,
-			embyRefresh:   embyRefresh,
-			taskRuntime:   taskRuntime,
-			execDeps:      execDeps,
+			settingsStore:      settingsStore,
+			tasksStore:         tasksStore,
+			accountStore:       accountStore,
+			monitor:            mon,
+			embyRefresh:        embyRefresh,
+			taskRuntime:        taskRuntime,
+			execDeps:           execDeps,
+			cmdHandler:         cmdHandler,
+			cleanupInteraction: cleanupInteraction,
+			cleanupDeps: handler.StrmCleanupDeps{
+				SettingsStore: settingsStore,
+				AccountStore:  accountStore,
+				SQLiteDB:      execDeps.SQLiteDB,
+				Interaction:   cleanupInteraction,
+			},
 		}
 		cmdHandler.SetMenuActions(adapter)
 	}

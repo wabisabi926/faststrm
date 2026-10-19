@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -164,8 +165,71 @@ func TestBuildSTRMMenu(t *testing.T) {
 	if len(buttons) < 2 {
 		t.Fatalf("expected >= 2 button rows, got %d", len(buttons))
 	}
-	if buttons[0][0].CallbackData != callbackStrmSync {
-		t.Fatalf("first button: got %q, want %q", buttons[0][0].CallbackData, callbackStrmSync)
+	// 全量同步进任务选择页，清理孤儿进映射选择页
+	if buttons[0][0].CallbackData != callbackSyncPick {
+		t.Fatalf("first button: got %q, want %q", buttons[0][0].CallbackData, callbackSyncPick)
+	}
+	if buttons[1][0].CallbackData != callbackCleanPick {
+		t.Fatalf("second button: got %q, want %q", buttons[1][0].CallbackData, callbackCleanPick)
+	}
+}
+
+// 任务选择页：每个任务一个执行按钮 + 全部按顺序执行
+func TestBuildSyncTaskPicker(t *testing.T) {
+	tasks := []map[string]any{
+		{"id": "t1", "name": "电影库", "account": "acc1", "schedule": "每天 03:00"},
+		{"id": "t2", "name": "剧集库", "account": "acc2", "schedule": "手动"},
+	}
+	text, buttons := BuildSyncTaskPicker(tasks)
+	if !strings.Contains(text, "电影库") || !strings.Contains(text, "每天 03:00") {
+		t.Fatalf("任务信息缺失: %s", text)
+	}
+	// 2 个任务 + 全部执行 + 返回
+	if len(buttons) != 4 {
+		t.Fatalf("button rows = %d, want 4", len(buttons))
+	}
+	if buttons[0][0].CallbackData != callbackSyncRun+"t1" {
+		t.Fatalf("first task button = %q", buttons[0][0].CallbackData)
+	}
+	if buttons[2][0].CallbackData != callbackSyncAll {
+		t.Fatalf("run-all button = %q", buttons[2][0].CallbackData)
+	}
+
+	// 无任务时只保留返回按钮
+	_, empty := BuildSyncTaskPicker(nil)
+	if len(empty) != 1 || empty[0][0].CallbackData != callbackMenuSTRM {
+		t.Fatalf("空任务应只有返回按钮: %+v", empty)
+	}
+}
+
+// 清理映射选择页：每个映射一个扫描按钮，callback_data 用序号而非长路径
+func TestBuildCleanupMappingPicker(t *testing.T) {
+	mappings := []map[string]string{
+		{"account": "acc1", "cloudPath": "/媒体/电影", "localPath": "/mnt/strm/电影"},
+		{"account": "acc1", "cloudPath": "/媒体/剧集", "localPath": "/mnt/strm/剧集"},
+	}
+	text, buttons := BuildCleanupMappingPicker(mappings)
+	if !strings.Contains(text, "/媒体/电影") {
+		t.Fatalf("映射信息缺失: %s", text)
+	}
+	if len(buttons) != 3 {
+		t.Fatalf("button rows = %d, want 3（2 映射 + 返回）", len(buttons))
+	}
+	if buttons[0][0].CallbackData != callbackCleanScan+"0" {
+		t.Fatalf("首个扫描按钮 = %q", buttons[0][0].CallbackData)
+	}
+	// 中文路径不得进入 callback_data（64 字节上限）
+	for _, row := range buttons {
+		for _, b := range row {
+			if len(b.CallbackData) > 64 {
+				t.Fatalf("callback_data 超限: %q", b.CallbackData)
+			}
+		}
+	}
+
+	_, empty := BuildCleanupMappingPicker(nil)
+	if len(empty) != 1 {
+		t.Fatalf("无映射应只有返回按钮: %+v", empty)
 	}
 }
 

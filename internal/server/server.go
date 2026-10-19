@@ -169,7 +169,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 		settingsStore, tasksStore, accountStore,
 		lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
 		taskRuntime, execDeps, embyClient, embyRefresh,
-		embyProxyManager,
+		embyProxyManager, cleanupInteraction,
 	)
 
 	// 延迟注入 Notifier：dispatcher 在 initPhase6Deps 内创建

@@ -63,6 +63,9 @@ func (h *CommandHandler) tg() *TelegramBot {
 	return h.bot
 }
 
+// CurrentBot 暴露当前 TelegramBot，供适配器在异步任务完成后主动推送消息。
+func (h *CommandHandler) CurrentBot() *TelegramBot { return h.tg() }
+
 // SetMenuActions 注入菜单动作接口实现
 func (h *CommandHandler) SetMenuActions(actions MenuActions) {
 	h.menuActions = actions
@@ -209,6 +212,8 @@ func isMenuCallbackData(data string) bool {
 		"mon_event:", "mon_detail:",
 		// 通知内联按钮（dispatcher.buildInlineKeyboard）
 		"refresh_emby:", "detail_strm:",
+		// STRM 操作：全量同步任务选择 / 清理映射选择
+		"sync_", "clean_",
 	}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(data, prefix) {

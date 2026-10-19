@@ -3,10 +3,16 @@ package server
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/wabisabi926/faststrm/internal/handler"
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
 	"github.com/wabisabi926/faststrm/internal/service/monitor"
+	"github.com/wabisabi926/faststrm/internal/service/notify"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -24,6 +30,15 @@ type menuActionsAdapter struct {
 	embyRefresh   *emby.MediaServerRefresh
 	taskRuntime   *task.Runtime
 	execDeps      task.ExecutorDeps
+
+	// 异步流程完成后主动推送消息用
+	cmdHandler *notify.CommandHandler
+	// 清理扫描：复用 Web UI 同一套扫描逻辑，结果送入 TG 待确认队列
+	cleanupInteraction *handler.StrmCleanupInteraction
+	cleanupDeps        handler.StrmCleanupDeps
+
+	runAll          atomic.Bool // 「全部按顺序执行」防重入
+	cleanupScanning atomic.Bool // 清理扫描防重入（同一时间只允许一个）
 }
 
 // GetSystemStatus 聚合账号、监控、运行任务和 Emby 状态
@@ -269,19 +284,45 @@ func (a *menuActionsAdapter) GetEmbyStatus() (map[string]any, error) {
 	return a.embyRefresh.GetStatus(), nil
 }
 
-// RunFullSync 全量同步：异步触发第一个任务（与 Web UI 手动执行等价）
-func (a *menuActionsAdapter) RunFullSync(ctx context.Context) error {
-	return a.triggerFirstTask()
+// ==================== 全量同步：任务选择 ====================
+
+// ListSyncTasks 列出全部任务（含未启用定时的手动任务），供「全量同步」选择
+func (a *menuActionsAdapter) ListSyncTasks() ([]map[string]any, error) {
+	if a.tasksStore == nil {
+		return nil, fmt.Errorf("任务存储未初始化")
+	}
+	tasks, err := a.tasksStore.ReadTasks()
+	if err != nil {
+		return nil, fmt.Errorf("读取任务失败: %w", err)
+	}
+	out := make([]map[string]any, 0, len(tasks))
+	for _, t := range tasks {
+		schedule := "手动"
+		if t.Schedule != nil && t.Schedule.Enabled {
+			schedule = a.formatSchedule(t.Schedule)
+		}
+		out = append(out, map[string]any{
+			"id":       t.ID,
+			"name":     t.Name,
+			"account":  t.Account,
+			"schedule": schedule,
+		})
+	}
+	return out, nil
 }
 
-// RunCleanup 清理孤儿：随全量扫描执行，异步触发第一个任务
-func (a *menuActionsAdapter) RunCleanup(ctx context.Context) error {
-	return a.triggerFirstTask()
+// RunTaskByID 异步执行单个任务
+func (a *menuActionsAdapter) RunTaskByID(ctx context.Context, taskID string) error {
+	if strings.TrimSpace(taskID) == "" {
+		return fmt.Errorf("任务 ID 为空")
+	}
+	go a.runTaskAsync(taskID)
+	return nil
 }
 
-// triggerFirstTask 异步触发第一个任务。Bot 的「全量同步 / 清理孤儿」按钮共用：
-// 二者本质都是跑一次全量扫描，清理策略由设置中的 fullSyncCleanupOrphans 决定。
-func (a *menuActionsAdapter) triggerFirstTask() error {
+// RunAllTasksSequential 异步按顺序执行全部任务：一个完成再下一个。
+// 账号被其它任务占用（Blocked）时跳过，失败继续，最后推送汇总。
+func (a *menuActionsAdapter) RunAllTasksSequential(ctx context.Context) error {
 	if a.tasksStore == nil {
 		return fmt.Errorf("任务存储未初始化")
 	}
@@ -292,9 +333,154 @@ func (a *menuActionsAdapter) triggerFirstTask() error {
 	if len(tasks) == 0 {
 		return fmt.Errorf("暂无任务，请先在 Web UI 创建任务")
 	}
-	t := tasks[0]
-	go a.runTaskAsync(t.ID)
+	if !a.runAll.CompareAndSwap(false, true) {
+		return fmt.Errorf("「全部按顺序执行」已在进行中")
+	}
+
+	go func() {
+		defer a.runAll.Store(false)
+		var ok, skipped, failed int
+		failedNames := make([]string, 0, 2)
+		for _, t := range tasks {
+			res := task.ExecuteTask(context.Background(), t.ID, a.execDeps)
+			switch {
+			case res.Success:
+				ok++
+			case res.Blocked:
+				skipped++
+				logger.S().Infof("[TG] 全部执行跳过 %s（%s）", t.ID, res.Message)
+			default:
+				failed++
+				failedNames = append(failedNames, t.Name)
+				logger.S().Warnf("[TG] 全部执行失败 %s: %s", t.ID, res.Message)
+			}
+		}
+		msg := fmt.Sprintf("🏁 <b>全部任务执行完成</b>\n\n成功 %d / 跳过 %d / 失败 %d", ok, skipped, failed)
+		if len(failedNames) > 0 {
+			msg += "\n失败任务: " + notify.EscapeHTML(strings.Join(failedNames, "、"))
+		}
+		a.notifyUser(msg)
+	}()
 	return nil
+}
+
+// ==================== 清理孤儿：映射扫描 ====================
+
+// ListCleanupMappings 列出可清理的路径映射（来自生活监控路径映射）
+func (a *menuActionsAdapter) ListCleanupMappings() ([]map[string]string, error) {
+	if a.settingsStore == nil {
+		return nil, fmt.Errorf("设置存储未初始化")
+	}
+	s, err := a.settingsStore.ReadSettings()
+	if err != nil {
+		return nil, fmt.Errorf("读取设置失败: %w", err)
+	}
+	reqs := handler.CleanupMappings(s)
+	out := make([]map[string]string, 0, len(reqs))
+	for _, r := range reqs {
+		out = append(out, map[string]string{
+			"account":   r.Account,
+			"cloudPath": r.CloudPath,
+			"localPath": r.LocalPath,
+		})
+	}
+	return out, nil
+}
+
+// ScanCleanupMappingAsync 异步扫描指定映射：只对账不生成，
+// 扫完把失效 STRM 送入 TG 待确认队列（带确认/取消按钮）。
+func (a *menuActionsAdapter) ScanCleanupMappingAsync(ctx context.Context, index int) error {
+	if a.cleanupInteraction == nil {
+		return fmt.Errorf("清理待删队列未启用（SQLite 不可用）")
+	}
+	mappings, err := a.ListCleanupMappings()
+	if err != nil {
+		return err
+	}
+	if index < 0 || index >= len(mappings) {
+		return fmt.Errorf("映射不存在（序号 %d）", index)
+	}
+	if !a.cleanupScanning.CompareAndSwap(false, true) {
+		return fmt.Errorf("已有清理扫描在进行中，请稍后")
+	}
+
+	m := mappings[index]
+	req := handler.MappingScanRequest{
+		Account:   m["account"],
+		CloudPath: m["cloudPath"],
+		LocalPath: m["localPath"],
+	}
+
+	go func() {
+		defer a.cleanupScanning.Store(false)
+		a.notifyUser(fmt.Sprintf("🔍 开始扫描 <code>%s</code> …", notify.EscapeHTML(req.CloudPath)))
+
+		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		res, serr := handler.ScanCleanupMapping(sctx, a.cleanupDeps, req)
+		if serr != nil {
+			a.notifyUser("❌ 扫描失败: " + notify.EscapeHTML(serr.Error()))
+			return
+		}
+		if res.Error != "" {
+			a.notifyUser("❌ 扫描失败: " + notify.EscapeHTML(res.Error))
+			return
+		}
+
+		summary := fmt.Sprintf(
+			"🧹 <b>扫描完成</b>\n\n目录: <code>%s</code>\n云端文件: %d\n本地 STRM: %d\n失效: %d\n缺失: %d",
+			notify.EscapeHTML(req.CloudPath), res.RemoteFileCount, res.LocalStrmCount,
+			len(res.StaleStrms), len(res.MissingStrms))
+
+		if len(res.StaleStrms) == 0 {
+			a.notifyUser(summary + "\n\n没有需要清理的 STRM。")
+			return
+		}
+
+		settings, _ := a.settingsStore.ReadSettings()
+		cleanupCfg := model.CleanupSettings{}
+		if settings != nil {
+			cleanupCfg = settings.Cleanup
+		}
+		paths := make([]string, 0, len(res.StaleStrms))
+		for _, s := range res.StaleStrms {
+			paths = append(paths, filepath.Join(req.LocalPath, s.RelPath))
+		}
+		batch := handler.CleanupBatch{
+			RequestID:          handler.GenerateRequestID(),
+			CreatedAt:          time.Now().UnixMilli(),
+			Paths:              paths,
+			SamplePaths:        handler.BuildSamplePaths(paths),
+			PathCount:          len(paths),
+			RemoveStrm:         true,
+			RemoveEmptyDirs:    cleanupCfg.RemoveEmptyDirs,
+			RemoveRelatedFiles: cleanupCfg.RemoveRelatedFiles,
+		}
+		if aerr := a.cleanupInteraction.AppendBatch(context.Background(), batch); aerr != nil {
+			a.notifyUser("❌ 入队失败: " + notify.EscapeHTML(aerr.Error()))
+			return
+		}
+		a.notifyUser(summary)
+		if nerr := a.cleanupInteraction.NotifyTelegramPending(context.Background(), batch); nerr != nil {
+			logger.S().Warnf("[TG] 清理确认通知发送失败 requestID=%s: %v", batch.RequestID, nerr)
+		}
+	}()
+	return nil
+}
+
+// notifyUser 通过当前 Bot 推送一条 HTML 消息（异步流程完成后回执用）
+func (a *menuActionsAdapter) notifyUser(text string) {
+	if a.cmdHandler == nil {
+		return
+	}
+	bot := a.cmdHandler.CurrentBot()
+	if bot == nil {
+		logger.S().Warnf("[TG] 当前 Bot 不可用，跳过推送: %s", text)
+		return
+	}
+	if err := bot.SendNotification(context.Background(), text); err != nil {
+		logger.S().Warnf("[TG] 推送失败: %v", err)
+	}
 }
 
 func maskToken(t string) string {

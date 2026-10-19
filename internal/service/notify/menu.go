@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -26,6 +27,12 @@ type MenuActions interface {
 	CancelTask(ctx context.Context, taskID string) error
 	ListRunningTasks() ([]map[string]any, error)
 	ListScheduledTasks() ([]map[string]any, error)
+	// ListSyncTasks 列出全部任务（含未启用定时的手动任务），供「全量同步」选择
+	ListSyncTasks() ([]map[string]any, error)
+	// RunTaskByID 异步执行单个任务（立即返回）
+	RunTaskByID(ctx context.Context, taskID string) error
+	// RunAllTasksSequential 异步按顺序执行全部任务（一个完成再下一个）
+	RunAllTasksSequential(ctx context.Context) error
 
 	// ========== Emby 刷库 ==========
 	RefreshEmbyByPath(ctx context.Context, path string) error
@@ -33,8 +40,10 @@ type MenuActions interface {
 	GetEmbyStatus() (map[string]any, error)
 
 	// ========== STRM 操作 ==========
-	RunFullSync(ctx context.Context) error
-	RunCleanup(ctx context.Context) error
+	// ListCleanupMappings 列出可清理的路径映射（account/cloudPath/localPath）
+	ListCleanupMappings() ([]map[string]string, error)
+	// ScanCleanupMappingAsync 异步扫描指定映射，扫完把失效项送入 TG 待确认队列
+	ScanCleanupMappingAsync(ctx context.Context, index int) error
 }
 
 // ==================== 回调常量 ====================
@@ -74,8 +83,15 @@ const (
 	callbackEmbyStatus   = "emby_status"
 
 	// STRM 操作
-	callbackStrmSync    = "strm_sync"
-	callbackStrmCleanup = "strm_cleanup"
+	callbackStrmSync    = "strm_sync"    // 旧入口，保留兼容
+	callbackStrmCleanup = "strm_cleanup" // 旧入口，保留兼容
+
+	// STRM 操作：全量同步（任务选择）与清理孤儿（映射选择）
+	callbackSyncPick  = "sync_pick"
+	callbackSyncRun   = "sync_run:"
+	callbackSyncAll   = "sync_all"
+	callbackCleanPick = "clean_pick"
+	callbackCleanScan = "clean_scan:"
 
 	// STRM 通知内联按钮（由 dispatcher.buildInlineKeyboard 生成）
 	callbackStrmRefreshEmby = "refresh_emby:"
@@ -391,22 +407,87 @@ func BuildEmbyMenu(embyStatus map[string]any) (string, [][]InlineKeyboardButton)
 func BuildSTRMMenu() (string, [][]InlineKeyboardButton) {
 	text := "📁 <b>STRM 文件操作</b>\n\n" +
 		"选择要执行的操作：\n\n" +
-		"• 🔍 <b>全量同步</b> — 扫描云端与本地差异，补生成/删除 STRM\n" +
-		"• 🧹 <b>清理孤儿</b> — 随全量扫描对账，清理云端已删除的 STRM\n\n" +
-		"⚠️ 全量同步会扫描整棵目录树，大库耗时较长；任务在后台执行。"
+		"• 🔍 <b>全量同步</b> — 选择一个任务执行，或全部按顺序执行\n" +
+		"• 🧹 <b>清理孤儿</b> — 只对账并删除云端已删除的 STRM（不重新生成）\n\n" +
+		"⚠️ 两个操作都在后台执行，完成后推送通知。"
 
 	buttons := [][]InlineKeyboardButton{
 		{
-			{Text: "🔍 执行全量同步", CallbackData: callbackStrmSync},
+			{Text: "🔍 全量同步（选择任务）", CallbackData: callbackSyncPick},
 		},
 		{
-			{Text: "🧹 清理孤儿 STRM", CallbackData: callbackStrmCleanup},
+			{Text: "🧹 清理孤儿 STRM", CallbackData: callbackCleanPick},
 		},
 		{
 			{Text: "🔙 返回主菜单", CallbackData: callbackMenuMain},
 		},
 	}
 	return text, buttons
+}
+
+// BuildSyncTaskPicker 构建「全量同步」的任务选择页
+func BuildSyncTaskPicker(tasks []map[string]any) (string, [][]InlineKeyboardButton) {
+	var sb strings.Builder
+	sb.WriteString("🔍 <b>全量同步</b>\n\n")
+	back := [][]InlineKeyboardButton{{{Text: "🔙 返回", CallbackData: callbackMenuSTRM}}}
+	if len(tasks) == 0 {
+		sb.WriteString("暂无任务，请先在 Web UI 创建任务。")
+		return sb.String(), back
+	}
+	sb.WriteString("选择要执行的任务（异步执行，完成后推送通知）：\n\n")
+
+	buttons := make([][]InlineKeyboardButton, 0, len(tasks)+2)
+	for _, t := range tasks {
+		id, _ := t["id"].(string)
+		name, _ := t["name"].(string)
+		account, _ := t["account"].(string)
+		schedule, _ := t["schedule"].(string)
+		if name == "" {
+			name = id
+		}
+		if schedule == "" {
+			schedule = "手动"
+		}
+		sb.WriteString(fmt.Sprintf("• <b>%s</b> — %s · %s\n",
+			EscapeHTML(name), EscapeHTML(account), EscapeHTML(schedule)))
+		if id != "" {
+			buttons = append(buttons, []InlineKeyboardButton{
+				{Text: "▶️ " + truncate(name, 18), CallbackData: callbackSyncRun + id},
+			})
+		}
+	}
+	buttons = append(buttons, []InlineKeyboardButton{
+		{Text: "▶️ 全部按顺序执行", CallbackData: callbackSyncAll},
+	})
+	buttons = append(buttons, back...)
+	return sb.String(), buttons
+}
+
+// BuildCleanupMappingPicker 构建「清理孤儿」的映射选择页
+func BuildCleanupMappingPicker(mappings []map[string]string) (string, [][]InlineKeyboardButton) {
+	var sb strings.Builder
+	sb.WriteString("🧹 <b>清理孤儿 STRM</b>\n\n")
+	sb.WriteString("只对账、不重新生成：找出云端已删除或改名/移动后残留的本地 STRM，确认后删除。\n\n")
+	back := [][]InlineKeyboardButton{{{Text: "🔙 返回", CallbackData: callbackMenuSTRM}}}
+	if len(mappings) == 0 {
+		sb.WriteString("未配置生活监控路径映射，无法按目录清理。\n可在 Web UI 的监控设置里添加路径映射，或到清理页手动指定目录。")
+		return sb.String(), back
+	}
+	sb.WriteString("选择要扫描的目录：\n\n")
+
+	buttons := make([][]InlineKeyboardButton, 0, len(mappings)+1)
+	for i, m := range mappings {
+		account := m["account"]
+		cloud := m["cloudPath"]
+		local := m["localPath"]
+		sb.WriteString(fmt.Sprintf("• <b>%s</b>\n  <code>%s</code> → <code>%s</code>\n",
+			EscapeHTML(account), EscapeHTML(cloud), EscapeHTML(local)))
+		buttons = append(buttons, []InlineKeyboardButton{
+			{Text: "🧹 扫描 " + truncate(cloud, 20), CallbackData: fmt.Sprintf("%s%d", callbackCleanScan, i)},
+		})
+	}
+	buttons = append(buttons, back...)
+	return sb.String(), buttons
 }
 
 // BuildHelpMenu 构建帮助菜单
@@ -519,10 +600,18 @@ func (h *CommandHandler) RouteMenuCallback(ctx context.Context, cq CallbackQuery
 		return h.handleStrmDetail(ctx, chatID, messageID, path)
 
 	// ===== STRM 操作 =====
-	case data == callbackStrmSync:
-		return h.handleFullSync(ctx, chatID, messageID)
-	case data == callbackStrmCleanup:
-		return h.handleCleanupSTRM(ctx, chatID, messageID)
+	// 全量同步：先选任务（旧入口 strm_sync 一并导向选择页）
+	case data == callbackStrmSync || data == callbackSyncPick:
+		return h.showSyncTaskPicker(ctx, chatID, messageID)
+	case strings.HasPrefix(data, callbackSyncRun):
+		return h.handleSyncRun(ctx, chatID, messageID, strings.TrimPrefix(data, callbackSyncRun))
+	case data == callbackSyncAll:
+		return h.handleSyncAll(ctx, chatID, messageID)
+	// 清理孤儿：先选映射，扫描结果走 TG 待确认队列
+	case data == callbackStrmCleanup || data == callbackCleanPick:
+		return h.showCleanupMappingPicker(ctx, chatID, messageID)
+	case strings.HasPrefix(data, callbackCleanScan):
+		return h.handleCleanupScan(ctx, chatID, messageID, strings.TrimPrefix(data, callbackCleanScan))
 	case data == "task_create":
 		return h.tg().EditMessageText(ctx, chatID, messageID, "请在 Web UI 创建新任务。", "HTML")
 
@@ -738,26 +827,73 @@ func (h *CommandHandler) handleEmbyRefreshByPath(ctx context.Context, chatID str
 		fmt.Sprintf("✅ 路径刷库已触发: <code>%s</code>", path), "HTML")
 }
 
-func (h *CommandHandler) handleFullSync(ctx context.Context, chatID string, messageID int64) error {
+// showSyncTaskPicker 全量同步：列出全部任务供选择
+func (h *CommandHandler) showSyncTaskPicker(ctx context.Context, chatID string, messageID int64) error {
 	if h.menuActions == nil {
 		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
-	if err := h.menuActions.RunFullSync(ctx); err != nil {
-		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 全量同步失败: %v", err), "HTML")
+	tasks, err := h.menuActions.ListSyncTasks()
+	if err != nil {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "❌ 读取任务失败: "+EscapeHTML(err.Error()), "HTML")
 	}
-	return h.tg().EditMessageText(ctx, chatID, messageID,
-		"✅ <b>全量同步已触发</b>\n\n任务在后台执行，完成后会推送通知；进度可在 Web UI 或 /status 查看。", "HTML")
+	text, buttons := BuildSyncTaskPicker(tasks)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
 }
 
-func (h *CommandHandler) handleCleanupSTRM(ctx context.Context, chatID string, messageID int64) error {
+// handleSyncRun 执行用户选中的单个任务（异步）
+func (h *CommandHandler) handleSyncRun(ctx context.Context, chatID string, messageID int64, taskID string) error {
 	if h.menuActions == nil {
 		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
 	}
-	if err := h.menuActions.RunCleanup(ctx); err != nil {
-		return h.tg().EditMessageText(ctx, chatID, messageID, fmt.Sprintf("❌ 清理孤儿失败: %v", err), "HTML")
+	if taskID == "" {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 任务 ID 为空。", "HTML")
+	}
+	if err := h.menuActions.RunTaskByID(ctx, taskID); err != nil {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "❌ 触发失败: "+EscapeHTML(err.Error()), "HTML")
 	}
 	return h.tg().EditMessageText(ctx, chatID, messageID,
-		"✅ <b>清理任务已触发</b>\n\n将在后台执行全量扫描，并按「孤儿 STRM 清理」策略对账；超过保护阈值时会转入待确认队列。", "HTML")
+		"✅ <b>任务已触发</b>\n\n后台执行中，完成后会推送通知；进度可在 Web UI 或 /status 查看。", "HTML")
+}
+
+// handleSyncAll 按顺序执行全部任务（异步）
+func (h *CommandHandler) handleSyncAll(ctx context.Context, chatID string, messageID int64) error {
+	if h.menuActions == nil {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+	}
+	if err := h.menuActions.RunAllTasksSequential(ctx); err != nil {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "❌ 触发失败: "+EscapeHTML(err.Error()), "HTML")
+	}
+	return h.tg().EditMessageText(ctx, chatID, messageID,
+		"✅ <b>已开始按顺序执行全部任务</b>\n\n一个完成后自动执行下一个；账号正在跑任务时会跳过并记录。全部结束后推送汇总。", "HTML")
+}
+
+// showCleanupMappingPicker 清理孤儿：列出可扫描的路径映射
+func (h *CommandHandler) showCleanupMappingPicker(ctx context.Context, chatID string, messageID int64) error {
+	if h.menuActions == nil {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+	}
+	mappings, err := h.menuActions.ListCleanupMappings()
+	if err != nil {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "❌ 读取映射失败: "+EscapeHTML(err.Error()), "HTML")
+	}
+	text, buttons := BuildCleanupMappingPicker(mappings)
+	return h.tg().EditMessageTextWithButtons(ctx, chatID, messageID, text, buttons)
+}
+
+// handleCleanupScan 扫描指定映射（异步），结果由适配器送入 TG 待确认队列
+func (h *CommandHandler) handleCleanupScan(ctx context.Context, chatID string, messageID int64, indexStr string) error {
+	if h.menuActions == nil {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 菜单操作未初始化，请重启服务。", "HTML")
+	}
+	idx, err := strconv.Atoi(strings.TrimSpace(indexStr))
+	if err != nil || idx < 0 {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "⚠️ 无效的映射序号。", "HTML")
+	}
+	if err := h.menuActions.ScanCleanupMappingAsync(ctx, idx); err != nil {
+		return h.tg().EditMessageText(ctx, chatID, messageID, "❌ 扫描失败: "+EscapeHTML(err.Error()), "HTML")
+	}
+	return h.tg().EditMessageText(ctx, chatID, messageID,
+		"🔍 <b>已开始扫描</b>\n\n只对账不生成，完成后会发送结果；如有失效 STRM，会附「确认删除 / 取消」按钮。", "HTML")
 }
 
 // ==================== 辅助函数 ====================

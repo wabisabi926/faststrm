@@ -319,6 +319,16 @@ func getDefaultScanRequestsFromSettings(settings *model.Settings) []MappingScanR
 	if settings == nil || !settings.LifeMonitor.Enabled {
 		return nil
 	}
+	return CleanupMappings(settings)
+}
+
+// CleanupMappings 返回可用于清理扫描的路径映射（来自生活监控路径映射）。
+// 与 getDefaultScanRequestsFromSettings 的区别：不要求监控已启用——
+// 清理是独立动作，监控关着也可能需要清理历史残留。
+func CleanupMappings(settings *model.Settings) []MappingScanRequest {
+	if settings == nil {
+		return nil
+	}
 	mappings := make([]MappingScanRequest, 0, len(settings.LifeMonitor.PathMappings))
 	for _, pm := range settings.LifeMonitor.PathMappings {
 		if pm.Account != "" && pm.CloudPath != "" && pm.LocalPath != "" {
@@ -330,6 +340,23 @@ func getDefaultScanRequestsFromSettings(settings *model.Settings) []MappingScanR
 		}
 	}
 	return mappings
+}
+
+// ScanCleanupMapping 扫描单个路径映射（供 TG 等非 HTTP 入口复用同一套扫描逻辑）。
+// 调用方负责异步执行与超时控制：全量遍历云端目录可能耗时数分钟。
+func ScanCleanupMapping(ctx context.Context, deps StrmCleanupDeps, req MappingScanRequest) (MappingScanResult, error) {
+	if deps.SettingsStore == nil || deps.AccountStore == nil {
+		return MappingScanResult{}, fmt.Errorf("cleanup deps 未初始化")
+	}
+	accounts := deps.AccountStore.List()
+	accountMap := make(map[string]string, len(accounts))
+	for _, acc := range accounts {
+		accountMap[acc.Name] = acc.Cookie
+	}
+	if _, ok := accountMap[req.Account]; !ok {
+		return MappingScanResult{}, fmt.Errorf("账号不存在: %s", req.Account)
+	}
+	return scanMapping(ctx, req, deps, accountMap), nil
 }
 
 func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps, accountMap map[string]string) MappingScanResult {

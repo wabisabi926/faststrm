@@ -74,8 +74,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 		notifyDeps, embyDeps, lifeMonitorDeps, mon := initPhase6Deps(
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
-			taskRuntime, execDeps, nil, nil, nil,
-		)
+			taskRuntime, execDeps, nil, nil, nil, nil)
 
 		// Dispatcher 必须非 nil（即便 Telegram 未配置，Notify 静默跳过）
 		if notifyDeps.Dispatcher == nil {
@@ -138,8 +137,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 		notifyDeps, _, _, _ := initPhase6Deps(
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
-			taskRuntime, execDeps, nil, nil, nil,
-		)
+			taskRuntime, execDeps, nil, nil, nil, nil)
 
 		if notifyDeps.TelegramBot == nil {
 			t.Fatal("TelegramBot should not be nil when botToken is configured")
@@ -166,8 +164,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 		_, embyDeps, _, _ := initPhase6Deps(
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
-			taskRuntime, execDeps, embyClient, nil, nil,
-		)
+			taskRuntime, execDeps, embyClient, nil, nil, nil)
 		if embyDeps.EmbyClient == nil {
 			t.Fatal("EmbyClient should not be nil when emby.url+apiKey are configured")
 		}
@@ -182,8 +179,7 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 		_, embyDeps, _, _ := initPhase6Deps(
 			settingsStore, tasksStore, accountStore,
 			lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
-			taskRuntime, execDeps, nil, nil, nil,
-		)
+			taskRuntime, execDeps, nil, nil, nil, nil)
 		// 启动时 emby 未配置 → EmbyClient 为 nil
 		if embyDeps.EmbyClient != nil {
 			t.Fatal("EmbyClient should be nil at startup")
@@ -343,8 +339,7 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 	notifyDeps, embyDeps, lifeMonitorDeps, _ := initPhase6Deps(
 		settingsStore, tasksStore, accountStore,
 		lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr,
-		taskRuntime2, execDeps2, nil, nil, nil,
-	)
+		taskRuntime2, execDeps2, nil, nil, nil, nil)
 
 	// doJSON 发起 JSON POST 请求并返回 (status, body)
 	doJSON := func(h http.HandlerFunc, method, path string, body any) (int, []byte) {
@@ -415,7 +410,7 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 			t.Fatalf("SaveSettings: %v", err)
 		}
 		// 重新构造 notifyDeps（BotToken 为空时 initPhase6Deps 不会触发 Telegram HTTP 请求）
-		nd, _, _, _ := initPhase6Deps(settingsStore, tasksStore, accountStore, lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr, taskRuntime2, execDeps2, nil, nil, nil)
+		nd, _, _, _ := initPhase6Deps(settingsStore, tasksStore, accountStore, lifeEventRepo, lifeEventLogRepo, filePathRepo, stateMgr, taskRuntime2, execDeps2, nil, nil, nil, nil)
 
 		raw, _ := json.Marshal(map[string]any{"update_id": 1})
 		req := httptest.NewRequest(http.MethodPost, "/api/notify/webhook", bytes.NewReader(raw))

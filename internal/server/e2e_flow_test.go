@@ -419,8 +419,7 @@ func TestE2E_FlowC_EmbyWebhookLifeMonitor(t *testing.T) {
 	_, embyDeps, lifeMonitorDeps, _ := initPhase6Deps(
 		f.settingsStore, f.tasksStore, f.accountStore,
 		f.lifeEventRepo, f.lifeEventLog, f.filePathRepo, f.stateMgr,
-		f.taskRuntime, execDeps, nil, nil, nil,
-	)
+		f.taskRuntime, execDeps, nil, nil, nil, nil)
 
 	t.Run("emby_webhook_library_new", func(t *testing.T) {
 		// 未配置 Emby → 应安全跳过（不崩溃）
