@@ -21,6 +21,7 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== 常量 ====================
@@ -200,7 +201,14 @@ func MapEmbyPathToCloud(embyPath string, mapping model.SyncDeletePathMapping) st
 	if relativePath == "" || relativePath == "." {
 		return cloudPrefix
 	}
-	return cloudPrefix + "/" + relativePath
+	// Emby 路径是本地的落盘名（':' 已转成全角 '：'、'/' 已转成 '_'），
+	// DB 里存的是云端形态（':' ASCII、'/' 转 '_'）。逐段做可逆还原（'：'→':'），
+	// 否则含冒号的片名（如 "复仇者联盟:终局之战"）删不掉对应 DB 记录。
+	segs := strings.Split(relativePath, "/")
+	for i := range segs {
+		segs[i] = strmutil.LocalNameToCloudName(segs[i])
+	}
+	return cloudPrefix + "/" + strings.Join(segs, "/")
 }
 
 // normalizePath 规范化路径：统一为正斜杠
