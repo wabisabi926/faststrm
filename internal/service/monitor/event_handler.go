@@ -14,6 +14,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== 常量 ====================
@@ -117,12 +118,14 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 	//   2.2 P0-2: 映射云端前缀 → cid 比对，走 /files/getid，不依赖 /files/medialist
 	if strings.TrimSpace(rawCloudPath) == "" && strings.TrimSpace(event.FileName) != "" {
 		if dir := m.resolveCloudDirPathByParentID(account, event.ParentID); dir != "" {
-			rawCloudPath = dir + "/" + event.FileName
+			// 事件文件名可含 '/'（115 允许），拼路径前结构转义，
+			// 与任务侧写入 files 表的转义路径保持一致，否则匹配不上
+			rawCloudPath = strmutil.JoinCloudPath(dir, event.FileName)
 			source = srcDBParent
 		}
 		if strings.TrimSpace(rawCloudPath) == "" && lifeClient != nil {
 			if dir := m.resolveCloudDirPathByMappingPrefix(ctx, account, event.ParentID, config, lifeClient); dir != "" {
-				rawCloudPath = dir + "/" + event.FileName
+				rawCloudPath = strmutil.JoinCloudPath(dir, event.FileName)
 				source = srcMapPrefix
 			}
 		}

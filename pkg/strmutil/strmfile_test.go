@@ -13,7 +13,7 @@ func TestStrmFileName(t *testing.T) {
 		{"game.iso", "game.iso.strm"},
 		{"GAME.ISO", "GAME.iso.strm"}, // 只把扩展名归一化为小写，主体保留原样
 		{"noext", "noext.strm"},
-		{"dir/movie.mkv", "dir/movie.strm"},
+		{"dir/movie.mkv", "dir_movie.strm"}, // 文件名含 '/' → 清理为 '_'，不做路径
 		{"movie:1.mkv", "movie：1.strm"}, // 云端文件名直接传入也要清理
 		// ISO：先清理非法字符，再保留 .iso 双扩展名（Emby 靠它识别原盘容器）
 		{"复仇者联盟:终局之战.iso", "复仇者联盟：终局之战.iso.strm"},

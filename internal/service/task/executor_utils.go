@@ -416,10 +416,9 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 				logger.S().Debugf("[listAllFilesRecursive] cid=%d relPath=%q page=%d offset=%d returned=%d count=%d", top.cid, top.relPath, page, offset, len(resp.Data), resp.Count)
 				for _, e := range resp.Data {
 					logger.S().Debugf("[listAllFilesRecursive] entry name=%q cid=%v fid=%v fc=%v size=%d pickcode=%q isDir=%v", e.Name, e.CID, e.FID, e.FC, e.Size, e.PickCode, e.IsDir)
-					relName := e.Name
-					if top.relPath != "" {
-						relName = top.relPath + "/" + e.Name
-					}
+					// 115 文件名本身可含 '/'，拼入路径后会被误当目录分隔符；
+					// 统一走 JoinCloudPath（内部做结构转义），避免一个文件被拆成多级目录。
+					relName := strmutil.JoinCloudPath(top.relPath, e.Name)
 					cloudPath := originPath
 					if relName != "" {
 						cloudPath = strings.TrimRight(originPath, "/") + "/" + relName

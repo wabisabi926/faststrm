@@ -18,6 +18,7 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== 事件类型常量 ====================
@@ -732,7 +733,9 @@ func (c *LifeClient) FsFilesMediaAncestors(ctx context.Context, cid string) ([]f
 	if len(resp.Path) > 0 {
 		nodes := make([]fsMediaAncestorNode, 0, len(resp.Path))
 		for _, p := range resp.Path {
-			name := strings.TrimSpace(p.Name)
+			// 该接口自行 unmarshal path，不走 FsFiles（那里才做 charref 解码），
+			// 必须在入口补齐，否则 emoji 等特殊字符在此链路上保留 "\x02<码点>" 原始编码
+			name := strings.TrimSpace(strmutil.Unescape115CharRef(p.Name))
 			if name == "" {
 				continue
 			}
@@ -866,7 +869,9 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 		if name == "" || name == "根目录" {
 			continue
 		}
-		ancestorNames = append(ancestorNames, name)
+		// 目录名可含 '/'（115 允许），拼入路径前结构转义，保证路径中的 '/' 均为真实分隔符；
+		// 与文件级 EscapeName、folders 表记录遵循同一规则
+		ancestorNames = append(ancestorNames, strmutil.EscapeName(name))
 	}
 
 	// b) 自身名称：path 含自身时直接取最后一项，无需再发请求
@@ -911,8 +916,8 @@ func (c *LifeClient) ResolveDirPath(ctx context.Context, cid string) (string, er
 			cid, len(ancestors), selfIncluded)
 	}
 
-	// 3) 组装完整路径：[ancestorNames...] + folderOwnName
-	ancestorNames = append(ancestorNames, folderOwnName)
+	// 3) 组装完整路径：[ancestorNames...] + folderOwnName（自身名同样结构转义）
+	ancestorNames = append(ancestorNames, strmutil.EscapeName(folderOwnName))
 	fullPath := strings.Join(ancestorNames, "/")
 	fullPath = stripRootPrefix(fullPath) // 再次安全清理
 
@@ -942,7 +947,7 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 	}
 	if fileID == "" || fileID == "0" {
 		// 没 file_id，退化为裸文件名（仅作为最后兜底）
-		return "/" + fileName
+		return strmutil.AbsCloudPath(fileName)
 	}
 
 	// 先尝试缓存 key=fileID
@@ -951,7 +956,9 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 		entry := cached.(cachedPathEntry)
 		if now.Before(entry.expiresAt) {
 			if entry.path != "" {
-				return entry.path + "/" + fileName
+				// 与下方降级分支同规则：文件/目录名可含 '/'，拼路径前结构转义，
+				// 避免同一文件随缓存命中与否产生两种 cloudPath
+				return strmutil.JoinCloudPath(entry.path, fileName)
 			}
 		} else {
 			c.pathCache.Delete("fid:" + fileID)
@@ -985,7 +992,7 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 				path:      parent,
 				expiresAt: now.Add(c.pathCacheTTL),
 			})
-			return parent + "/" + fileName
+			return strmutil.JoinCloudPath(parent, fileName)
 		}
 
 		// 2) 次选：语义解析未命中 → 列根目录核对（是否真的位于根目录）
@@ -1001,7 +1008,7 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 							path:      "",
 							expiresAt: now.Add(c.pathCacheTTL),
 						})
-						return "/" + fileName
+						return strmutil.AbsCloudPath(fileName)
 					}
 				}
 
@@ -1037,7 +1044,8 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 					for j := range subResp.Data {
 						se := &subResp.Data[j]
 						if strings.EqualFold(strings.TrimSpace(se.Name), fileName) && anyIDMatches(se.CID, fileID) {
-							parentName := strings.TrimSpace(e.Name)
+							// 目录名同样需要结构转义（该值既拼路径又写 pathCache）
+							parentName := strmutil.EscapeName(strings.TrimSpace(e.Name))
 							if parentName == "" || parentName == "根目录" {
 								continue
 							}
@@ -1047,7 +1055,7 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 								path:      parentName,
 								expiresAt: now.Add(c.pathCacheTTL),
 							})
-							return parentName + "/" + fileName
+							return strmutil.JoinCloudPath(parentName, fileName)
 						}
 					}
 				}
@@ -1057,7 +1065,7 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 			}
 		}
 		// 所有途径都失败：返回 "/" + fileName 作为最后兜底（caller 会根据 mapping 判断无效）
-		return "/" + fileName
+		return strmutil.AbsCloudPath(fileName)
 	}
 
 	// path 含目标自身（最后一项即本次查询的文件/目录），需先丢弃自身项，
@@ -1077,7 +1085,9 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 		if name == "" || name == "根目录" {
 			continue
 		}
-		parentNames = append(parentNames, name)
+		// 目录名可含 '/'（115 允许），拼入路径前结构转义，
+		// 与 ResolveDirPath / resolveRelPathFromChain 同一规则
+		parentNames = append(parentNames, strmutil.EscapeName(name))
 	}
 
 	parentDir := strings.Join(parentNames, "/")
@@ -1090,9 +1100,9 @@ func (c *LifeClient) ResolvePathByFileID(ctx context.Context, fileID, fileName s
 	})
 
 	if parentDir == "" {
-		return "/" + fileName
+		return strmutil.AbsCloudPath(fileName)
 	}
-	return parentDir + "/" + fileName
+	return strmutil.JoinCloudPath(parentDir, fileName)
 }
 
 // ResolvePath 通过 parent_id + file_name 解析文件/文件夹在云端的完整路径
@@ -1119,7 +1129,7 @@ func (c *LifeClient) ResolvePath(ctx context.Context, parentID, fileID, fileName
 	if parentID != "" && parentID != "0" {
 		dirPath, err := c.ResolveDirPath(ctx, parentID)
 		if err == nil && dirPath != "" {
-			return dirPath + "/" + fileName
+			return strmutil.JoinCloudPath(dirPath, fileName)
 		}
 		if err != nil {
 			logger.S().Warnf("[LifeClient] ResolvePath via parentID 降级: parentID=%s fid=%s name=%s: %v",
@@ -1136,7 +1146,7 @@ func (c *LifeClient) ResolvePath(ctx context.Context, parentID, fileID, fileName
 	}
 
 	// 情况 3：最后兜底：返回 "/fileName"。后续 mapping 若不命中会自然 NONE 跳过。
-	return "/" + fileName
+	return strmutil.AbsCloudPath(fileName)
 }
 
 // FsFiles 列目录（生活事件文件夹递归处理使用）
@@ -1161,9 +1171,11 @@ func (c *LifeClient) FsDirGetID(ctx context.Context, dirPath string) (int64, err
 func (r lifeEventRaw) toLifeEventItem() LifeEventItem {
 	item := LifeEventItem{
 		BehaviorType: r.BehaviorType,
-		FileName:     r.FileName,
-		PickCode:     r.PickCode,
-		FilePath:     r.FilePath,
+		// 生活事件的 file_name 同样可能是 "\x02<码点>" 编码（115 对特殊字符的私有引用），
+		// 与任务侧扫描统一在此解码，保证同一文件两条链路得到一致名字
+		FileName: strmutil.Unescape115CharRef(r.FileName),
+		PickCode: r.PickCode,
+		FilePath: strmutil.Unescape115CharRef(r.FilePath),
 	}
 	item.ID = lifeToString(r.ID)
 	item.Type = lifeToInt(r.Type)

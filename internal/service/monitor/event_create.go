@@ -13,6 +13,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/pkg/concurrency"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== handleCreateEvent：创建 STRM ====================
@@ -410,7 +411,7 @@ func (m *Monitor) handleCreateFolderRecursive(
 					folderCloudPath, processedFiles)
 				return totalCreated, nil
 			}
-			entryCloudPath := folderCloudPath + "/" + entry.Name
+			entryCloudPath := strmutil.JoinCloudPath(folderCloudPath, entry.Name)
 			// BDMV 原盘：跳过 BDMV/STREAM 层级（含其目录本身，不再向下递归），
 			// 避免一个蓝光原盘被拆成上百个 m2ts STRM。ISO 原盘不受影响。
 			if model.IsBdmvStreamPath(entryCloudPath) {

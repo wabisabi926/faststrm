@@ -20,6 +20,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== 常量 ====================
@@ -328,16 +329,18 @@ func upperHex(b byte) string {
 }
 
 // ResolveFileName 解码 Content-Disposition filename
+// URL 百分解码后追加 115 字符引用解码（"\x02<码点>" → 真实字符，emoji 等特殊字符
+// 在 115 下载接口 / CDN 文件名中以此编码返回）；无编码时为 O(1) 快速跳过。
 func ResolveFileName(raw string) string {
 	if raw == "" {
 		return ""
 	}
 	if strings.Contains(raw, "%") {
 		if decoded, err := urlQueryUnescape(raw); err == nil {
-			return decoded
+			raw = decoded
 		}
 	}
-	return raw
+	return strmutil.Unescape115CharRef(raw)
 }
 
 func urlQueryUnescape(s string) (string, error) {

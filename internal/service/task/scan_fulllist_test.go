@@ -174,6 +174,24 @@ func TestResolveRelPathFromChain(t *testing.T) {
 	}
 }
 
+// 目录名含 '/'（115 允许）时，祖先链翻译必须结构转义，
+// 保证 dirRels/folders 表与文件级 EscapeName 遵循同一不变量：路径中的 '/' 均为真实分隔符。
+func TestResolveRelPathFromChain_SlashInDirName(t *testing.T) {
+	chain := []client115.FsFilesPathNode{
+		{Cid: 0, Pid: 0, Name: "根目录"},
+		{Cid: 100, Pid: 0, Name: "电影"},
+		{Cid: 200, Pid: 100, Name: "国语次时代/台/粤音轨"},
+	}
+	got, ok := resolveRelPathFromChain(chain, 0)
+	if !ok {
+		t.Fatal("应命中根目录")
+	}
+	want := "电影/国语次时代_台_粤音轨"
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
 func TestCloudParent(t *testing.T) {
 	cases := map[string]string{
 		"/电影/合集":  "/电影",

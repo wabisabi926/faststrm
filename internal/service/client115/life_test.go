@@ -263,6 +263,27 @@ func TestResolvePathByFileID_PathIncludesSelf(t *testing.T) {
 	}
 }
 
+// 主成功路径（祖先链可用）里，目录名含 '/' 时必须结构转义，
+// 否则 parentDir 会被下游按分隔符切分，同一个文件夹得到错误的 cloudPath。
+func TestResolvePathByFileID_EscapesSlashInAncestorDirName(t *testing.T) {
+	lc := newLifeClientWithTrips(t, []*mockTrip{{
+		Path:       "/files/medialist",
+		Query:      map[string]string{"cid": "888"},
+		BodyString: `{"state":true,"path":[{"cid":1,"name":"根目录","pid":0},{"cid":777,"name":"国语次时代/台/粤音轨","pid":1},{"cid":888,"name":"新文件夹","pid":777}]}`,
+	}})
+	got := lc.ResolvePathByFileID(context.Background(), "888", "新文件夹")
+	want := "国语次时代_台_粤音轨/新文件夹"
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+	// 缓存里存的父目录也必须是转义形态，否则后续缓存命中继续错
+	if cached, ok := lc.pathCache.Load("fid:888"); ok {
+		if entry := cached.(cachedPathEntry); entry.path != "国语次时代_台_粤音轨" {
+			t.Fatalf("pathCache 应为转义形态, got %q", entry.path)
+		}
+	}
+}
+
 // 祖先链为空时走「语义优先」降级链：先用 ResolveDirPath(fileID) 做完整祖先链解析（支持任意深度），
 // 而不是盲目假设「父目录是根目录」并浪费地遍历根目录一级子目录。
 func TestResolvePathByFileID_SemanticFirstViaResolveDirPath(t *testing.T) {
@@ -281,6 +302,22 @@ func TestResolvePathByFileID_SemanticFirstViaResolveDirPath(t *testing.T) {
 	got := lc.ResolvePathByFileID(context.Background(), "888", "新文件夹")
 	if got != "电影/动作片/新文件夹" {
 		t.Fatalf("want 电影/动作片/新文件夹, got %q", got)
+	}
+}
+
+// 文件名含 '/'（115 允许）时，缓存命中分支也必须结构转义，
+// 与缓存未命中的降级分支保持同一规则，避免同一文件随缓存状态产生两种 cloudPath。
+func TestResolvePathByFileID_CacheHitEscapesSlashInName(t *testing.T) {
+	// 预置 fid 缓存应直接命中；trips 为空 → 若发出任何请求测试即失败
+	lc := newLifeClientWithTrips(t, nil)
+	lc.pathCache.Store("fid:888", cachedPathEntry{
+		path:      "电影",
+		expiresAt: time.Now().Add(time.Minute),
+	})
+	got := lc.ResolvePathByFileID(context.Background(), "888", "国语次时代/台/粤音轨")
+	want := "电影/国语次时代_台_粤音轨"
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
 	}
 }
 

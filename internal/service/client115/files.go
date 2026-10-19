@@ -15,6 +15,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/crypto115"
 	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== 公共 request115 封装 ====================
@@ -340,8 +341,9 @@ func (c *Client) GetDownloadUrlWebFull(
 	}
 
 	result := &DownloadUrlMeta{
+		// 下载接口的 file_name 同样返回 "\x02<码点>" 编码（p115client download 模块同点解码）
 		URL:      dm.URL,
-		FileName: firstNonEmpty(dm.FileName, dm.FileName2),
+		FileName: strmutil.Unescape115CharRef(firstNonEmpty(dm.FileName, dm.FileName2)),
 	}
 	switch v := dm.FileSize.(type) {
 	case float64:
@@ -452,6 +454,9 @@ func (c *Client) FsFiles(
 	//   2. 无有效 fid 但有有效 cid → 目录
 	//   3. 都没有 → 用 fc 兜底
 	for i := range resp.Data {
+		// 115 会把 emoji 等特殊字符编码为 "\x02<码点>"（path 祖先链已知返回编码；
+		// 条目名统一解码兜底，与 p115client 对齐），必须在进入路径构建前还原真实名字
+		resp.Data[i].Name = strmutil.Unescape115CharRef(resp.Data[i].Name)
 		cid, cidErr := toInt64(resp.Data[i].CID)
 		fid, fidErr := toInt64(resp.Data[i].FID)
 		hasCID := cidErr == nil && cid > 0
@@ -466,6 +471,10 @@ func (c *Client) FsFiles(
 		default:
 			resp.Data[i].IsDir = hasChildren
 		}
+	}
+	// path 祖先链目录名同样解码（115 对该字段确认返回 "\x02<码点>" 编码，p115client 同点解码）
+	for i := range resp.Path {
+		resp.Path[i].Name = strmutil.Unescape115CharRef(resp.Path[i].Name)
 	}
 	return &resp, nil
 }
@@ -514,7 +523,7 @@ func (e *FullListEntry) UnmarshalJSON(b []byte) error {
 	}
 	e.FID = firstNonZeroInt64(int64(raw.Fid), int64(raw.FileID))
 	e.PID = firstNonZeroInt64(int64(raw.Pid), int64(raw.ParentID), int64(raw.Cid))
-	e.Name = firstNonEmpty(raw.N, raw.Fn, raw.FileName)
+	e.Name = strmutil.Unescape115CharRef(firstNonEmpty(raw.N, raw.Fn, raw.FileName))
 	e.PickCode = firstNonEmpty(raw.Pc, raw.PickCode, raw.Pickcode)
 	e.Size = firstNonZeroInt64(int64(raw.S), int64(raw.Size), int64(raw.SizeByte))
 	e.SHA = firstNonEmpty(raw.Sha, raw.Sha1)

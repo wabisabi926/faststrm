@@ -515,3 +515,38 @@ func TestListAllFilesRecursive_WritesFoldersTable(t *testing.T) {
 		}
 	}
 }
+
+// TestListAllFilesRecursive_SlashInFileName 115 文件名可含 '/'，拼接路径前必须结构转义（'/'→'_'），
+// 避免一个文件被误拆成多级目录。对齐参考项目 posix_escape_name 思路，替换字符用全平台合法的 '_'。
+func TestListAllFilesRecursive_SlashInFileName(t *testing.T) {
+	rt := &bdmvRT{fixtures: map[string]string{
+		"100": `{"state":true,"data":[` +
+			`{"n":"美国狙击手 央视国语次时代/台/粤音轨.mkv","fid":11,"pc":"abcdefghij1234567","s":100000,"cid":100}]}`,
+	}}
+
+	out, err := listAllFilesRecursive(
+		context.Background(), newMockClient(rt), "cookie", 100, "电影",
+		map[string]struct{}{".mkv": {}}, map[string]struct{}{},
+		0, nil, "", nil, nil, nil, "", nil,
+	)
+	if err != nil {
+		t.Fatalf("listAllFilesRecursive: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("应只命中 1 个文件, got %d", len(out))
+	}
+	f := out[0]
+	// Name 保留原始文件名（供 URL 参数、DB 等使用）
+	if f.Name != "美国狙击手 央视国语次时代/台/粤音轨.mkv" {
+		t.Fatalf("Name = %q, want 原始文件名", f.Name)
+	}
+	// RelPath 和 CloudPath 中的 '/' 应被替换为 '_'
+	wantRel := "美国狙击手 央视国语次时代_台_粤音轨.mkv"
+	wantCloud := "电影/美国狙击手 央视国语次时代_台_粤音轨.mkv"
+	if f.RelPath != wantRel {
+		t.Fatalf("RelPath = %q, want %q", f.RelPath, wantRel)
+	}
+	if f.CloudPath != wantCloud {
+		t.Fatalf("CloudPath = %q, want %q", f.CloudPath, wantCloud)
+	}
+}

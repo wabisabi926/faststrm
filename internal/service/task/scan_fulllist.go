@@ -14,6 +14,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== cur=0 全量清单扫描（M5） ====================
@@ -133,7 +134,9 @@ func resolveRelPathFromChain(chain []client115.FsFilesPathNode, rootCID int64) (
 			// 中间层缺名字会让整条路径错位，宁可失败回退 DFS
 			return "", false
 		}
-		names = append(names, name)
+		// 目录名同样可能含 '/'（115 允许），拼入路径前必须结构转义，
+		// 与文件级 EscapeName 保持同一不变量：路径中的 '/' 均为真实分隔符
+		names = append(names, strmutil.EscapeName(name))
 	}
 	return strings.Join(names, "/"), true
 }
@@ -283,10 +286,13 @@ func (r *dirPathResolver) upsertChain(chain []client115.FsFilesPathNode, rootCID
 	for _, node := range chain[idx:] {
 		name := strings.TrimSpace(node.Name)
 		if name != "" && int64(node.Cid) != rootCID {
+			// 目录名含 '/' 时先结构转义再拼路径（与 resolveRelPathFromChain、文件级转义一致），
+			// 保证 folders 表记录的 Path 与文件 RelPath 遵循同一规则；
+			// DB 的 FileName 字段保留原始名（与「Name 字段保留原始值」约定一致）
 			if rel == "" {
-				rel = name
+				rel = strmutil.EscapeName(name)
 			} else {
-				rel = rel + "/" + name
+				rel = rel + "/" + strmutil.EscapeName(name)
 			}
 		}
 		full := r.originPath
@@ -432,10 +438,9 @@ func listAllFilesViaFullList(
 	for i := range matchedEntries {
 		m := matchedEntries[i]
 		dirRel := dirRels[m.entry.PID]
-		relName := m.entry.Name
-		if dirRel != "" {
-			relName = dirRel + "/" + m.entry.Name
-		}
+		// 115 文件名本身可含 '/'，拼入路径后会被误当目录分隔符；
+		// 统一走 JoinCloudPath（内部做结构转义），避免一个文件被拆成多级目录。
+		relName := strmutil.JoinCloudPath(dirRel, m.entry.Name)
 		cloudPath := originPath
 		if relName != "" {
 			cloudPath = strings.TrimRight(originPath, "/") + "/" + relName
