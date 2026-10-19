@@ -22,7 +22,17 @@ import {
 } from "lucide-react";
 import { logger } from "@/lib/logger";
 
-type LifeEventType = "create" | "delete" | "move" | "rename" | "folder-sync";
+type LifeEventType =
+  | "create"
+  | "delete"
+  | "move"
+  | "rename"
+  | "folder-sync"
+  | "move-out"
+  | "move-recreate"
+  | "new_folder"
+  | "poll"
+  | "stall-timeout";
 
 interface LifeEventLog {
   id: string;
@@ -35,13 +45,28 @@ interface LifeEventLog {
   message: string;
 }
 
-const TYPE_LABELS: Record<LifeEventType, { label: string; color: string }> = {
+// 事件类型中文标签。后端可能新增类型，兜底用 FALLBACK_LABEL 包住英文原样
+const TYPE_LABELS: Partial<Record<LifeEventType, { label: string; color: string }>> = {
   create: { label: "创建", color: "bg-green-500/20 text-green-400" },
   delete: { label: "删除", color: "bg-red-500/20 text-red-400" },
   move: { label: "移动", color: "bg-blue-500/20 text-blue-400" },
   rename: { label: "重命名", color: "bg-purple-500/20 text-purple-400" },
   "folder-sync": { label: "文件夹同步", color: "bg-orange-500/20 text-orange-400" },
+  "move-out": { label: "移出", color: "bg-yellow-500/20 text-yellow-400" },
+  "move-recreate": { label: "移动重建", color: "bg-cyan-500/20 text-cyan-400" },
+  new_folder: { label: "新建文件夹", color: "bg-teal-500/20 text-teal-400" },
+  poll: { label: "轮询", color: "bg-gray-500/20 text-gray-400" },
+  "stall-timeout": { label: "轮询超时", color: "bg-amber-500/20 text-amber-400" },
 };
+
+function eventTypeLabel(type: string): { label: string; color: string } {
+  return (
+    TYPE_LABELS[type as LifeEventType] ?? {
+      label: type,
+      color: "bg-gray-500/20 text-gray-400",
+    }
+  );
+}
 
 function formatTime(ts: number) {
   const d = new Date(ts);
@@ -253,13 +278,8 @@ export default function LifeEventsPage() {
                       </TableCell>
                       <TableCell className="text-xs">{item.account}</TableCell>
                       <TableCell>
-                        <Badge
-                          className={
-                            TYPE_LABELS[item.eventType]?.color ||
-                            "bg-muted text-muted-foreground"
-                          }
-                        >
-                          {TYPE_LABELS[item.eventType]?.label || item.eventType}
+                        <Badge className={eventTypeLabel(item.eventType).color}>
+                          {eventTypeLabel(item.eventType).label}
                         </Badge>
                       </TableCell>
                       <TableCell>

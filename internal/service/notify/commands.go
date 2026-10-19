@@ -416,6 +416,29 @@ func (h *CommandHandler) handleStatus(ctx context.Context, chatID string) error 
 			boolToText(et.Rename, "✅", "❌")))
 	}
 
+	// 最近 3 条生活事件（命令入口已做过 ACL）
+	if h.menuActions != nil {
+		if events := h.menuActions.RecentEvents(ctx, 3); len(events) > 0 {
+			sb.WriteString("\n<b>🗒 最近事件</b>\n")
+			for _, e := range events {
+				et, _ := e["eventType"].(string)
+				acc, _ := e["account"].(string)
+				msg, _ := e["message"].(string)
+				ts, _ := e["timestamp"].(int64)
+				state := "✅"
+				if ok, _ := e["success"].(bool); !ok {
+					state = "❌"
+				}
+				when := ""
+				if ts > 0 {
+					when = time.UnixMilli(ts).Format("01-02 15:04")
+				}
+				sb.WriteString(fmt.Sprintf("%s %s · %s · %s\n  <code>%s</code>\n",
+					state, eventLabelZH(et), EscapeHTML(acc), when, truncateRunes(EscapeHTML(msg), 80)))
+			}
+		}
+	}
+
 	sb.WriteString(fmt.Sprintf("\n<b>⏰ %s</b>", nowFormatted()))
 	return h.tg().SendMessage(ctx, chatID, sb.String(), "HTML")
 }
@@ -485,4 +508,24 @@ func (h *CommandHandler) authorizeCallback(ctx context.Context, chatID string, u
 // nowFormatted 返回当前时间的格式化字符串
 func nowFormatted() string {
 	return time.Now().Format("2006-01-02 15:04:05")
+}
+
+// eventLabelZH 生活事件类型的中文标签（后端可能新增类型，兜底返回原文）
+func eventLabelZH(t string) string {
+	labels := map[string]string{
+		"create":        "创建",
+		"delete":        "删除",
+		"move":          "移动",
+		"move-out":      "移出",
+		"move-recreate": "移动重建",
+		"rename":        "重命名",
+		"folder-sync":   "文件夹同步",
+		"new_folder":    "新建文件夹",
+		"poll":          "轮询",
+		"stall-timeout": "轮询超时",
+	}
+	if l, ok := labels[t]; ok {
+		return l
+	}
+	return t
 }

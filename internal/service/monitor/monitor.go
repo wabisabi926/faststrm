@@ -330,6 +330,19 @@ func (m *Monitor) Refresh() {
 	}
 }
 
+// RecentEvents 返回最近 n 条生活事件日志（时间倒序）；repo 不可用时返回 nil。
+// 供 TG /status 展示「最近事件」。
+func (m *Monitor) RecentEvents(ctx context.Context, n int) []db.LifeEventLog {
+	if m.lifeEventLogRepo == nil || n <= 0 {
+		return nil
+	}
+	logs, err := m.lifeEventLogRepo.Query(ctx, db.LifeEventLogQuery{Limit: n})
+	if err != nil {
+		return nil
+	}
+	return logs
+}
+
 // Status 返回所有配置账号的监控状态
 func (m *Monitor) Status() map[string]AccountMonitorStatus {
 	m.mu.RLock()

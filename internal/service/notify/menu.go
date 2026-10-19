@@ -14,6 +14,8 @@ import (
 type MenuActions interface {
 	// ========== 系统状态 ==========
 	GetSystemStatus() (map[string]any, error)
+	// RecentEvents 最近 n 条生活事件日志（时间倒序），供 /status 展示
+	RecentEvents(ctx context.Context, n int) []map[string]any
 
 	// ========== 监控控制 ==========
 	StartMonitor(ctx context.Context, account string) error
@@ -425,6 +427,21 @@ func BuildSTRMMenu() (string, [][]InlineKeyboardButton) {
 	return text, buttons
 }
 
+// maxPickerButtons 选择页按钮上限。任务/映射很多时无限拉长按钮列表
+// 既难点又可能撞 Telegram 键盘行数限制，超过只保留前 N 个。
+const maxPickerButtons = 8
+
+// limitPickerButtons 超过上限时截断按钮并在文本追加提示
+func limitPickerButtons(sb *strings.Builder, buttons [][]InlineKeyboardButton) [][]InlineKeyboardButton {
+	if len(buttons) <= maxPickerButtons {
+		return buttons
+	}
+	kept := buttons[:maxPickerButtons]
+	sb.WriteString(fmt.Sprintf("\n⚠️ 按钮已达 %d 个上限，其余 %d 个请到 Web UI 操作。",
+		maxPickerButtons, len(buttons)-maxPickerButtons))
+	return kept
+}
+
 // BuildSyncTaskPicker 构建「全量同步」的任务选择页
 func BuildSyncTaskPicker(tasks []map[string]any) (string, [][]InlineKeyboardButton) {
 	var sb strings.Builder
@@ -459,6 +476,7 @@ func BuildSyncTaskPicker(tasks []map[string]any) (string, [][]InlineKeyboardButt
 	buttons = append(buttons, []InlineKeyboardButton{
 		{Text: "▶️ 全部按顺序执行", CallbackData: callbackSyncAll},
 	})
+	buttons = limitPickerButtons(&sb, buttons)
 	buttons = append(buttons, back...)
 	return sb.String(), buttons
 }
@@ -486,6 +504,7 @@ func BuildCleanupMappingPicker(mappings []map[string]string) (string, [][]Inline
 			{Text: "🧹 扫描 " + truncate(cloud, 20), CallbackData: fmt.Sprintf("%s%d", callbackCleanScan, i)},
 		})
 	}
+	buttons = limitPickerButtons(&sb, buttons)
 	buttons = append(buttons, back...)
 	return sb.String(), buttons
 }

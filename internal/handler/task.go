@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 
@@ -471,12 +474,17 @@ func HandleUpsertTask(deps TaskHandlerDeps, isUpdate bool) http.HandlerFunc {
 		}
 
 		var existing *task.Task
-		if req.ID != "" {
-			list, err := deps.TasksStore.ReadTasks()
-			if err != nil {
+		// 新建也要读全量任务做 ID 查重；更新时顺便用于定位 existing
+		list, err := deps.TasksStore.ReadTasks()
+		if err != nil {
+			if isUpdate {
 				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
+			// 新建时读取失败不阻塞创建，ID 回退时间戳
+			list = nil
+		}
+		if req.ID != "" {
 			for i := range list {
 				if list[i].ID == req.ID {
 					existing = &list[i]
@@ -487,6 +495,14 @@ func HandleUpsertTask(deps TaskHandlerDeps, isUpdate bool) http.HandlerFunc {
 				httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "task not found"})
 				return
 			}
+		}
+		// 新建且未指定 ID：生成可读 ID「账户-目录名」（如 aliyun-电影）
+		if !isUpdate && req.ID == "" {
+			origin := req.OriginPath
+			if origin == "" {
+				origin = req.SourcePath
+			}
+			req.ID = GenerateTaskID(req.Account, origin, list)
 		}
 
 		t := req.toTask(existing)
@@ -534,4 +550,76 @@ func HandleDeleteTask(deps TaskHandlerDeps) http.HandlerFunc {
 		w.Header().Set("HX-Trigger", "tasks-changed")
 		httpx.WriteJson(w, http.StatusOK, map[string]any{"success": true, "message": "task deleted"})
 	}
+}
+
+// ==================== 任务 ID 生成 ====================
+
+// maxTaskIDBytes 任务 ID 字节上限。任务 ID 会拼进 Telegram callback_data
+// （如 "task_exec:<id>"、"sync_run:<id>"，前缀最多 10 字节），
+// callback_data 总上限 64 字节，给 ID 留 48 字节余量充足。
+const maxTaskIDBytes = 48
+
+// GenerateTaskID 生成可读任务 ID：<账户>-<目录名>（如 "aliyun-电影"）。
+// 只在新建任务且前端未指定 ID 时调用；旧任务 ID 不受影响。
+//   - 清洗：/ \ : 空白 等特殊字符替换为 '-'，中文与字母数字保留
+//   - 按字节截断且不切断 UTF-8 多字节字符，防 callback_data 超限
+//   - 与现有任务 ID 冲突时追加 -2、-3… 直到唯一
+//   - 账户与路径都为空时回退时间戳 ID（防御）
+func GenerateTaskID(account, originPath string, existing []task.Task) string {
+	name := path.Base(strings.TrimSpace(originPath))
+	raw := sanitizeTaskIDPart(account) + "-" + sanitizeTaskIDPart(name)
+	raw = collapseDashes(truncateUTF8Safe(raw, maxTaskIDBytes))
+	if raw == "" {
+		return fmt.Sprintf("task-%d", time.Now().UnixMilli())
+	}
+	taken := make(map[string]bool, len(existing))
+	for _, t := range existing {
+		taken[t.ID] = true
+	}
+	if !taken[raw] {
+		return raw
+	}
+	for i := 2; ; i++ {
+		suffix := fmt.Sprintf("-%d", i)
+		id := truncateUTF8Safe(raw, maxTaskIDBytes-len(suffix)) + suffix
+		if !taken[id] {
+			return id
+		}
+	}
+}
+
+// sanitizeTaskIDPart 清洗 ID 片段：非法字符替换为 '-'，去掉首尾 '-'
+// 保留：Unicode 字母（含汉字）、数字、- _ .
+func sanitizeTaskIDPart(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r), r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-.")
+}
+
+// truncateUTF8Safe 按字节截断且不切断 UTF-8 多字节字符
+func truncateUTF8Safe(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	cut := s[:max]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return strings.TrimRight(cut, "-")
+}
+
+// collapseDashes 把连续 '-' 压缩为一个并去掉首尾 '-'（含 '.'，如 path.Base("") == "."）
+func collapseDashes(s string) string {
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	return strings.Trim(s, "-.")
 }

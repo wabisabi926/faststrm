@@ -41,6 +41,25 @@ type menuActionsAdapter struct {
 	cleanupScanning atomic.Bool // 清理扫描防重入（同一时间只允许一个）
 }
 
+// RecentEvents 最近 n 条生活事件日志（TG /status 展示用）
+func (a *menuActionsAdapter) RecentEvents(ctx context.Context, n int) []map[string]any {
+	if a.monitor == nil {
+		return nil
+	}
+	logs := a.monitor.RecentEvents(ctx, n)
+	out := make([]map[string]any, 0, len(logs))
+	for _, l := range logs {
+		out = append(out, map[string]any{
+			"eventType": l.EventType,
+			"account":   l.Account,
+			"success":   l.Success,
+			"message":   l.Message,
+			"timestamp": l.Timestamp,
+		})
+	}
+	return out
+}
+
 // GetSystemStatus 聚合账号、监控、运行任务和 Emby 状态
 func (a *menuActionsAdapter) GetSystemStatus() (map[string]any, error) {
 	accounts := a.accountStore.List()
