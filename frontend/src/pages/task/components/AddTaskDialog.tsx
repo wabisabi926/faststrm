@@ -40,7 +40,7 @@ import { resolveStrmSettings } from "@/lib/strmUtils";
 export const taskFormSchema = z.object({
   account: z.string().min(1, "账户不能为空"),
   originPath: z.string().min(1, "远程路径不能为空"),
-  targetPath: z.string().optional(),
+  targetPath: z.string().min(1, "本地目标路径不能为空"),
   strmType: z.string().optional(),
   strmPrefix: z.string().optional(),
 });

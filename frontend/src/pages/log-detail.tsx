@@ -36,6 +36,7 @@ export default function DownloadProgressPage() {
   const [searchParams] = useSearchParams();
   const executionId = searchParams.get("executionId") || undefined;
   const [logs, setLogs] = useState<Progress[]>([]);
+  const [rawLines, setRawLines] = useState<string[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<string>("连接中...");
   const [isCancelling, setIsCancelling] = useState<boolean>(false);
   const [taskStatus, setTaskStatus] = useState<string>("开始");
@@ -85,108 +86,50 @@ export default function DownloadProgressPage() {
   }, [executionId]);
 
   useEffect(() => {
-    let abortController: AbortController | null = null;
-
-    const startSSE = async () => {
-      abortController = new AbortController();
-      setConnectionStatus("连接中...");
-
+    const loadLiveLogs = async () => {
+      // 历史 execution 模式：走 history 接口
+      if (executionId) {
+        await loadHistoryLogs();
+        return;
+      }
+      setConnectionStatus("加载中...");
       try {
-        if (executionId) {
-          await loadHistoryLogs();
-          return;
-        }
+        // 后端 /api/taskLog/:taskId 返回一次性纯文本行（非 SSE 流）：
+        // 行内容可能是 Progress JSON（文件进度），也可能是普通日志文本
+        const response = await axiosInstance.get(
+          `/api/taskLog/${encodeURIComponent(taskId ?? "")}`
+        );
+        const text: string = typeof response.data === "string" ? response.data : "";
+        const lines = text.split("\n").filter((l) => l.trim() !== "");
 
-        const response = await fetch(`/api/taskLog/${taskId}`, {
-          method: 'GET',
-          headers: {
-            'Accept': 'text/event-stream',
-            'Authorization': `Bearer ${localStorage.getItem('auth-token')}`,
-          },
-          signal: abortController.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        setConnectionStatus("已连接");
-
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error('No reader available');
-        }
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            setConnectionStatus("连接已断开");
-            break;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const dataStr = line.slice(6);
-              if (dataStr.trim()) {
-                try {
-                  const data: Progress = JSON.parse(dataStr);
-
-                  if (data.error) {
-                    setLogs([]);
-                    setConnectionStatus("任务不存在");
-                    setTaskStatus("不存在");
-                    return;
-                  }
-
-                  if (data.cancelled) {
-                    setTaskStatus("已取消");
-                  } else if (data.done) {
-                    setTaskStatus("已完成");
-                  } else {
-                    setTaskStatus("开始");
-                  }
-
-                  setLogs((prev) => {
-                    const idx = prev.findIndex((log) => log.filePath === data.filePath);
-                    if (idx !== -1) {
-                      const updated = [...prev];
-                      updated[idx] = { ...updated[idx], ...data };
-                      return updated;
-                    } else {
-                      return [...prev, data];
-                    }
-                  });
-                } catch (e) {
-                  console.error('Error parsing SSE data:', e, 'Raw data:', dataStr);
-                }
-              }
+        const parsed: Progress[] = [];
+        const raw: string[] = [];
+        for (const line of lines) {
+          try {
+            const obj = JSON.parse(line);
+            if (obj && typeof obj === "object" && ("filePath" in obj || "error" in obj)) {
+              parsed.push(obj as Progress);
+              continue;
             }
+          } catch {
+            // 非 JSON 行
           }
+          raw.push(line);
+        }
+
+        setLogs(parsed);
+        setRawLines(raw);
+        setConnectionStatus("已加载");
+        if (lines.length === 0) {
+          setTaskStatus("不存在");
         }
       } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          setConnectionStatus("连接已取消");
-        } else {
-          console.error('SSE connection error:', error);
-          setConnectionStatus(`连接错误: ${error instanceof Error ? error.message : '未知错误'}`);
-        }
+        console.error("加载任务日志失败:", error);
+        setConnectionStatus("加载日志失败");
       }
     };
 
-    startSSE();
-
-    return () => {
-      if (abortController) {
-        abortController.abort();
-      }
-    };
+    loadLiveLogs();
   }, [taskId, executionId, loadHistoryLogs]);
 
   const cancelTask = async () => {
@@ -302,7 +245,7 @@ export default function DownloadProgressPage() {
         )}
       </div>
 
-      {logs.length === 0 ? (
+      {logs.length === 0 && rawLines.length === 0 ? (
         <div style={{
           textAlign: 'center',
           padding: 48,
@@ -312,7 +255,7 @@ export default function DownloadProgressPage() {
           border: "1px solid #e5e7eb"
         }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
-          <p style={{ color: "#6b7280", fontSize: 16, margin: 0 }}>暂无下载任务</p>
+          <p style={{ color: "#6b7280", fontSize: 16, margin: 0 }}>暂无任务日志</p>
         </div>
       ) : (
         <>
@@ -450,6 +393,39 @@ export default function DownloadProgressPage() {
             </div>
           </div>
         </>
+      )}
+
+      {rawLines.length > 0 && (
+        <div style={{
+          marginTop: 24,
+          backgroundColor: "#ffffff",
+          borderRadius: 12,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          border: "1px solid #e5e7eb",
+          overflow: 'hidden'
+        }}>
+          <div style={{
+            padding: 16,
+            borderBottom: "1px solid #e5e7eb",
+            backgroundColor: "#f9fafb"
+          }}>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#111827" }}>日志输出</h3>
+          </div>
+          <pre style={{
+            margin: 0,
+            padding: 16,
+            maxHeight: 480,
+            overflowY: 'auto',
+            fontSize: 12,
+            lineHeight: 1.6,
+            color: "#374151",
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+          }}>
+            {rawLines.join("\n")}
+          </pre>
+        </div>
       )}
 
       <style>{`

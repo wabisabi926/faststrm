@@ -29,7 +29,7 @@ const CLEANUP_MODE_HINTS: Record<string, string> = {
   mark_only:
     "只在任务日志里列出孤儿 STRM，不动任何文件。适合先观察一段时间，确认判定准确后再切到自动清理。",
   auto_clean:
-    "直接删除孤儿 STRM。命中保护阈值时会自动停手，或转入待确认队列，等你在 Web UI 确认后才删。",
+    "直接删除孤儿 STRM。命中保护阈值时会自动停手，或转入待确认队列——可在 Telegram 按钮或清理页「待确认删除批次」中确认；超过 24 小时未确认的批次会自动作废。",
 };
 
 export interface BasicSettingsTabProps {

@@ -191,7 +191,7 @@ export function CleanupToolbar({
         <p className="text-xs flex items-center gap-2 mt-1">
           <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700">
             <RefreshCw className="size-3 inline mr-1 align-text-bottom" />
-            P3：{cacheWindowSec}s 内复扫 → 命中本地 STRM 生成缓存
+            {cacheWindowSec}s 内复扫 → 命中本地 STRM 生成缓存
           </Badge>
           <span className="text-muted-foreground">
             缓存可减少重复读取 115 云端目录；如需强制刷新，请隔 {cacheWindowSec} 秒后再扫。

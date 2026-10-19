@@ -156,8 +156,15 @@ export function useTasks(): UseTasksResult {
   // 删除任务
   const deleteTask = async (id: string, cleanStrm: boolean) => {
     try {
-      await axiosInstance.delete(`/api/task?id=${id}${cleanStrm ? "&cleanStrm=true" : ""}`);
-      toast.success(cleanStrm ? "任务删除成功，STRM 目录已清理" : "任务删除成功");
+      const res = await axiosInstance.delete(
+        `/api/task?id=${encodeURIComponent(id)}${cleanStrm ? "&cleanStrm=true" : ""}`
+      );
+      const removed: number = res.data?.strmRemoved ?? 0;
+      toast.success(
+        cleanStrm
+          ? `任务删除成功，已清理 ${removed} 个 STRM 文件`
+          : "任务删除成功"
+      );
       void fetchTasks();
     } catch {
       toast.error("删除失败");
@@ -227,7 +234,7 @@ export function useTasks(): UseTasksResult {
   // 查看日志
   const goToLog = async (id: string) => {
     try {
-      const logRes = await axiosInstance.get(`/api/taskLog/${id}`);
+      const logRes = await axiosInstance.get(`/api/taskLog/${encodeURIComponent(id)}`);
       const logText: string = logRes.data || "";
       if (logText.trim()) {
         navigate(`/log/${id}`);

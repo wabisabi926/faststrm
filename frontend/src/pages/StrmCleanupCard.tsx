@@ -29,6 +29,7 @@ import { MissingStrmDialog } from "./strm-cleanup/MissingStrmDialog";
 import { CleanupToolbar } from "./strm-cleanup/CleanupToolbar";
 import { CleanupLogPanel } from "./strm-cleanup/CleanupLogPanel";
 import { MappingDetailList } from "./strm-cleanup/MappingDetailList";
+import { PendingBatchesSection } from "./strm-cleanup/PendingBatchesSection";
 
 export function StrmCleanupCard() {
   // 对话框开关由组件层管理
@@ -248,6 +249,9 @@ export function StrmCleanupCard() {
 
             {/* 操作日志 */}
             <CleanupLogPanel logs={logs} onClear={clearLogs} />
+
+            {/* 待确认删除批次（清理转入待确认队列后在此执行/取消） */}
+            <PendingBatchesSection />
 
             {/* 路径映射扫描明细 */}
             <MappingDetailList mappings={scanResult.mappings} />

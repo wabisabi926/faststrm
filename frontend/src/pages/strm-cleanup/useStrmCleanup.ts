@@ -22,6 +22,20 @@ import {
   toggleStaleInSet,
 } from "./selection";
 
+
+// friendlyHttpError 把 HTTP/网络错误转成用户可读的中文：
+// 优先取后端返回的 error 字段；网络类错误（断网/超时/连接失败）映射为中文；其余兜底 fallback
+function friendlyHttpError(err: AxiosError | undefined, fallback: string): string {
+  const backend = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+  if (backend) return backend;
+  const raw = err?.message || "";
+  if (/network error/i.test(raw)) return "网络连接失败，请检查服务是否在运行";
+  if (/timeout/i.test(raw)) return "请求超时，请稍后重试";
+  if (/err_(?:connection|name)/i.test(raw)) return "无法连接到服务，请检查服务状态";
+  if (raw && !/request failed with status code/i.test(raw)) return raw;
+  return fallback;
+}
+
 export interface UseStrmCleanupResult {
   // 状态
   scanning: boolean;
@@ -246,7 +260,7 @@ export function useStrmCleanup(
       );
     } catch (err) {
       const axiosErr = err as AxiosError;
-      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "操作后复扫失败";
+      const msg = friendlyHttpError(axiosErr, "操作后复扫失败");
       appendLog("复扫", msg, false);
       toast.warning("操作已完成，但刷新统计失败，请稍后手动扫描", {
         description: msg,
@@ -266,7 +280,7 @@ export function useStrmCleanup(
       toast.success(`扫描完成：发现 ${data.totalStale} 个失效 STRM，${data.totalMissing} 个漏生成`);
     } catch (err) {
       const axiosErr = err as AxiosError;
-      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "扫描失败";
+      const msg = friendlyHttpError(axiosErr, "扫描失败");
       appendLog("扫描", msg, false);
       toast.error(msg);
       console.error(err);
@@ -307,7 +321,7 @@ export function useStrmCleanup(
       });
     } catch (err) {
       const axiosErr = err as AxiosError;
-      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "对账失败";
+      const msg = friendlyHttpError(axiosErr, "对账失败");
       appendLog("全量对账", msg, false);
       toast.error("对账失败", { description: msg });
       console.error(err);
@@ -411,7 +425,7 @@ export function useStrmCleanup(
       handleDeleteResult(res.data);
     } catch (err) {
       const axiosErr = err as AxiosError;
-      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "删除失败";
+      const msg = friendlyHttpError(axiosErr, "删除失败");
       appendLog("删除", msg, false);
       toast.error(msg);
       console.error(err);
@@ -437,7 +451,7 @@ export function useStrmCleanup(
       await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
-      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "批量删除失败";
+      const msg = friendlyHttpError(axiosErr, "批量删除失败");
       appendLog("批量删除", msg, false);
       toast.error(msg);
     } finally {
@@ -465,7 +479,7 @@ export function useStrmCleanup(
       await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
-      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "组合操作失败";
+      const msg = friendlyHttpError(axiosErr, "组合操作失败");
       appendLog("清理+补生成", msg, false);
       toast.error(msg);
     } finally {
@@ -492,7 +506,7 @@ export function useStrmCleanup(
       await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
-      const msg = axiosErr?.response?.data?.error || axiosErr?.message || "补生成失败";
+      const msg = friendlyHttpError(axiosErr, "补生成失败");
       appendLog("补生成", msg, false);
       toast.error(msg);
     } finally {

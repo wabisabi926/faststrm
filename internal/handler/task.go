@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -49,7 +51,7 @@ func HandleStartTask(deps TaskHandlerDeps) http.HandlerFunc {
 		}
 		if req.TaskID == "" {
 			httpx.WriteJson(w, http.StatusBadRequest, task.ExecuteResult{
-				Success: false, Reason: "missing_task_id", Message: "taskId required",
+				Success: false, Reason: "missing_task_id", Message: "缺少任务 ID",
 			})
 			return
 		}
@@ -206,7 +208,7 @@ func HandleTaskLog(deps TaskHandlerDeps) http.HandlerFunc {
 			}
 		}
 		if tid == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "taskId required"})
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少任务 ID"})
 			return
 		}
 		// 先从运行时内存取，再从 SSE 缓冲，最后才从 DB 取
@@ -452,7 +454,7 @@ func HandleUpsertTask(deps TaskHandlerDeps, isUpdate bool) http.HandlerFunc {
 				req.ID = r.URL.Query().Get("id")
 			}
 			if req.ID == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "task id required for update"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "更新任务需要指定任务 ID"})
 				return
 			}
 		}
@@ -460,7 +462,7 @@ func HandleUpsertTask(deps TaskHandlerDeps, isUpdate bool) http.HandlerFunc {
 		// 必填检查（新建）
 		if !isUpdate {
 			if req.Account == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "account required"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少账号"})
 				return
 			}
 			origin := req.OriginPath
@@ -468,7 +470,7 @@ func HandleUpsertTask(deps TaskHandlerDeps, isUpdate bool) http.HandlerFunc {
 				origin = req.SourcePath
 			}
 			if origin == "" || req.TargetPath == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "sourcePath and targetPath required"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少远程路径或本地目标路径"})
 				return
 			}
 		}
@@ -531,25 +533,70 @@ func HandleDeleteTask(deps TaskHandlerDeps) http.HandlerFunc {
 			id = lastSeg(r.URL.Path)
 		}
 		if id == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "task id required"})
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少任务 ID"})
 			return
+		}
+		// cleanStrm=true：删除任务前先取其输出目录，删掉目录下所有 STRM 文件并清理空目录。
+		// 用户在删除对话框显式勾选（带红色警告）后才传该参数。
+		cleanStrm := r.URL.Query().Get("cleanStrm") == "true"
+		strmRemoved := 0
+		if cleanStrm {
+			if tasks, rerr := deps.TasksStore.ReadTasks(); rerr == nil {
+				for _, t := range tasks {
+					if t.ID == id && strings.TrimSpace(t.TargetPath) != "" {
+						strmRemoved = removeStrmFiles(t.TargetPath)
+						logger.S().Infof("[DeleteTask] 清理任务 %s STRM 目录 %s: removed=%d", id, t.TargetPath, strmRemoved)
+						break
+					}
+				}
+			}
 		}
 		// 先尝试 cancel 避免残留
 		_ = deps.Runtime.Cancel(id)
 		deleted, err := deps.TasksStore.DeleteTask(id)
 		if err != nil {
 			logger.S().Errorf("[DeleteTask] %s: %v", id, err)
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "删除任务失败: " + err.Error()})
 			return
 		}
 		if !deleted {
-			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "任务不存在"})
 			return
 		}
 		go deps.Scheduler.RefreshAll(deps.TasksStore)
 		w.Header().Set("HX-Trigger", "tasks-changed")
-		httpx.WriteJson(w, http.StatusOK, map[string]any{"success": true, "message": "task deleted"})
+		httpx.WriteJson(w, http.StatusOK, map[string]any{
+			"success": true, "message": "任务已删除", "strmRemoved": strmRemoved,
+		})
 	}
+}
+
+// removeStrmFiles 删除 root 目录下所有 .strm 文件并清理空目录，返回删除数。
+// 只碰 .strm，不碰其他文件（媒体/海报/nfo 等一律保留）；目录不存在时返回 0。
+func removeStrmFiles(root string) int {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return 0
+	}
+	if _, err := os.Stat(root); err != nil {
+		return 0
+	}
+	removed := 0
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(p), ".strm") {
+			if rmErr := os.Remove(p); rmErr == nil {
+				removed++
+			} else {
+				logger.S().Warnf("[DeleteTask] remove strm %s failed: %v", p, rmErr)
+			}
+		}
+		return nil
+	})
+	rmEmptyDirs(root)
+	return removed
 }
 
 // ==================== 任务 ID 生成 ====================

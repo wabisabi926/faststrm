@@ -201,8 +201,13 @@ export default function LifeEventsPage() {
                 <option value="create">创建</option>
                 <option value="delete">删除</option>
                 <option value="move">移动</option>
+                <option value="move-out">移出</option>
+                <option value="move-recreate">移动重建</option>
                 <option value="rename">重命名</option>
                 <option value="folder-sync">文件夹同步</option>
+                <option value="new_folder">新建文件夹</option>
+                <option value="poll">轮询</option>
+                <option value="stall-timeout">轮询超时</option>
               </select>
             </div>
             <div className="flex items-center gap-2">

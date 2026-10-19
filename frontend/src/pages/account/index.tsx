@@ -107,7 +107,7 @@ export default function AccountPage() {
 
   const handleDelete = async (name: string) => {
     try {
-      await axiosInstance.delete(`/api/account?name=${name}`);
+      await axiosInstance.delete(`/api/account?name=${encodeURIComponent(name)}`);
       toast.success("删除成功");
       fetchAccounts();
     } catch {

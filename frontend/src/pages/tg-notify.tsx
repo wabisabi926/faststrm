@@ -16,6 +16,7 @@ interface TelegramConfig {
   enabled?: boolean;
   autoPolling?: boolean;
   proxyUrl?: string;
+  hasWebhookSecret?: boolean;
 }
 
 interface BotInfo {
@@ -50,6 +51,8 @@ export default function TelegramNotifyPage() {
   const [pollingStatus, setPollingStatus] = useState<{ polling: boolean; message: string } | null>(null);
   const [originalTokenPlain, setOriginalTokenPlain] = useState<string>("");
   const [tokenModified, setTokenModified] = useState<boolean>(false);
+  // webhook secret 输入值：空串=保持现状（后端沿用旧值）；"-"=清除；其他=设置新值
+  const [webhookSecretInput, setWebhookSecretInput] = useState<string>("");
 
   useEffect(() => {
     void loadBotInfo();
@@ -85,6 +88,7 @@ export default function TelegramNotifyPage() {
       if (botResp.data.configured) {
         if (botResp.data.bot) setBotInfo(botResp.data.bot.result ?? botResp.data.bot);
         if (botResp.data.webhook) setWebhookInfo(botResp.data.webhook.result ?? botResp.data.webhook);
+        setConfig((prev) => ({ ...prev, hasWebhookSecret: botResp.data.hasWebhookSecret === true }));
       }
     } catch (error) {
       logger.error("加载 Bot 信息失败:", error);
@@ -106,10 +110,13 @@ export default function TelegramNotifyPage() {
         enabled: config.enabled !== false,
         autoPolling: config.autoPolling !== false,
         proxyUrl: config.proxyUrl,
+        // 留空不传=后端沿用旧值；"-"=清除；其他=设置新值
+        ...(webhookSecretInput.trim() !== "" ? { webhookSecretToken: webhookSecretInput.trim() } : {}),
       });
 
       if (response.data.success) {
         setSuccess("配置保存成功！");
+        setWebhookSecretInput("");
         const savedToken = tokenModified && config.botToken ? config.botToken : originalTokenPlain;
         setOriginalTokenPlain(savedToken);
         setTokenModified(false);
@@ -285,6 +292,28 @@ export default function TelegramNotifyPage() {
           />
           <p className="text-xs text-muted-foreground">留空使用轮询模式（5秒延迟），填写则使用 Webhook（毫秒级）</p>
         </div>
+
+        {config.webhookUrl && (
+          <div className="space-y-1.5 min-w-0">
+            <Label htmlFor="webhookSecret">
+              Webhook 密钥{" "}
+              {config.hasWebhookSecret && (
+                <span className="text-xs text-green-600">（已设置）</span>
+              )}
+              <span className="text-xs text-muted-foreground">（可选，防伪造请求）</span>
+            </Label>
+            <Input
+              id="webhookSecret"
+              placeholder={config.hasWebhookSecret ? "已设置，留空保持不变；输入 - 清除" : "输入密钥（任意 1-256 字符随机串）"}
+              value={webhookSecretInput}
+              onChange={(e) => setWebhookSecretInput(e.target.value)}
+              autoComplete="off"
+            />
+            <p className="text-xs text-muted-foreground">
+              设置后把同一密钥填到反向代理/网关的 <code>X-Telegram-Bot-Api-Secret-Token</code> 头；留空保持现状
+            </p>
+          </div>
+        )}
 
         <div className="space-y-1.5 min-w-0">
           <Label htmlFor="proxyUrl">代理 URL <span className="text-xs text-muted-foreground">（可选，国内必填）</span></Label>

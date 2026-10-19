@@ -165,12 +165,13 @@ func HandleNotifyBotGET(deps NotifyDeps) http.HandlerFunc {
 		tg := settings.Telegram
 
 		base := map[string]any{
-			"configured":  tg.BotToken != "",
-			"botToken":    maskBotToken(tg.BotToken),
-			"chatId":      tg.ChatID,
-			"webhookUrl":  tg.WebhookURL,
-			"enabled":     tg.Enabled,
-			"autoPolling": tg.AutoPolling,
+			"configured":       tg.BotToken != "",
+			"botToken":         maskBotToken(tg.BotToken),
+			"chatId":           tg.ChatID,
+			"webhookUrl":       tg.WebhookURL,
+			"enabled":          tg.Enabled,
+			"autoPolling":      tg.AutoPolling,
+			"hasWebhookSecret": tg.WebhookSecretToken != "",
 		}
 
 		if tg.BotToken == "" {
@@ -216,6 +217,8 @@ type NotifyBotRequest struct {
 	ProxyURL    string `json:"proxyUrl"`
 	Enabled     *bool  `json:"enabled"`
 	AutoPolling *bool  `json:"autoPolling"`
+	// WebhookSecretToken webhook 密钥：空串=保持不变；"-"=清除；其他=设置新值
+	WebhookSecretToken string `json:"webhookSecretToken,omitempty"`
 }
 
 // HandleNotifyBotPOST POST /api/notify/bot 校验 Bot Token 后保存 Telegram 配置，可选设置 Webhook
@@ -295,15 +298,24 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		}
 
 		newTg := model.TelegramSettings{
-			BotToken:           req.BotToken,
-			ChatID:             req.ChatID,
-			WebhookURL:         req.WebhookURL,
-			ProxyURL:           req.ProxyURL,
-			Enabled:            true,
-			AutoPolling:        true,
-			AllowedUsers:       old.AllowedUsers,
-			AccountAlerts:      old.AccountAlerts,
+			BotToken:     req.BotToken,
+			ChatID:       req.ChatID,
+			WebhookURL:   req.WebhookURL,
+			ProxyURL:     req.ProxyURL,
+			Enabled:      true,
+			AutoPolling:  true,
+			AllowedUsers: old.AllowedUsers,
+			AccountAlerts: old.AccountAlerts,
+			// secret 默认沿用旧值（GET 不回传明文，前端留空即保留）
 			WebhookSecretToken: old.WebhookSecretToken,
+		}
+		// 显式传了 secret：非空设置新值；"-" 清除
+		if s := strings.TrimSpace(req.WebhookSecretToken); s != "" {
+			if s == "-" {
+				newTg.WebhookSecretToken = ""
+			} else {
+				newTg.WebhookSecretToken = s
+			}
 		}
 		if req.Enabled != nil {
 			newTg.Enabled = *req.Enabled
@@ -712,7 +724,7 @@ func HandleNotifySend(deps NotifyDeps) http.HandlerFunc {
 		default:
 			// 无 type：直接发送 message 文本
 			if req.Message == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "message is required"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少消息内容"})
 				return
 			}
 			sendErr = deps.Dispatcher.Notify(ctx, req.Message)

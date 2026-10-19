@@ -74,7 +74,7 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 			return
 		}
 		if req.Action == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "action is required"})
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少操作类型"})
 			return
 		}
 		if deps.Monitor == nil {
@@ -87,7 +87,7 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 		switch req.Action {
 		case "start":
 			if req.Account == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "account is required"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少账号"})
 				return
 			}
 			if err := deps.Monitor.Start(ctx, req.Account); err != nil {
@@ -101,7 +101,7 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 
 		case "stop":
 			if req.Account == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "account is required"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少账号"})
 				return
 			}
 			deps.Monitor.Stop(req.Account)
@@ -129,7 +129,7 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 
 		case "saveConfig":
 			if len(req.Config) == 0 {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "config is required"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少配置内容"})
 				return
 			}
 			settings, err := deps.SettingsStore.ReadSettings()
@@ -157,7 +157,7 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 
 		case "verify":
 			if req.Account == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "account is required"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少账号"})
 				return
 			}
 			vctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -177,7 +177,7 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 
 		case "updateConfig":
 			if len(req.Updates) == 0 {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "updates is required"})
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少更新内容"})
 				return
 			}
 			settings, err := deps.SettingsStore.ReadSettings()
