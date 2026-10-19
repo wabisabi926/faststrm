@@ -21,6 +21,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 type StrmCleanupDeps struct {
@@ -374,14 +375,15 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 	result.RemoteFileCount = len(cloudItems)
 
 	// cloudStrmSet：云端文件对应的 .strm 名集合
-	// 云端相对路径（/ 分隔）→ 按生成侧规则换 .strm → 统一为本地 OS 分隔符，
-	// 与 listLocalStrmFiles 返回的本地相对路径逐字节对齐，避免扩展名与分隔符导致误判失效
+	// 云端相对路径（/ 分隔）→ 按生成侧规则换 .strm → 再做落盘清理（冒号转全角等）
+	// → 统一为本地 OS 分隔符，与 listLocalStrmFiles 返回的本地相对路径逐字节对齐。
+	// 必须走 cloudStrmRelKey（内部 SanitizeRelPath），只换扩展名会对不上含 ':' 的本地文件名。
 	cloudStrmSet := make(map[string]struct{}, len(cloudItems))
 	for _, it := range cloudItems {
 		if it.IsDir {
 			continue
 		}
-		cloudStrmSet[filepath.FromSlash(cleanupStrmFileName(it.RelPath))] = struct{}{}
+		cloudStrmSet[cloudStrmRelKey(it.RelPath)] = struct{}{}
 	}
 
 	localSet := make(map[string]os.FileInfo)
@@ -405,7 +407,7 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 		if it.IsDir {
 			continue
 		}
-		strmRel := filepath.FromSlash(cleanupStrmFileName(it.RelPath))
+		strmRel := cloudStrmRelKey(it.RelPath)
 		if _, exists := localSet[strmRel]; !exists {
 			result.MissingStrms = append(result.MissingStrms, MissingStrm{
 				RelPath:  strmRel,
@@ -633,10 +635,10 @@ func walkCloudTree(ctx context.Context, client *client115.Client, cookie string,
 		}
 		for i := range resp.Data {
 			f := resp.Data[i]
-			rel := f.Name
-			if relBase != "" {
-				rel = relBase + "/" + f.Name
-			}
+			// 115 文件/目录名可含 '/'，拼入 RelPath 前必须结构转义，
+			// 与生成侧（task/monitor 的 JoinCloudPath）同一规则，否则该文件的本地 STRM
+			// 会因与云端名单对不上而被误判失效删除。Name 字段保留原始名供 pickcode 对账。
+			rel := strmutil.JoinCloudPath(relBase, f.Name)
 			*out = append(*out, cloudWalkItem{
 				Name:     f.Name,
 				RelPath:  rel,
@@ -707,6 +709,15 @@ func cleanupStrmFileName(fileName string) string {
 		return stem + ".iso.strm"
 	}
 	return stem + ".strm"
+}
+
+// cloudStrmRelKey 把云端相对路径换算成本地 STRM 相对路径（比对键）。
+//
+// 与生成侧 replaceRelPathExtToStrm 同规则：换扩展名 → SanitizeRelPath 逐段落盘清理
+// （':' → '：'、'/' '\' → '_' 等）→ 当前平台 OS 分隔符。
+// 两边必须逐字节一致：只换扩展名而不做落盘清理，含 ':' 的片名会被误判为「本地多余」而删除。
+func cloudStrmRelKey(cloudRel string) string {
+	return strmutil.SanitizeRelPath(cleanupStrmFileName(cloudRel))
 }
 
 // listLocalStrmFiles 返回本地 .strm 相对路径→文件信息（保持签名不变，避免 StaleStrm/MissingStrm 匹配逻辑改动）
