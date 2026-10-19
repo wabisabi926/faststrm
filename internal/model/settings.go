@@ -515,6 +515,14 @@ func (v StrmURLTemplateVars) encode(s string) string {
 	return strmutil.URLPathEncode(s)
 }
 
+// encodeStrict 完整编码（'/' 也编码为 %2F），用于把路径塞进单个 query 参数。
+func (v StrmURLTemplateVars) encodeStrict(s string) string {
+	if v.DisableEncode {
+		return s
+	}
+	return strmutil.URLPathEncodeStrict(s)
+}
+
 // RenderStrmUrlTemplate 渲染 STRM URL 模板。
 // 当 Template == "" 时返回空字符串，由调用方回退默认拼接逻辑。
 func RenderStrmUrlTemplate(v StrmURLTemplateVars) string {
@@ -526,6 +534,7 @@ func RenderStrmUrlTemplate(v StrmURLTemplateVars) string {
 	encodedPickcode := v.encode(v.PickCode)
 	encodedFileName := v.encode(v.FileName)
 	encodedFilePath := v.encode(v.CloudPath)
+	encodedFilePathStrict := v.encodeStrict(v.CloudPath)
 	r := strings.NewReplacer(
 		"{prefix}", prefix,
 		"{base_url}", prefix,
@@ -539,6 +548,8 @@ func RenderStrmUrlTemplate(v StrmURLTemplateVars) string {
 		"{file_stem}", v.Stem,
 		"{file_path}", encodedFilePath,
 		"{file_path_raw}", v.CloudPath,
+		// 完整编码（'/' → %2F）：用于精简路径式 URL 的 path 参数
+		"{file_path_strict}", encodedFilePathStrict,
 		"{file_id}", v.FileID,
 	)
 	result := r.Replace(v.Template)

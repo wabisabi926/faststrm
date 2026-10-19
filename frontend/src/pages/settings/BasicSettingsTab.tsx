@@ -32,20 +32,6 @@ const CLEANUP_MODE_HINTS: Record<string, string> = {
     "直接删除孤儿 STRM。命中保护阈值时会自动停手，或转入待确认队列——可在 Telegram 按钮或清理页「待确认删除批次」中确认；超过 24 小时未确认的批次会自动作废。",
 };
 
-// ==================== STRM URL 形态 ====================
-// 必要参数（account / pickcode / file_name）固定携带，不做选择；
-// 唯一可选项：是否把云端路径放进 URL 的 path 段（路径式 URL）。
-const STRM_URL_STANDARD_TEMPLATE =
-  "{prefix}/api/strm?account={account}&pickcode={pickcode}&file_name={file_name}";
-
-// 路径式：path 末段即文件名（.iso/.mkv 在最后），播放器识别容器更可靠
-const STRM_URL_PATH_TEMPLATE =
-  "{prefix}/api/strm/{file_path}?account={account}&pickcode={pickcode}";
-
-function isStrmPathTemplate(tmpl?: string): boolean {
-  return !!tmpl && tmpl.includes("/api/strm/{file_path}");
-}
-
 export interface BasicSettingsTabProps {
   data: SettingsType;
   setData: Dispatch<SetStateAction<SettingsType>>;
@@ -100,26 +86,8 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
   // 孤儿 STRM 清理策略：未配置时与后端默认值保持一致（auto_clean）
   const cleanupMode = data.download?.fullSyncCleanupOrphans ?? "auto_clean";
 
-  // STRM URL：编码开关（默认开启）+ 是否使用路径式 URL（由模板字符串反推）
+  // STRM URL：编码开关（默认开启）
   const pathEncodingEnabled = data.enablePathEncoding !== false;
-  const useStrmPathUrl = isStrmPathTemplate(data.strm?.strmUrlTemplate);
-  const setStrmPathUrl = (on: boolean) => {
-    setData({
-      ...data,
-      strm: {
-        ...data.strm,
-        strmUrlTemplate: on ? STRM_URL_PATH_TEMPLATE : STRM_URL_STANDARD_TEMPLATE,
-      },
-    });
-  };
-  // 预览：用示例值替换模板变量，直观展示最终 URL
-  const strmUrlPreview = (data.strm?.strmUrlTemplate || STRM_URL_STANDARD_TEMPLATE)
-    .replace("{prefix}", (data.strmPrefix || "http://192.168.1.100:8090").replace(/\/$/, ""))
-    .replace("{account}", "wabisabi926")
-    .replace("{pickcode}", "csj82c47tyb01dm22")
-    .replace("{file_name}", "The.Ordinary.Jackpot.S01E10.Episode.10.1080p.DSNP.WEB-DL.AAC.2.0.H.264-BlackTV.mkv")
-    .replace("{filename}", "The.Ordinary.Jackpot.S01E10.Episode.10.1080p.DSNP.WEB-DL.AAC.2.0.H.264-BlackTV.mkv")
-    .replace("{file_path}", "电影/科幻/示例影片.iso");
 
   return (
     <div className="space-y-6">
@@ -210,34 +178,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 关闭后参数原样写入 URL：文件名含 # / &amp; / ? / 空格 等字符时会破坏 URL 解析，仅在确有需要时关闭。
               </p>
             </div>
-          </div>
-        </div>
-
-        <div className="space-y-3 pt-2 border-t">
-          <Label>URL 形态</Label>
-          <div className="flex items-start gap-2">
-            <Checkbox
-              id="strm-path-url"
-              checked={useStrmPathUrl}
-              onCheckedChange={(checked) => setStrmPathUrl(checked === true)}
-              className="mt-0.5"
-            />
-            <div className="space-y-1">
-              <label htmlFor="strm-path-url" className="text-sm cursor-pointer">
-                URL 路径携带文件路径（路径式 URL）
-              </label>
-              <p className="text-xs text-muted-foreground">
-                勾选后 URL 变为 <code>/api/strm/电影/.../xxx.iso?account=..&pickcode=..</code>，
-                路径末尾带真实扩展名（如 .iso），Emby/Kodi 识别原盘容器更可靠；
-                与 p115strmhelper 的 redirect_url 形态一致。播放定位仍靠 pickcode，路径仅用于显示与识别。
-              </p>
-            </div>
-          </div>
-          <div className="rounded-md bg-muted px-3 py-2 space-y-1">
-            <p className="text-xs text-muted-foreground">
-              当前形态预览（{useStrmPathUrl ? "路径式" : "标准"}）
-            </p>
-            <code className="text-xs break-all">{strmUrlPreview}</code>
           </div>
         </div>
 

@@ -2,6 +2,29 @@ package strmutil
 
 import "strings"
 
+// URLPathEncodeStrict 对 URL 参数值做「完整」编码：'/' 也编码为 %2F。
+//
+// 用于把完整云端路径塞进单个 query 参数（如 path=电影%2F...%2Fxxx.iso），
+// 对齐参考项目 115 网关的 URL 形态。空格编码为 %20（不用 '+'，router 不还原 '+'）。
+// 保留字符仅：字母数字与 - _ . ~
+func URLPathEncodeStrict(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) * 3)
+	for _, b := range []byte(s) {
+		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+			(b >= '0' && b <= '9') ||
+			b == '-' || b == '_' || b == '.' || b == '~' {
+			sb.WriteByte(b)
+			continue
+		}
+		const hex = "0123456789ABCDEF"
+		sb.WriteByte('%')
+		sb.WriteByte(hex[b>>4])
+		sb.WriteByte(hex[b&0x0F])
+	}
+	return sb.String()
+}
+
 // URLPathEncode 对 URL 参数值做编码，保留路径分隔符 '/'。
 //
 // 与标准 url.QueryEscape 的差异（这是刻意设计）：

@@ -36,7 +36,6 @@ func RegisterRoutes(
 	embyDeps handler.EmbyDeps,
 	lifeMonitorDeps handler.LifeMonitorDeps,
 	cleanupInteraction *handler.StrmCleanupInteraction,
-	strmDispatcher *handler.StrmPathDispatcher,
 ) {
 	// ========== 公开路由（无需 JWT，仅 CORS） ==========
 	publicRoutes := []rest.Route{
@@ -56,17 +55,13 @@ func RegisterRoutes(
 
 	// ========== 阶段4: STRM 路由（播放器无 token，公开） ==========
 	jwtMW := middleware.JWTMiddleware(issuer)
-	// 同一个 handler 同时服务 /api/strm（标准 URL）与 /api/strm/{path...}（路径式 URL，
-	// 由 404 分发器承接）
-	strmHandler := middleware.CORS(handler.HandleStrm(handler.StrmOptions{
-		Cfg: cfg, Client115: client, AccountStore: accountStore,
-	}))
-	if strmDispatcher != nil {
-		strmDispatcher.SetStrmHandler(strmHandler)
-	}
 	server.AddRoutes([]rest.Route{
-		{Method: http.MethodGet, Path: "/api/strm", Handler: strmHandler},
-		{Method: http.MethodHead, Path: "/api/strm", Handler: strmHandler},
+		{Method: http.MethodGet, Path: "/api/strm", Handler: middleware.CORS(handler.HandleStrm(handler.StrmOptions{
+			Cfg: cfg, Client115: client, AccountStore: accountStore,
+		}))},
+		{Method: http.MethodHead, Path: "/api/strm", Handler: middleware.CORS(handler.HandleStrm(handler.StrmOptions{
+			Cfg: cfg, Client115: client, AccountStore: accountStore,
+		}))},
 		{Method: http.MethodGet, Path: "/api/fs/get", Handler: middleware.CORS(handler.HandleFsGet(handler.StrmOptions{
 			Cfg: cfg, Client115: client, AccountStore: accountStore,
 		}))},

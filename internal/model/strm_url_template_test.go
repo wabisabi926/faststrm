@@ -92,3 +92,28 @@ func TestRenderStrmUrlTemplate_FileIDEmpty(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// TestRenderStrmUrlTemplate_CompactPathForm 精简路径式：
+// /api/strm/video{ext}?account=..&pickcode=..&path={file_path_strict}（'/' → %2F）
+func TestRenderStrmUrlTemplate_CompactPathForm(t *testing.T) {
+	cloudPath := "电影/华语电影/东邪西毒：终极版 (2008)/东邪西毒.Ashes.of.Time.Redux.2008.1080p.mkv"
+	got := RenderStrmUrlTemplate(StrmURLTemplateVars{
+		Template:  "{prefix}/api/strm/video{ext}?account={account}&pickcode={pickcode}&path={file_path_strict}",
+		Prefix:    "http://nas:8090",
+		Account:   "副卡",
+		PickCode:  "a7nds6qtempqehtnn",
+		FileName:  "东邪西毒.Ashes.of.Time.Redux.2008.1080p.mkv",
+		Ext:       ".mkv",
+		Stem:      "东邪西毒.Ashes.of.Time.Redux.2008.1080p",
+		CloudPath: cloudPath,
+	})
+	want := "http://nas:8090/api/strm/video.mkv?account=" + strmutil.URLPathEncode("副卡") +
+		"&pickcode=a7nds6qtempqehtnn&path=" + strmutil.URLPathEncodeStrict(cloudPath) + "\n"
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+	// path 参数里 '/' 必须是 %2F（不能裸 '/'，否则 query 值会被误判为路径）
+	if strings.Contains(got, "path=") && strings.Contains(got[strings.Index(got, "path="):], "/") {
+		t.Fatalf("path 参数内不应出现裸 '/': %s", got)
+	}
+}

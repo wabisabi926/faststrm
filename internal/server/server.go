@@ -50,11 +50,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 		},
 	}
 
-	// 404 分发：路径式 STRM URL（/api/strm/电影/.../xxx.iso）交给 STRM 处理器，
-	// 其余请求（前端 SPA 路由、静态资源）原样回落。
-	// go-zero 路由不支持 * 通配，只能借 404 处理器承接任意深度的路径式 URL。
-	strmDispatcher := handler.NewStrmPathDispatcher(web.SPAHandler())
-	server := rest.MustNewServer(restCfg, rest.WithNotFoundHandler(strmDispatcher))
+	server := rest.MustNewServer(restCfg, rest.WithNotFoundHandler(web.SPAHandler()))
 	defer server.Stop()
 
 	// 初始化依赖
@@ -191,7 +187,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// 注册路由
 	RegisterRoutes(server, cfg, issuer, client, accountStore, settingsStore, tasksStore, strmCacheStore,
 		taskHistoryRepo, taskRuntime, scheduler, execDeps,
-		notifyDeps, embyDeps, lifeMonitorDeps, cleanupInteraction, strmDispatcher)
+		notifyDeps, embyDeps, lifeMonitorDeps, cleanupInteraction)
 
 	// 若生活监控已在配置中启用，启动后台监控（异步）
 	if mon != nil {
