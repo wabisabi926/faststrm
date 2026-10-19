@@ -50,12 +50,17 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       accessorKey: "id",
       header: "任务ID",
-      size: 80,
-      cell: ({ row }) => (
-        <code className="text-xs bg-muted px-2 py-1 rounded">
-          {row.original.id.slice(0, 8)}...
-        </code>
-      )
+      size: 150,
+      cell: ({ row }) => {
+        const task = row.original;
+        // 短 ID 完整显示；超长 ID 截断加省略号，悬停 tooltip 可见完整值。
+        const displayId = task.id.length > 16 ? `${task.id.slice(0, 14)}…` : task.id;
+        return (
+          <code className="text-xs bg-muted px-2 py-1 rounded" title={task.id}>
+            {displayId}
+          </code>
+        );
+      }
     },
     {
       accessorKey: "account",
@@ -117,7 +122,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     {
       accessorKey: "status",
       header: "状态 / 进度",
-      size: 220,
+      size: 180,
       cell: ({ row }) => {
         const task = row.original;
         return (

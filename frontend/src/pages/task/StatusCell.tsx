@@ -120,7 +120,7 @@ export function StatusCell({
               </div>
               <div className="text-[11px] text-muted-foreground mt-0.5 pl-0.5 font-mono">
                 {downloadedFiles} / {totalFiles} 个文件
-                <span className="ml-2 text-muted-foreground/70">
+                <span className="ml-2 text-muted-foreground">
                   ({Math.round((downloadedFiles / totalFiles) * 100)}%)
                 </span>
               </div>

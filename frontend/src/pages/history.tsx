@@ -42,10 +42,10 @@ interface TaskExecutionHistory {
 // 状态图标和颜色映射
 const getStatusConfig = (status: TaskExecutionHistory["status"]) => {
   const configs = {
-    running: { icon: Clock, color: "bg-blue-500/20 text-blue-400", label: "运行中" },
-    completed: { icon: CheckCircle, color: "bg-green-500/20 text-green-400", label: "已完成" },
-    failed: { icon: XCircle, color: "bg-red-500/20 text-red-400", label: "失败" },
-    cancelled: { icon: AlertCircle, color: "bg-yellow-500/20 text-yellow-400", label: "已取消" },
+    running: { icon: Clock, color: "bg-blue-500/20 text-blue-700 dark:text-blue-400", label: "运行中" },
+    completed: { icon: CheckCircle, color: "bg-green-500/20 text-green-700 dark:text-green-400", label: "已完成" },
+    failed: { icon: XCircle, color: "bg-red-500/20 text-red-700 dark:text-red-400", label: "失败" },
+    cancelled: { icon: AlertCircle, color: "bg-yellow-500/20 text-yellow-700 dark:text-yellow-400", label: "已取消" },
   };
   return configs[status];
 };
