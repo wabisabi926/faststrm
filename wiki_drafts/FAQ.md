@@ -95,7 +95,8 @@ A: 在「Telegram 通知」页面开启「账户状态通知」：
 
 ### Q: 中文路径在 Kodi 中显示乱码？
 
-A: 开启 `enablePathEncoding: true`，URL 路径会被 `encodeURI` 编码。
+A: 不需要额外设置。STRM 内容里的 `account` / `file_name` 参数始终做百分号编码；
+若仍异常，请检查 STRM 前缀是否指向 Emby/Kodi 可访问的地址。
 
 ---
 

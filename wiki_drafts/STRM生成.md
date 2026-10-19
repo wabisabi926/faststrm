@@ -183,20 +183,19 @@ http://192.168.1.100:8090/api/strm?account=我的115&pickcode=xxxx&file_name=小
 - `pickcode`：115 文件唯一标识
 - `file_name`：文件名（用于 Content-Disposition 和大文件判断）
 
-## 路径编码
+## URL 编码
 
-`enablePathEncoding: true` 时，URL 中的中文/特殊字符会被 `encodeURI`：
-- 关：`/电影/小王子.mkv`
-- 开：`/%E7%94%B5%E5%BD%B1/%E5%B0%8F%E7%8E%8B%E5%AD%90.mkv`
-
-> Kodi 某些版本对非编码中文路径支持不好，建议开启。
+STRM 内容统一使用 pickcode 式 URL，`account` 与 `file_name` 参数**始终**做百分号编码，
+无需也无法关闭（原 `enablePathEncoding` 开关已废弃，保留字段仅为兼容旧配置）。
 
 ## 删除多余文件
 
-`removeExtraFiles: true` 时：
-- 扫描时发现本地 STRM 在远端不存在 → 直接物理删除
-- 同时清理 DB 中对应记录
-- 误删后可在 115 网盘恢复文件后重新全量扫描生成 STRM
+已下线。路径级清理被「孤儿 STRM 清理」取代：按 STRM 内容中的 pickcode 与云端清单对账，
+在设置页「孤儿 STRM 清理」中选择策略（`download.fullSyncCleanupOrphans`）：
+
+- `off`：不处理
+- `mark_only`：只记录，不删除
+- `auto_clean`：自动清理（推荐，超阈值先进入待确认队列）
 
 ## 性能参考
 

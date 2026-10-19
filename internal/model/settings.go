@@ -18,6 +18,8 @@ type Settings struct {
 	DownloadExtensions []string            `json:"downloadExtensions"`
 	MediaMountPath     []string            `json:"mediaMountPath"`
 	StrmPrefix         string              `json:"strmPrefix"`
+	// Deprecated: URL 路径编码开关已下线。v1.2.2 起 STRM 统一使用 pickcode 式 /api/strm URL，
+	// URL 中不再包含路径，file_name 始终百分号编码。字段保留仅为读取旧配置不报错。
 	EnablePathEncoding bool                `json:"enablePathEncoding"`
 	Download           DownloadSettings    `json:"download"`
 	Strm               StrmSettings        `json:"strm"`
@@ -236,6 +238,7 @@ type LifeMonitorSettings struct {
 	RemoveEmptyDirs    bool                 `json:"removeEmptyDirs"`
 	EventTypes         EventTypesSettings   `json:"eventTypes"`
 	StrmPrefix         string               `json:"strmPrefix"`
+	// Deprecated: 同 Settings.EnablePathEncoding，开关已下线，保留字段仅为兼容旧配置。
 	EnablePathEncoding bool                 `json:"enablePathEncoding"`
 	// StrmExtensions 生活监控生成 STRM 的视频扩展名；空则继承全局 StrmExtensions
 	// （继承在 server 层装配时完成，见 wire.go 的 lifeSettingsFn）

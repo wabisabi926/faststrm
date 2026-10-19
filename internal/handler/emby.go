@@ -422,7 +422,9 @@ type settingsPostBody struct {
 	DownloadExtensions []string                `json:"downloadExtensions"`
 	MediaMountPath     []string                `json:"mediaMountPath"`
 	StrmPrefix         string                  `json:"strmPrefix"`
-	EnablePathEncoding bool                    `json:"enablePathEncoding"`
+	// Deprecated: URL 路径编码开关已下线（STRM 统一 pickcode 式 URL，file_name 必须编码）。
+	// 保留指针字段仅为兼容旧前端/脚本提交，不再写入 settings。
+	EnablePathEncoding *bool                   `json:"enablePathEncoding"`
 	Download           *model.DownloadSettings `json:"download"`
 	Strm               *model.StrmSettings     `json:"strm"`
 	Emby               *model.EmbySettings     `json:"emby"`
@@ -470,7 +472,7 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 		// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
 
 		// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
-		settings.EnablePathEncoding = body.EnablePathEncoding
+		// enablePathEncoding 已下线：旧客户端仍可能提交，但不再影响任何逻辑，也不回写配置
 
 		// ====== Cleanup：只接受两个「连带动作」开关，阈值等保持后端值 ======
 		if body.Cleanup != nil {

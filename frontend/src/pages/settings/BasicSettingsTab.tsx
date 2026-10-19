@@ -23,6 +23,15 @@ import type {
   MountSyncApplyData,
 } from "./types";
 
+// 孤儿 STRM 清理三档策略说明（与后端 cleanupOrphanStrms 的实际行为逐条对齐）
+const CLEANUP_MODE_HINTS: Record<string, string> = {
+  off: "不检查、不处理。网盘已删除的影片会继续保留本地 STRM，媒体库里可能出现点开就报错的条目。",
+  mark_only:
+    "只在任务日志里列出孤儿 STRM，不动任何文件。适合先观察一段时间，确认判定准确后再切到自动清理。",
+  auto_clean:
+    "直接删除孤儿 STRM。命中保护阈值时会自动停手，或转入待确认队列，等你在 Web UI 确认后才删。",
+};
+
 export interface BasicSettingsTabProps {
   data: SettingsType;
   setData: Dispatch<SetStateAction<SettingsType>>;
@@ -73,6 +82,9 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
     saving,
     onSave,
   } = props;
+
+  // 孤儿 STRM 清理策略：未配置时与后端默认值保持一致（auto_clean）
+  const cleanupMode = data.download?.fullSyncCleanupOrphans ?? "auto_clean";
 
   return (
     <div className="space-y-6">
@@ -145,18 +157,8 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="global-enable-path-encoding"
-              checked={!!data.enablePathEncoding}
-              onCheckedChange={(checked) =>
-                setData({ ...data, enablePathEncoding: checked === true })
-              }
-            />
-            <label htmlFor="global-enable-path-encoding" className="text-sm cursor-pointer">
-              URL 路径编码
-            </label>
-          </div>
+          {/* 「URL 路径编码」开关已下线：v1.2.2 起 STRM 统一走 pickcode 式 /api/strm，
+              URL 里不再有路径，file_name 必须编码，开关已无意义（后端字段保留仅为兼容旧配置）。 */}
         </div>
 
         {/* 全局文件过滤 */}
@@ -218,9 +220,14 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
 
         {/* 清理策略：只按 STRM 内容里的 pickcode 对账，不会碰用户自己的文件 */}
         <div className="space-y-3 pt-4 border-t">
-          <Label>孤儿 STRM 清理</Label>
+          <div className="space-y-1">
+            <Label>孤儿 STRM 清理</Label>
+            <p className="text-xs text-muted-foreground">
+              按 STRM 内容里的 pickcode 与云端清单对账，判断哪些本地 STRM 已经失效。
+            </p>
+          </div>
           <Select
-            value={data.download?.fullSyncCleanupOrphans ?? "auto_clean"}
+            value={cleanupMode}
             onValueChange={(value) =>
               setData({
                 ...data,
@@ -233,46 +240,61 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="off">关闭</SelectItem>
-              <SelectItem value="mark_only">仅记录（不删除）</SelectItem>
+              <SelectItem value="mark_only">仅标记（不删除）</SelectItem>
               <SelectItem value="auto_clean">自动清理（推荐）</SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            网盘里已删除的影片，其本地 STRM 会按此策略处理。只检查 STRM 文件内容里的 pickcode，
-            不会删除你自己放进去的海报、字幕或其他文件；超过保护阈值时会先进入待确认队列。
+            {CLEANUP_MODE_HINTS[cleanupMode] ?? CLEANUP_MODE_HINTS.auto_clean}
           </p>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="cleanup-remove-related"
-              checked={data.cleanup?.removeRelatedFiles ?? true}
-              onCheckedChange={(checked) =>
-                setData({
-                  ...data,
-                  cleanup: { ...(data.cleanup || {}), removeRelatedFiles: checked === true },
-                })
-              }
-            />
-            <label htmlFor="cleanup-remove-related" className="text-sm cursor-pointer">
-              同时删除同名的 nfo / 海报 / 字幕
-            </label>
+
+          <div className="rounded-md border p-2.5 sm:p-3 space-y-1.5 bg-muted/30">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">判定规则：</span>
+              云端清单里找不到该 pickcode，或 pickcode 仍有效但本地路径与云端不一致（改名/移动残留），都算孤儿。
+            </p>
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">安全保护：</span>
+              没有 pickcode 的手写 STRM、视频文件、列目录失败目录下的 STRM 一律跳过；孤儿数量/占比/涉及目录数超阈值时不会直接删除。
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            只删 .nfo/.jpg/.png/.srt/.ass 等元数据与字幕，<span className="font-medium">绝不会删 .mkv/.mp4 等视频文件</span>。
-          </p>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="cleanup-remove-empty-dirs"
-              checked={data.cleanup?.removeEmptyDirs ?? false}
-              onCheckedChange={(checked) =>
-                setData({
-                  ...data,
-                  cleanup: { ...(data.cleanup || {}), removeEmptyDirs: checked === true },
-                })
-              }
-            />
-            <label htmlFor="cleanup-remove-empty-dirs" className="text-sm cursor-pointer">
-              删完后清理空目录
-            </label>
+
+          <div className={cleanupMode === "off" ? "space-y-3 opacity-50" : "space-y-3"}>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="cleanup-remove-related"
+                disabled={cleanupMode === "off"}
+                checked={data.cleanup?.removeRelatedFiles ?? true}
+                onCheckedChange={(checked) =>
+                  setData({
+                    ...data,
+                    cleanup: { ...(data.cleanup || {}), removeRelatedFiles: checked === true },
+                  })
+                }
+              />
+              <label htmlFor="cleanup-remove-related" className="text-sm cursor-pointer">
+                删除孤儿 STRM 时，连带删除同名 nfo / 海报 / 字幕
+              </label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              只删 .nfo/.jpg/.png/.srt/.ass 等元数据与字幕，<span className="font-medium">绝不会删 .mkv/.mp4 等视频文件</span>。
+            </p>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="cleanup-remove-empty-dirs"
+                disabled={cleanupMode === "off"}
+                checked={data.cleanup?.removeEmptyDirs ?? false}
+                onCheckedChange={(checked) =>
+                  setData({
+                    ...data,
+                    cleanup: { ...(data.cleanup || {}), removeEmptyDirs: checked === true },
+                  })
+                }
+              />
+              <label htmlFor="cleanup-remove-empty-dirs" className="text-sm cursor-pointer">
+                删完后清理空目录
+              </label>
+            </div>
           </div>
         </div>
 
