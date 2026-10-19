@@ -124,8 +124,9 @@ func initPhase6Deps(
 			}
 			life.StrmPrefix = prefix
 		}
-		// EnablePathEncoding 已下线（STRM 统一 pickcode 式 URL，file_name 始终编码），
-		// 不再需要全局→life 的继承逻辑
+		// URL 参数编码开关：life 侧没有独立 UI，始终继承全局设置，
+		// 保证监控与任务生成的 URL 编码规则一致（都编码 / 都不编码）
+		life.EnablePathEncoding = s.EnablePathEncoding
 		// 黑名单关键词：life 自身未设置（空切片）时，继承全局 Download.StrmGenerateBlacklist
 		if len(life.StrmGenerateBlacklist) == 0 {
 			life.StrmGenerateBlacklist = s.Download.StrmGenerateBlacklist

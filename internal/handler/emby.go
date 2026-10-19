@@ -424,8 +424,7 @@ type settingsPostBody struct {
 	DownloadExtensions []string `json:"downloadExtensions"`
 	MediaMountPath     []string `json:"mediaMountPath"`
 	StrmPrefix         string   `json:"strmPrefix"`
-	// Deprecated: URL 路径编码开关已下线（STRM 统一 pickcode 式 URL，file_name 必须编码）。
-	// 保留指针字段仅为兼容旧前端/脚本提交，不再写入 settings。
+	// EnablePathEncoding URL 参数编码开关（默认开启）；指针区分「未提供」与显式 false
 	EnablePathEncoding *bool                   `json:"enablePathEncoding"`
 	Download           *model.DownloadSettings `json:"download"`
 	Strm               *model.StrmSettings     `json:"strm"`
@@ -633,7 +632,8 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			if body.LifeMonitor.StrmPrefix != "" {
 				lm.StrmPrefix = body.LifeMonitor.StrmPrefix
 			}
-			// enablePathEncoding 已下线：旧前端仍可能提交，忽略即可（不再写入配置）
+			// life 侧没有独立编码开关：始终继承全局 Settings.EnablePathEncoding，
+			// 旧前端若提交该字段也忽略，避免两套规则不一致
 			if body.LifeMonitor.AutoDownloadMetadata != nil {
 				lm.AutoDownloadMetadata = *body.LifeMonitor.AutoDownloadMetadata
 			}
