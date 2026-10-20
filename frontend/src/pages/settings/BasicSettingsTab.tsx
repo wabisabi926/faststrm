@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Settings, Filter, ShieldAlert } from "lucide-react";
+import { Settings, Filter } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -22,15 +22,6 @@ import type {
   MountDryRunData,
   MountSyncApplyData,
 } from "./types";
-
-// 孤儿 STRM 清理三档策略说明（与后端 cleanupOrphanStrms 的实际行为逐条对齐）
-const CLEANUP_MODE_HINTS: Record<string, string> = {
-  off: "不检查、不处理。网盘已删除的影片会继续保留本地 STRM，媒体库里可能出现点开就报错的条目。",
-  mark_only:
-    "只在任务日志里列出孤儿 STRM，不动任何文件。适合先观察一段时间，确认判定准确后再切到自动清理。",
-  auto_clean:
-    "直接删除孤儿 STRM（只删托管 STRM，不连带删关联文件/空目录）。命中保护阈值时会自动停手，或转入待确认队列——可在 Telegram 按钮或清理页「待确认删除批次」中确认；超过 24 小时未确认的批次会自动作废。",
-};
 
 export interface BasicSettingsTabProps {
   data: SettingsType;
@@ -86,9 +77,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
     saving,
     onSave,
   } = props;
-
-  // 孤儿 STRM 清理策略：未配置时与后端默认值保持一致（auto_clean）
-  const cleanupMode = data.download?.fullSyncCleanupOrphans ?? "auto_clean";
 
   // STRM URL：编码开关（默认开启）
   const pathEncodingEnabled = data.enablePathEncoding !== false;
@@ -240,202 +228,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           <p className="text-xs text-muted-foreground">
             决定重新生成时如何处理已存在的 STRM 文件。「总是覆盖」每次重新生成，保证与网盘一致；「跳过已存在」可加速重复生成，但源文件改名或换链时可能残留旧链接。
           </p>
-        </div>
-
-        {/* 清理策略：只按 STRM 内容里的 pickcode 对账，不会碰用户自己的文件 */}
-        <div className="space-y-3 pt-4 border-t">
-          <div className="space-y-1">
-            <Label>孤儿 STRM 清理</Label>
-            <p className="text-xs text-muted-foreground">
-              按 STRM 内容里的 pickcode 与云端清单对账，判断哪些本地 STRM 已经失效。
-            </p>
-          </div>
-          <Select
-            value={cleanupMode}
-            onValueChange={(value) =>
-              setData({
-                ...data,
-                download: { ...(data.download || {}), fullSyncCleanupOrphans: value },
-              })
-            }
-          >
-            <SelectTrigger className="w-full md:w-64">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="off">关闭</SelectItem>
-              <SelectItem value="mark_only">仅标记（不删除）</SelectItem>
-              <SelectItem value="auto_clean">自动清理（推荐）</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            {CLEANUP_MODE_HINTS[cleanupMode] ?? CLEANUP_MODE_HINTS.auto_clean}
-          </p>
-
-          <div className="rounded-md border p-2.5 sm:p-3 space-y-1.5 bg-muted/30">
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">判定规则：</span>
-              云端清单里找不到该 pickcode，或 pickcode 仍有效但本地路径与云端不一致（改名/移动残留），都算孤儿。
-            </p>
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">安全保护：</span>
-              没有 pickcode 的手写 STRM、视频文件、列目录失败目录下的 STRM 一律跳过；孤儿数量/占比/涉及目录数超阈值时不会直接删除。
-            </p>
-          </div>
-
-          <div className={cleanupMode === "off" ? "space-y-3 opacity-50" : "space-y-3"}>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="cleanup-remove-related"
-                disabled={cleanupMode === "off"}
-                checked={data.cleanup?.removeRelatedFiles ?? false}
-                onCheckedChange={(checked) =>
-                  setData({
-                    ...data,
-                    cleanup: { ...(data.cleanup || {}), removeRelatedFiles: checked === true },
-                  })
-                }
-              />
-              <label htmlFor="cleanup-remove-related" className="text-sm cursor-pointer">
-                删除孤儿 STRM 时，连带删除同名 nfo / 海报 / 字幕（默认关闭）
-              </label>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              只删 .nfo/.jpg/.png/.srt/.ass/.vtt 等元数据与字幕，<span className="font-medium">绝不会删 .mkv/.mp4 等视频文件</span>。开启前请确认目录里的关联文件都由本工具管理。
-            </p>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="cleanup-remove-empty-dirs"
-                disabled={cleanupMode === "off"}
-                checked={data.cleanup?.removeEmptyDirs ?? false}
-                onCheckedChange={(checked) =>
-                  setData({
-                    ...data,
-                    cleanup: { ...(data.cleanup || {}), removeEmptyDirs: checked === true },
-                  })
-                }
-              />
-              <label htmlFor="cleanup-remove-empty-dirs" className="text-sm cursor-pointer">
-                删完后清理空目录（默认关闭）
-              </label>
-            </div>
-          </div>
-
-          {/* 保护阈值 + 二次确认 */}
-          <div className="rounded-md border p-3 space-y-3 bg-muted/20">
-            <div className="flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-amber-500" />
-              <h4 className="text-sm font-medium">清理保护阈值与二次确认</h4>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              保护阈值命中时只停删除、不停生成；超过稳定阈值且开启确认模式时，会先转入「待确认删除批次」。
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="cleanup-max-threshold">单次删除绝对上限</Label>
-                <Input
-                  id="cleanup-max-threshold"
-                  type="number"
-                  min="1"
-                  value={data.cleanup?.maxThreshold ?? 1000}
-                  onChange={(e) =>
-                    setData({
-                      ...data,
-                      cleanup: {
-                        ...(data.cleanup || {}),
-                        maxThreshold: Math.max(1, parseInt(e.target.value) || 1000),
-                      },
-                    })
-                  }
-                />
-                <p className="text-xs text-muted-foreground">默认 1000</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cleanup-max-ratio">比例上限（%）</Label>
-                <Input
-                  id="cleanup-max-ratio"
-                  type="number"
-                  min="1"
-                  max="100"
-                  step="1"
-                  value={Math.round((data.cleanup?.maxRatio ?? 0.1) * 100)}
-                  onChange={(e) => {
-                    const pct = Math.min(100, Math.max(1, parseInt(e.target.value) || 10));
-                    setData({
-                      ...data,
-                      cleanup: { ...(data.cleanup || {}), maxRatio: pct / 100 },
-                    });
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">默认 10%</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cleanup-max-dirs">涉及目录数上限</Label>
-                <Input
-                  id="cleanup-max-dirs"
-                  type="number"
-                  min="1"
-                  value={data.cleanup?.maxDirs ?? 20}
-                  onChange={(e) =>
-                    setData({
-                      ...data,
-                      cleanup: {
-                        ...(data.cleanup || {}),
-                        maxDirs: Math.max(1, parseInt(e.target.value) || 20),
-                      },
-                    })
-                  }
-                />
-                <p className="text-xs text-muted-foreground">默认 20，防止分散目录的小批量删除绕过阈值</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cleanup-stable-threshold">稳定阈值</Label>
-                <Input
-                  id="cleanup-stable-threshold"
-                  type="number"
-                  min="1"
-                  value={data.cleanup?.stableThreshold ?? 5}
-                  onChange={(e) =>
-                    setData({
-                      ...data,
-                      cleanup: {
-                        ...(data.cleanup || {}),
-                        stableThreshold: Math.max(1, parseInt(e.target.value) || 5),
-                      },
-                    })
-                  }
-                />
-                <p className="text-xs text-muted-foreground">超过该数量才进入二次确认，默认 5</p>
-              </div>
-              <div className="space-y-1.5 md:col-span-2">
-                <Label htmlFor="cleanup-confirm-mode">二次确认模式</Label>
-                <Select
-                  value={data.cleanup?.confirmMode ?? "none"}
-                  onValueChange={(value) =>
-                    setData({
-                      ...data,
-                      cleanup: {
-                        ...(data.cleanup || {}),
-                        confirmMode: value as "none" | "plugin_ui" | "telegram",
-                      },
-                    })
-                  }
-                >
-                  <SelectTrigger id="cleanup-confirm-mode" className="w-full md:w-72">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">关闭（超过稳定阈值直接执行）</SelectItem>
-                    <SelectItem value="plugin_ui">Web UI 待确认批次</SelectItem>
-                    <SelectItem value="telegram">Telegram 按钮确认</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  选择 Web UI 或 Telegram 后，超过稳定阈值的清理会先进入待确认队列；保护阈值（比例/绝对/目录数）仍会强制拦截。
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* STRM 路由策略配置（始终生效，后端智能路由自动决定 proxy/redirect） */}

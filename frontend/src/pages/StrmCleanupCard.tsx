@@ -33,7 +33,12 @@ import { MappingDetailList } from "./strm-cleanup/MappingDetailList";
 import { PendingBatchesSection } from "./strm-cleanup/PendingBatchesSection";
 import { TrashSection } from "./strm-cleanup/TrashSection";
 
-export function StrmCleanupCard() {
+export interface StrmCleanupCardProps {
+  /** 当前清理策略摘要（由设置页传入，避免用户忘记已保存的策略） */
+  policySummary?: string;
+}
+
+export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
   // 对话框开关由组件层管理
   // 注：confirmOpen 仅用于 StaleStrmDialog 内的「删除选中」二次确认。
   // CleanupToolbar 的三个 AlertDialog 已内聚状态（独立 useState），
@@ -79,6 +84,11 @@ export function StrmCleanupCard() {
               扫描本地与 115 网盘文件树的一致性，找出网盘已删除但本地仍残留的
               STRM 文件（失效）以及网盘有但本地缺失的 STRM 文件（漏生成），使用生活事件监控配置中的路径映射作为扫描范围
             </CardDescription>
+            {policySummary && (
+              <p className="mt-2 text-xs text-muted-foreground break-words">
+                当前清理策略：{policySummary}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <Button onClick={handleScan} disabled={scanning}>

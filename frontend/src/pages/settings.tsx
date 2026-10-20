@@ -4,6 +4,7 @@ import { Settings, LifeBuoy, Eraser } from "lucide-react";
 import axiosInstance from "@/lib/axios";
 import type { AxiosError } from "axios";
 import { StrmCleanupCard } from "./StrmCleanupCard";
+import { CleanupPolicyCard } from "./strm-cleanup/CleanupPolicyCard";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
 import { LocalDirectoryTreeDialog } from "@/pages/task/components/LocalDirectoryTreeDialog";
 import type {
@@ -19,6 +20,18 @@ import type {
 import { DEFAULT_MONITOR_CONFIG } from "./settings/types";
 import { BasicSettingsTab } from "./settings/BasicSettingsTab";
 import { MonitorSettingsTab } from "./settings/MonitorSettingsTab";
+
+const AUTO_CLEANUP_LABELS: Record<string, string> = {
+  off: "关闭",
+  mark_only: "仅标记",
+  auto_clean: "自动清理",
+};
+
+const CLEANUP_CONFIRM_LABELS: Record<string, string> = {
+  none: "关闭",
+  plugin_ui: "Web UI",
+  telegram: "Telegram",
+};
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<"basic" | "monitor" | "cleanup">("basic");
@@ -315,13 +328,17 @@ export default function SettingsPage() {
     };
   };
 
-  const onSave = async () => {
+  const saveSettings = async (cleanupOnly = false): Promise<boolean> => {
     setSaving(true);
     try {
       const saveData = buildSaveData();
 
       await axiosInstance.post("/api/settings", saveData);
       setData(saveData);
+      if (cleanupOnly) {
+        toast.success("清理策略已保存");
+        return true;
+      }
       // 保存后刷新试运行视图；mediaMountPath 不会随设置保存自动落盘，需在上方手动同步。
       const dry = await fetchMountDryRun();
       toast.success(
@@ -329,6 +346,7 @@ export default function SettingsPage() {
           ? "保存成功；挂载路径有变化，请点“立即同步并持久化”"
           : "保存成功"
       );
+      return true;
     } catch (error: unknown) {
       const apiError = error as { response?: { data?: { message?: string; error?: string } } };
       toast.error(
@@ -336,10 +354,25 @@ export default function SettingsPage() {
           apiError.response?.data?.error ||
           "保存失败"
       );
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const onSave = async (): Promise<void> => {
+    await saveSettings(false);
+  };
+
+  const onSaveCleanupPolicy = (): Promise<boolean> => saveSettings(true);
+
+  const cleanupForSummary = data.cleanup || {};
+  const cleanupModeForSummary = data.download?.fullSyncCleanupOrphans ?? "auto_clean";
+  const cleanupPolicySummary = [
+    `任务同步自动清理：${AUTO_CLEANUP_LABELS[cleanupModeForSummary] ?? cleanupModeForSummary}`,
+    `阈值 ${cleanupForSummary.maxThreshold ?? 1000} / ${Math.round((cleanupForSummary.maxRatio ?? 0.1) * 100)}% / ${cleanupForSummary.maxDirs ?? 20}`,
+    `确认：${CLEANUP_CONFIRM_LABELS[cleanupForSummary.confirmMode ?? "none"] ?? cleanupForSummary.confirmMode}`,
+  ].join(" · ");
 
   const toggleAccount = (accountName: string) => {
     setSelectedAccounts(prev =>
@@ -708,12 +741,18 @@ export default function SettingsPage() {
       {/* Tab 3: STRM清理 */}
       {activeTab === "cleanup" && (
         <div className="space-y-6">
+          <CleanupPolicyCard
+            data={data}
+            setData={setData}
+            saving={saving}
+            onSave={onSaveCleanupPolicy}
+          />
           <section className="border rounded-md p-3 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-medium">STRM 清理</h2>
               <p className="text-xs text-muted-foreground mt-1">扫描本地与网盘的一致性，清理失效 STRM</p>
             </div>
-            <StrmCleanupCard />
+            <StrmCleanupCard policySummary={cleanupPolicySummary} />
           </section>
         </div>
       )}
