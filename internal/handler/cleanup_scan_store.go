@@ -127,12 +127,6 @@ func (s *cleanupScanStore) gcLocked(now time.Time) {
 	}
 }
 
-func (s *cleanupScanStore) reset() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.entries = make(map[string]*cleanupScanSnapshot)
-}
-
 func cloneScanResponse(in ScanResponse) ScanResponse {
 	data, err := json.Marshal(in)
 	if err != nil {

@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -106,13 +108,9 @@ func HandleStrmTrashListGET(deps StrmCleanupDeps) http.HandlerFunc {
 // POST /api/strmCleanup/trash/restore
 func HandleStrmTrashRestorePOST(deps StrmCleanupDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req TrashRestoreRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
-			return
-		}
-		if strings.TrimSpace(req.TrashPath) == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "trashPath 不能为空"})
+		req, err := decodeTrashRestoreRequest(r)
+		if err != nil {
+			writeTrashRestoreError(w, err)
 			return
 		}
 		settings, err := deps.SettingsStore.ReadSettings()
@@ -125,104 +123,140 @@ func HandleStrmTrashRestorePOST(deps StrmCleanupDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "没有可用的清理映射"})
 			return
 		}
-
-		absTrash, err := filepath.Abs(req.TrashPath)
+		absTrash, root, err := resolveTrashRestoreTarget(req, roots)
 		if err != nil {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "trashPath 无效"})
+			writeTrashRestoreError(w, err)
 			return
 		}
-		var root string
-		if strings.TrimSpace(req.LocalPath) != "" {
-			root, err = validateCleanupRoot(req.LocalPath, roots)
-			if err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-			if !pathWithinRoot(root, absTrash) {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "trashPath 不在指定映射根内"})
-				return
-			}
-		} else {
-			for _, candidate := range roots {
-				if pathWithinRoot(candidate, absTrash) {
-					root = candidate
-					break
-				}
-			}
-			if root == "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "trashPath 不在已配置的清理映射内"})
-				return
-			}
-		}
-
-		info, lerr := os.Lstat(absTrash)
-		if lerr != nil {
-			if os.IsNotExist(lerr) {
-				httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "回收站文件不存在"})
-				return
-			}
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": lerr.Error()})
+		original, err := restoreTrashEntry(absTrash, root, req.Overwrite)
+		if err != nil {
+			writeTrashRestoreError(w, err)
 			return
 		}
-		if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "只能恢复普通文件"})
-			return
-		}
-		if !trashEntryKindAllowed(absTrash) {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "只允许恢复 .strm 或关联媒体文件"})
-			return
-		}
-
-		original, _, derr := deriveTrashOriginal(root, absTrash)
-		if derr != nil {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": derr.Error()})
-			return
-		}
-		if _, statErr := os.Lstat(original); statErr == nil {
-			if !req.Overwrite {
-				httpx.WriteJson(w, http.StatusConflict, map[string]string{"error": "原路径已存在文件，拒绝覆盖"})
-				return
-			}
-			// 覆盖前把现有文件也移入回收站，保持可逆
-			if _, terr := strmutil.MoveToTrash(original, root, ""); terr != nil {
-				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "现有文件移入回收站失败: " + terr.Error()})
-				return
-			}
-		}
-		if err := os.MkdirAll(filepath.Dir(original), 0o755); err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "创建原目录失败: " + err.Error()})
-			return
-		}
-		if err := os.Rename(absTrash, original); err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "恢复失败: " + err.Error()})
-			return
-		}
-
-		// 恢复后的 STRM 重新登记托管，避免下一轮清理把它当未托管
-		if deps.ManagedStrm != nil && strings.EqualFold(filepath.Ext(original), ".strm") {
-			if content, rerr := os.ReadFile(original); rerr == nil {
-				account, pickcode := strm.ParseManagedContent(string(content))
-				if account != "" && pickcode != "" {
-					if merr := deps.ManagedStrm.Record(r.Context(), strm.ManagedInput{
-						LocalPath: original, Account: account, Pickcode: pickcode,
-						Content: string(content), Source: "trash-restore",
-					}); merr != nil {
-						logger.S().Warnf("[trash] 恢复后托管登记失败 %s: %v", original, merr)
-					}
-				}
-			}
-		}
-
-		// 顺手清理空的批次目录 / 回收站目录（非空时 os.Remove 会失败，忽略即可）
-		batchDir := filepath.Dir(absTrash)
-		_ = os.Remove(batchDir)
-		trashDir := filepath.Dir(batchDir)
-		if filepath.Base(trashDir) == strmutil.TrashDirName {
-			_ = os.Remove(trashDir)
-		}
+		registerRestoredManagedSTRM(r.Context(), deps, original)
+		removeEmptyTrashDirs(absTrash)
 
 		logger.S().Infof("[trash] restored %s -> %s", absTrash, original)
 		httpx.WriteJson(w, http.StatusOK, TrashRestoreResponse{RestoredPath: original, Message: "已恢复"})
+	}
+}
+
+type trashRestoreError struct {
+	status int
+	msg    string
+}
+
+func (e *trashRestoreError) Error() string { return e.msg }
+
+func newTrashRestoreError(status int, msg string) error {
+	return &trashRestoreError{status: status, msg: msg}
+}
+
+func writeTrashRestoreError(w http.ResponseWriter, err error) {
+	var re *trashRestoreError
+	if errors.As(err, &re) {
+		httpx.WriteJson(w, re.status, map[string]string{"error": re.msg})
+		return
+	}
+	httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+}
+
+func decodeTrashRestoreRequest(r *http.Request) (TrashRestoreRequest, error) {
+	var req TrashRestoreRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return req, newTrashRestoreError(http.StatusBadRequest, "请求格式错误")
+	}
+	if strings.TrimSpace(req.TrashPath) == "" {
+		return req, newTrashRestoreError(http.StatusBadRequest, "trashPath 不能为空")
+	}
+	return req, nil
+}
+
+func resolveTrashRestoreTarget(req TrashRestoreRequest, roots []string) (absTrash, root string, err error) {
+	absTrash, err = filepath.Abs(req.TrashPath)
+	if err != nil {
+		return "", "", newTrashRestoreError(http.StatusBadRequest, "trashPath 无效")
+	}
+	if strings.TrimSpace(req.LocalPath) != "" {
+		root, err = validateCleanupRoot(req.LocalPath, roots)
+		if err != nil {
+			return "", "", newTrashRestoreError(http.StatusBadRequest, err.Error())
+		}
+		if !pathWithinRoot(root, absTrash) {
+			return "", "", newTrashRestoreError(http.StatusBadRequest, "trashPath 不在指定映射根内")
+		}
+		return absTrash, root, nil
+	}
+	for _, candidate := range roots {
+		if pathWithinRoot(candidate, absTrash) {
+			return absTrash, candidate, nil
+		}
+	}
+	return "", "", newTrashRestoreError(http.StatusBadRequest, "trashPath 不在已配置的清理映射内")
+}
+
+func restoreTrashEntry(absTrash, root string, overwrite bool) (string, error) {
+	info, err := os.Lstat(absTrash)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", newTrashRestoreError(http.StatusNotFound, "回收站文件不存在")
+		}
+		return "", newTrashRestoreError(http.StatusInternalServerError, err.Error())
+	}
+	if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", newTrashRestoreError(http.StatusBadRequest, "只能恢复普通文件")
+	}
+	if !trashEntryKindAllowed(absTrash) {
+		return "", newTrashRestoreError(http.StatusBadRequest, "只允许恢复 .strm 或关联媒体文件")
+	}
+	original, _, err := deriveTrashOriginal(root, absTrash)
+	if err != nil {
+		return "", newTrashRestoreError(http.StatusBadRequest, err.Error())
+	}
+	if _, statErr := os.Lstat(original); statErr == nil {
+		if !overwrite {
+			return "", newTrashRestoreError(http.StatusConflict, "原路径已存在文件，拒绝覆盖")
+		}
+		// 覆盖前把现有文件也移入回收站，保持可逆
+		if _, terr := strmutil.MoveToTrash(original, root, ""); terr != nil {
+			return "", newTrashRestoreError(http.StatusInternalServerError, "现有文件移入回收站失败: "+terr.Error())
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(original), 0o755); err != nil {
+		return "", newTrashRestoreError(http.StatusInternalServerError, "创建原目录失败: "+err.Error())
+	}
+	if err := os.Rename(absTrash, original); err != nil {
+		return "", newTrashRestoreError(http.StatusInternalServerError, "恢复失败: "+err.Error())
+	}
+	return original, nil
+}
+
+func registerRestoredManagedSTRM(ctx context.Context, deps StrmCleanupDeps, original string) {
+	if deps.ManagedStrm == nil || !strings.EqualFold(filepath.Ext(original), ".strm") {
+		return
+	}
+	content, err := os.ReadFile(original)
+	if err != nil {
+		return
+	}
+	account, pickcode := strm.ParseManagedContent(string(content))
+	if account == "" || pickcode == "" {
+		return
+	}
+	if err := deps.ManagedStrm.Record(ctx, strm.ManagedInput{
+		LocalPath: original, Account: account, Pickcode: pickcode,
+		Content: string(content), Source: "trash-restore",
+	}); err != nil {
+		logger.S().Warnf("[trash] 恢复后托管登记失败 %s: %v", original, err)
+	}
+}
+
+func removeEmptyTrashDirs(absTrash string) {
+	batchDir := filepath.Dir(absTrash)
+	_ = os.Remove(batchDir)
+	trashDir := filepath.Dir(batchDir)
+	if filepath.Base(trashDir) == strmutil.TrashDirName {
+		_ = os.Remove(trashDir)
 	}
 }
 

@@ -240,82 +240,93 @@ func (r *managedRecorder) Bootstrap(ctx context.Context, roots []string, account
 		}
 		pickcodeSets[account] = set
 	}
+	state := &bootstrapState{recorder: r, accountSet: accountSet, pickcodes: pickcodeSets}
 	for _, root := range roots {
 		root = db.NormalizeManagedLocalPath(root)
 		if root == "" {
 			continue
 		}
-		werr := filepath.WalkDir(root, func(p string, d os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return nil
-			}
-			if ctx != nil {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			if d.IsDir() {
-				if d.Name() == strmutil.TrashDirName {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !strings.EqualFold(filepath.Ext(p), ".strm") {
-				return nil
-			}
-			if d.Type()&os.ModeSymlink != 0 {
-				skipped++
-				return nil
-			}
-			if existing, _ := db.GetManagedStrm(r.db, p); existing != nil {
-				skipped++
-				return nil
-			}
-			data, rerr := os.ReadFile(p)
-			if rerr != nil || len(data) > 8192 {
-				skipped++
-				return nil
-			}
-			account, pickcode := ParseManagedContent(string(data))
-			if account == "" || !strmutil.IsValidPickcode(pickcode) || !isStandardStrmURL(string(data)) {
-				skipped++
-				return nil
-			}
-			if _, ok := accountSet[account]; !ok {
-				skipped++
-				return nil
-			}
-			set, ok := pickcodeSets[account]
-			if !ok {
-				skipped++
-				return nil
-			}
-			cloudPath, exists := set[pickcode]
-			if !exists {
-				skipped++
-				return nil
-			}
-			if err := r.Record(ctx, ManagedInput{
-				LocalPath: p,
-				Account:   account,
-				CloudPath: cloudPath,
-				Pickcode:  pickcode,
-				Content:   string(data),
-				Source:    "bootstrap",
-			}); err != nil {
-				skipped++
-				return nil
-			}
-			added++
-			if added%1000 == 0 {
-				logger.S().Infof("[ManagedStrm] 已纳管历史 STRM %d 个...", added)
-			}
-			return nil
-		})
-		if werr != nil {
-			return added, skipped, werr
+		if werr := state.walkRoot(ctx, root); werr != nil {
+			return state.added, state.skipped, werr
 		}
 	}
-	logger.S().Infof("[ManagedStrm] 历史纳管完成：新增 %d，跳过 %d（手写/非本工具/云端索引缺失）", added, skipped)
-	return added, skipped, nil
+	logger.S().Infof("[ManagedStrm] 历史纳管完成：新增 %d，跳过 %d（手写/非本工具/云端索引缺失）", state.added, state.skipped)
+	return state.added, state.skipped, nil
+}
+
+type bootstrapState struct {
+	recorder   *managedRecorder
+	accountSet map[string]struct{}
+	pickcodes  map[string]map[string]string
+	added      int
+	skipped    int
+}
+
+func (s *bootstrapState) walkRoot(ctx context.Context, root string) error {
+	return filepath.WalkDir(root, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if d.IsDir() {
+			if d.Name() == strmutil.TrashDirName {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(p), ".strm") {
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			s.skipped++
+			return nil
+		}
+		if s.recordFile(ctx, p) {
+			s.added++
+			if s.added%1000 == 0 {
+				logger.S().Infof("[ManagedStrm] 已纳管历史 STRM %d 个...", s.added)
+			}
+		} else {
+			s.skipped++
+		}
+		return nil
+	})
+}
+
+func (s *bootstrapState) recordFile(ctx context.Context, p string) bool {
+	if existing, _ := db.GetManagedStrm(s.recorder.db, p); existing != nil {
+		return false
+	}
+	data, err := os.ReadFile(p)
+	if err != nil || len(data) > 8192 {
+		return false
+	}
+	account, pickcode := ParseManagedContent(string(data))
+	if account == "" || !strmutil.IsValidPickcode(pickcode) || !isStandardStrmURL(string(data)) {
+		return false
+	}
+	if _, ok := s.accountSet[account]; !ok {
+		return false
+	}
+	set, ok := s.pickcodes[account]
+	if !ok {
+		return false
+	}
+	cloudPath, exists := set[pickcode]
+	if !exists {
+		return false
+	}
+	err = s.recorder.Record(ctx, ManagedInput{
+		LocalPath: p,
+		Account:   account,
+		CloudPath: cloudPath,
+		Pickcode:  pickcode,
+		Content:   string(data),
+		Source:    "bootstrap",
+	})
+	return err == nil
 }
