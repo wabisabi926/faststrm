@@ -693,6 +693,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 	mode string,
 	cleanup model.CleanupSettings,
 	embyRefresh StrmRefresher,
+	managed strm.ManagedRecorder,
 ) (int, string, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" || mode == "off" {
@@ -702,17 +703,26 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 		// 云端集合为空时不做对账：避免在 fileEntries 还未填充阶段误删全部本地 STRM
 		return 0, "", nil
 	}
+	if mode == "auto_clean" {
+		if n := strmutil.PurgeTrashTree(targetPath, 7*24*time.Hour); n > 0 && sseServer != nil {
+			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：回收站已清理 %d 个过期批次", n))
+		}
+	}
 
 	// 第一遍扫描：收集孤儿 STRM 路径（同时统计本地 STRM 总数，供比例阈值判定）
 	var orphans []string
 	strmTotal := 0
 	failedSkipped := 0
+	unmanagedSkipped := 0
 	staleDup := 0
 	werr := filepath.Walk(targetPath, func(p string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
 		}
 		if info.IsDir() {
+			if info.Name() == strmutil.TrashDirName {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		// 跳过非 .strm 文件
@@ -755,6 +765,19 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 			// 非 faststrm 生成的 STRM，跳过（避免误删手动创建的 STRM）
 			return nil
 		}
+		if managed != nil {
+			ok, verr := managed.VerifyFile(ctx, p, pc)
+			if verr != nil {
+				logger.S().Debugf("[cleanupOrphanStrms] 托管复核失败 %s: %v", p, verr)
+				unmanagedSkipped++
+				return nil
+			}
+			if !ok {
+				// 未登记 / 内容被用户改过 / 指纹不一致：一律不自动删除
+				unmanagedSkipped++
+				return nil
+			}
+		}
 		expectedRel, inCurrent := cloudCurrent[pc]
 		if !inCurrent {
 			// 仅 DB 快照知道这个 pickcode：路径未知，保守保留（快照存在的意义就是防误删）
@@ -790,6 +813,10 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 	if staleDup > 0 && sseServer != nil {
 		sseServer.EmitLog(taskID, "info", fmt.Sprintf(
 			"对账清理：%d 个 STRM 的 pickcode 仍有效但路径与云端不一致（改名/移动残留），一并清理", staleDup))
+	}
+	if unmanagedSkipped > 0 && sseServer != nil {
+		sseServer.EmitLog(taskID, "info", fmt.Sprintf(
+			"对账清理：%d 个 STRM 未托管或指纹已变化，已跳过（不自动删除）", unmanagedSkipped))
 	}
 
 	// 三重保护判定（比例 + 绝对 + 目录数）
@@ -864,33 +891,52 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 		}
 	}
 
-	// auto_clean 直接硬删（不再生成 .deleted.bak 备份）
+	// auto_clean 移入回收站（可恢复；不再硬删）
 	if mode == "auto_clean" {
 		deleted := 0
 		relatedDeleted := 0
+		skippedAtDelete := 0
+		trashDir := strmutil.TrashSessionDir(targetPath)
 		for _, p := range orphans {
-			if derr := strmutil.DeleteStrmFile(p); derr != nil {
-				logger.S().Warnf("[cleanupOrphanStrms] 硬删孤儿 STRM 失败 %s: %v", p, derr)
+			if managed != nil {
+				pc, _ := strmutil.ExtractPickcode(p)
+				ok, verr := managed.VerifyFile(ctx, p, pc)
+				if verr != nil || !ok {
+					skippedAtDelete++
+					logger.S().Warnf("[cleanupOrphanStrms] 删除前复核未通过，保留 %s", p)
+					continue
+				}
+			}
+			dest, terr := strmutil.MoveToTrash(p, targetPath, trashDir)
+			if terr != nil {
+				logger.S().Warnf("[cleanupOrphanStrms] 移入回收站失败 %s: %v", p, terr)
 				if sseServer != nil {
-					sseServer.EmitLog(taskID, "warn", fmt.Sprintf("硬删孤儿STRM失败 %s: %v", p, derr))
+					sseServer.EmitLog(taskID, "warn", fmt.Sprintf("移入回收站失败 %s: %v", p, terr))
 				}
 				continue
 			}
 			deleted++
-			logger.S().Infof("[cleanupOrphanStrms] 硬删孤儿 STRM %s", p)
-			// 连带清理关联文件（默认开）：只删白名单扩展名（nfo/jpg/srt 等），绝不碰视频文件
+			if managed != nil {
+				_ = managed.MarkDeleted(ctx, p)
+			}
+			logger.S().Infof("[cleanupOrphanStrms] 孤儿 STRM 已移入回收站 %s -> %s", p, dest)
+			// 连带清理关联文件（默认关闭）：只移动白名单扩展名，绝不碰视频文件
 			if cleanup.RemoveRelatedFiles {
-				relatedDeleted += strmutil.DeleteRelatedFiles(p, strmutil.DefaultRelatedExts)
+				relatedDeleted += len(strmutil.MoveRelatedFilesToTrash(p, targetPath, trashDir, strmutil.DefaultRelatedExts))
 			}
 			if cleanup.RemoveEmptyDirs {
 				removeEmptyParentsUpTo(filepath.Dir(p), targetPath)
 			}
 		}
+		if skippedAtDelete > 0 && sseServer != nil {
+			sseServer.EmitLog(taskID, "info", fmt.Sprintf(
+				"对账清理：%d 个 STRM 在删除前复核时发现变化，已保留", skippedAtDelete))
+		}
 		if relatedDeleted > 0 && sseServer != nil {
-			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：连带删除 %d 个关联文件（nfo/海报/字幕）", relatedDeleted))
+			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：连带移入回收站 %d 个关联文件（nfo/海报/字幕）", relatedDeleted))
 		}
 		if sseServer != nil {
-			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：已硬删 %d/%d 个孤儿 STRM", deleted, len(orphans)))
+			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：已移入回收站 %d/%d 个孤儿 STRM", deleted, len(orphans)))
 		}
 		// Emby 刷库（删除后刷新整个目标目录，对齐 MoviePilot full_sync_media_server_refresh）
 		if embyRefresh != nil && deleted > 0 {

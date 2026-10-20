@@ -280,7 +280,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 			if newContent := generateStrmContent(
 				cloudPath, config.StrmPrefix, account, event.PickCode, event.FileName, event.FileID, config.EnablePathEncoding,
 			); newContent != "" {
-				if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
+				if werr := m.writeStrmFile(newStrmPath, newContent); werr != nil {
 					m.appendLog(ctx, account, "rename", false, cloudPath, newStrmPath,
 						fmt.Sprintf("合并场景同步新 STRM 内容失败: %v", werr))
 					return werr
@@ -339,7 +339,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 			cloudPath, config.StrmPrefix,
 			account, event.PickCode, event.FileName, event.FileID, config.EnablePathEncoding,
 		); newContent != "" {
-			if werr := writeStrmFile(newStrmPath, newContent); werr != nil {
+			if werr := m.writeStrmFile(newStrmPath, newContent); werr != nil {
 				logger.S().Warnf("[Monitor] rename 后 STRM 内容重同步失败 %s: %v", newStrmPath, werr)
 			}
 		}

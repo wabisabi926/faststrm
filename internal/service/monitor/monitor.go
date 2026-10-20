@@ -18,6 +18,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
 	"github.com/wabisabi926/faststrm/internal/service/runtime"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -99,6 +100,7 @@ type Monitor struct {
 	intent           *intentSuppressor        // P3-4 文件夹递归意图互斥（防重复 create）
 	embyRefresh      *emby.MediaServerRefresh // Emby 媒体库刷库服务
 	notifyMerger     *NotifyMerger            // P2-8 通知合并器
+	managed          strm.ManagedRecorder     // STRM 托管登记（可为 nil）
 	mu               sync.RWMutex
 
 	// prefixCIDCache 映射云端前缀 → cid 缓存（P0-2 前缀反查用，避免每个事件都打 /files/getid）
@@ -154,6 +156,11 @@ func NewMonitor(
 		embyRefresh:      embyRefresh,
 		notifyMerger:     NewNotifyMerger(notifier),
 	}
+}
+
+// SetManagedRecorder 注入 STRM 托管登记器（服务启动/测试用）。
+func (m *Monitor) SetManagedRecorder(rec strm.ManagedRecorder) {
+	m.managed = rec
 }
 
 // ==================== 生命周期管理 ====================

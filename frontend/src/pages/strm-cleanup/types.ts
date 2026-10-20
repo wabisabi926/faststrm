@@ -13,8 +13,8 @@ export type StrmPreviewResponse = {
 export type StaleStrm = {
   relPath: string;
   fullPath?: string;
-  /** 失效原因：not_in_cloud=云端已无对应文件；account_missing=STRM 引用的账户已不存在（改名/删除残留） */
-  reason?: "not_in_cloud" | "account_missing";
+  /** 失效原因：not_in_cloud=云端已无对应文件；account_missing=STRM 引用的账户已不存在（改名/删除残留）；unmanaged=未托管 */
+  reason?: "not_in_cloud" | "account_missing" | "unmanaged";
   /** P3：后端扫描阶段预读 512B；空时保持兼容老字段名 strmContent（同样有值）。truncated=true 时可点"查看完整"调 /preview */
   content?: string;
   /** 兼容字段：与 content 同值，保留给 StaleStrmDialog 现有渲染（s.strmContent || "-"）*/
@@ -48,6 +48,9 @@ export type MappingResult = {
   // P2：本地关联文件数（.nfo/.jpg/.png/.srt/.sub/.ass/.vtt），与 STRM 分开统计，语义纯净
   associatedFileCount?: number;
   staleStrms: StaleStrm[];
+  // 云端不存在但未纳入托管的 STRM（手写/第三方）。默认不参与删除。
+  unmanagedStrms?: StaleStrm[];
+  unmanagedCount?: number;
   missingStrms: MissingStrm[];
   error?: string;
   /** 结构化扫描错误码：account_not_found（账号不存在/无 Cookie）/ cloud_dir_failed / cloud_walk_failed */
@@ -62,6 +65,8 @@ export type ScanSummary = {
   // P2：全部 mappings 关联文件总数（展示在顶部统计卡"关联媒体"，有值才显示 6 列布局）
   totalAssociatedFiles?: number;
   totalStale: number;
+  // 云端不存在但未纳入托管的 STRM 总数（默认不删除）
+  totalUnmanaged?: number;
   totalMissing: number;
   durationMs: number;
   mappings: MappingResult[];
@@ -72,6 +77,8 @@ export type ScanSummary = {
 export type ExecuteResult = {
   deletedCount: number;
   failedCount: number;
+  // 因未托管/指纹变化而跳过、未删除的文件数
+  skippedUnmanaged?: number;
   errors: Array<{ path: string; error: string }>;
   removedEmptyDirs: string[];
   dryRun: boolean;

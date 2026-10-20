@@ -22,6 +22,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/internal/service/runtime"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/internal/web"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -154,12 +155,60 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 		TaskHistory:      taskHistoryRepo,
 		TasksStore:       tasksStore,
 		StrmCache:        &strmCacheWriterAdapter{inner: strmCacheStore},
+		ManagedStrm:      strm.NewManagedRecorder(sqliteDB),
 		EmbyRefresh:      embyRefresh,
 		CleanupSubmitter: &cleanupSubmitterAdapter{interaction: cleanupInteraction},
 		BaseURL:          baseURL,
 		PublicBaseURL:    cfg.Settings.StrmPrefix,
 	}
 	_ = scheduler.Init(execDeps, tasksStore, store.NewSettingsAdapter(settingsStore))
+
+	// 历史 STRM 一次性纳管（异步）：只登记“内容含合法 pickcode + 账号存在 + 云端索引命中”的文件。
+	// 在纳管完成前，自动清理只会跳过未登记文件，不会误删。
+	if execDeps.ManagedStrm != nil {
+		go func() {
+			roots := make([]string, 0, 8)
+			seen := make(map[string]struct{})
+			addRoot := func(p string) {
+				if p == "" {
+					return
+				}
+				if _, ok := seen[p]; ok {
+					return
+				}
+				seen[p] = struct{}{}
+				roots = append(roots, p)
+			}
+			if initSettings != nil {
+				for _, pm := range initSettings.LifeMonitor.PathMappings {
+					addRoot(pm.LocalPath)
+				}
+			}
+			if tasks, err := tasksStore.ReadTasks(); err == nil {
+				for _, t := range tasks {
+					addRoot(t.TargetPath)
+				}
+			}
+			accounts := make([]string, 0, 4)
+			for _, acc := range accountStore.List() {
+				if acc.Name != "" {
+					accounts = append(accounts, acc.Name)
+				}
+			}
+			if len(roots) == 0 || len(accounts) == 0 {
+				logger.S().Infof("[ManagedStrm] 无历史 STRM 纳管任务（roots=%d accounts=%d）", len(roots), len(accounts))
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			added, skipped, err := execDeps.ManagedStrm.Bootstrap(ctx, roots, accounts)
+			if err != nil {
+				logger.S().Warnf("[ManagedStrm] 历史纳管未完成: %v (added=%d skipped=%d)", err, added, skipped)
+				return
+			}
+			logger.S().Infof("[ManagedStrm] 历史纳管完成: added=%d skipped=%d", added, skipped)
+		}()
+	}
 
 	// ==================== 阶段6: 通知 + Emby + 生活监控依赖 ====================
 	// 创建 EmbyProxyManager（支持热重启：用户改 ProxyPort / EmbyURL 后无需重启主程序）

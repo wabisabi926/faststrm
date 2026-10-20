@@ -68,6 +68,11 @@ export function MappingDetailList({ mappings }: MappingDetailListProps) {
                 <span className="text-sky-700 break-all">关联：{m.associatedFileCount}</span>
               )}
               <span className="text-destructive break-all">失效：{m.staleStrms.length}</span>
+              {(m.unmanagedCount ?? 0) > 0 && (
+                <span className="text-amber-700 break-all" title="手写/第三方/未纳管的 STRM，默认不删除">
+                  未托管：{m.unmanagedCount}
+                </span>
+              )}
               <span className="text-amber-600 break-all">漏生成：{m.missingStrms.length}</span>
             </div>
             {m.error && (

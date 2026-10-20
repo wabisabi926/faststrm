@@ -20,9 +20,8 @@ func newTestDB(t *testing.T) (*sql.DB, string) {
 	return db, dir
 }
 
-// --- T10.1 新库首次启动：v1 自动应用，5 张表都存在 ---
-func TestMigrate_FreshDB_Version1Applied(t *testing.T) {
-	// 保留 migrations.go init() 注册的官方 v1
+// --- T10.1 新库首次启动：官方迁移全部应用（当前 v2） ---
+func TestMigrate_FreshDB_AllMigrationsApplied(t *testing.T) {
 	db, _ := newTestDB(t)
 	defer db.Close()
 
@@ -30,14 +29,14 @@ func TestMigrate_FreshDB_Version1Applied(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&cnt); err != nil {
 		t.Fatalf("schema_migrations missing: %v", err)
 	}
-	if cnt != 1 {
-		t.Errorf("want 1, got %d", cnt)
+	if cnt != 2 {
+		t.Errorf("want 2, got %d", cnt)
 	}
-	if CurrentMigrationVersion(db) != 1 {
-		t.Errorf("want v1, got v%d", CurrentMigrationVersion(db))
+	if v := CurrentMigrationVersion(db); v != 2 {
+		t.Errorf("want v2, got v%d", v)
 	}
 
-	for _, tbl := range []string{"files", "folders", "strm_exec_history", "schema_migrations"} {
+	for _, tbl := range []string{"files", "folders", "strm_exec_history", "managed_strms", "schema_migrations"} {
 		var c int
 		_ = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&c)
 		if c != 1 {
@@ -73,8 +72,8 @@ func TestMigrate_Idempotent_NoDupExec(t *testing.T) {
 	}
 	var cnt int
 	_ = db2.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&cnt)
-	if cnt != 1 {
-		t.Errorf("want still 1 record, got %d", cnt)
+	if cnt != 2 {
+		t.Errorf("want still 2 records, got %d", cnt)
 	}
 	_ = db2.QueryRow(`SELECT COUNT(*) FROM files WHERE file_id=1`).Scan(&cnt)
 	if cnt != 1 {
@@ -91,7 +90,7 @@ func TestMigrate_RejectsNonMonotonic(t *testing.T) {
 			t.Logf("correctly panicked: %v", r)
 		}
 	}()
-	// migrations.go init() 已注册 v1，再注册 v0 应 panic
+	// migrations.go init() 已注册 v1/v2，再注册 v0 应 panic
 	RegisterMigration(0, "dup", func(tx *sql.Tx) error { return nil })
 }
 

@@ -153,6 +153,7 @@ func initPhase6Deps(
 		embyRefresh,
 		execDeps.SQLiteDB,
 	)
+	mon.SetManagedRecorder(execDeps.ManagedStrm)
 
 	// ---------- MenuActions 适配器 ----------
 	if cmdHandler != nil {

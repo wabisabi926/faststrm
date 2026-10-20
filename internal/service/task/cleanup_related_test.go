@@ -48,7 +48,7 @@ func TestCleanup_RemovesRelatedFiles(t *testing.T) {
 
 	cloud := map[string]string{"zzzzzzzzzzzzzzz99": "无关/x.strm"}
 	n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
-		"t", target, cloud, nil, nil, "auto_clean", generousCleanup(true, false), nil)
+		"t", target, cloud, nil, nil, "auto_clean", generousCleanup(true, false), nil, nil)
 	if err != nil {
 		t.Fatalf("cleanupOrphanStrms: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestCleanup_KeepsRelatedFilesWhenDisabled(t *testing.T) {
 
 	cloud := map[string]string{"zzzzzzzzzzzzzzz99": "无关/x.strm"}
 	if _, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
-		"t", target, cloud, nil, nil, "auto_clean", generousCleanup(false, false), nil); err != nil {
+		"t", target, cloud, nil, nil, "auto_clean", generousCleanup(false, false), nil, nil); err != nil {
 		t.Fatalf("cleanupOrphanStrms: %v", err)
 	}
 	if exists(filepath.Join(dir, "movie.strm")) {
@@ -96,7 +96,7 @@ func TestCleanup_RemovesEmptyDirs(t *testing.T) {
 
 	cloud := map[string]string{"zzzzzzzzzzzzzzz99": "无关/x.strm"}
 	if _, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
-		"t", target, cloud, nil, nil, "auto_clean", generousCleanup(true, true), nil); err != nil {
+		"t", target, cloud, nil, nil, "auto_clean", generousCleanup(true, true), nil, nil); err != nil {
 		t.Fatalf("cleanupOrphanStrms: %v", err)
 	}
 	if exists(dir) {

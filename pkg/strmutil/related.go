@@ -35,9 +35,8 @@ func DeleteRelatedFiles(strmPath string, exts map[string]struct{}) int {
 	return len(DeleteRelatedFilesDetailed(strmPath, exts))
 }
 
-// DeleteRelatedFilesDetailed 删除关联文件并返回实际删除的绝对路径列表。
-// 调用方需要回显删除结果（如清理页）时使用；任务/监控侧只关心数量。
-func DeleteRelatedFilesDetailed(strmPath string, exts map[string]struct{}) []string {
+// relatedFileCandidates 返回与 STRM 同名的关联文件绝对路径（不删除）。
+func relatedFileCandidates(strmPath string, exts map[string]struct{}) []string {
 	if strmPath == "" {
 		return nil
 	}
@@ -51,7 +50,7 @@ func DeleteRelatedFilesDetailed(strmPath string, exts map[string]struct{}) []str
 	if err != nil {
 		return nil
 	}
-	var removed []string
+	var out []string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -68,10 +67,31 @@ func DeleteRelatedFilesDetailed(strmPath string, exts map[string]struct{}) []str
 		if _, ok := exts[strings.ToLower(filepath.Ext(name))]; !ok {
 			continue
 		}
-		full := filepath.Join(dir, name)
+		out = append(out, filepath.Join(dir, name))
+	}
+	return out
+}
+
+// DeleteRelatedFilesDetailed 删除关联文件并返回实际删除的绝对路径列表。
+// 调用方需要回显删除结果（如清理页）时使用；任务/监控侧只关心数量。
+func DeleteRelatedFilesDetailed(strmPath string, exts map[string]struct{}) []string {
+	var removed []string
+	for _, full := range relatedFileCandidates(strmPath, exts) {
 		if err := os.Remove(full); err == nil {
 			removed = append(removed, full)
 		}
 	}
 	return removed
+}
+
+// MoveRelatedFilesToTrash 把关联文件移入回收站，返回实际移动后的路径。
+func MoveRelatedFilesToTrash(strmPath, root, trashDir string, exts map[string]struct{}) []string {
+	var moved []string
+	for _, full := range relatedFileCandidates(strmPath, exts) {
+		dest, err := MoveToTrash(full, root, trashDir)
+		if err == nil && dest != "" {
+			moved = append(moved, dest)
+		}
+	}
+	return moved
 }

@@ -155,16 +155,35 @@ func init() {
 		}
 		return nil
 	})
+	// ---------- v002: STRM 托管所有权 ----------
+	RegisterMigration(2, "managed_strms", func(tx *sql.Tx) error {
+		stmts := []string{
+			`CREATE TABLE IF NOT EXISTS managed_strms (
+				local_path     TEXT    PRIMARY KEY,
+				account        TEXT    NOT NULL DEFAULT '',
+				cloud_path     TEXT    NOT NULL DEFAULT '',
+				pickcode       TEXT    NOT NULL DEFAULT '',
+				file_id        TEXT    NOT NULL DEFAULT '',
+				content_sha256 TEXT    NOT NULL DEFAULT '',
+				size           INTEGER NOT NULL DEFAULT 0,
+				mtime_ns       INTEGER NOT NULL DEFAULT 0,
+				source         TEXT    NOT NULL DEFAULT '',
+				task_id        TEXT    NOT NULL DEFAULT '',
+				state          TEXT    NOT NULL DEFAULT 'active',
+				written_at     INTEGER NOT NULL DEFAULT 0,
+				last_seen_at   INTEGER NOT NULL DEFAULT 0
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_managed_strms_pickcode ON managed_strms(account, pickcode)`,
+			`CREATE INDEX IF NOT EXISTS idx_managed_strms_state ON managed_strms(state)`,
+		}
+		for _, s := range stmts {
+			if _, err := tx.Exec(s); err != nil {
+				return fmt.Errorf("exec %s: %w", s, err)
+			}
+		}
+		return nil
+	})
 	// 保存官方注册快照给测试隔离恢复用
 	officialRegistry = make([]migration, len(registry))
 	copy(officialRegistry, registry)
-
-	// ---------- v002+: 未来迁移在这里追加，版本号必须 > 1 ----------
-	// 示例（注释掉，等真正需要时启用）：
-	// RegisterMigration(2, "add_source_path_to_strm_history", func(tx *sql.Tx) error {
-	//     // SQLite ALTER TABLE ADD COLUMN 支持新列，但默认值必须是常量
-	//     // 如果需要非平凡默认值或改列类型 → 用 RENAME→CREATE→INSERT 保守方案
-	//     _, err := tx.Exec(`ALTER TABLE strm_exec_history ADD COLUMN source_path TEXT NOT NULL DEFAULT ''`)
-	//     return err
-	// })
 }

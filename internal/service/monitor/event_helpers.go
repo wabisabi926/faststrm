@@ -403,11 +403,39 @@ func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName, fil
 	return content
 }
 
-// writeStrmFile 原子写入 STRM 文件（先写 tmp 再 rename）
+// writeStrmFile 原子写入 STRM 文件（先写 tmp 再 rename），并登记托管归属。
 // P2-10: 读-比较-写，仅在内容变化时覆盖（对齐参考项目 _sync_strm_text_with_event）
-func writeStrmFile(strmPath, content string) error {
+func (m *Monitor) writeStrmFile(strmPath, content string) error {
 	_, err := strmutil.WriteStrmFile(strmPath, content)
+	if err == nil {
+		m.recordManagedFromContent(context.Background(), strmPath, content, "monitor")
+	}
 	return err
+}
+
+// recordManagedStrm 写入后登记完整元数据（账号/云端路径/pickcode/file_id）。
+func (m *Monitor) recordManagedStrm(ctx context.Context, localPath, content, account, cloudPath, pickcode, fileID, source string) {
+	if m.managed == nil || localPath == "" || pickcode == "" {
+		return
+	}
+	if err := m.managed.Record(ctx, strm.ManagedInput{
+		LocalPath: localPath, Account: account, CloudPath: cloudPath,
+		Pickcode: pickcode, FileID: fileID, Content: content, Source: source,
+	}); err != nil {
+		logger.S().Debugf("[Monitor] 托管登记失败 path=%s: %v", localPath, err)
+	}
+}
+
+// recordManagedFromContent 从默认 URL 解析账号/pickcode 后登记；自定义模板无法解析时跳过。
+func (m *Monitor) recordManagedFromContent(ctx context.Context, localPath, content, source string) {
+	if m.managed == nil {
+		return
+	}
+	account, pickcode := strm.ParseManagedContent(content)
+	if account == "" || pickcode == "" {
+		return
+	}
+	m.recordManagedStrm(ctx, localPath, content, account, "", pickcode, "", source)
 }
 
 // removeEmptyParents 向上递归删除空目录，直到遇到任一映射根目录或非空目录。

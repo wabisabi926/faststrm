@@ -20,6 +20,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/concurrency"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 	"github.com/wabisabi926/faststrm/pkg/strmutil"
@@ -52,6 +53,7 @@ type ExecutorDeps struct {
 	TaskHistory      *db.TaskHistoryRepo // 任务执行历史（可为 nil）
 	TasksStore       TasksReaderWriter
 	StrmCache        StrmCacheWriter
+	ManagedStrm      strm.ManagedRecorder  // STRM 托管登记与删除前复核（nil=未启用 SQLite）
 	EmbyRefresh      StrmRefresher         // Emby 刷库服务（可为 nil）
 	CleanupSubmitter CleanupBatchSubmitter // STRM 清理延迟批次提交器（可为 nil）
 	Notifier         TaskNotifier          // 任务完成/失败通知（可为 nil）
@@ -360,6 +362,11 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				snapPickcodes = buildCloudPickcodeSetFromSnapshot(snap)
 			}
 		}
+		// 未启用 SQLite 托管索引时不允许自动删除：降级为仅标记，避免回到“只凭 pickcode 就删”的旧行为
+		if mode == "auto_clean" && deps.ManagedStrm == nil {
+			mode = "mark_only"
+			sseServer.EmitLog(task.ID, "warn", "全量预扫：未启用 SQLite 托管索引，自动清理已降级为仅标记（不删除文件）")
+		}
 		// 本次清单：pickcode → 期望的本地 STRM 相对路径。
 		// 除了判孤儿，还能识别「pickcode 仍有效但路径变了」（云端改名/移动残留），
 		// 这是原来只有路径级清理能做的事。
@@ -372,7 +379,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			cloudCurrent[f.PickCode] = filepath.Clean(resolveStrmRelPath(strmTemplate, task.Account, f))
 		}
 		orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
-			task.ID, task.TargetPath, cloudCurrent, snapPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh)
+			task.ID, task.TargetPath, cloudCurrent, snapPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh, deps.ManagedStrm)
 		if cerr != nil {
 			sseServer.EmitLog(task.ID, "warn", "全量预扫清理失败: "+cerr.Error())
 			logger.S().Warnf("[Task] 全量预扫清理失败 task=%s: %v", task.ID, cerr)
@@ -517,6 +524,15 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 					// Emby 刷库（带防抖，对齐 MoviePilot mediaserver_helper.refresh_mediaserver）
 					if rerr := deps.EmbyRefresh.RefreshOnCreate(ctx, savePath); rerr != nil {
 						logger.S().Debugf("[Task] Emby 刷库安排失败 path=%s: %v", savePath, rerr)
+					}
+				}
+				if deps.ManagedStrm != nil {
+					if merr := deps.ManagedStrm.Record(ctx, strm.ManagedInput{
+						LocalPath: savePath, Account: task.Account, CloudPath: f.CloudPath,
+						Pickcode: f.PickCode, FileID: f.FID, Content: content,
+						Source: "task", TaskID: task.ID,
+					}); merr != nil {
+						logger.S().Debugf("[Task] 托管登记失败 path=%s: %v", savePath, merr)
 					}
 				}
 				cacheMu.Lock()

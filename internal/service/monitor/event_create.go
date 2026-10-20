@@ -127,6 +127,7 @@ func (m *Monitor) createStrmForSingleFile(
 	if werr != nil {
 		return strmPath, fmt.Errorf("写入 STRM 失败: %w", werr)
 	}
+	m.recordManagedStrm(ctx, strmPath, content, account, in.CloudPath, in.PickCode, in.FileID, "life")
 
 	// 7. 清理同 file_id 的旧 STRM（仅在确定生成新 STRM 时执行，对齐参考项目 create() L1590-1626）
 	// 参考项目行为：检查 DB 中是否已有同 file_id 的旧记录，若旧路径 ≠ 新路径则删除旧 STRM

@@ -18,6 +18,7 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/service/notify"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -55,6 +56,7 @@ type StrmCleanupInteraction struct {
 	db       *sql.DB
 	bot      *notify.TelegramBot
 	settings *store.SettingsStore
+	managed  strm.ManagedRecorder
 	mu       sync.Mutex
 }
 
@@ -64,7 +66,7 @@ func NewStrmCleanupInteraction(db *sql.DB, bot *notify.TelegramBot, settings *st
 		// db 为空时返回无持久化的实例（仅内存，不推荐生产使用）
 		logger.S().Warnf("[CleanupInteraction] SQLite 未注入，待删批次将不持久化")
 	}
-	i := &StrmCleanupInteraction{db: db, bot: bot, settings: settings}
+	i := &StrmCleanupInteraction{db: db, bot: bot, settings: settings, managed: strm.NewManagedRecorder(db)}
 	if db != nil {
 		if err := i.migrate(); err != nil {
 			return nil, fmt.Errorf("migrate cleanup_pending_batches: %w", err)
@@ -329,7 +331,7 @@ func (i *StrmCleanupInteraction) HandleTelegramCallback(ctx context.Context, req
 			logger.S().Infof("[CleanupInteraction] 批次 %s 已过期（age=%s），作废", requestID, age.Truncate(time.Minute))
 			return fmt.Sprintf("⌛ <b>待删批次已过期（超过 24 小时）</b>\n\n扫描结果已不能反映当前云端状态，为避免误删已作废。\n请重新执行「清理孤儿 → 扫描」获取最新结果。"), nil
 		}
-		resp := executePendingBatch(ctx, *batch)
+		resp := executePendingBatch(ctx, *batch, i.managed)
 		logger.S().Infof("[CleanupInteraction] TG callback 确认删除 %s: deleted=%d failed=%d dirs=%d duration=%dms",
 			requestID, resp.DeletedCount, resp.FailedCount, len(resp.RemovedEmptyDirs), resp.DurationMs)
 		var sb strings.Builder

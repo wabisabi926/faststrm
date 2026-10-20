@@ -21,6 +21,7 @@ import {
   Loader2,
   Paperclip,
   SearchX,
+  ShieldAlert,
 } from "lucide-react";
 import { useStrmCleanup } from "./strm-cleanup/useStrmCleanup";
 import { StatCard } from "./strm-cleanup/StatCard";
@@ -233,6 +234,18 @@ export function StrmCleanupCard() {
                 )}
               </StatCard>
             </div>
+
+            {(scanResult.totalUnmanaged ?? 0) > 0 && (
+              <Alert className="border-amber-300/60 bg-amber-50/60 dark:bg-amber-950/20">
+                <ShieldAlert className="size-4 text-amber-600" />
+                <AlertTitle>有 {scanResult.totalUnmanaged} 个未托管 STRM 已跳过</AlertTitle>
+                <AlertDescription>
+                  这些文件在云端已不存在，但没有出现在托管登记表里（可能是手写、第三方工具生成，或纳管前遗留）。
+                  为了避免误删，它们不会进入删除候选，也不会被「全部删除」处理。确认不再需要时请手动清理；
+                  若刚升级，历史纳管可能仍在后台进行，稍后重新扫描即可。
+                </AlertDescription>
+              </Alert>
+            )}
 
             {/* 操作工具栏 */}
             <CleanupToolbar

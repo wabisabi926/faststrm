@@ -213,6 +213,7 @@ func RegisterRoutes(
 		StrmCache:   strmCacheStore,
 		Interaction: cleanupInteraction,
 		SQLiteDB:    execDeps.SQLiteDB,
+		ManagedStrm: execDeps.ManagedStrm,
 	}
 	// P0 注入 cleanupInteraction 到 TG CommandHandler（处理 inline 按钮回调）
 	if cleanupInteraction != nil && notifyDeps.CommandHandler != nil {
