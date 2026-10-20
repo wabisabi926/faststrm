@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -79,9 +80,15 @@ type StaleStrm struct {
 }
 
 type MissingStrm struct {
-	RelPath  string `json:"relPath"`
-	PickCode string `json:"pickCode"`
-	Size     int64  `json:"size"`
+	// RelPath 本地 .strm 相对路径（OS 分隔符、已做落盘清理）
+	RelPath string `json:"relPath"`
+	// CloudRelPath 源文件的云端相对路径（'/' 分隔、保留原扩展名）。
+	// RelPath 是 .strm 路径，构建 URL 需要的是源文件名（file_name / {ext} / {stem} /
+	// {file_path}）；早期实现误把 RelPath 当源文件名，导致补建出的 STRM 里
+	// file_name 写成 "xxx.strm"，播放器拿不到真实容器扩展名。
+	CloudRelPath string `json:"cloudRelPath,omitempty"`
+	PickCode     string `json:"pickCode"`
+	Size         int64  `json:"size"`
 }
 
 type MappingScanResult struct {
@@ -434,6 +441,11 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 		if it.IsDir {
 			continue
 		}
+		// 关联文件（图片 / 字幕 / nfo）永远不生成 STRM，也不该参与比对：
+		// 跳过它们，历史误生成的 backdrop.strm 之类才会被判为残留并被清理。
+		if strmutil.IsRelatedAssetPath(it.RelPath) {
+			continue
+		}
 		cloudStrmSet[cloudStrmRelKey(it.RelPath)] = struct{}{}
 	}
 
@@ -459,12 +471,17 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 		if it.IsDir {
 			continue
 		}
+		// 关联文件不生成 STRM（见 cloudStrmSet 同处说明）
+		if strmutil.IsRelatedAssetPath(it.RelPath) {
+			continue
+		}
 		strmRel := cloudStrmRelKey(it.RelPath)
 		if _, exists := localSet[strmRel]; !exists {
 			result.MissingStrms = append(result.MissingStrms, MissingStrm{
-				RelPath:  strmRel,
-				PickCode: it.PickCode,
-				Size:     it.Size,
+				RelPath:      strmRel,
+				CloudRelPath: it.RelPath,
+				PickCode:     it.PickCode,
+				Size:         it.Size,
 			})
 		}
 	}
@@ -1234,17 +1251,24 @@ func buildStrmForMissing(m MappingScanResult, miss MissingStrm, settings *model.
 		prefix = resolved
 	}
 
-	// 3. 云端完整路径 = 映射根 + 相对路径。miss.RelPath 是本地形态（OS 分隔符、'：' 全角字符），
-	//    必须先逐段反推为云端形态（'/' 分隔、':' ASCII），才能与生成侧 f.CloudPath 同形态；
-	//    否则 {file_path}/{file_path_raw}/{file_path_strict} 会渲染出混合形态的路径。
-	cloudPath := strings.TrimRight(m.CloudPath, "/") + "/" + strmutil.LocalRelToCloudRel(miss.RelPath)
+	// 3. 源文件的云端形态路径。
+	//    优先用扫描带回来的 CloudRelPath（'/' 分隔、保留原扩展名 .mkv/.iso）；
+	//    旧版 ScanSummary 没有该字段时，退回由 RelPath 反推（此时拿不到真实扩展名，
+	//    只能得到 xxx.strm，属于降级行为）。
+	srcRel := miss.CloudRelPath
+	if srcRel == "" {
+		srcRel = strmutil.LocalRelToCloudRel(miss.RelPath)
+	}
+	// 云端文件名用于 file_name / {filename} / {ext} / {stem} 等变量
+	srcName := path.Base(srcRel)
+	cloudPath := strings.TrimRight(m.CloudPath, "/") + "/" + srcRel
 
 	content, err := strm.BuildContent(strm.ContentInput{
 		Template:  settings.Strm.StrmUrlTemplate,
 		Prefix:    prefix,
 		Account:   m.Account,
 		PickCode:  miss.PickCode,
-		FileName:  base,
+		FileName:  srcName,
 		CloudPath: cloudPath,
 		// MissingStrm 无 file_id（云端比对只带 pickcode），模板引用 {file_id} 时为空
 		FileID:        "",

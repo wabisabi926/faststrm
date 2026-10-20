@@ -115,3 +115,82 @@ func TestBuildStrmForMissing_InvalidPickcode(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildStrmForMissing_UsesSourceName 补建必须用源文件名（.mkv/.iso），而不是 .strm 路径。
+// 回归：历史实现把 MissingStrm.RelPath（xxx.strm）当源文件名，补建出的 STRM 里
+// file_name=xxx.strm，播放器拿不到真实容器扩展名（ISO 尤其明显）。
+func TestBuildStrmForMissing_UsesSourceName(t *testing.T) {
+	m := MappingScanResult{Account: "acc", LocalPath: "/data/media", CloudPath: "电影"}
+	settings := &model.Settings{StrmPrefix: "http://nas:8090", EnablePathEncoding: true}
+
+	cases := []struct {
+		name     string
+		miss     MissingStrm
+		wantURL  string
+		wantName string
+	}{
+		{
+			name: "普通视频",
+			miss: MissingStrm{
+				RelPath: "movie.strm", CloudRelPath: "movie.mkv", PickCode: "pc1234567890abcde",
+			},
+			wantURL:  "http://nas:8090/api/strm?account=acc&pickcode=pc1234567890abcde&file_name=movie.mkv\n",
+			wantName: "movie.strm",
+		},
+		{
+			name: "子目录 + ISO",
+			miss: MissingStrm{
+				RelPath: filepath.Join("原盘", "007.strm"), CloudRelPath: "原盘/007.iso",
+				PickCode: "pc1234567890abcde",
+			},
+			wantURL:  "http://nas:8090/api/strm?account=acc&pickcode=pc1234567890abcde&file_name=007.iso\n",
+			wantName: filepath.Join("原盘", "007.strm"),
+		},
+		{
+			name:     "兼容旧 ScanSummary（无 CloudRelPath）",
+			miss:     MissingStrm{RelPath: "legacy.strm", PickCode: "pc1234567890abcde"},
+			wantURL:  "http://nas:8090/api/strm?account=acc&pickcode=pc1234567890abcde&file_name=legacy.strm\n",
+			wantName: "legacy.strm",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			strmPath, content, err := buildStrmForMissing(m, c.miss, settings)
+			if err != nil {
+				t.Fatalf("buildStrmForMissing: %v", err)
+			}
+			if content != c.wantURL {
+				t.Fatalf("content = %q, want %q", content, c.wantURL)
+			}
+			if filepath.Base(strmPath) != filepath.Base(c.wantName) {
+				t.Fatalf("strmPath = %q, want basename %q", strmPath, c.wantName)
+			}
+		})
+	}
+}
+
+// TestBuildStrmForMissing_TemplateUsesSourceExt 模板变量 {ext}/{stem}/{file_path} 也必须是源文件形态
+func TestBuildStrmForMissing_TemplateUsesSourceExt(t *testing.T) {
+	m := MappingScanResult{Account: "acc", LocalPath: "/data/media", CloudPath: "电影"}
+	settings := &model.Settings{
+		StrmPrefix:         "http://nas:8090",
+		EnablePathEncoding: true,
+		Strm: model.StrmSettings{
+			StrmUrlTemplate: "{prefix}/play/{stem}{ext}?pc={pickcode}&p={file_path}",
+		},
+	}
+	_, content, err := buildStrmForMissing(m, MissingStrm{
+		RelPath: "007.strm", CloudRelPath: "华语/007：大破量子危机.iso", PickCode: "pc1234567890abcde",
+	}, settings)
+	if err != nil {
+		t.Fatalf("buildStrmForMissing: %v", err)
+	}
+	if !strings.Contains(content, "/play/007：大破量子危机.iso.iso?") {
+		t.Fatalf("stem+ext 应为源文件形态（.iso 双扩展名），got %q", content)
+	}
+	// {file_path} 用 URLPathEncode：中文编码、'/' 保留（{file_path_strict} 才是 %2F）
+	if !strings.Contains(content, "p=%E7%94%B5%E5%BD%B1/%E5%8D%8E%E8%AF%AD/") {
+		t.Fatalf("{file_path} 应为「中文编码 + 保留 /」的云端路径，got %q", content)
+	}
+}

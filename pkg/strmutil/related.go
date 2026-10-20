@@ -16,6 +16,20 @@ var DefaultRelatedExts = map[string]struct{}{
 	".srt": {}, ".ass": {}, ".ssa": {}, ".sub": {}, ".vtt": {}, ".sup": {},
 }
 
+// IsRelatedAssetPath 判断路径是否为 STRM 的关联文件（图片 / 字幕 / nfo 等）。
+//
+// 用途：清理扫描时跳过这类云端文件。它们永远不该有对应的 .strm——
+// 历史实现按「云端每个文件都要有一个 .strm」比对，结果给 backdrop.jpg /
+// poster.jpg / logo.png 补建出了 backdrop.strm / poster.strm / logo.strm，
+// 这些条目在 Emby 里会被当成无法播放的媒体项。
+func IsRelatedAssetPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	_, ok := DefaultRelatedExts[strings.ToLower(filepath.Ext(p))]
+	return ok
+}
+
 // DeleteRelatedFiles 删除与 STRM 同名的关联文件（stem + 扩展名），返回删除数量。
 //
 // 匹配规则：文件名以 `<stem>` 开头、剩余部分为空或以 "." 开头，且扩展名在 exts 白名单内。
