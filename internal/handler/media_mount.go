@@ -107,8 +107,10 @@ func HandleMediaMountSyncPOST(deps MediaMountDeps) http.HandlerFunc {
 		added, removed, kept, changed := mediasync.ComputeDiff(settings, cr)
 
 		if changed {
-			settings.MediaMountPath = cr.FinalPaths
-			if err := deps.SettingsStore.SaveSettings(settings); err != nil {
+			if _, err := deps.SettingsStore.Update(func(s *model.Settings) error {
+				s.MediaMountPath = cr.FinalPaths
+				return nil
+			}); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

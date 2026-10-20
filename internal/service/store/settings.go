@@ -30,18 +30,60 @@ func NewSettingsStore(salt, configDir string) *SettingsStore {
 	}
 }
 
-// ReadSettings 读取 Settings，不存在或权限不足则返回默认值
+// ReadSettings 读取 Settings，不存在或权限不足则返回默认值。
+// 只读场景使用；需要“读取→修改→写回”时必须用 Update，避免并发丢更新。
 func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	out, changed, err := s.readLocked()
+	if err != nil {
+		return nil, err
+	}
+	// 迁移后如果有变更，回写 settings.json（保持幂等，下次启动不会重复触发）
+	if changed {
+		logger.S().Infof("[SettingsStore] 迁移: 合并新默认值到 settings.json 并回写")
+		if err := s.saveLocked(out); err != nil {
+			logger.S().Warnf("[SettingsStore] 迁移回写 settings.json 失败: %v", err)
+		}
+	}
+	return out, nil
+}
+
+// Update 在锁内完成“读取 → 修改 → 落盘”，并返回修改后的配置。
+// 多个 handler/webhook 同时保存不同字段时不会互相覆盖；mutate 返回错误时不做任何写盘。
+func (s *SettingsStore) Update(mutate func(*model.Settings) error) (*model.Settings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out, changed, err := s.readLocked()
+	if err != nil {
+		return nil, err
+	}
+	if mutate != nil {
+		if err := mutate(out); err != nil {
+			return nil, err
+		}
+		changed = true
+	}
+	if changed {
+		if err := s.saveLocked(out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// readLocked 读取并应用默认值；调用方必须持有 s.mu。
+// changed 表示是否需要回写，由 ReadSettings/Update 决定落盘时机。
+func (s *SettingsStore) readLocked() (*model.Settings, bool, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return model.DefaultSettings(), nil
+			return model.DefaultSettings(), false, nil
 		}
 		logger.S().Warnf("[SettingsStore] ReadSettings failed: %v, returning defaults", err)
-		return model.DefaultSettings(), nil
+		return model.DefaultSettings(), false, nil
 	}
 	var out model.Settings
 	// P0-2：判定 lifeMonitor.eventTypes 是否缺失（旧配置/空配置反序列化后 4 个 bool 全为 false，
@@ -50,7 +92,7 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &out); err != nil {
 			logger.S().Warnf("[SettingsStore] ReadSettings json unmarshal failed: %v, returning defaults", err)
-			return model.DefaultSettings(), nil
+			return model.DefaultSettings(), false, nil
 		}
 		// 迁移：旧配置文件没有 notifyOnlyOnError 字段
 		var rawCheck map[string]json.RawMessage
@@ -71,15 +113,7 @@ func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	}
 	// 填充默认值（策略：空则覆盖，非空则对明确新增的默认元素做追加，不破坏用户自定义）
 	changed := applyDefaults(&out, model.DefaultSettings(), eventTypesMissing)
-
-	// 迁移后如果有变更，回写 settings.json（保持幂等，下次启动不会重复触发）
-	if changed {
-		logger.S().Infof("[SettingsStore] 迁移: 合并新默认值到 settings.json 并回写")
-		if err := s.saveLocked(&out); err != nil {
-			logger.S().Warnf("[SettingsStore] 迁移回写 settings.json 失败: %v", err)
-		}
-	}
-	return &out, nil
+	return &out, changed, nil
 }
 
 // normalizeExtensions 规范化扩展名列表：去空白、去前导点、小写、去重（保留首次出现顺序）。

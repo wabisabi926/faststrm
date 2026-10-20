@@ -170,25 +170,28 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少配置内容"})
 				return
 			}
-			settings, err := deps.SettingsStore.ReadSettings()
-			if err != nil {
-				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
-				return
-			}
 			// 合并语义：以现有配置为基准，仅覆盖 config 中出现的字段，
 			// 避免未提供字段被零值清空（与 updateConfig 保持一致）。
-			merged := settings.LifeMonitor
-			if err := json.Unmarshal(req.Config, &merged); err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid config"})
-				return
-			}
-			if msg := validateLifeMonitorAccounts(merged, deps.AccountStore); msg != "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": msg})
-				return
-			}
-			settings.LifeMonitor = merged
-			if err := deps.SettingsStore.SaveSettings(settings); err != nil {
-				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
+			badRequest := false
+			_, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
+				merged := settings.LifeMonitor
+				if err := json.Unmarshal(req.Config, &merged); err != nil {
+					badRequest = true
+					return fmt.Errorf("invalid config: %w", err)
+				}
+				if msg := validateLifeMonitorAccounts(merged, deps.AccountStore); msg != "" {
+					badRequest = true
+					return fmt.Errorf("%s", msg)
+				}
+				settings.LifeMonitor = merged
+				return nil
+			})
+			if err != nil {
+				if badRequest {
+					httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				} else {
+					httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
+				}
 				return
 			}
 			deps.Monitor.Refresh()
@@ -222,24 +225,27 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少更新内容"})
 				return
 			}
-			settings, err := deps.SettingsStore.ReadSettings()
+			badRequest := false
+			_, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
+				merged := settings.LifeMonitor
+				// 在现有结构上 unmarshal updates：仅覆盖 updates 中存在的字段
+				if err := json.Unmarshal(req.Updates, &merged); err != nil {
+					badRequest = true
+					return fmt.Errorf("invalid updates: %w", err)
+				}
+				if msg := validateLifeMonitorAccounts(merged, deps.AccountStore); msg != "" {
+					badRequest = true
+					return fmt.Errorf("%s", msg)
+				}
+				settings.LifeMonitor = merged
+				return nil
+			})
 			if err != nil {
-				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
-				return
-			}
-			merged := settings.LifeMonitor
-			// 在现有结构上 unmarshal updates：仅覆盖 updates 中存在的字段
-			if err := json.Unmarshal(req.Updates, &merged); err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid updates"})
-				return
-			}
-			if msg := validateLifeMonitorAccounts(merged, deps.AccountStore); msg != "" {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": msg})
-				return
-			}
-			settings.LifeMonitor = merged
-			if err := deps.SettingsStore.SaveSettings(settings); err != nil {
-				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
+				if badRequest {
+					httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				} else {
+					httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
+				}
 				return
 			}
 			deps.Monitor.Refresh()

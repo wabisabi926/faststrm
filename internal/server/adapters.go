@@ -148,23 +148,22 @@ func (a *menuActionsAdapter) internalGetMonitorStatus() map[string]any {
 
 // ToggleMonitorEvent 切换监控事件类型（持久化到 settings.json）
 func (a *menuActionsAdapter) ToggleMonitorEvent(ctx context.Context, account, eventType string, enabled bool) error {
-	s, err := a.settingsStore.ReadSettings()
+	_, err := a.settingsStore.Update(func(s *model.Settings) error {
+		switch eventType {
+		case "create":
+			s.LifeMonitor.EventTypes.Create = enabled
+		case "remove":
+			s.LifeMonitor.EventTypes.Remove = enabled
+		case "rename":
+			s.LifeMonitor.EventTypes.Rename = enabled
+		case "move":
+			s.LifeMonitor.EventTypes.Move = enabled
+		default:
+			return fmt.Errorf("未知事件类型: %s", eventType)
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("读取设置失败: %w", err)
-	}
-	switch eventType {
-	case "create":
-		s.LifeMonitor.EventTypes.Create = enabled
-	case "remove":
-		s.LifeMonitor.EventTypes.Remove = enabled
-	case "rename":
-		s.LifeMonitor.EventTypes.Rename = enabled
-	case "move":
-		s.LifeMonitor.EventTypes.Move = enabled
-	default:
-		return fmt.Errorf("未知事件类型: %s", eventType)
-	}
-	if err := a.settingsStore.SaveSettings(s); err != nil {
 		return fmt.Errorf("保存设置失败: %w", err)
 	}
 	return nil

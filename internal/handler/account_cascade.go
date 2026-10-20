@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/monitor"
 	"github.com/wabisabi926/faststrm/internal/service/store"
@@ -122,9 +123,8 @@ func CascadeAccountRename(oldName, newName string, deps *AccountCascadeDeps) map
 
 	// 2) 生活监控配置（accounts + pathMappings）
 	if deps.SettingsStore != nil {
-		if s, err := deps.SettingsStore.ReadSettings(); err != nil {
-			logger.S().Warnf("[accountCascade] 读取设置失败: %v", err)
-		} else {
+		updated := false
+		_, err := deps.SettingsStore.Update(func(s *model.Settings) error {
 			changed := false
 			for i, a := range s.LifeMonitor.Accounts {
 				if a == oldName {
@@ -138,13 +138,13 @@ func CascadeAccountRename(oldName, newName string, deps *AccountCascadeDeps) map
 					changed = true
 				}
 			}
-			if changed {
-				if err := deps.SettingsStore.SaveSettings(s); err != nil {
-					logger.S().Warnf("[accountCascade] 保存设置失败: %v", err)
-				} else {
-					summary["monitorConfigUpdated"] = true
-				}
-			}
+			updated = changed
+			return nil
+		})
+		if err != nil {
+			logger.S().Warnf("[accountCascade] 保存设置失败: %v", err)
+		} else if updated {
+			summary["monitorConfigUpdated"] = true
 		}
 	}
 

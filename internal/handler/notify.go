@@ -327,15 +327,22 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		if newTg.ChatID == "" {
 			newTg.ChatID = old.ChatID
 		}
-		settings.Telegram = newTg
-		// 重置共享轮询管理器，下次请求时会用新 BotToken 创建
-		resetSharedPolling()
-
-		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
-			logger.S().Errorf("[notify/bot POST] save settings: %v", err)
+		// 用 Update 重新读取当前配置后合并，避免覆盖并发修改的 allowedUsers/alerts
+		if _, err := deps.SettingsStore.Update(func(current *model.Settings) error {
+			newTg.AllowedUsers = current.Telegram.AllowedUsers
+			newTg.AccountAlerts = current.Telegram.AccountAlerts
+			if strings.TrimSpace(req.WebhookSecretToken) == "" {
+				newTg.WebhookSecretToken = current.Telegram.WebhookSecretToken
+			}
+			current.Telegram = newTg
+			return nil
+		}); err != nil {
+			logger.S().Errorf("[notify/bot POST] update settings: %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
 			return
 		}
+		// 重置共享轮询管理器，下次请求时会用新 BotToken 创建
+		resetSharedPolling()
 
 		// ============ 热更新：让 deps 中的实例同步新配置，避免通知发往旧 Bot/ChatID ============
 		applyTelegramHotUpdates(deps, newTg)
@@ -433,11 +440,14 @@ func HandleNotifyBotDELETE(deps NotifyDeps) http.HandlerFunc {
 		// 重置共享轮询管理器
 		resetSharedPolling()
 		// 保留 allowedUsers / accountAlerts 子配置，仅清空 bot 本体相关字段
-		settings.Telegram = model.TelegramSettings{
-			AllowedUsers:  tg.AllowedUsers,
-			AccountAlerts: tg.AccountAlerts,
-		}
-		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
+		if _, err := deps.SettingsStore.Update(func(current *model.Settings) error {
+			tgNow := current.Telegram
+			current.Telegram = model.TelegramSettings{
+				AllowedUsers:  tgNow.AllowedUsers,
+				AccountAlerts: tgNow.AccountAlerts,
+			}
+			return nil
+		}); err != nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
 			return
 		}
@@ -795,19 +805,22 @@ func HandleNotifyUsersPOST(deps NotifyDeps) http.HandlerFunc {
 			return
 		}
 
-		settings, err := deps.SettingsStore.ReadSettings()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
+		conflict := false
+		_, err = deps.SettingsStore.Update(func(settings *model.Settings) error {
+			for _, id := range settings.Telegram.AllowedUsers {
+				if id == userID {
+					conflict = true
+					return fmt.Errorf("user already exists")
+				}
+			}
+			settings.Telegram.AllowedUsers = append(settings.Telegram.AllowedUsers, userID)
+			return nil
+		})
+		if conflict {
+			httpx.WriteJson(w, http.StatusConflict, map[string]string{"error": "User already exists"})
 			return
 		}
-		for _, id := range settings.Telegram.AllowedUsers {
-			if id == userID {
-				httpx.WriteJson(w, http.StatusConflict, map[string]string{"error": "User already exists"})
-				return
-			}
-		}
-		settings.Telegram.AllowedUsers = append(settings.Telegram.AllowedUsers, userID)
-		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
+		if err != nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
 			return
 		}
@@ -832,26 +845,29 @@ func HandleNotifyUsersDELETE(deps NotifyDeps) http.HandlerFunc {
 			return
 		}
 
-		settings, err := deps.SettingsStore.ReadSettings()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
-			return
-		}
-		next := make([]int64, 0, len(settings.Telegram.AllowedUsers))
-		found := false
-		for _, id := range settings.Telegram.AllowedUsers {
-			if id == userID {
-				found = true
-				continue
+		notFound := false
+		_, err = deps.SettingsStore.Update(func(settings *model.Settings) error {
+			next := make([]int64, 0, len(settings.Telegram.AllowedUsers))
+			found := false
+			for _, id := range settings.Telegram.AllowedUsers {
+				if id == userID {
+					found = true
+					continue
+				}
+				next = append(next, id)
 			}
-			next = append(next, id)
-		}
-		if !found {
+			if !found {
+				notFound = true
+				return fmt.Errorf("user not found")
+			}
+			settings.Telegram.AllowedUsers = next
+			return nil
+		})
+		if notFound {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "User not found"})
 			return
 		}
-		settings.Telegram.AllowedUsers = next
-		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
+		if err != nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
 			return
 		}
@@ -916,50 +932,47 @@ func HandleNotifyAlertsPOST(deps NotifyDeps) http.HandlerFunc {
 			return
 		}
 
-		settings, err := deps.SettingsStore.ReadSettings()
+		saved, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
+			alerts := settings.Telegram.AccountAlerts
+			if alerts == nil {
+				alerts = &model.AccountAlertsSettings{}
+			}
+			if req.Enabled != nil {
+				alerts.Enabled = *req.Enabled
+			}
+			if req.OnError != nil {
+				alerts.OnError = *req.OnError
+			}
+			if req.OnRecover != nil {
+				alerts.OnRecover = *req.OnRecover
+			}
+			settings.Telegram.AccountAlerts = alerts
+
+			// Cookie 主动巡检配置（字段级合并：仅覆盖显式提供的字段）
+			if req.CookieInspect != nil {
+				ci := settings.CookieInspect
+				if req.CookieInspect.Enabled != nil {
+					ci.Enabled = req.CookieInspect.Enabled
+				}
+				if req.CookieInspect.IntervalHours != nil && *req.CookieInspect.IntervalHours > 0 {
+					ci.IntervalHours = *req.CookieInspect.IntervalHours
+				}
+				settings.CookieInspect = ci
+			}
+			return nil
+		})
 		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
-			return
-		}
-
-		alerts := settings.Telegram.AccountAlerts
-		if alerts == nil {
-			alerts = &model.AccountAlertsSettings{}
-		}
-		if req.Enabled != nil {
-			alerts.Enabled = *req.Enabled
-		}
-		if req.OnError != nil {
-			alerts.OnError = *req.OnError
-		}
-		if req.OnRecover != nil {
-			alerts.OnRecover = *req.OnRecover
-		}
-		settings.Telegram.AccountAlerts = alerts
-
-		// Cookie 主动巡检配置（字段级合并：仅覆盖显式提供的字段）
-		if req.CookieInspect != nil {
-			ci := settings.CookieInspect
-			if req.CookieInspect.Enabled != nil {
-				ci.Enabled = req.CookieInspect.Enabled
-			}
-			if req.CookieInspect.IntervalHours != nil && *req.CookieInspect.IntervalHours > 0 {
-				ci.IntervalHours = *req.CookieInspect.IntervalHours
-			}
-			settings.CookieInspect = ci
-		}
-
-		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存配置失败"})
 			return
 		}
+		alerts := saved.Telegram.AccountAlerts
 		httpx.OkJson(w, map[string]any{
 			"success": true,
 			"message": "账户状态通知配置保存成功",
 			"config":  alerts,
 			"cookieInspect": map[string]any{
-				"enabled":       settings.CookieInspect.IsEnabled(),
-				"intervalHours": settings.CookieInspect.EffectiveIntervalHours(),
+				"enabled":       saved.CookieInspect.IsEnabled(),
+				"intervalHours": saved.CookieInspect.EffectiveIntervalHours(),
 			},
 		})
 	}

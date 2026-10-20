@@ -1,9 +1,14 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/wabisabi926/faststrm/internal/model"
 )
 
 // writeSettings 写入指定 JSON 内容到 config/settings.json
@@ -117,5 +122,78 @@ func TestReadSettings_CleanupRelatedDefaults(t *testing.T) {
 	}
 	if !s3.Cleanup.RemoveRelatedFiles {
 		t.Error("V3 标记存在时不应覆盖用户手动开启")
+	}
+}
+
+func TestSettingsStore_UpdateSerializesDisjointFields(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSettingsStore("test_salt", dir)
+	if _, err := s.Update(func(cfg *model.Settings) error {
+		cfg.UserAgent = "initial-agent"
+		cfg.StrmPrefix = "http://old"
+		return nil
+	}); err != nil {
+		t.Fatalf("seed update: %v", err)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		if _, err := s.Update(func(cfg *model.Settings) error {
+			cfg.UserAgent = "agent-A"
+			// 持锁期间故意变慢，暴露“读-改-写不在同一临界区”的丢更新问题
+			time.Sleep(30 * time.Millisecond)
+			return nil
+		}); err != nil {
+			t.Errorf("update A: %v", err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		if _, err := s.Update(func(cfg *model.Settings) error {
+			cfg.StrmPrefix = "http://new"
+			return nil
+		}); err != nil {
+			t.Errorf("update B: %v", err)
+		}
+	}()
+	close(start)
+	wg.Wait()
+
+	got, err := s.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserAgent != "agent-A" || got.StrmPrefix != "http://new" {
+		t.Fatalf("lost update: userAgent=%q prefix=%q", got.UserAgent, got.StrmPrefix)
+	}
+}
+
+func TestSettingsStore_UpdateErrorDoesNotPersist(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSettingsStore("test_salt", dir)
+	if _, err := s.Update(func(cfg *model.Settings) error {
+		cfg.UserAgent = "keep-me"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Update(func(cfg *model.Settings) error {
+		cfg.UserAgent = "should-not-persist"
+		return errors.New("validation failed")
+	})
+	if err == nil {
+		t.Fatal("expected update error")
+	}
+	got, err := s.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserAgent != "keep-me" {
+		t.Fatalf("failed update persisted: %q", got.UserAgent)
 	}
 }

@@ -152,91 +152,89 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			return
 		}
 
-		settings, err := deps.SettingsStore.ReadSettings()
-		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
-			return
-		}
-		em := settings.Emby
+		savedSettings, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
+			em := settings.Emby
 
-		if patch.URL != nil {
-			em.URL = *patch.URL
-		}
-		if patch.APIKey != nil && !containsAsterisk(*patch.APIKey) {
-			em.APIKey = *patch.APIKey
-		}
-		if patch.NotifyMediaAdded != nil {
-			em.NotifyMediaAdded = *patch.NotifyMediaAdded
-		}
-		if patch.NotifyMediaRemoved != nil {
-			em.NotifyMediaRemoved = *patch.NotifyMediaRemoved
-		}
-		if patch.NotifyPlayback != nil {
-			em.NotifyPlayback = *patch.NotifyPlayback
-		}
-		if patch.PlaybackShowProgress != nil {
-			em.PlaybackShowProgress = *patch.PlaybackShowProgress
-		}
-		if patch.PlaybackShowOverview != nil {
-			em.PlaybackShowOverview = *patch.PlaybackShowOverview
-		}
-		if patch.WebhookAuth != nil {
-			em.WebhookAuth = *patch.WebhookAuth
-		}
-		if patch.LibraryID != nil {
-			em.LibraryID = *patch.LibraryID
-		}
-		if patch.SyncDeleteEnabled != nil {
-			em.SyncDeleteEnabled = *patch.SyncDeleteEnabled
-		}
-		if patch.SyncDeletePathMappings != nil {
-			mappings := *patch.SyncDeletePathMappings
-			cleaned := make([]model.SyncDeletePathMapping, 0, len(mappings))
-			for _, m := range mappings {
-				if m.EmbyPath == "" || m.CloudPath == "" {
-					continue
-				}
-				cleaned = append(cleaned, m)
+			if patch.URL != nil {
+				em.URL = *patch.URL
 			}
-			em.SyncDeletePathMappings = cleaned
-		}
-		if patch.SyncDeleteNotify != nil {
-			em.SyncDeleteNotify = *patch.SyncDeleteNotify
-		}
-		if patch.SyncDeleteDryRun != nil {
-			em.SyncDeleteDryRun = *patch.SyncDeleteDryRun
-		}
-		if patch.SyncDeleteDeleteSymlink != nil {
-			em.SyncDeleteDeleteSymlink = *patch.SyncDeleteDeleteSymlink
-		}
-		if patch.SyncDeleteRemoveVersions != nil {
-			em.SyncDeleteRemoveVersions = *patch.SyncDeleteRemoveVersions
-		}
-		if patch.SyncDeleteSource != nil {
-			em.SyncDeleteSource = *patch.SyncDeleteSource
-		}
-		if patch.RefreshOnCreate != nil {
-			em.RefreshOnCreate = *patch.RefreshOnCreate
-		}
-		if patch.RefreshOnDelete != nil {
-			em.RefreshOnDelete = *patch.RefreshOnDelete
-		}
-		if patch.DebounceSeconds != nil {
-			em.DebounceSeconds = *patch.DebounceSeconds
-		}
-		if patch.ProxyPort != nil {
-			em.ProxyPort = *patch.ProxyPort
-		}
-		if patch.ExternalPlayerEnabled != nil {
-			em.ExternalPlayerEnabled = *patch.ExternalPlayerEnabled
-		}
-		settings.Emby = em
-
-		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
-			logger.S().Errorf("[emby/settings POST] save: %v", err)
+			if patch.APIKey != nil && !containsAsterisk(*patch.APIKey) {
+				em.APIKey = *patch.APIKey
+			}
+			if patch.NotifyMediaAdded != nil {
+				em.NotifyMediaAdded = *patch.NotifyMediaAdded
+			}
+			if patch.NotifyMediaRemoved != nil {
+				em.NotifyMediaRemoved = *patch.NotifyMediaRemoved
+			}
+			if patch.NotifyPlayback != nil {
+				em.NotifyPlayback = *patch.NotifyPlayback
+			}
+			if patch.PlaybackShowProgress != nil {
+				em.PlaybackShowProgress = *patch.PlaybackShowProgress
+			}
+			if patch.PlaybackShowOverview != nil {
+				em.PlaybackShowOverview = *patch.PlaybackShowOverview
+			}
+			if patch.WebhookAuth != nil {
+				em.WebhookAuth = *patch.WebhookAuth
+			}
+			if patch.LibraryID != nil {
+				em.LibraryID = *patch.LibraryID
+			}
+			if patch.SyncDeleteEnabled != nil {
+				em.SyncDeleteEnabled = *patch.SyncDeleteEnabled
+			}
+			if patch.SyncDeletePathMappings != nil {
+				mappings := *patch.SyncDeletePathMappings
+				cleaned := make([]model.SyncDeletePathMapping, 0, len(mappings))
+				for _, m := range mappings {
+					if m.EmbyPath == "" || m.CloudPath == "" {
+						continue
+					}
+					cleaned = append(cleaned, m)
+				}
+				em.SyncDeletePathMappings = cleaned
+			}
+			if patch.SyncDeleteNotify != nil {
+				em.SyncDeleteNotify = *patch.SyncDeleteNotify
+			}
+			if patch.SyncDeleteDryRun != nil {
+				em.SyncDeleteDryRun = *patch.SyncDeleteDryRun
+			}
+			if patch.SyncDeleteDeleteSymlink != nil {
+				em.SyncDeleteDeleteSymlink = *patch.SyncDeleteDeleteSymlink
+			}
+			if patch.SyncDeleteRemoveVersions != nil {
+				em.SyncDeleteRemoveVersions = *patch.SyncDeleteRemoveVersions
+			}
+			if patch.SyncDeleteSource != nil {
+				em.SyncDeleteSource = *patch.SyncDeleteSource
+			}
+			if patch.RefreshOnCreate != nil {
+				em.RefreshOnCreate = *patch.RefreshOnCreate
+			}
+			if patch.RefreshOnDelete != nil {
+				em.RefreshOnDelete = *patch.RefreshOnDelete
+			}
+			if patch.DebounceSeconds != nil {
+				em.DebounceSeconds = *patch.DebounceSeconds
+			}
+			if patch.ProxyPort != nil {
+				em.ProxyPort = *patch.ProxyPort
+			}
+			if patch.ExternalPlayerEnabled != nil {
+				em.ExternalPlayerEnabled = *patch.ExternalPlayerEnabled
+			}
+			settings.Emby = em
+			return nil
+		})
+		if err != nil {
+			logger.S().Errorf("[emby/settings POST] update: %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存失败"})
 			return
 		}
+		em := savedSettings.Emby
 
 		// 保存后清除 Notifier 的 Client 缓存，确保下次获取最新配置
 		if deps.EmbyNotifier != nil {
@@ -256,9 +254,9 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 						host = st.Addr[:idx]
 					}
 				}
-				forceProxyUaTokens := settings.Strm.ForceProxyUaTokens
+				forceProxyUaTokens := savedSettings.Strm.ForceProxyUaTokens
 				// 强制代理格式热更新（空则回落内置默认值）
-				embyproxy.SetForceProxyFormats(settings.Strm.ForceProxyFormats)
+				embyproxy.SetForceProxyFormats(savedSettings.Strm.ForceProxyFormats)
 				if err := mgr.Restart(host, em.ProxyPort, em.URL, forceProxyUaTokens); err != nil {
 					logger.S().Warnf("[EmbyProxy] 热重启失败: %v", err)
 				} else {
@@ -443,13 +441,6 @@ func containsAsterisk(s string) bool { return strings.Contains(s, "*") }
 // mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
 func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // complexity: 51
 	return func(w http.ResponseWriter, r *http.Request) {
-		settings, err := deps.SettingsStore.ReadSettings()
-		if err != nil {
-			logger.S().Errorf("[settings POST] read settings: %v", err)
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取配置失败"})
-			return
-		}
-
 		var body settingsPostBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			logger.S().Warnf("[settings POST] JSON decode failed: %v", err)
@@ -457,206 +448,218 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			return
 		}
 
-		// ====== 通用字段 ======
-		if body.UserAgent != "" {
-			settings.UserAgent = strings.TrimSpace(body.UserAgent)
-		}
-		if body.StrmPrefix != "" {
-			settings.StrmPrefix = strings.TrimSpace(body.StrmPrefix)
-		}
-		if len(body.StrmExtensions) > 0 {
-			settings.StrmExtensions = body.StrmExtensions
-		}
-		if len(body.DownloadExtensions) > 0 {
-			settings.DownloadExtensions = body.DownloadExtensions
-		}
-		// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
+		savedSettings, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
+			// ====== 通用字段 ======
+			if body.UserAgent != "" {
+				settings.UserAgent = strings.TrimSpace(body.UserAgent)
+			}
+			if body.StrmPrefix != "" {
+				settings.StrmPrefix = strings.TrimSpace(body.StrmPrefix)
+			}
+			if len(body.StrmExtensions) > 0 {
+				settings.StrmExtensions = body.StrmExtensions
+			}
+			if len(body.DownloadExtensions) > 0 {
+				settings.DownloadExtensions = body.DownloadExtensions
+			}
+			// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
 
-		// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
-		// URL 参数编码开关（默认 true）：关闭后 file_name 等参数原样写入 URL
-		if body.EnablePathEncoding != nil {
-			settings.EnablePathEncoding = *body.EnablePathEncoding
-		}
+			// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
+			// URL 参数编码开关（默认 true）：关闭后 file_name 等参数原样写入 URL
+			if body.EnablePathEncoding != nil {
+				settings.EnablePathEncoding = *body.EnablePathEncoding
+			}
 
-		// ====== Cleanup：只接受两个「连带动作」开关，阈值等保持后端值 ======
-		if body.Cleanup != nil {
-			settings.Cleanup.RemoveRelatedFiles = body.Cleanup.RemoveRelatedFiles
-			settings.Cleanup.RemoveEmptyDirs = body.Cleanup.RemoveEmptyDirs
-		}
+			// ====== Cleanup：只接受两个「连带动作」开关，阈值等保持后端值 ======
+			if body.Cleanup != nil {
+				settings.Cleanup.RemoveRelatedFiles = body.Cleanup.RemoveRelatedFiles
+				settings.Cleanup.RemoveEmptyDirs = body.Cleanup.RemoveEmptyDirs
+			}
 
-		// ====== Download 嵌套对象 ======
-		if body.Download != nil {
-			if body.Download.LinkMaxPerSecond != nil {
-				settings.Download.LinkMaxPerSecond = body.Download.LinkMaxPerSecond
-			}
-			if body.Download.LinkMaxConcurrent != nil {
-				settings.Download.LinkMaxConcurrent = body.Download.LinkMaxConcurrent
-			}
-			if body.Download.DownloadMaxConcurrent != nil {
-				settings.Download.DownloadMaxConcurrent = body.Download.DownloadMaxConcurrent
-			}
-			settings.Download.AutoDownloadMetadata = body.Download.AutoDownloadMetadata
-			// 全局文件过滤：最小文件大小阈值（字节），前端始终发送全量值，直接覆盖
-			settings.Download.MinFileSize = body.Download.MinFileSize
-			// 全局文件过滤：文件名黑名单（nil 表示未提供，保留旧值；空数组表示用户主动清空）
-			if body.Download.StrmGenerateBlacklist != nil {
-				settings.Download.StrmGenerateBlacklist = body.Download.StrmGenerateBlacklist
-			}
-			// STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空值表示未提供，保留旧配置
-			if body.Download.OverwriteMode != "" {
-				settings.Download.OverwriteMode = body.Download.OverwriteMode
-			}
-			// 孤儿 STRM 清理策略：off / mark_only / auto_clean；空值表示未提供
-			if body.Download.FullSyncCleanupOrphans != "" {
-				settings.Download.FullSyncCleanupOrphans = body.Download.FullSyncCleanupOrphans
-			}
-		}
-
-		// ====== STRM 嵌套对象 ======
-		if body.Strm != nil {
-			// STRM URL 模板：设置页「标准 URL + 附加参数勾选」生成的完整模板。
-			// 空串视为未提供（保留旧值），兼容旧前端不发送该字段的情况。
-			if body.Strm.StrmUrlTemplate != "" {
-				settings.Strm.StrmUrlTemplate = body.Strm.StrmUrlTemplate
-			}
-			// 空数组也允许覆盖：用户清空输入框时前端发送 []，必须能清掉旧值
-			if body.Strm.ForceProxyUaTokens != nil {
-				settings.Strm.ForceProxyUaTokens = body.Strm.ForceProxyUaTokens
-			}
-			if body.Strm.AccountProxyConcurrencyLimit > 0 {
-				settings.Strm.AccountProxyConcurrencyLimit = body.Strm.AccountProxyConcurrencyLimit
-			}
-			// RedirectCheckTimeout 最小 500ms，低于此值视为无效配置（不更新）
-			if time.Duration(body.Strm.RedirectCheckTimeoutMs)*time.Millisecond >= 500*time.Millisecond {
-				settings.Strm.RedirectCheckTimeoutMs = body.Strm.RedirectCheckTimeoutMs
-			}
-		}
-
-		// ====== Emby 嵌套对象 ======
-		if body.Emby != nil {
-			em := settings.Emby
-			if body.Emby.URL != "" {
-				em.URL = strings.TrimSpace(body.Emby.URL)
-			}
-			if body.Emby.APIKey != "" && !containsAsterisk(body.Emby.APIKey) {
-				em.APIKey = strings.TrimSpace(body.Emby.APIKey)
-			}
-			if body.Emby.WebhookAuth != "" && !containsAsterisk(body.Emby.WebhookAuth) {
-				em.WebhookAuth = strings.TrimSpace(body.Emby.WebhookAuth)
-			}
-			if body.Emby.LibraryID != "" {
-				em.LibraryID = strings.TrimSpace(body.Emby.LibraryID)
-			}
-			em.NotifyMediaAdded = body.Emby.NotifyMediaAdded
-			em.NotifyMediaRemoved = body.Emby.NotifyMediaRemoved
-			em.NotifyPlayback = body.Emby.NotifyPlayback
-			em.PlaybackShowProgress = body.Emby.PlaybackShowProgress
-			em.PlaybackShowOverview = body.Emby.PlaybackShowOverview
-			em.SyncDeleteEnabled = body.Emby.SyncDeleteEnabled
-			em.SyncDeleteDryRun = body.Emby.SyncDeleteDryRun
-			if body.Emby.SyncDeletePathMappings != nil {
-				em.SyncDeletePathMappings = body.Emby.SyncDeletePathMappings
-			}
-			settings.Emby = em
-		}
-
-		// ====== Telegram 嵌套对象 ======
-		if body.Telegram != nil {
-			tg := settings.Telegram
-			if body.Telegram.BotToken != "" && !containsAsterisk(body.Telegram.BotToken) {
-				tg.BotToken = strings.TrimSpace(body.Telegram.BotToken)
-			}
-			if body.Telegram.ChatID != "" {
-				tg.ChatID = strings.TrimSpace(body.Telegram.ChatID)
-			}
-			if body.Telegram.WebhookURL != "" {
-				tg.WebhookURL = strings.TrimSpace(body.Telegram.WebhookURL)
-			}
-			tg.Enabled = body.Telegram.Enabled
-			tg.AutoPolling = body.Telegram.AutoPolling
-			if body.Telegram.AllowedUsers != nil {
-				tg.AllowedUsers = body.Telegram.AllowedUsers
-			}
-			if body.Telegram.AccountAlerts != nil {
-				tg.AccountAlerts = body.Telegram.AccountAlerts
-			}
-			settings.Telegram = tg
-		}
-
-		// ====== LifeMonitor 嵌套对象 ======
-		if body.LifeMonitor != nil {
-			lm := settings.LifeMonitor
-			// 使用指针类型检查，只有当字段被显式提供时才更新
-			if body.LifeMonitor.Enabled != nil {
-				lm.Enabled = *body.LifeMonitor.Enabled
-			}
-			if body.LifeMonitor.Accounts != nil {
-				lm.Accounts = body.LifeMonitor.Accounts
-			}
-			if body.LifeMonitor.PollInterval > 0 {
-				lm.PollInterval = body.LifeMonitor.PollInterval
-			}
-			if body.LifeMonitor.PathMappings != nil {
-				// PathMappings 使用 any 类型接收，需要通过 JSON 转换
-				if pathMappingsJSON, err := json.Marshal(body.LifeMonitor.PathMappings); err == nil {
-					var mappings []model.MonitorPathMapping
-					if err := json.Unmarshal(pathMappingsJSON, &mappings); err == nil {
-						lm.PathMappings = mappings
-					}
+			// ====== Download 嵌套对象 ======
+			if body.Download != nil {
+				if body.Download.LinkMaxPerSecond != nil {
+					settings.Download.LinkMaxPerSecond = body.Download.LinkMaxPerSecond
+				}
+				if body.Download.LinkMaxConcurrent != nil {
+					settings.Download.LinkMaxConcurrent = body.Download.LinkMaxConcurrent
+				}
+				if body.Download.DownloadMaxConcurrent != nil {
+					settings.Download.DownloadMaxConcurrent = body.Download.DownloadMaxConcurrent
+				}
+				if body.Download.StrmMaxConcurrent != nil {
+					settings.Download.StrmMaxConcurrent = body.Download.StrmMaxConcurrent
+				}
+				settings.Download.AutoDownloadMetadata = body.Download.AutoDownloadMetadata
+				// 全局文件过滤：最小文件大小阈值（字节），前端始终发送全量值，直接覆盖
+				settings.Download.MinFileSize = body.Download.MinFileSize
+				// 全局文件过滤：文件名黑名单（nil 表示未提供，保留旧值；空数组表示用户主动清空）
+				if body.Download.StrmGenerateBlacklist != nil {
+					settings.Download.StrmGenerateBlacklist = body.Download.StrmGenerateBlacklist
+				}
+				// STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空值表示未提供，保留旧配置
+				if body.Download.OverwriteMode != "" {
+					settings.Download.OverwriteMode = body.Download.OverwriteMode
+				}
+				// 孤儿 STRM 清理策略：off / mark_only / auto_clean；空值表示未提供
+				if body.Download.FullSyncCleanupOrphans != "" {
+					settings.Download.FullSyncCleanupOrphans = body.Download.FullSyncCleanupOrphans
 				}
 			}
-			if body.LifeMonitor.RemoveEmptyDirs != nil {
-				lm.RemoveEmptyDirs = *body.LifeMonitor.RemoveEmptyDirs
-			}
-			if body.LifeMonitor.EventTypes != nil {
-				if eventTypesJSON, err := json.Marshal(body.LifeMonitor.EventTypes); err == nil {
-					var eventTypes model.EventTypesSettings
-					if err := json.Unmarshal(eventTypesJSON, &eventTypes); err == nil {
-						lm.EventTypes = eventTypes
-					}
+
+			// ====== STRM 嵌套对象 ======
+			if body.Strm != nil {
+				// STRM URL 模板：设置页「标准 URL + 附加参数勾选」生成的完整模板。
+				// 空串视为未提供（保留旧值），兼容旧前端不发送该字段的情况。
+				if body.Strm.StrmUrlTemplate != "" {
+					settings.Strm.StrmUrlTemplate = body.Strm.StrmUrlTemplate
+				}
+				if body.Strm.StrmFilenameTemplate != "" {
+					settings.Strm.StrmFilenameTemplate = body.Strm.StrmFilenameTemplate
+				}
+				// 空数组也允许覆盖：用户清空输入框时前端发送 []，必须能清掉旧值
+				if body.Strm.ForceProxyUaTokens != nil {
+					settings.Strm.ForceProxyUaTokens = body.Strm.ForceProxyUaTokens
+				}
+				if body.Strm.ForceProxyFormats != nil {
+					settings.Strm.ForceProxyFormats = body.Strm.ForceProxyFormats
+				}
+				if body.Strm.AccountProxyConcurrencyLimit > 0 {
+					settings.Strm.AccountProxyConcurrencyLimit = body.Strm.AccountProxyConcurrencyLimit
+				}
+				// RedirectCheckTimeout 最小 500ms，低于此值视为无效配置（不更新）
+				if time.Duration(body.Strm.RedirectCheckTimeoutMs)*time.Millisecond >= 500*time.Millisecond {
+					settings.Strm.RedirectCheckTimeoutMs = body.Strm.RedirectCheckTimeoutMs
 				}
 			}
-			if body.LifeMonitor.MinFileSize > 0 {
-				lm.MinFileSize = body.LifeMonitor.MinFileSize
-			}
-			if body.LifeMonitor.FirstPullMode != "" {
-				lm.FirstPullMode = body.LifeMonitor.FirstPullMode
-			}
-			if body.LifeMonitor.MoveMediaMode != "" {
-				lm.MoveMediaMode = body.LifeMonitor.MoveMediaMode
-			}
-			// 移出映射时删除本地旧 STRM（默认 true；nil 表示旧前端未提交，保留旧值）
-			if body.LifeMonitor.MoveOutRemoveLocalStrm != nil {
-				lm.MoveOutRemoveLocalStrm = *body.LifeMonitor.MoveOutRemoveLocalStrm
-			}
-			if body.LifeMonitor.StrmPrefix != "" {
-				lm.StrmPrefix = body.LifeMonitor.StrmPrefix
-			}
-			// life 侧没有独立编码开关：始终继承全局 Settings.EnablePathEncoding，
-			// 旧前端若提交该字段也忽略，避免两套规则不一致
-			if body.LifeMonitor.AutoDownloadMetadata != nil {
-				lm.AutoDownloadMetadata = *body.LifeMonitor.AutoDownloadMetadata
-			}
-			if body.LifeMonitor.DownloadExtensions != nil {
-				lm.DownloadExtensions = body.LifeMonitor.DownloadExtensions
-			}
-			if body.LifeMonitor.NotifyOnlyOnError != nil {
-				lm.NotifyOnlyOnError = *body.LifeMonitor.NotifyOnlyOnError
-			}
-			settings.LifeMonitor = lm
-		}
 
-		if err := deps.SettingsStore.SaveSettings(settings); err != nil {
-			logger.S().Errorf("[settings POST] save: %v", err)
+			// ====== Emby 嵌套对象 ======
+			if body.Emby != nil {
+				em := settings.Emby
+				if body.Emby.URL != "" {
+					em.URL = strings.TrimSpace(body.Emby.URL)
+				}
+				if body.Emby.APIKey != "" && !containsAsterisk(body.Emby.APIKey) {
+					em.APIKey = strings.TrimSpace(body.Emby.APIKey)
+				}
+				if body.Emby.WebhookAuth != "" && !containsAsterisk(body.Emby.WebhookAuth) {
+					em.WebhookAuth = strings.TrimSpace(body.Emby.WebhookAuth)
+				}
+				if body.Emby.LibraryID != "" {
+					em.LibraryID = strings.TrimSpace(body.Emby.LibraryID)
+				}
+				em.NotifyMediaAdded = body.Emby.NotifyMediaAdded
+				em.NotifyMediaRemoved = body.Emby.NotifyMediaRemoved
+				em.NotifyPlayback = body.Emby.NotifyPlayback
+				em.PlaybackShowProgress = body.Emby.PlaybackShowProgress
+				em.PlaybackShowOverview = body.Emby.PlaybackShowOverview
+				em.SyncDeleteEnabled = body.Emby.SyncDeleteEnabled
+				em.SyncDeleteDryRun = body.Emby.SyncDeleteDryRun
+				if body.Emby.SyncDeletePathMappings != nil {
+					em.SyncDeletePathMappings = body.Emby.SyncDeletePathMappings
+				}
+				settings.Emby = em
+			}
+
+			// ====== Telegram 嵌套对象 ======
+			if body.Telegram != nil {
+				tg := settings.Telegram
+				if body.Telegram.BotToken != "" && !containsAsterisk(body.Telegram.BotToken) {
+					tg.BotToken = strings.TrimSpace(body.Telegram.BotToken)
+				}
+				if body.Telegram.ChatID != "" {
+					tg.ChatID = strings.TrimSpace(body.Telegram.ChatID)
+				}
+				if body.Telegram.WebhookURL != "" {
+					tg.WebhookURL = strings.TrimSpace(body.Telegram.WebhookURL)
+				}
+				tg.Enabled = body.Telegram.Enabled
+				tg.AutoPolling = body.Telegram.AutoPolling
+				if body.Telegram.AllowedUsers != nil {
+					tg.AllowedUsers = body.Telegram.AllowedUsers
+				}
+				if body.Telegram.AccountAlerts != nil {
+					tg.AccountAlerts = body.Telegram.AccountAlerts
+				}
+				settings.Telegram = tg
+			}
+
+			// ====== LifeMonitor 嵌套对象 ======
+			if body.LifeMonitor != nil {
+				lm := settings.LifeMonitor
+				// 使用指针类型检查，只有当字段被显式提供时才更新
+				if body.LifeMonitor.Enabled != nil {
+					lm.Enabled = *body.LifeMonitor.Enabled
+				}
+				if body.LifeMonitor.Accounts != nil {
+					lm.Accounts = body.LifeMonitor.Accounts
+				}
+				if body.LifeMonitor.PollInterval > 0 {
+					lm.PollInterval = body.LifeMonitor.PollInterval
+				}
+				if body.LifeMonitor.PathMappings != nil {
+					// PathMappings 使用 any 类型接收，需要通过 JSON 转换
+					if pathMappingsJSON, err := json.Marshal(body.LifeMonitor.PathMappings); err == nil {
+						var mappings []model.MonitorPathMapping
+						if err := json.Unmarshal(pathMappingsJSON, &mappings); err == nil {
+							lm.PathMappings = mappings
+						}
+					}
+				}
+				if body.LifeMonitor.RemoveEmptyDirs != nil {
+					lm.RemoveEmptyDirs = *body.LifeMonitor.RemoveEmptyDirs
+				}
+				if body.LifeMonitor.EventTypes != nil {
+					if eventTypesJSON, err := json.Marshal(body.LifeMonitor.EventTypes); err == nil {
+						var eventTypes model.EventTypesSettings
+						if err := json.Unmarshal(eventTypesJSON, &eventTypes); err == nil {
+							lm.EventTypes = eventTypes
+						}
+					}
+				}
+				if body.LifeMonitor.MinFileSize > 0 {
+					lm.MinFileSize = body.LifeMonitor.MinFileSize
+				}
+				if body.LifeMonitor.FirstPullMode != "" {
+					lm.FirstPullMode = body.LifeMonitor.FirstPullMode
+				}
+				if body.LifeMonitor.MoveMediaMode != "" {
+					lm.MoveMediaMode = body.LifeMonitor.MoveMediaMode
+				}
+				// 移出映射时删除本地旧 STRM（默认 true；nil 表示旧前端未提交，保留旧值）
+				if body.LifeMonitor.MoveOutRemoveLocalStrm != nil {
+					lm.MoveOutRemoveLocalStrm = *body.LifeMonitor.MoveOutRemoveLocalStrm
+				}
+				if body.LifeMonitor.StrmPrefix != "" {
+					lm.StrmPrefix = body.LifeMonitor.StrmPrefix
+				}
+				// life 侧没有独立编码开关：始终继承全局 Settings.EnablePathEncoding，
+				// 旧前端若提交该字段也忽略，避免两套规则不一致
+				if body.LifeMonitor.AutoDownloadMetadata != nil {
+					lm.AutoDownloadMetadata = *body.LifeMonitor.AutoDownloadMetadata
+				}
+				if body.LifeMonitor.DownloadExtensions != nil {
+					lm.DownloadExtensions = body.LifeMonitor.DownloadExtensions
+				}
+				if body.LifeMonitor.NotifyOnlyOnError != nil {
+					lm.NotifyOnlyOnError = *body.LifeMonitor.NotifyOnlyOnError
+				}
+				settings.LifeMonitor = lm
+			}
+
+			return nil
+		})
+		if err != nil {
+			logger.S().Errorf("[settings POST] update: %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存失败"})
 			return
 		}
 
 		// 返回保存后的聚合（脱敏）供前端对比
-		saved := *settings
+		saved := *savedSettings
 		saved.InternalToken = ""
-		saved.Emby.APIKey = maskAPIKey(settings.Emby.APIKey)
-		saved.Telegram.BotToken = maskBotToken(settings.Telegram.BotToken)
+		saved.Emby.APIKey = maskAPIKey(savedSettings.Emby.APIKey)
+		saved.Telegram.BotToken = maskBotToken(savedSettings.Telegram.BotToken)
 		saved.Telegram.WebhookSecretToken = ""
 		httpx.OkJson(w, map[string]any{
 			"success": true,
