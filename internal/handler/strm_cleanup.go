@@ -122,6 +122,9 @@ type ScanResponse struct {
 	Mappings        []MappingScanResult  `json:"mappings"`
 	MappingsScanned []MappingScanRequest `json:"mappingsScanned,omitempty"`
 	DurationMs      int64                `json:"durationMs"`
+	// ScanId 服务端扫描快照 ID（执行删除/补建时必须回传）；默认 30 分钟有效。
+	ScanId        string `json:"scanId,omitempty"`
+	ScanExpiresAt int64  `json:"scanExpiresAt,omitempty"`
 	// TotalRemoteFiles / TotalLocalStrms / TotalStale / TotalMissing 后端聚合好的全量统计
 	// 前端直接使用，避免 reduce + ?? 0 兜底导致的数字漂移或漏报
 	TotalRemoteFiles int `json:"totalRemoteFiles"`
@@ -153,6 +156,8 @@ type ExecuteRequest struct {
 	Action       string               `json:"action"`
 	MissingItems []ExecuteMissingItem `json:"missingItems"`
 	ScanSummary  *ScanResponse        `json:"scanSummary,omitempty"`
+	// ScanId 扫描接口返回的服务端快照 ID；执行时只认快照中的路径。
+	ScanId string `json:"scanId"`
 }
 
 // MappingLocalStats P2：execute 结束后对每个 mapping 的本地 Walk 结果，供前端覆盖增量估算
@@ -319,6 +324,8 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 		if deps.SQLiteDB != nil {
 			resp.TotalDbRecords = totalDb
 		}
+		// 保存服务端扫描快照：执行只能删除/补建本次扫描确认过的路径。
+		resp.ScanId, resp.ScanExpiresAt = cleanupScanCache.Put(r.Header.Get("X-User"), resp)
 
 		httpx.WriteJson(w, http.StatusOK, resp)
 	}
@@ -336,6 +343,29 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 		settings, err := deps.SettingsStore.ReadSettings()
 		if err != nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		if strings.TrimSpace(body.ScanId) == "" {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+				"code":  "SCAN_TOKEN_REQUIRED",
+				"error": "缺少扫描结果标识，请重新扫描后再执行",
+			})
+			return
+		}
+		snapshot, ok := cleanupScanCache.Get(body.ScanId, r.Header.Get("X-User"))
+		if !ok {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+				"code":  "SCAN_TOKEN_INVALID",
+				"error": "扫描结果不存在或已过期，请重新扫描",
+			})
+			return
+		}
+		if err := bindExecuteToScan(&body, snapshot); err != nil {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+				"code":  "SCAN_STALE_MISMATCH",
+				"error": err.Error(),
+			})
 			return
 		}
 

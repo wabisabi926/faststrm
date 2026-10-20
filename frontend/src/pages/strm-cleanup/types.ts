@@ -78,6 +78,9 @@ export type MappingResult = {
 };
 
 export type ScanSummary = {
+  // 服务端扫描快照 ID（执行删除/补建必须回传）
+  scanId?: string;
+  scanExpiresAt?: number;
   totalRemoteFiles: number;
   totalLocalStrms: number;
   // P2：全部 mappings 关联文件总数（展示在顶部统计卡"关联媒体"，有值才显示 6 列布局）

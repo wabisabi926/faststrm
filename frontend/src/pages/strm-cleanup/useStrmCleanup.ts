@@ -9,7 +9,6 @@ import {
   type AxiosError,
   type ExecuteResult,
   type LogEntry,
-  type MappingResult,
   type MissingStrm,
   type ScanSummary,
   type StaleStrm,
@@ -21,6 +20,7 @@ import {
   selectAllStale,
   toggleStaleInSet,
 } from "./selection";
+import { normalizeScanResponse } from "./scan-normalize";
 
 
 // friendlyHttpError 把 HTTP/网络错误转成用户可读的中文：
@@ -108,76 +108,6 @@ export function useStrmCleanup(
 
   // v1.2.5：扫描/对账复用同一 normalize；后端已统一为 ScanResponse
   type ScanMode = "scan" | "reconcile";
-  const normalizeScanResponse = (
-    raw: {
-      mappings: Array<
-        Omit<MappingResult, "mappingId" | "staleStrms" | "missingStrms"> & {
-          staleStrms?: Array<Omit<StaleStrm, "localPath" | "mappingId">>;
-          missingStrms?: Array<Omit<MissingStrm, "mappingId">>;
-          dbRecordCount?: number;
-          associatedFileCount?: number;
-        }
-      >;
-      totalRemoteFiles?: number;
-      totalLocalStrms?: number;
-      totalAssociatedFiles?: number;
-      totalStale?: number;
-      totalMissing?: number;
-      totalDbRecords?: number;
-      durationMs?: number;
-    },
-    idPrefix: string
-  ): ScanSummary => {
-    const normalizedMappings: MappingResult[] = (raw.mappings || []).map((m, idx) => ({
-      mappingId: `${idPrefix}-${idx}`,
-      account: m.account,
-      cloudPath: m.cloudPath,
-      localPath: m.localPath,
-      remoteFileCount: Number(m.remoteFileCount ?? 0),
-      localStrmCount: Number(m.localStrmCount ?? 0),
-      associatedFileCount: m.associatedFileCount,
-      dbRecordCount: m.dbRecordCount,
-      staleStrms: (m.staleStrms || []).map((s) => {
-        const content: string | undefined =
-          (s as unknown as { content?: string }).content ??
-          (s as unknown as { strmContent?: string }).strmContent;
-        const truncated = (s as unknown as { truncated?: boolean }).truncated;
-        const size = (s as unknown as { size?: number }).size;
-        return {
-          ...s,
-          localPath: m.localPath,
-          mappingId: `${idPrefix}-${idx}`,
-          content,
-          strmContent: content, // 兼容老 StaleStrmDialog（s.strmContent || "-"）
-          truncated,
-          size,
-        } as StaleStrm;
-      }),
-      missingStrms: (m.missingStrms || []).map((mi) => ({
-        ...mi,
-        mappingId: `${idPrefix}-${idx}`,
-      })),
-      error: m.error,
-      errorCode: m.errorCode,
-    }));
-    const totalRemote = raw.totalRemoteFiles ?? normalizedMappings.reduce((s, m) => s + m.remoteFileCount, 0);
-    const totalLocal = raw.totalLocalStrms ?? normalizedMappings.reduce((s, m) => s + m.localStrmCount, 0);
-    const totalAssoc =
-      raw.totalAssociatedFiles ??
-      normalizedMappings.reduce((s, m) => s + (m.associatedFileCount ?? 0), 0);
-    const totalStale = raw.totalStale ?? normalizedMappings.reduce((s, m) => s + m.staleStrms.length, 0);
-    const totalMissing = raw.totalMissing ?? normalizedMappings.reduce((s, m) => s + m.missingStrms.length, 0);
-    return {
-      totalRemoteFiles: totalRemote,
-      totalLocalStrms: totalLocal,
-      totalAssociatedFiles: totalAssoc > 0 ? totalAssoc : undefined,
-      totalStale,
-      totalMissing,
-      durationMs: raw.durationMs ?? 0,
-      totalDbRecords: raw.totalDbRecords,
-      mappings: normalizedMappings,
-    };
-  };
   // P2：用后端 refreshedMappingStats 覆盖 mappings[i] 的 localStrmCount / associatedFileCount，再重新计算聚合计数
   // 避免"基于 deletedCount / regeneratedCount 的增量估算"造成累计漂移（删除相关文件、补生成同目录重叠文件等特殊场景会产生误差）
   const applyRefreshedStats = (r: ExecuteResult, prev: ScanSummary): ScanSummary => {
@@ -415,12 +345,18 @@ export function useStrmCleanup(
   };
 
   const handleExecuteDelete = async () => {
+    const scanId = scanResult?.scanId;
+    if (!scanId) {
+      toast.error("扫描结果已过期，请重新扫描");
+      return;
+    }
     setExecuting(true);
     try {
       const entries = buildEntriesFromSelection(selectedStale, allStale);
       const res = await axiosInstance.post("/api/strmCleanup/execute", {
         entries,
         action: "delete",
+        scanId,
         dryRun: false,
       });
       handleDeleteResult(res.data);
@@ -436,11 +372,17 @@ export function useStrmCleanup(
   };
 
   const handleDeleteAll = async () => {
+    const scanId = scanResult?.scanId;
+    if (!scanId) {
+      toast.error("扫描结果已过期，请重新扫描");
+      return;
+    }
     setExecuting(true);
     try {
       const res = await axiosInstance.post("/api/strmCleanup/execute", {
         entries: [],
         action: "delete_all",
+        scanId,
         scanSummary: { mappings: scanResult!.mappings },
         dryRun: false,
       });
@@ -461,6 +403,11 @@ export function useStrmCleanup(
   };
 
   const handleDeleteAndRegenerate = async () => {
+    const scanId = scanResult?.scanId;
+    if (!scanId) {
+      toast.error("扫描结果已过期，请重新扫描");
+      return;
+    }
     setExecuting(true);
     try {
       const entries = buildEntriesFromSelection(selectedStale, allStale);
@@ -472,6 +419,7 @@ export function useStrmCleanup(
       const res = await axiosInstance.post("/api/strmCleanup/execute", {
         entries,
         action: "delete_and_regenerate",
+        scanId,
         scanSummary: { mappings: scanResult!.mappings },
         missingItems,
         dryRun: false,
@@ -489,6 +437,11 @@ export function useStrmCleanup(
   };
 
   const handleRegenerate = async () => {
+    const scanId = scanResult?.scanId;
+    if (!scanId) {
+      toast.error("扫描结果已过期，请重新扫描");
+      return;
+    }
     setExecuting(true);
     try {
       const missingItems = allMissing.map((m) => ({
@@ -499,6 +452,7 @@ export function useStrmCleanup(
       const res = await axiosInstance.post("/api/strmCleanup/execute", {
         entries: [],
         action: "regenerate",
+        scanId,
         scanSummary: { mappings: scanResult!.mappings },
         missingItems,
         dryRun: false,

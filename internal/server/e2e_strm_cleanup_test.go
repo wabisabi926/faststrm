@@ -34,6 +34,15 @@ type strmE2E struct {
 	Account string
 }
 
+func withScanToken(t *testing.T, body handler.ExecuteRequest) handler.ExecuteRequest {
+	t.Helper()
+	if body.ScanSummary == nil {
+		t.Fatal("execute 测试需要 ScanSummary 以注入扫描快照")
+	}
+	body.ScanId, _ = handler.SeedCleanupScanForTest(*body.ScanSummary)
+	return body
+}
+
 func buildStrmE2E(t *testing.T, withSQLite bool) *strmE2E {
 	t.Helper()
 	root := t.TempDir()
@@ -232,7 +241,7 @@ func TestE2E_StrmCleanup_DeleteAndRegenerate_OnlySelectedEntries(t *testing.T) {
 		},
 		Action: "delete_and_regenerate", ScanSummary: scan, DryRun: false,
 	}
-	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
+	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", withScanToken(t, body), "")
 	resp := decodeAsMap(t, raw)
 	dAll, _ := resp["deletedAllCount"].(float64)
 	dCnt, _ := resp["deletedCount"].(float64)
@@ -258,7 +267,7 @@ func TestE2E_StrmCleanup_Regenerate_ReturnsRegeneratedPaths(t *testing.T) {
 	f := buildStrmE2E(t, true)
 	scan := f.buildFakeScanSummary()
 	body := handler.ExecuteRequest{Entries: []handler.ExecuteEntry{}, Action: "regenerate", ScanSummary: scan, DryRun: false}
-	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
+	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", withScanToken(t, body), "")
 	var resp handler.ExecuteResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("unmarshal ExecuteResponse: %v (raw=%s)", err, raw)
@@ -307,7 +316,7 @@ func TestE2E_StrmCleanup_DeleteAndRegenerate_CombinedResponse(t *testing.T) {
 		},
 		Action: "delete_and_regenerate", ScanSummary: scan, DryRun: false,
 	}
-	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
+	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", withScanToken(t, body), "")
 	var resp handler.ExecuteResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("unmarshal: %v (raw=%s)", err, raw)
@@ -335,7 +344,7 @@ func TestE2E_StrmCleanup_DeleteAll_DeletesFromScanSummary(t *testing.T) {
 	f := buildStrmE2E(t, true)
 	scan := f.buildFakeScanSummary()
 	body := handler.ExecuteRequest{Entries: []handler.ExecuteEntry{}, Action: "delete_all", ScanSummary: scan, DryRun: false}
-	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
+	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", withScanToken(t, body), "")
 	resp := decodeAsMap(t, raw)
 	dAll, _ := resp["deletedAllCount"].(float64)
 	dCnt, _ := resp["deletedCount"].(float64)
@@ -403,7 +412,7 @@ func TestE2E_StrmCleanup_DeleteAll_RefreshedMappingStats(t *testing.T) {
 	f := buildStrmE2E(t, true)
 	scan := f.buildFakeScanSummary()
 	body := handler.ExecuteRequest{Entries: []handler.ExecuteEntry{}, Action: "delete_all", ScanSummary: scan, DryRun: false}
-	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
+	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", withScanToken(t, body), "")
 	resp := decodeAsMap(t, raw)
 	statsRaw, ok := resp["refreshedMappingStats"].([]any)
 	if !ok || len(statsRaw) == 0 {
@@ -449,7 +458,7 @@ func TestE2E_StrmCleanup_DryRun_NoRefreshedMappingStats(t *testing.T) {
 	f := buildStrmE2E(t, true)
 	scan := f.buildFakeScanSummary()
 	body := handler.ExecuteRequest{Entries: []handler.ExecuteEntry{}, Action: "delete_all", ScanSummary: scan, DryRun: true}
-	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", body, "")
+	_, raw := doReq(handler.HandleStrmCleanupExecutePOST(f.Deps), "POST", "/api/strmCleanup/execute", withScanToken(t, body), "")
 	resp := decodeAsMap(t, raw)
 	if stats, ok := resp["refreshedMappingStats"].([]any); ok && len(stats) > 0 {
 		t.Errorf("DryRun 不应产生 refreshedMappingStats, got %d 项", len(stats))
