@@ -573,51 +573,10 @@ func countFilesRecursive(dir string) (int, error) {
 	return count, err
 }
 
-// removeEmptyParents 清理空父目录，遇到 rootDir 或非空目录停止
-// 对齐 TS removeEmptyParents
+// removeEmptyParents 清理空父目录，遇到 rootDir 或非空目录停止。
+// 实现统一在 pkg/strmutil（与 task / monitor 同一份），这里只保留原签名。
 func removeEmptyParents(dirPath string, rootDirs []string) int {
-	count := 0
-	abs, err := filepath.Abs(dirPath)
-	if err != nil {
-		return 0
-	}
-
-	// 规范化 rootDirs 为绝对路径
-	normalizedRoots := make([]string, 0, len(rootDirs))
-	for _, r := range rootDirs {
-		if ra, err := filepath.Abs(r); err == nil {
-			normalizedRoots = append(normalizedRoots, normalizePath(ra))
-		}
-	}
-
-	current := normalizePath(abs)
-	for {
-		// 检查是否到达根目录
-		isRoot := false
-		for _, root := range normalizedRoots {
-			if current == root {
-				isRoot = true
-				break
-			}
-		}
-		if isRoot {
-			break
-		}
-
-		// 检查目录是否为空
-		entries, err := os.ReadDir(current)
-		if err != nil || len(entries) > 0 {
-			break
-		}
-
-		parent := filepath.Dir(current)
-		if err := os.Remove(current); err != nil {
-			break
-		}
-		count++
-		current = normalizePath(parent)
-	}
-	return count
+	return strmutil.RemoveEmptyParentsUpTo(dirPath, rootDirs)
 }
 
 // ==================== DB 清理 ====================

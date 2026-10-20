@@ -12,6 +12,7 @@ import (
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ClearDeps 清空目录 API 依赖（需要 settings 用于保留扩展名）
@@ -154,13 +155,5 @@ func rmEmptyDirs(root string) {
 	}
 }
 
-// normalizeExt 确保扩展名前有 "."
-func normalizeExt(ext string) string {
-	if ext == "" {
-		return ext
-	}
-	if strings.HasPrefix(ext, ".") {
-		return ext
-	}
-	return "." + ext
-}
+// normalizeExt 确保扩展名前有 "."（实现在 pkg/strmutil，task 侧共用同一份）
+func normalizeExt(ext string) string { return strmutil.NormalizeExt(ext) }

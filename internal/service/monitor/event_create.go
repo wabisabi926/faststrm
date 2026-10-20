@@ -121,8 +121,11 @@ func (m *Monitor) createStrmForSingleFile(
 	if err := os.MkdirAll(filepath.Dir(strmPath), 0o755); err != nil {
 		return strmPath, fmt.Errorf("创建父目录失败: %w", err)
 	}
-	if err := writeStrmFile(strmPath, content); err != nil {
-		return strmPath, fmt.Errorf("写入 STRM 失败: %w", err)
+	// unchanged=true 表示磁盘内容与待写内容完全一致（重复 create 事件、或移动后回写同内容）。
+	// 此时不写盘、也不排 Emby 刷库——否则 mtime 未变却被刷一次，媒体库会假重扫。
+	unchanged, werr := strmutil.WriteStrmFile(strmPath, content)
+	if werr != nil {
+		return strmPath, fmt.Errorf("写入 STRM 失败: %w", werr)
 	}
 
 	// 7. 清理同 file_id 的旧 STRM（仅在确定生成新 STRM 时执行，对齐参考项目 create() L1590-1626）
@@ -136,8 +139,10 @@ func (m *Monitor) createStrmForSingleFile(
 		}
 	}
 
-	// 9. Emby 刷库
-	if m.embyRefresh != nil {
+	// 9. Emby 刷库（内容未变化时跳过，与任务侧 writeStrmFile 的 unchanged 语义对齐）
+	if unchanged {
+		logger.S().Debugf("[Monitor] STRM 内容未变，跳过 Emby 刷库: %s", strmPath)
+	} else if m.embyRefresh != nil {
 		if err := m.embyRefresh.RefreshOnCreate(ctx, strmPath); err != nil {
 			logger.S().Warnf("[Monitor] Emby 刷库安排失败 path=%s: %v", strmPath, err)
 		}

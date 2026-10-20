@@ -175,50 +175,29 @@ func writeStrmFile(strmPath, content string) (unchanged bool, err error) {
 	return strmutil.WriteStrmFile(strmPath, content)
 }
 
-// buildStrmContent 生成 .strm 文件内容
-// 统一模式：{StrmPrefix}/api/strm?account=xxx&pickcode=xxx&file_name=<编码后的文件名>
-// P1-4：urlTemplate 非空时优先用 model.RenderStrmUrlTemplate（变量按「URL 编码」开关处理）
+// buildStrmContent 生成 .strm 文件内容。
+// 规则（模板优先 / pickcode 校验 / 前缀判定 / 标准格式 / 编码开关 / 结尾换行）
+// 全部收敛在 strm.BuildContent，本函数只做 fileItem → ContentInput 的字段映射，
+// 保证任务侧与生活事件侧、清理补建侧产出逐字节相同的内容。
 func buildStrmContent(task *Task, f *fileItem, r resolvedStrm, urlTemplate ...string) (string, error) {
-	// pickcode 严格校验（对齐 MoviePilot len=17 && isalnum）
-	if !isValidPickcode(f.PickCode) {
-		return "", fmt.Errorf("pickcode 无效(需17位字母数字): %q file=%q", f.PickCode, f.Name)
+	tmpl := ""
+	if len(urlTemplate) > 0 {
+		tmpl = urlTemplate[0]
 	}
-	// —— P1-4 高级 URL 模板优先 ——
-	if len(urlTemplate) > 0 && urlTemplate[0] != "" {
-		ext := strings.ToLower(filepath.Ext(f.Name))
-		stem := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
-		if strings.EqualFold(ext, ".iso") {
-			stem = stem + ".iso"
-		}
-		if rendered := model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
-			Template:      urlTemplate[0],
-			Prefix:        r.StrmPrefix,
-			Account:       task.Account,
-			PickCode:      f.PickCode,
-			FileName:      f.Name,
-			Ext:           ext,
-			Stem:          stem,
-			CloudPath:     f.CloudPath,
-			FileID:        f.FID,
-			DisableEncode: r.DisableEncode,
-		}); rendered != "" {
-			return rendered, nil
-		}
+	content, err := strm.BuildContent(strm.ContentInput{
+		Template:      tmpl,
+		Prefix:        r.StrmPrefix,
+		Account:       task.Account,
+		PickCode:      f.PickCode,
+		FileName:      f.Name,
+		CloudPath:     f.CloudPath,
+		FileID:        f.FID,
+		DisableEncode: r.DisableEncode,
+	})
+	if err != nil {
+		return "", fmt.Errorf("%w file=%q", err, f.Name)
 	}
-	var u string
-	prefix := strings.TrimRight(r.StrmPrefix, "/")
-	// 统一硬编码 /api/strm（带智能路由 + proxy 模式）
-	account := task.Account
-	fileName := f.Name
-	if !r.DisableEncode {
-		account = strmutil.URLPathEncode(account)
-		fileName = strmutil.URLPathEncode(fileName)
-	}
-	u = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, account, f.PickCode)
-	if fileName != "" {
-		u += "&file_name=" + fileName
-	}
-	return u + "\n", nil
+	return content, nil
 }
 
 // ScanStats 扫描阶段统计信息（供任务日志/结果展示）
@@ -689,16 +668,8 @@ func downloadFileWithProgress(
 	return nil
 }
 
-// normalizeExt 确保扩展名前有 "."
-func normalizeExt(ext string) string {
-	if ext == "" {
-		return ext
-	}
-	if strings.HasPrefix(ext, ".") {
-		return ext
-	}
-	return "." + ext
-}
+// normalizeExt 确保扩展名前有 "."（实现在 pkg/strmutil，handler 侧共用同一份）
+func normalizeExt(ext string) string { return strmutil.NormalizeExt(ext) }
 
 // ==================== P0-1/P0-2 孤儿 STRM 对账清理 ====================
 //
@@ -956,17 +927,8 @@ func sameLocalPath(a, b string) bool {
 }
 
 // removeEmptyParentsUpTo 从 dir 开始向上删除空目录，直到 targetPath（不含）。
-// os.Remove 在目录非空时失败，正好作为停止条件；不会越过 targetPath 删到用户其它目录。
+// 实现统一在 pkg/strmutil：非空目录会因 os.Remove 失败而停止，
+// 且不会越过 targetPath 删到用户其它目录。
 func removeEmptyParentsUpTo(dir, targetPath string) {
-	stop := filepath.Clean(targetPath)
-	cur := filepath.Clean(dir)
-	for cur != "" && cur != stop {
-		if !strings.HasPrefix(cur, stop+string(filepath.Separator)) {
-			return
-		}
-		if err := os.Remove(cur); err != nil {
-			return
-		}
-		cur = filepath.Dir(cur)
-	}
+	strmutil.RemoveEmptyParentsUpTo(dir, []string{targetPath})
 }

@@ -356,34 +356,20 @@ func sanitizePathParts(relativePath string) string {
 	return strmutil.SanitizeRelPath(relativePath)
 }
 
-// generateStrmContent 生成 .strm 文件内容（URL 到 115 文件）
-// 统一输出：{prefix}/api/strm?account=xxx&pickcode=xxx&file_name=<编码后的文件名>
-// P1-4：customTemplate 非空时优先用 model.RenderStrmUrlTemplate（支持 {file_path}/{file_id} 等变量）。
+// generateStrmContent 生成 .strm 文件内容（URL 到 115 文件）。
+//
+// 内容规则全部由 strm.BuildContent 统一实现（与全量任务、清理补建同一份代码）；
+// 本函数只负责生活事件侧特有的两件事：
+//  1. 前缀兜底：监控只拿得到全局前缀，不可用时用本机内网 IP 兜底并告警
+//  2. 失败日志：pickcode 非法 / 前缀不可用时记录可定位的 Warn，并返回空串让调用方跳过
+//
 // encodePath=false 时参数值原样写入（对应设置页「URL 编码」关闭）。
-// 对齐 TS generateStrmContent
 func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName, fileID string, encodePath bool, customTemplate ...string) string {
-	// —— P1-4 高级模板优先 ——
-	if len(customTemplate) > 0 && customTemplate[0] != "" {
-		ext := strings.ToLower(filepath.Ext(fileName))
-		stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-		if strings.EqualFold(ext, ".iso") {
-			stem = stem + ".iso"
-		}
-		if rendered := model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
-			Template:      customTemplate[0],
-			Prefix:        strmPrefix,
-			Account:       account,
-			PickCode:      pickcode,
-			FileName:      fileName,
-			Ext:           ext,
-			Stem:          stem,
-			CloudPath:     cloudPath,
-			FileID:        fileID,
-			DisableEncode: !encodePath,
-		}); rendered != "" {
-			return rendered
-		}
+	tmpl := ""
+	if len(customTemplate) > 0 {
+		tmpl = customTemplate[0]
 	}
+
 	prefix := strings.TrimRight(strmPrefix, "/")
 	// 前缀不可用（空 / 回环 / 0.0.0.0）时先用本机内网 IP 兜底。
 	// 历史实现直接回落到 http://127.0.0.1:8090，结果只有本机能播，用户很难定位原因。
@@ -392,30 +378,29 @@ func generateStrmContent(cloudPath, strmPrefix, account, pickcode, fileName, fil
 			logger.S().Warnf("[Monitor] STRM 前缀不可用(%q)，已改用本机内网地址 %s（source=%s）cloudPath=%s",
 				prefix, p, source, cloudPath)
 			prefix = p
-		} else {
+		} else if tmpl == "" {
+			// 模板可能不引用 {prefix}（例如指向外部网关），此时无需前缀，交给模板分支渲染
 			logger.S().Warnf("[Monitor] STRM 前缀不可用(%q) 且无法探测内网地址，跳过生成 cloudPath=%s；请在设置中配置可访问的 STRM 前缀",
 				prefix, cloudPath)
 			return ""
 		}
 	}
-	// pickcode 为空无法生成
-	if pickcode == "" {
-		logger.S().Warnf("[Monitor] generateStrmContent: pickcode 为空，跳过生成 cloudPath=%s account=%s", cloudPath, account)
+
+	content, err := strm.BuildContent(strm.ContentInput{
+		Template:      tmpl,
+		Prefix:        prefix,
+		Account:       account,
+		PickCode:      pickcode,
+		FileName:      fileName,
+		CloudPath:     cloudPath,
+		FileID:        fileID,
+		DisableEncode: !encodePath,
+	})
+	if err != nil {
+		logger.S().Warnf("[Monitor] 生成 STRM 内容失败: %v cloudPath=%s account=%s", err, cloudPath, account)
 		return ""
 	}
-	// 对参数进行 URL 编码（编码开关关闭时原样写入）
-	encodedAccount := account
-	encodedFileName := fileName
-	if encodePath {
-		encodedAccount = strmutil.URLPathEncode(account)
-		encodedFileName = strmutil.URLPathEncode(fileName)
-	}
-	// 统一硬编码 /api/strm（enable302 已废弃）
-	u := fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s", prefix, encodedAccount, pickcode)
-	if fileName != "" {
-		u += "&file_name=" + encodedFileName
-	}
-	return u + "\n"
+	return content
 }
 
 // writeStrmFile 原子写入 STRM 文件（先写 tmp 再 rename）
@@ -425,40 +410,24 @@ func writeStrmFile(strmPath, content string) error {
 	return err
 }
 
-// removeEmptyParents 向上递归删除空目录，直到遇到根目录或非空目录
-// 对齐 TS removeEmptyParents
+// removeEmptyParents 向上递归删除空目录，直到遇到任一映射根目录或非空目录。
+// 实现统一在 pkg/strmutil（与 task / emby 同一份），这里只做映射 → 边界目录的转换。
 func removeEmptyParents(startDir string, mappings []model.MonitorPathMapping) {
 	rootDirs := getRootDirs(mappings)
-	currentDir := startDir
-	for {
-		// 检查是否命中根目录
-		abs, err := filepath.Abs(currentDir)
-		if err != nil {
-			break
-		}
-		if _, ok := rootDirs[abs]; ok {
-			break
-		}
-		// 检查目录是否为空
-		entries, err := os.ReadDir(currentDir)
-		if err != nil || len(entries) > 0 {
-			break
-		}
-		// 删除空目录
-		if err := os.Remove(currentDir); err != nil {
-			break
-		}
-		logger.S().Debugf("[Monitor] 清理空目录: %s", currentDir)
-		currentDir = filepath.Dir(currentDir)
+	if len(rootDirs) == 0 {
+		return
+	}
+	if n := strmutil.RemoveEmptyParentsUpTo(startDir, rootDirs); n > 0 {
+		logger.S().Debugf("[Monitor] 清理空目录 %d 个，起点=%s", n, startDir)
 	}
 }
 
-// getRootDirs 从路径映射中提取根目录集合（绝对路径）
-func getRootDirs(mappings []model.MonitorPathMapping) map[string]bool {
-	roots := make(map[string]bool)
+// getRootDirs 从路径映射中提取根目录列表（绝对路径）
+func getRootDirs(mappings []model.MonitorPathMapping) []string {
+	roots := make([]string, 0, len(mappings))
 	for _, m := range mappings {
 		if abs, err := filepath.Abs(m.LocalPath); err == nil {
-			roots[abs] = true
+			roots = append(roots, abs)
 		}
 	}
 	return roots

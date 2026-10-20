@@ -20,6 +20,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 	"github.com/wabisabi926/faststrm/pkg/strmutil"
@@ -1190,7 +1191,9 @@ func regenerateMissingStrms(body ExecuteRequest, settings *model.Settings, resp 
 				})
 				continue
 			}
-			if err := writeStrmFileAtomic(strmPath, content); err != nil {
+			// 统一走 strmutil.WriteStrmFile：内容未变时跳过写盘，
+			// 避免补建动作无谓刷新 mtime 触发 Emby 假重扫
+			if _, err := strmutil.WriteStrmFile(strmPath, content); err != nil {
 				failed++
 				resp.Errors = append(resp.Errors, map[string]string{
 					"path":  strmPath,
@@ -1208,8 +1211,9 @@ func regenerateMissingStrms(body ExecuteRequest, settings *model.Settings, resp 
 	return regen, failed
 }
 
-// buildStrmForMissing 为漏项构造 STRM 完整路径和 URL 内容
-// 文件名策略：去掉原扩展名，追加 .strm（对齐 task.executor_utils.go getStrmFileName）
+// buildStrmForMissing 为漏项构造 STRM 完整路径和 URL 内容。
+// 文件名策略：去掉原扩展名，追加 .strm（对齐 strmutil.StrmFileName）。
+// URL 内容由 strm.BuildContent 统一生成，与全量任务 / 生活事件逐字节一致。
 func buildStrmForMissing(m MappingScanResult, miss MissingStrm, settings *model.Settings) (string, string, error) {
 	// 1. STRM 完整路径：localPath + relPath 目录部分 + stem + ".strm"
 	relDir := filepath.Dir(miss.RelPath)
@@ -1218,61 +1222,41 @@ func buildStrmForMissing(m MappingScanResult, miss MissingStrm, settings *model.
 	strmName := stem + ".strm"
 	strmPath := filepath.Join(m.LocalPath, relDir, strmName)
 
-	// 2. URL 内容
-	prefix := strings.TrimRight(settings.StrmPrefix, "/")
-	if prefix == "" {
-		prefix = "http://127.0.0.1:8090"
-	}
-	tmpl := settings.Strm.StrmUrlTemplate
-	fileName := base
-
-	var content string
-	encodePath := settings.EnablePathEncoding
-	if tmpl != "" {
-		ext := strings.ToLower(filepath.Ext(fileName))
-		stemForTmpl := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-		// 云端完整路径 = 映射根 + 相对路径。miss.RelPath 是本地形态（OS 分隔符、'：' 全角字符），
-		// 必须先逐段反推为云端形态（'/' 分隔、':' ASCII），才能与生成侧 f.CloudPath 同形态；
-		// 否则 {file_path}/{file_path_raw}/{file_path_strict} 会渲染出混合形态的路径。
-		cloudPath := strings.TrimRight(m.CloudPath, "/") + "/" + strmutil.LocalRelToCloudRel(miss.RelPath)
-		content = model.RenderStrmUrlTemplate(model.StrmURLTemplateVars{
-			Template:  tmpl,
-			Prefix:    prefix,
-			Account:   m.Account,
-			PickCode:  miss.PickCode,
-			FileName:  fileName,
-			Ext:       ext,
-			Stem:      stemForTmpl,
-			CloudPath: cloudPath,
-			// MissingStrm 无 file_id（云端比对只带 pickcode），模板引用 {file_id} 时为空
-			FileID:        "",
-			DisableEncode: !encodePath,
-		})
-	}
-	if content == "" {
-		// fallback：与 task/monitor 完全一致的默认格式（含 file_name，编码规则统一）
-		account := m.Account
-		fileNameEnc := fileName
-		if encodePath {
-			account = strmutil.URLPathEncode(account)
-			fileNameEnc = strmutil.URLPathEncode(fileName)
+	// 2. 前缀：清理链路只有全局配置可用，交给统一解析器处理
+	//    （空 / 回环 / 0.0.0.0 → 本机内网 IP；仍不可用则报错，不再写 127.0.0.1 死链）
+	prefix := settings.StrmPrefix
+	if settings.Strm.StrmUrlTemplate == "" {
+		resolved, _ := strm.ResolveStrmPrefix([]string{settings.StrmPrefix}, 0)
+		if resolved == "" {
+			return strmPath, "", fmt.Errorf("%w：未配置 STRM 前缀且无法探测内网地址，请在设置中填写可访问地址",
+				strm.ErrUnusablePrefix)
 		}
-		content = fmt.Sprintf("%s/api/strm?account=%s&pickcode=%s&file_name=%s",
-			prefix, account, miss.PickCode, fileNameEnc)
+		prefix = resolved
+	}
+
+	// 3. 云端完整路径 = 映射根 + 相对路径。miss.RelPath 是本地形态（OS 分隔符、'：' 全角字符），
+	//    必须先逐段反推为云端形态（'/' 分隔、':' ASCII），才能与生成侧 f.CloudPath 同形态；
+	//    否则 {file_path}/{file_path_raw}/{file_path_strict} 会渲染出混合形态的路径。
+	cloudPath := strings.TrimRight(m.CloudPath, "/") + "/" + strmutil.LocalRelToCloudRel(miss.RelPath)
+
+	content, err := strm.BuildContent(strm.ContentInput{
+		Template:  settings.Strm.StrmUrlTemplate,
+		Prefix:    prefix,
+		Account:   m.Account,
+		PickCode:  miss.PickCode,
+		FileName:  base,
+		CloudPath: cloudPath,
+		// MissingStrm 无 file_id（云端比对只带 pickcode），模板引用 {file_id} 时为空
+		FileID:        "",
+		DisableEncode: !settings.EnablePathEncoding,
+	})
+	if err != nil {
+		return strmPath, "", err
 	}
 	return strmPath, content, nil
 }
 
-// writeStrmFileAtomic 原子写入 STRM 文件（先写 tmp 再 rename）
-// 与 service/task/executor_utils.go 的 writeStrmFile 行为一致
-func writeStrmFileAtomic(strmPath, content string) error {
-	tmpPath := strmPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, strmPath)
-}
-
+// removeEmptyDirs 递归清理 root 下的空目录（批量删除后调用）
 func removeEmptyDirs(root string, removed *[]string) {
 	for {
 		done := true

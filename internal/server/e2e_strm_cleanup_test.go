@@ -49,7 +49,7 @@ func buildStrmE2E(t *testing.T, withSQLite bool) *strmE2E {
 	accountName := "e2e_user"
 	salt := "strm_e2e_salt_pad_to_32_chars_ok"
 	settings := model.DefaultSettings()
-	settings.StrmPrefix = "http://127.0.0.1:8090"
+	settings.StrmPrefix = "http://nas:8090"
 	settings.Cleanup.RemoveStrm = true
 	settings.Cleanup.RemoveRelatedFiles = true
 	settings.Cleanup.RemoveEmptyDirs = false
@@ -124,13 +124,13 @@ func (f *strmE2E) buildFakeScanSummary() *handler.ScanResponse {
 				Account: f.Account, CloudPath: "/电影", LocalPath: f.MediaA,
 				RemoteFileCount: 10, LocalStrmCount: 2,
 				StaleStrms:   []handler.StaleStrm{{RelPath: "staleA1.strm", Size: 5}, {RelPath: "sub/staleA2.strm", Size: 5}},
-				MissingStrms: []handler.MissingStrm{{RelPath: "goodA.mkv", PickCode: "pickcodeAAA0000001"}, {RelPath: "sub/goodA2.mp4", PickCode: "pickcodeAAA0000002"}},
+				MissingStrms: []handler.MissingStrm{{RelPath: "goodA.mkv", PickCode: "pickcodeAAA000001"}, {RelPath: "sub/goodA2.mp4", PickCode: "pickcodeAAA000002"}},
 			},
 			{
 				Account: f.Account, CloudPath: "/电视剧", LocalPath: f.MediaB,
 				RemoteFileCount: 20, LocalStrmCount: 1,
 				StaleStrms:   []handler.StaleStrm{{RelPath: "staleB1.strm", Size: 5}},
-				MissingStrms: []handler.MissingStrm{{RelPath: "goodB.mkv", PickCode: "pickcodeBBB0000001"}},
+				MissingStrms: []handler.MissingStrm{{RelPath: "goodB.mkv", PickCode: "pickcodeBBB000001"}},
 			},
 		},
 	}

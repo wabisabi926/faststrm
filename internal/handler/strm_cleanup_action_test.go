@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wabisabi926/faststrm/internal/model"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // 测试夹具：构造一份 ScanSummary，含 staleStrms + missingStrms
@@ -41,8 +42,8 @@ func buildTestScanSummary(t *testing.T) (string, *ScanResponse) {
 					{RelPath: "sub/stale_movie2.strm"},
 				},
 				MissingStrms: []MissingStrm{
-					{RelPath: missingRel1, PickCode: "pickcode1234567890"},
-					{RelPath: missingRel2, PickCode: "pickcode9876543210"},
+					{RelPath: missingRel1, PickCode: "pickcode123456789"},
+					{RelPath: missingRel2, PickCode: "pickcode987654321"},
 				},
 			},
 		},
@@ -279,7 +280,7 @@ func TestBuildStrmForMissing_WithTemplate(t *testing.T) {
 	}
 	miss := MissingStrm{
 		RelPath:  "movie.mkv",
-		PickCode: "pc1234567890abcdef",
+		PickCode: "pc1234567890abcde",
 	}
 	settings := &model.Settings{
 		StrmPrefix: "http://example.com",
@@ -304,7 +305,7 @@ func TestBuildStrmForMissing_WithTemplate(t *testing.T) {
 	if !strings.Contains(content, "a=my_account") {
 		t.Errorf("content %q 不含 a=my_account", content)
 	}
-	if !strings.Contains(content, "p=pc1234567890abcdef") {
+	if !strings.Contains(content, "p=pc1234567890abcde") {
 		t.Errorf("content %q 不含 p=pc...", content)
 	}
 }
@@ -317,10 +318,10 @@ func TestBuildStrmForMissing_Fallback(t *testing.T) {
 	}
 	miss := MissingStrm{
 		RelPath:  "video.mp4",
-		PickCode: "pc1234567890",
+		PickCode: "pc1234567890abcde",
 	}
 	settings := &model.Settings{
-		StrmPrefix:         "http://localhost:8090",
+		StrmPrefix:         "http://nas:8090",
 		EnablePathEncoding: true,
 		Strm: model.StrmSettings{
 			StrmUrlTemplate: "",
@@ -337,32 +338,48 @@ func TestBuildStrmForMissing_Fallback(t *testing.T) {
 	}
 
 	// 与 task/monitor 默认格式统一：包含 file_name
-	expected := "http://localhost:8090/api/strm?account=user&pickcode=pc1234567890&file_name=video.mp4"
+	expected := "http://nas:8090/api/strm?account=user&pickcode=pc1234567890abcde&file_name=video.mp4\n"
 	if content != expected {
 		t.Errorf("content = %q, want %q", content, expected)
 	}
 }
 
-// 验证 writeStrmFileAtomic：原子写入（tmp + rename）
-func TestWriteStrmFileAtomic(t *testing.T) {
+// 验证补建写盘走 strmutil.WriteStrmFile：内容未变时不重写（避免刷新 mtime 触发 Emby 假重扫）
+func TestWriteStrmFile_SkipsUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.strm")
-	content := "http://example.com/api/strm?account=test&pickcode=pc"
+	content := "http://example.com/api/strm?account=test&pickcode=pc\n"
 
-	if err := writeStrmFileAtomic(path, content); err != nil {
-		t.Fatalf("writeStrmFileAtomic failed: %v", err)
+	unchanged, err := strmutil.WriteStrmFile(path, content)
+	if err != nil {
+		t.Fatalf("WriteStrmFile: %v", err)
 	}
-
+	if unchanged {
+		t.Fatal("首次写入不应标记为 unchanged")
+	}
 	got, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
+		t.Fatalf("ReadFile: %v", err)
 	}
 	if string(got) != content {
 		t.Errorf("content = %q, want %q", string(got), content)
 	}
-
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Errorf("tmp 文件仍存在，rename 未生效")
+	}
+
+	// 第二次写入相同内容 → unchanged=true，文件不被重写
+	before, _ := os.Stat(path)
+	unchanged, err = strmutil.WriteStrmFile(path, content)
+	if err != nil {
+		t.Fatalf("WriteStrmFile 第二次: %v", err)
+	}
+	if !unchanged {
+		t.Fatal("内容相同应返回 unchanged=true")
+	}
+	after, _ := os.Stat(path)
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("内容未变不应重写文件（mtime 变化）")
 	}
 }
 
