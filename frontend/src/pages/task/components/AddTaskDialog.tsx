@@ -38,7 +38,7 @@ import { AdvancedStrmSettings } from "./AdvancedStrmSettings";
 import { resolveStrmSettings } from "@/lib/strmUtils";
 
 export const taskFormSchema = z.object({
-  account: z.string().min(1, "账户不能为空"),
+  account: z.string().min(1, "账号不能为空"),
   originPath: z.string().min(1, "远程路径不能为空"),
   targetPath: z.string().min(1, "本地目标路径不能为空"),
   strmType: z.string().optional(),
@@ -204,11 +204,11 @@ export function AddTaskDialog({
               name="account"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>账户</FormLabel>
+                  <FormLabel>账号</FormLabel>
                   <FormControl>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <SelectTrigger>
-                        <SelectValue placeholder="选择账户" />
+                        <SelectValue placeholder="选择账号" />
                       </SelectTrigger>
                       <SelectContent className="z-[60]">
                         {accountsLoading ? (

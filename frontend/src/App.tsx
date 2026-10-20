@@ -9,12 +9,12 @@ import AccountPage from "@/pages/account";
 import TaskPage from "@/pages/task";
 import SettingsPage from "@/pages/settings";
 import HistoryPage from "@/pages/history";
-import LifeEventsPage from "@/pages/life-events";
-import AccountAlertsPage from "@/pages/account-alerts";
-import TgNotifyPage from "@/pages/tg-notify";
-import EmbyNotifyPage from "@/pages/emby-notify";
+import LifeEventsHubPage from "@/pages/life-events-hub";
+import NotificationCenterPage from "@/pages/notification-center";
 import LogDetailPage from "@/pages/log-detail";
 import AccountSecurityPage from "@/pages/account-security";
+import CleanupPage from "@/pages/cleanup";
+import DiagnosePage from "@/pages/diagnose";
 
 export default function App() {
   return (
@@ -27,14 +27,16 @@ export default function App() {
             <Route path="/account" element={<AccountPage />} />
             <Route path="/task" element={<TaskPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/cleanup" element={<CleanupPage />} />
+            <Route path="/diagnose" element={<DiagnosePage />} />
             <Route path="/history" element={<HistoryPage />} />
-            <Route path="/life-events" element={<LifeEventsPage />} />
-            <Route path="/account-alerts" element={<AccountAlertsPage />} />
-            <Route path="/tg-notify" element={<TgNotifyPage />} />
-            <Route path="/emby-notify" element={<EmbyNotifyPage />} />
+            <Route path="/life-events" element={<LifeEventsHubPage />} />
+            <Route path="/account-alerts" element={<Navigate to="/account" replace />} />
+            <Route path="/notify" element={<NotificationCenterPage />} />
+            <Route path="/tg-notify" element={<Navigate to="/notify?tab=telegram" replace />} />
+            <Route path="/emby-notify" element={<Navigate to="/notify?tab=emby" replace />} />
             <Route path="/account-security" element={<AccountSecurityPage />} />
-            <Route path="/notify" element={<Navigate to="/tg-notify" replace />} />
-            <Route path="/notify/users" element={<Navigate to="/tg-notify" replace />} />
+            <Route path="/notify/users" element={<Navigate to="/notify?tab=telegram" replace />} />
             <Route path="/log/:taskId" element={<LogDetailPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

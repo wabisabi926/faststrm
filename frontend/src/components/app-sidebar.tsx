@@ -1,4 +1,15 @@
-import { ListChecks, Inbox, Settings, Github, Bot, History, Activity, Bell, ShieldAlert, UserCog } from "lucide-react";
+import {
+  LayoutDashboard,
+  Users,
+  ListChecks,
+  Trash2,
+  Activity,
+  BellRing,
+  History,
+  Settings,
+  ShieldCheck,
+  Github,
+} from "lucide-react";
 
 import {
   Sidebar,
@@ -17,59 +28,50 @@ import frontendPkg from "../../package.json";
 type PackageJson = { version?: string } & Record<string, unknown>;
 const appVersion = (frontendPkg as PackageJson).version ?? "";
 
-const items = [
+type NavItem = {
+  title: string;
+  url: string;
+  icon: typeof LayoutDashboard;
+};
+
+const navGroups: Array<{ label?: string; items: NavItem[] }> = [
   {
-    title: "账户",
-    url: "/account",
-    icon: Inbox,
+    items: [{ title: "概览", url: "/", icon: LayoutDashboard }],
   },
   {
-    title: "任务",
-    url: "/task",
-    icon: ListChecks,
+    label: "媒体库",
+    items: [
+      { title: "账号管理", url: "/account", icon: Users },
+      { title: "任务管理", url: "/task", icon: ListChecks },
+      { title: "STRM 清理", url: "/cleanup", icon: Trash2 },
+    ],
   },
   {
-    title: "设置",
-    url: "/settings",
-    icon: Settings,
+    label: "通知",
+    items: [{ title: "通知中心", url: "/notify", icon: BellRing }],
   },
   {
-    title: "账号安全",
-    url: "/account-security",
-    icon: UserCog,
+    label: "日志",
+    items: [
+      { title: "生活事件", url: "/life-events", icon: Activity },
+      { title: "执行历史", url: "/history", icon: History },
+    ],
+  },
+  {
+    label: "设置",
+    items: [
+      { title: "设置中心", url: "/settings", icon: Settings },
+      { title: "账号安全", url: "/account-security", icon: ShieldCheck },
+    ],
   },
 ];
 
-const notifyItems = [
-  {
-    title: "账户状态",
-    url: "/account-alerts",
-    icon: ShieldAlert,
-  },
-  {
-    title: "TG 通知",
-    url: "/tg-notify",
-    icon: Bot,
-  },
-  {
-    title: "Emby 通知",
-    url: "/emby-notify",
-    icon: Bell,
-  },
-];
-
-const logItems = [
-  {
-    title: "任务历史",
-    url: "/history",
-    icon: History,
-  },
-  {
-    title: "生活事件",
-    url: "/life-events",
-    icon: Activity,
-  },
-];
+function isNavActive(url: string, pathname: string): boolean {
+  if (url === "/") return pathname === "/";
+  // 日志详情从执行历史打开，归属于执行历史
+  if (url === "/history") return pathname === "/history" || pathname.startsWith("/log/");
+  return pathname === url || pathname.startsWith(url + "/");
+}
 
 export function AppSidebar() {
   const location = useLocation();
@@ -78,7 +80,7 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarContent>
         <div className="p-4 border-b border-border/50">
-          <Link to="/account" className="flex items-center gap-3 group">
+          <Link to="/" className="flex items-center gap-3 group">
             <img
               src="/logo.png"
               alt="Fast Strm Logo"
@@ -92,80 +94,32 @@ export function AppSidebar() {
             </div>
           </Link>
         </div>
-        <SidebarGroup>
-          <SidebarGroupLabel>主菜单</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {items.map((item) => {
-                const isActive = pathname === item.url;
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton 
-                      asChild 
-                      tooltip={item.title}
-                      isActive={isActive}
-                    >
-                      <Link to={item.url}>
-                        <item.icon className="h-4 w-4" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        
-        <SidebarGroup>
-          <SidebarGroupLabel>通知</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {notifyItems.map((item) => {
-                const isActive = pathname === item.url;
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton 
-                      asChild 
-                      tooltip={item.title}
-                      isActive={isActive}
-                    >
-                      <Link to={item.url}>
-                        <item.icon className="h-4 w-4" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>日志</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {logItems.map((item) => {
-                const isActive = pathname === item.url;
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton 
-                      asChild 
-                      tooltip={item.title}
-                      isActive={isActive}
-                    >
-                      <Link to={item.url}>
-                        <item.icon className="h-4 w-4" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {navGroups.map((group, index) => (
+          <SidebarGroup key={group.label ?? `group-${index}`}>
+            {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const isActive = isNavActive(item.url, pathname);
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton
+                        asChild
+                        tooltip={item.title}
+                        isActive={isActive}
+                      >
+                        <Link to={item.url}>
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
       <SidebarSeparator className="ml-0 mr-2 w-auto group-data-[collapsible=icon]:mx-0" />
       <SidebarFooter>

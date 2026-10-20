@@ -19,6 +19,7 @@ import {
   XCircle,
   FileText,
   Filter,
+  ChevronDown,
 } from "lucide-react";
 import { logger } from "@/lib/logger";
 
@@ -79,7 +80,11 @@ function formatTime(ts: number) {
   });
 }
 
-export default function LifeEventsPage() {
+export default function LifeEventsPage({
+  embedded = false,
+}: {
+  embedded?: boolean;
+} = {}) {
   const [items, setItems] = useState<LifeEventLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [accountFilter, setAccountFilter] = useState("");
@@ -166,14 +171,20 @@ export default function LifeEventsPage() {
   const failCount = visibleItems.length - successCount;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold break-words">生活事件日志</h1>
-          <p className="text-sm text-muted-foreground mt-1 break-words">
-            115 生活事件监控处理记录，保留最近 7 天
-          </p>
-        </div>
+    <div className={embedded ? "space-y-5" : "mx-auto max-w-5xl space-y-6"}>
+      <div
+        className={`flex flex-col sm:flex-row sm:items-center gap-3 ${
+          embedded ? "sm:justify-end" : "justify-between"
+        }`}
+      >
+        {!embedded && (
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold break-words">生活事件</h1>
+            <p className="text-sm text-muted-foreground mt-1 break-words">
+              115 生活事件监控处理记录，保留最近 7 天
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 shrink-0">
           <Button onClick={() => setAutoRefresh(!autoRefresh)} variant="outline">
             {autoRefresh ? "⏸ 暂停自动刷新" : "▶ 自动刷新"}
@@ -182,10 +193,26 @@ export default function LifeEventsPage() {
             <RefreshCw className="h-4 w-4 mr-1" />
             刷新
           </Button>
-          <Button onClick={handleCleanupPoll} variant="outline">
-            <Trash2 className="h-4 w-4 mr-1" />
-            清理轮询
-          </Button>
+          <details className="relative">
+            <summary className="inline-flex h-9 cursor-pointer list-none items-center gap-1 rounded-md border border-input bg-background px-3 text-sm shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground [&::-webkit-details-marker]:hidden">
+              更多
+              <ChevronDown className="h-4 w-4" />
+            </summary>
+            <div className="absolute right-0 z-20 mt-1 min-w-[170px] rounded-md border bg-popover p-1 shadow-md">
+              <button
+                type="button"
+                onClick={(e) => {
+                  void handleCleanupPoll();
+                  const details = e.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+              >
+                <Trash2 className="h-4 w-4" />
+                清理轮询日志
+              </button>
+            </div>
+          </details>
           <Button onClick={handleClear} variant="outline">
             <Trash2 className="h-4 w-4 mr-1" />
             清空

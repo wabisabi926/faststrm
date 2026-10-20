@@ -20,16 +20,9 @@ import {
 } from "@/components/ui/tooltip";
 import type {
   PathMapping,
-  PathMappingType,
   DisplayMonitorState,
   VerifyResult,
 } from "./types";
-
-const MAPPING_TYPE_OPTIONS: Array<{ value: PathMappingType; label: string }> = [
-  { value: "media", label: "媒体库" },
-  { value: "transfer", label: "整理目录" },
-  { value: "unrecognized", label: "未识别" },
-];
 
 export interface MonitorSettingsTabProps {
   monitorEnabled: boolean;
@@ -67,8 +60,6 @@ export interface MonitorSettingsTabProps {
   setPathMappings: Dispatch<SetStateAction<PathMapping[]>>;
   newMappingAccount: string;
   setNewMappingAccount: Dispatch<SetStateAction<string>>;
-  newMappingType: PathMappingType;
-  setNewMappingType: Dispatch<SetStateAction<PathMappingType>>;
   newCloudPath: string;
   setNewCloudPath: Dispatch<SetStateAction<string>>;
   newLocalPath: string;
@@ -119,8 +110,6 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
     setPathMappings,
     newMappingAccount,
     setNewMappingAccount,
-    newMappingType,
-    setNewMappingType,
     newCloudPath,
     setNewCloudPath,
     newLocalPath,
@@ -401,7 +390,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
           <div className="space-y-4 w-full min-w-0">
             <Label>路径映射（115 网盘路径 → 本地保存路径）</Label>
             <p className="text-xs text-muted-foreground">
-              映射类型（媒体库/整理目录/未识别）用于生活事件归类；清理扫描仍会使用全部路径映射。
+              路径映射用于生成与清理 STRM；整理目录/未识别分类暂未实现。
             </p>
             <div className="space-y-4 w-full min-w-0">
               {pathMappings.map((mapping, index) => (
@@ -414,7 +403,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                                  mobile：同一行 flex，账号 1/3 左、网盘 2/3 右
                   ============ */}
                   <div className="w-full sm:w-auto min-w-0 flex flex-row gap-1 sm:gap-0 items-center">
-                    {/* 账号下拉 + 映射类型：mobile 1/3；sm 固定 160px（"遍历全部账号" 6 字 + chevron 不截断）*/}
+                    {/* 账号下拉：mobile 1/3；sm 固定 160px（"遍历全部账号" 6 字 + chevron 不截断）*/}
                     <div className="w-1/3 sm:w-[160px] sm:shrink-0 min-w-0 sm:mr-2 space-y-1">
                       <Select
                         value={mapping.account || "__all__"}
@@ -431,25 +420,6 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                           <SelectItem value="__all__" className="truncate whitespace-nowrap pr-2">遍历全部账号</SelectItem>
                           {accounts.map(acc => (
                             <SelectItem key={acc} value={acc} className="truncate whitespace-nowrap pr-2">{acc}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Select
-                        value={mapping.mappingType || "media"}
-                        onValueChange={(val) => {
-                          const updated = [...pathMappings];
-                          updated[index] = { ...updated[index], mappingType: val as PathMappingType };
-                          setPathMappings(updated);
-                        }}
-                      >
-                        <SelectTrigger className="h-7 w-full min-w-0 text-xs" aria-label="映射类型">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent align="start">
-                          {MAPPING_TYPE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                              {opt.label}
-                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -570,21 +540,6 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                       <SelectItem value="__all__" className="truncate whitespace-nowrap pr-2">遍历全部账号</SelectItem>
                       {accounts.map(acc => (
                         <SelectItem key={acc} value={acc} className="truncate whitespace-nowrap pr-2">{acc}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={newMappingType}
-                    onValueChange={(val) => setNewMappingType(val as PathMappingType)}
-                  >
-                    <SelectTrigger className="h-7 w-full min-w-0 text-xs" aria-label="映射类型">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent align="start">
-                      {MAPPING_TYPE_OPTIONS.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                          {opt.label}
-                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

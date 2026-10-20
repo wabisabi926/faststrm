@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Bot, MessageSquare, CheckCircle, XCircle, RefreshCw, Play, Square, AlertCircle, Users, UserPlus, X, Loader2 } from "lucide-react";
+import { Bot, MessageSquare, CheckCircle, XCircle, RefreshCw, Play, Square, AlertCircle, Users, UserPlus, X, Loader2, ChevronDown } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import axiosInstance from "@/lib/axios";
 import { logger } from "@/lib/logger";
@@ -41,7 +41,7 @@ function maskToken(token: string): string {
   return `${idPart}:${"*".repeat(Math.max(secretPart.length - 4, 0))}${secretPart.slice(-4)}`;
 }
 
-export default function TelegramNotifyPage() {
+export default function TelegramNotifyPage({ embedded = false }: { embedded?: boolean }) {
   const [config, setConfig] = useState<TelegramConfig>({});
   const [botInfo, setBotInfo] = useState<BotInfo | null>(null);
   const [webhookInfo, setWebhookInfo] = useState<WebhookInfo | null>(null);
@@ -288,13 +288,15 @@ export default function TelegramNotifyPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 min-w-0">
-      <div className="break-words">
-        <h1 className="text-2xl font-semibold">Telegram 通知</h1>
-        <p className="text-sm text-muted-foreground mt-0.5 break-words">
-          配置 Bot、启动轮询，即可在 Telegram 接收通知
-        </p>
-      </div>
+    <div className={`${embedded ? "" : "mx-auto max-w-5xl"} space-y-5 min-w-0`}>
+      {!embedded && (
+        <div className="break-words">
+          <h1 className="text-2xl font-semibold">Telegram 通知</h1>
+          <p className="text-sm text-muted-foreground mt-0.5 break-words">
+            配置 Bot、启动轮询，即可在 Telegram 接收通知
+          </p>
+        </div>
+      )}
 
       {error && (
         <Alert variant="destructive" className="py-2">
@@ -343,49 +345,62 @@ export default function TelegramNotifyPage() {
           </div>
         </div>
 
-        <div className="space-y-1.5 min-w-0">
-          <Label htmlFor="webhookUrl">Webhook URL <span className="text-xs text-muted-foreground">（可选，家用留空）</span></Label>
-          <Input
-            id="webhookUrl"
-            placeholder="https://<你的公网域名>/api/notify/webhook"
-            value={config.webhookUrl || ""}
-            onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
-          />
-          <p className="text-xs text-muted-foreground">留空使用轮询模式（5秒延迟），填写则使用 Webhook（毫秒级）</p>
-        </div>
+        <details className="group space-y-3 border-t pt-4">
+          <summary className="flex cursor-pointer list-none items-center gap-2">
+            <span className="text-sm font-medium">高级连接设置</span>
+            <span className="text-xs text-muted-foreground">
+              {config.webhookUrl ? "Webhook 模式" : "轮询模式（默认）"}
+              {config.proxyUrl ? " · 已配置代理" : ""}
+            </span>
+            <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
 
-        {config.webhookUrl && (
-          <div className="space-y-1.5 min-w-0">
-            <Label htmlFor="webhookSecret">
-              Webhook 密钥{" "}
-              {config.hasWebhookSecret && (
-                <span className="text-xs text-green-600">（已设置）</span>
-              )}
-              <span className="text-xs text-muted-foreground">（可选，防伪造请求）</span>
-            </Label>
-            <Input
-              id="webhookSecret"
-              placeholder={config.hasWebhookSecret ? "已设置，留空保持不变；输入 - 清除" : "输入密钥（任意 1-256 字符随机串）"}
-              value={webhookSecretInput}
-              onChange={(e) => setWebhookSecretInput(e.target.value)}
-              autoComplete="off"
-            />
-            <p className="text-xs text-muted-foreground">
-              设置后把同一密钥填到反向代理/网关的 <code>X-Telegram-Bot-Api-Secret-Token</code> 头；留空保持现状
-            </p>
+          <div className="space-y-3 pt-2">
+            <div className="space-y-1.5 min-w-0">
+              <Label htmlFor="webhookUrl">Webhook URL <span className="text-xs text-muted-foreground">（可选，家用留空）</span></Label>
+              <Input
+                id="webhookUrl"
+                placeholder="https://<你的公网域名>/api/notify/webhook"
+                value={config.webhookUrl || ""}
+                onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">留空使用轮询模式（5秒延迟），填写则使用 Webhook（毫秒级）</p>
+            </div>
+
+            {config.webhookUrl && (
+              <div className="space-y-1.5 min-w-0">
+                <Label htmlFor="webhookSecret">
+                  Webhook 密钥{" "}
+                  {config.hasWebhookSecret && (
+                    <span className="text-xs text-green-600">（已设置）</span>
+                  )}
+                  <span className="text-xs text-muted-foreground">（可选，防伪造请求）</span>
+                </Label>
+                <Input
+                  id="webhookSecret"
+                  placeholder={config.hasWebhookSecret ? "已设置，留空保持不变；输入 - 清除" : "输入密钥（任意 1-256 字符随机串）"}
+                  value={webhookSecretInput}
+                  onChange={(e) => setWebhookSecretInput(e.target.value)}
+                  autoComplete="off"
+                />
+                <p className="text-xs text-muted-foreground">
+                  设置后把同一密钥填到反向代理/网关的 <code>X-Telegram-Bot-Api-Secret-Token</code> 头；留空保持现状
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-1.5 min-w-0">
+              <Label htmlFor="proxyUrl">代理 URL <span className="text-xs text-muted-foreground">（可选，国内必填）</span></Label>
+              <Input
+                id="proxyUrl"
+                placeholder="socks5://127.0.0.1:7890 或 http://127.0.0.1:7890"
+                value={config.proxyUrl || ""}
+                onChange={(e) => setConfig({ ...config, proxyUrl: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">支持 HTTP/HTTPS/SOCKS5 协议，国内访问 Telegram 时填写</p>
+            </div>
           </div>
-        )}
-
-        <div className="space-y-1.5 min-w-0">
-          <Label htmlFor="proxyUrl">代理 URL <span className="text-xs text-muted-foreground">（可选，国内必填）</span></Label>
-          <Input
-            id="proxyUrl"
-            placeholder="socks5://127.0.0.1:7890 或 http://127.0.0.1:7890"
-            value={config.proxyUrl || ""}
-            onChange={(e) => setConfig({ ...config, proxyUrl: e.target.value })}
-          />
-          <p className="text-xs text-muted-foreground">支持 HTTP/HTTPS/SOCKS5 协议，国内访问 Telegram 时填写</p>
-        </div>
+        </details>
 
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-x-6 gap-y-3">

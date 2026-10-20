@@ -38,8 +38,8 @@ import { QrCodeLogin } from "./QrCodeLogin";
 
 // 表单验证规则
 export const accountFormSchema = z.object({
-  accountType: z.string().min(1, "账户类型不能为空"),
-  name: z.string().min(1, "账户名称不能为空"),
+  accountType: z.string().min(1, "账号类型不能为空"),
+  name: z.string().min(1, "账号名称不能为空"),
   // 115 类型字段
   cookie: z.string().optional(),
   // openlist 类型字段
@@ -54,7 +54,7 @@ export const accountFormSchema = z.object({
   }
   return true;
 }, {
-  message: "请填写对应账户类型的必需字段",
+  message: "请填写对应账号类型的必需字段",
   path: ["accountType"]
 });
 
@@ -109,7 +109,7 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
         if (cascade) {
           const synced: string[] = [];
           if (cascade.tasksUpdated) synced.push(`${cascade.tasksUpdated} 个任务`);
-          if (cascade.monitorConfigUpdated) synced.push("生活监控配置");
+          if (cascade.monitorConfigUpdated) synced.push("生活事件监控设置");
           if (cascade.dbRecordsRenamed) synced.push("索引库记录");
           toast.success(
             synced.length > 0
@@ -144,8 +144,8 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
         if (data?.code === "duplicate_uid" && data.existingName) {
           const cookie = form.getValues("cookie") || "";
           const confirmed = window.confirm(
-            `该 115 账号已存在（账户名：${data.existingName}）。\n\n` +
-              `为避免已生成的 STRM 失效，请直接更新已有账户的 Cookie。\n` +
+            `该 115 账号已存在（账号名：${data.existingName}）。\n\n` +
+              `为避免已生成的 STRM 失效，请直接更新已有账号的 Cookie。\n` +
               `是否立即更新「${data.existingName}」的登录状态？`
           );
           if (confirmed && cookie) {
@@ -156,7 +156,7 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
                 accountType: "115",
                 cookie,
               });
-              toast.success(`已更新账户「${data.existingName}」的 Cookie`);
+              toast.success(`已更新账号「${data.existingName}」的 Cookie`);
               onSuccess?.();
               setOpen(false);
               form.reset();
@@ -202,7 +202,7 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
     // 账户名会写入 STRM 播放地址：不再自动生成「115账户-时间戳」名字。
     // 历史默认名是 STRM 大面积失效的根因之一（改名/重登后名字漂移）。
     if (!currentValues.name.trim()) {
-      toast.success("扫码登录成功，请填写账户名称后点击「保存」");
+      toast.success("扫码登录成功，请填写账号名称后点击「保存」");
       return;
     }
 
@@ -250,9 +250,9 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
 
       <DialogContent className="max-w-[95vw] sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>{account ? "编辑账户" : "新增账户"}</DialogTitle>
+          <DialogTitle>{account ? "编辑账号" : "新增账号"}</DialogTitle>
           <DialogDescription>
-            {account ? "编辑你的账户信息" : "添加一个新的网盘账户"}
+            {account ? "编辑你的账号信息" : "添加一个新的网盘账号"}
           </DialogDescription>
         </DialogHeader>
 
@@ -264,11 +264,11 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
               name="accountType"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>账户类型</FormLabel>
+                  <FormLabel>账号类型</FormLabel>
                   <FormControl>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <SelectTrigger>
-                        <SelectValue placeholder="选择账户类型" />
+                        <SelectValue placeholder="选择账号类型" />
                       </SelectTrigger>
                       <SelectContent>
                         {accountTypes.map((type) => (
@@ -290,9 +290,9 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>账户名称</FormLabel>
+                  <FormLabel>账号名称</FormLabel>
                   <FormControl>
-                    <Input placeholder="输入账户名称" {...field} />
+                    <Input placeholder="输入账号名称" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -373,10 +373,10 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
                   <Info className="h-4 w-4" />
                   <AlertDescription className="space-y-1">
                     <p>
-                      如果希望使用 302 重定向功能，推荐将账户名称与 openlist、cd2 的 115 账户用户名保持一致，这样可以保证正确回源。
+                      如果希望使用 302 重定向功能，推荐将账号名称与 openlist、cd2 的 115 账号用户名保持一致，这样可以保证正确回源。
                     </p>
                     <p className="text-muted-foreground">
-                      账户名会写入已生成的 STRM 播放地址：改名会自动同步任务、生活监控与索引库，
+                      账号名会写入已生成的 STRM 播放地址：改名会自动同步任务、生活监控与索引库，
                       但旧 STRM 内容不会被重写，需到「STRM 清理」页扫描并重建。
                     </p>
                   </AlertDescription>

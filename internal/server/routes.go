@@ -104,6 +104,10 @@ func RegisterRoutes(
 
 		// STRM 缓存管理
 		{Method: http.MethodPost, Path: "/api/strm/cache/clear", Handler: corsJWT(handler.HandleStrmCacheClear())},
+		// 播放诊断（受 JWT 保护）：只做路由判断与 CDN 探测，不代理大文件
+		{Method: http.MethodGet, Path: "/api/strm/diagnose", Handler: corsJWT(handler.HandleStrmDiagnose(handler.StrmOptions{
+			Cfg: cfg, Client115: client, AccountStore: accountStore,
+		}))},
 	}
 	server.AddRoutes(protectedRoutes)
 

@@ -82,7 +82,7 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
             </CardTitle>
             <CardDescription className="mt-2 break-words">
               扫描本地与 115 网盘文件树的一致性，找出网盘已删除但本地仍残留的
-              STRM 文件（失效）以及网盘有但本地缺失的 STRM 文件（漏生成），使用生活事件监控配置中的路径映射作为扫描范围
+              STRM 文件（失效）以及网盘有但本地缺失的 STRM 文件（漏生成），使用生活事件监控设置中的路径映射作为扫描范围
             </CardDescription>
             {policySummary && (
               <p className="mt-2 text-xs text-muted-foreground break-words">

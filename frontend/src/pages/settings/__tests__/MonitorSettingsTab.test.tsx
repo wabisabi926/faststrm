@@ -37,8 +37,6 @@ function buildProps(overrides: Partial<MonitorSettingsTabProps> = {}): MonitorSe
     setPathMappings: noop,
     newMappingAccount: "__all__",
     setNewMappingAccount: noop,
-    newMappingType: "media",
-    setNewMappingType: noop,
     newCloudPath: "",
     setNewCloudPath: noop,
     newLocalPath: "",

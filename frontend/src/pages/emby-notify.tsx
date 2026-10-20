@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Check, Server, XCircle } from "lucide-react";
+import { Check, ChevronDown, Server, XCircle } from "lucide-react";
 import { LocalDirectoryTreeDialog } from "@/pages/task/components/LocalDirectoryTreeDialog";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
 import { useEmbySettings } from "./emby-notify/useEmbySettings";
@@ -14,8 +14,9 @@ import { RefreshSettingsSection } from "./emby-notify/RefreshSettingsSection";
 import { WebhookInfoCard } from "./emby-notify/WebhookInfoCard";
 import { SyncDeleteSection } from "./emby-notify/SyncDeleteSection";
 
-export default function EmbyNotifyPage() {
+export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolean }) {
   const [webhookCopied, setWebhookCopied] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const {
     settings,
@@ -82,12 +83,14 @@ export default function EmbyNotifyPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className={`${embedded ? "" : "mx-auto max-w-5xl"} space-y-6`}>
       {/* 页面标题 */}
-      <div className="min-w-0 break-words">
-        <h1 className="text-2xl font-semibold break-words">Emby 通知</h1>
-        <p className="text-sm text-muted-foreground mt-1 break-words">配置 Emby 媒体服务器的通知与删除同步</p>
-      </div>
+      {!embedded && (
+        <div className="min-w-0 break-words">
+          <h1 className="text-2xl font-semibold break-words">Emby 通知</h1>
+          <p className="text-sm text-muted-foreground mt-1 break-words">配置 Emby 媒体服务器的通知与删除同步</p>
+        </div>
+      )}
 
       {/* 错误/成功提示 */}
       {error && (
@@ -128,42 +131,65 @@ export default function EmbyNotifyPage() {
         onSave={handleSave}
       />
 
-      {/* 媒体库刷库配置 */}
-      <RefreshSettingsSection
-        settings={settings}
-        loading={loading}
-        updateSetting={updateSetting}
-        onSave={handleSave}
-      />
+      {/* 高级设置：刷库、Webhook 指引、删除同步 */}
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          aria-expanded={advancedOpen}
+          className="flex w-full items-center justify-between gap-3 rounded-md border p-4 text-left transition-colors hover:bg-muted/40"
+        >
+          <div>
+            <h2 className="text-base font-medium">高级设置</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              媒体库刷新、Webhook 配置指引与删除同步
+            </p>
+          </div>
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+              advancedOpen ? "rotate-180" : ""
+            }`}
+          />
+        </button>
 
-      {/* Webhook 配置指引 */}
-      <WebhookInfoCard
-        webhookUrl={webhookUrl}
-        copied={webhookCopied}
-        onCopy={copyWebhookUrl}
-      />
+        {advancedOpen && (
+          <div className="space-y-4">
+            <RefreshSettingsSection
+              settings={settings}
+              loading={loading}
+              updateSetting={updateSetting}
+              onSave={handleSave}
+            />
 
-      {/* 删除同步设置 */}
-      <SyncDeleteSection
-        settings={settings}
-        loading={loading}
-        accounts={accounts}
-        updateSetting={updateSetting}
-        onSave={handleSave}
-        newMappingEmbyPath={newMappingEmbyPath}
-        newMappingCloudPath={newMappingCloudPath}
-        newMappingAccount={newMappingAccount}
-        setNewMappingEmbyPath={setNewMappingEmbyPath}
-        setNewMappingCloudPath={setNewMappingCloudPath}
-        setNewMappingAccount={setNewMappingAccount}
-        updatePathMapping={updatePathMapping}
-        addPathMapping={addPathMapping}
-        removePathMapping={removePathMapping}
-        openFolderPickerForNew={openFolderPickerForNew}
-        openFolderPickerForMapping={openFolderPickerForMapping}
-        openCloudPickerForNew={openCloudPickerForNew}
-        openCloudPickerForMapping={openCloudPickerForMapping}
-      />
+            <WebhookInfoCard
+              webhookUrl={webhookUrl}
+              copied={webhookCopied}
+              onCopy={copyWebhookUrl}
+            />
+
+            <SyncDeleteSection
+              settings={settings}
+              loading={loading}
+              accounts={accounts}
+              updateSetting={updateSetting}
+              onSave={handleSave}
+              newMappingEmbyPath={newMappingEmbyPath}
+              newMappingCloudPath={newMappingCloudPath}
+              newMappingAccount={newMappingAccount}
+              setNewMappingEmbyPath={setNewMappingEmbyPath}
+              setNewMappingCloudPath={setNewMappingCloudPath}
+              setNewMappingAccount={setNewMappingAccount}
+              updatePathMapping={updatePathMapping}
+              addPathMapping={addPathMapping}
+              removePathMapping={removePathMapping}
+              openFolderPickerForNew={openFolderPickerForNew}
+              openFolderPickerForMapping={openFolderPickerForMapping}
+              openCloudPickerForNew={openCloudPickerForNew}
+              openCloudPickerForMapping={openCloudPickerForMapping}
+            />
+          </div>
+        )}
+      </div>
 
       {/* 本地文件夹选择器：用于 Emby 路径前缀的快速选择 */}
       <LocalDirectoryTreeDialog

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PageTabs, type PageTabItem } from "@/components/page-tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -76,6 +78,11 @@ interface StrmHistoryStats {
 
 type HistoryTab = "tasks" | "strm";
 
+const HISTORY_TABS: readonly PageTabItem<HistoryTab>[] = [
+  { id: "tasks", label: "任务执行", icon: FileText },
+  { id: "strm", label: "STRM 记录", icon: Activity },
+];
+
 const STRM_KIND_LABELS: Record<string, string> = {
   full: "全量任务",
   increment: "增量任务",
@@ -131,7 +138,17 @@ function formatElapsed(ms: number): string {
 }
 
 export default function TaskHistoryPage() {
-  const [activeTab, setActiveTab] = useState<HistoryTab>("tasks");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab: HistoryTab = searchParams.get("tab") === "strm" ? "strm" : "tasks";
+  const setActiveTab = (tab: HistoryTab) => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === "tasks") {
+      next.delete("tab");
+    } else {
+      next.set("tab", tab);
+    }
+    setSearchParams(next, { replace: true });
+  };
   const [history, setHistory] = useState<TaskExecutionHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [strmHistory, setStrmHistory] = useState<StrmHistoryEntry[]>([]);
@@ -240,32 +257,12 @@ export default function TaskHistoryPage() {
         </div>
       </div>
 
-      <div className="flex flex-nowrap gap-1 border-b border-border overflow-x-auto scrollbar-none -mx-1 px-1">
-        <button
-          onClick={() => setActiveTab("tasks")}
-          className={`shrink-0 px-3 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
-            activeTab === "tasks" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <FileText className="inline-block h-4 w-4 mr-1" />
-          任务执行
-          {activeTab === "tasks" && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
-          )}
-        </button>
-        <button
-          onClick={() => setActiveTab("strm")}
-          className={`shrink-0 px-3 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
-            activeTab === "strm" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Activity className="inline-block h-4 w-4 mr-1" />
-          STRM 记录
-          {activeTab === "strm" && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
-          )}
-        </button>
-      </div>
+      <PageTabs
+        tabs={HISTORY_TABS}
+        value={activeTab}
+        onChange={setActiveTab}
+        ariaLabel="执行历史类型"
+      />
 
       {activeTab === "tasks" ? (
         loading ? (

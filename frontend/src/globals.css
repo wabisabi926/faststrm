@@ -120,6 +120,30 @@
   .scrollbar-none::-webkit-scrollbar {
     display: none;
   }
+  .scrollbar-thin {
+    scrollbar-gutter: stable;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: color-mix(in srgb, var(--foreground) 18%, transparent);
+  }
+  .scrollbar-thin:hover::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--foreground) 30%, transparent);
+  }
+  /* Firefox 不支持 ::-webkit-scrollbar，回退到标准 thin */
+  @supports not selector(::-webkit-scrollbar) {
+    .scrollbar-thin {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--foreground) 18%, transparent) transparent;
+    }
+  }
 }
 
 @layer base {

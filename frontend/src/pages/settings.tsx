@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Settings, LifeBuoy, Eraser } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  BellRing,
+  HeartPulse,
+  ShieldCheck,
+  Stethoscope,
+  Trash2,
+} from "lucide-react";
 import axiosInstance from "@/lib/axios";
 import type { AxiosError } from "axios";
-import { StrmCleanupCard } from "./StrmCleanupCard";
-import { CleanupPolicyCard } from "./strm-cleanup/CleanupPolicyCard";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
 import { LocalDirectoryTreeDialog } from "@/pages/task/components/LocalDirectoryTreeDialog";
 import type {
   PathMapping,
-  PathMappingType,
   Settings as SettingsType,
   MonitorState,
   MountDryRunData,
@@ -21,20 +27,66 @@ import { DEFAULT_MONITOR_CONFIG } from "./settings/types";
 import { BasicSettingsTab } from "./settings/BasicSettingsTab";
 import { MonitorSettingsTab } from "./settings/MonitorSettingsTab";
 
-const AUTO_CLEANUP_LABELS: Record<string, string> = {
-  off: "关闭",
-  mark_only: "仅标记",
-  auto_clean: "自动清理",
-};
+const CONFIG_ENTRIES = [
+  {
+    title: "清理策略",
+    description: "任务同步后的孤儿清理、保护阈值与确认方式",
+    to: "/cleanup",
+    icon: Trash2,
+  },
+  {
+    title: "生活事件监控",
+    description: "监控账号、轮询间隔、路径映射与事件类型",
+    to: "/life-events?tab=config",
+    icon: Activity,
+  },
+  {
+    title: "通知渠道",
+    description: "Telegram、Emby 与账号告警通知",
+    to: "/notify",
+    icon: BellRing,
+  },
+  {
+    title: "账号健康",
+    description: "Cookie 巡检间隔与账号状态",
+    to: "/account",
+    icon: HeartPulse,
+  },
+  {
+    title: "播放诊断",
+    description: "排查 STRM 的 redirect / proxy 路由",
+    to: "/diagnose",
+    icon: Stethoscope,
+  },
+  {
+    title: "账号安全",
+    description: "管理员用户名与密码",
+    to: "/account-security",
+    icon: ShieldCheck,
+  },
+];
 
-const CLEANUP_CONFIRM_LABELS: Record<string, string> = {
-  none: "关闭",
-  plugin_ui: "Web UI",
-  telegram: "Telegram",
-};
+export default function SettingsPage({
+  embedded = false,
+  forceTab,
+}: {
+  embedded?: boolean;
+  forceTab?: "monitor";
+} = {}) {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const activeTab: "basic" | "monitor" = forceTab === "monitor" ? "monitor" : "basic";
 
-export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"basic" | "monitor" | "cleanup">("basic");
+  // 兼容旧书签：清理已独立成页，生活事件监控已并入「生活事件」
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "cleanup") {
+      navigate("/cleanup", { replace: true });
+    } else if (tab === "monitor") {
+      navigate("/life-events?tab=config", { replace: true });
+    }
+  }, [searchParams, navigate]);
+
   const [data, setData] = useState<SettingsType>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -67,7 +119,6 @@ export default function SettingsPage() {
   const [pollInterval, setPollInterval] = useState(10);
   const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
   const [newMappingAccount, setNewMappingAccount] = useState<string>("__all__");
-  const [newMappingType, setNewMappingType] = useState<PathMappingType>("media");
   const [removeEmptyDirs, setRemoveEmptyDirs] = useState(true);
   const [notifyOnlyOnError, setNotifyOnlyOnError] = useState(false);
   const [eventTypes, setEventTypes] = useState({
@@ -315,7 +366,8 @@ export default function SettingsPage() {
         enabled: monitorEnabled,
         accounts: selectedAccounts,
         pollInterval,
-        pathMappings,
+        // 历史配置可能残留 transfer/unrecognized，统一归一到媒体库
+        pathMappings: pathMappings.map((mapping) => ({ ...mapping, mappingType: "media" })),
         removeEmptyDirs,
         notifyOnlyOnError,
         eventTypes,
@@ -328,17 +380,13 @@ export default function SettingsPage() {
     };
   };
 
-  const saveSettings = async (cleanupOnly = false): Promise<boolean> => {
+  const saveSettings = async (): Promise<boolean> => {
     setSaving(true);
     try {
       const saveData = buildSaveData();
 
       await axiosInstance.post("/api/settings", saveData);
       setData(saveData);
-      if (cleanupOnly) {
-        toast.success("清理策略已保存");
-        return true;
-      }
       // 保存后刷新试运行视图；mediaMountPath 不会随设置保存自动落盘，需在上方手动同步。
       const dry = await fetchMountDryRun();
       toast.success(
@@ -361,18 +409,8 @@ export default function SettingsPage() {
   };
 
   const onSave = async (): Promise<void> => {
-    await saveSettings(false);
+    await saveSettings();
   };
-
-  const onSaveCleanupPolicy = (): Promise<boolean> => saveSettings(true);
-
-  const cleanupForSummary = data.cleanup || {};
-  const cleanupModeForSummary = data.download?.fullSyncCleanupOrphans ?? "auto_clean";
-  const cleanupPolicySummary = [
-    `任务同步自动清理：${AUTO_CLEANUP_LABELS[cleanupModeForSummary] ?? cleanupModeForSummary}`,
-    `阈值 ${cleanupForSummary.maxThreshold ?? 1000} / ${Math.round((cleanupForSummary.maxRatio ?? 0.1) * 100)}% / ${cleanupForSummary.maxDirs ?? 20}`,
-    `确认：${CLEANUP_CONFIRM_LABELS[cleanupForSummary.confirmMode ?? "none"] ?? cleanupForSummary.confirmMode}`,
-  ].join(" · ");
 
   const toggleAccount = (accountName: string) => {
     setSelectedAccounts(prev =>
@@ -391,11 +429,9 @@ export default function SettingsPage() {
       account: newMappingAccount !== "__all__" ? newMappingAccount : undefined,
       cloudPath: newCloudPath.trim(),
       localPath: newLocalPath.trim(),
-      mappingType: newMappingType,
     }]);
     setNewCloudPath("");
     setNewLocalPath("");
-    setNewMappingType("media");
   };
 
   const removePathMapping = (index: number) => {
@@ -508,7 +544,7 @@ export default function SettingsPage() {
           enabled: monitorEnabled,
           accounts: selectedAccounts,
           pollInterval,
-          pathMappings,
+          pathMappings: pathMappings.map((mapping) => ({ ...mapping, mappingType: "media" })),
           removeEmptyDirs,
           eventTypes,
           minFileSize: minBytes,
@@ -600,62 +636,57 @@ export default function SettingsPage() {
 
   return (
     <>
-    <div className="mx-auto max-w-5xl space-y-4 sm:space-y-6 pb-24">
-      {/* Page Title */}
-      <div className="px-1">
-        <h1 className="text-xl sm:text-2xl font-semibold">设置</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          配置全局选项、生活事件监控与 STRM 清理
-        </p>
-      </div>
+    <div
+      className={
+        embedded
+          ? "space-y-4"
+          : "mx-auto max-w-5xl space-y-4 sm:space-y-6 pb-24"
+      }
+    >
+      {!embedded && (
+        <div className="px-1">
+          <h1 className="text-xl sm:text-2xl font-semibold">设置中心</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            基础设置与所有配置入口；对象相关配置仍在对应页面编辑。
+          </p>
+        </div>
+      )}
 
-      {/* Tab Bar - 移动端横向滚动不换行 */}
-      <div className="flex flex-nowrap gap-1 border-b border-border overflow-x-auto scrollbar-none -mx-1 px-1">
-        <button
-          onClick={() => setActiveTab("basic")}
-          className={`shrink-0 px-2.5 sm:px-4 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
-            activeTab === "basic"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Settings className="inline-block h-4 w-4 mr-1" />
-          基础设置
-          {activeTab === "basic" && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
-          )}
-        </button>
-        <button
-          onClick={() => setActiveTab("monitor")}
-          className={`shrink-0 px-2.5 sm:px-4 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
-            activeTab === "monitor"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <LifeBuoy className="inline-block h-4 w-4 mr-1" />
-          生活事件
-          {activeTab === "monitor" && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
-          )}
-        </button>
-        <button
-          onClick={() => setActiveTab("cleanup")}
-          className={`shrink-0 px-2.5 sm:px-4 py-2 text-sm font-medium transition-colors relative whitespace-nowrap ${
-            activeTab === "cleanup"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Eraser className="inline-block h-4 w-4 mr-1" />
-          STRM清理
-          {activeTab === "cleanup" && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground" />
-          )}
-        </button>
-      </div>
+      {activeTab === "basic" && (
+        <section className="border rounded-md p-3 sm:p-5 space-y-3">
+          <div>
+            <h2 className="text-base font-medium">配置索引</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              清理、监控、通知与安全的编辑入口集中在这里，不用再猜设置藏在哪。
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {CONFIG_ENTRIES.map((entry) => {
+              const Icon = entry.icon;
+              return (
+                <Link
+                  key={entry.title}
+                  to={entry.to}
+                  className="group flex items-start gap-2.5 rounded-md border p-3 transition-colors hover:bg-muted/50"
+                >
+                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1 text-sm font-medium">
+                      {entry.title}
+                      <ArrowRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {entry.description}
+                    </p>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
-      {/* Tab 1: 基础设置 */}
+      {/* 基础设置（单页；Tab 仅用于真正的平级视图） */}
       {activeTab === "basic" && (
         <BasicSettingsTab
           data={data}
@@ -685,7 +716,7 @@ export default function SettingsPage() {
         />
       )}
 
-      {/* Tab 2: 生活事件 */}
+      {/* 生活事件配置（仅由 /life-events?tab=config 内嵌渲染） */}
       {activeTab === "monitor" && (
         <MonitorSettingsTab
           monitorEnabled={monitorEnabled}
@@ -713,8 +744,6 @@ export default function SettingsPage() {
           setPathMappings={setPathMappings}
           newMappingAccount={newMappingAccount}
           setNewMappingAccount={setNewMappingAccount}
-          newMappingType={newMappingType}
-          setNewMappingType={setNewMappingType}
           newCloudPath={newCloudPath}
           setNewCloudPath={setNewCloudPath}
           newLocalPath={newLocalPath}
@@ -736,25 +765,6 @@ export default function SettingsPage() {
           onSave={onSave}
           handleStartMonitor={handleStartMonitor}
         />
-      )}
-
-      {/* Tab 3: STRM清理 */}
-      {activeTab === "cleanup" && (
-        <div className="space-y-6">
-          <CleanupPolicyCard
-            data={data}
-            setData={setData}
-            saving={saving}
-            onSave={onSaveCleanupPolicy}
-          />
-          <section className="border rounded-md p-3 sm:p-5 space-y-5">
-            <div>
-              <h2 className="text-base font-medium">STRM 清理</h2>
-              <p className="text-xs text-muted-foreground mt-1">扫描本地与网盘的一致性，清理失效 STRM</p>
-            </div>
-            <StrmCleanupCard policySummary={cleanupPolicySummary} />
-          </section>
-        </div>
       )}
 
     </div>

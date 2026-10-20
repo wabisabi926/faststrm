@@ -1,11 +1,7 @@
-export type PathMappingType = "media" | "transfer" | "unrecognized";
-
 export type PathMapping = {
   account?: string;
   cloudPath: string;
   localPath: string;
-  /** 生活事件映射类型：media=媒体库；transfer=整理目录；unrecognized=未识别目录 */
-  mappingType?: PathMappingType;
 };
 
 export type LifeMonitorConfig = {

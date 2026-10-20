@@ -68,7 +68,7 @@ export function ActionsCell({
         title={
           isStarting ? `${STATUS_LABELS.starting}...` :
           task.status === "processing" ? "任务运行中" :
-          isAccountBusy(task.account) ? `账户 ${task.account} 有任务正在运行` :
+          isAccountBusy(task.account) ? `账号 ${task.account} 有任务正在运行` :
           "开始任务"
         }
       >

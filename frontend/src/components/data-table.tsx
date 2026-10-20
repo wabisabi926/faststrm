@@ -19,12 +19,19 @@ import {
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
+  align?: "left" | "center"
 }
 
 export function DataTable<TData, TValue>({
   columns,
   data,
+  align = "left",
 }: DataTableProps<TData, TValue>) {
+  // 居中时同时处理直接子级 flex 容器，否则 flex 内容仍会靠左
+  const alignClass =
+    align === "center"
+      ? "text-center [&>div]:justify-center [&>div]:items-center"
+      : ""
   const table = useReactTable({
     data,
     columns,
@@ -39,7 +46,11 @@ export function DataTable<TData, TValue>({
             <TableRow key={headerGroup.id}>
               {headerGroup.headers.map((header) => {
                 return (
-                  <TableHead key={header.id} style={{ width: header.column.columnDef.size }}>
+                  <TableHead
+                    key={header.id}
+                    style={{ width: header.column.columnDef.size }}
+                    className={alignClass}
+                  >
                     {header.isPlaceholder
                       ? null
                       : flexRender(
@@ -60,7 +71,11 @@ export function DataTable<TData, TValue>({
                 data-state={row.getIsSelected() && "selected"}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id} style={{ width: cell.column.columnDef.size }}>
+                  <TableCell
+                    key={cell.id}
+                    style={{ width: cell.column.columnDef.size }}
+                    className={alignClass}
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
                 ))}

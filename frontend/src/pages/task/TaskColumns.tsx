@@ -6,6 +6,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import type { MutableRefObject } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { type Task, ACCOUNT_STYLES } from "./types";
 import type { AccountBrief, TaskDisplayStatus } from "./useTasks";
 import { StatusCell } from "./StatusCell";
@@ -27,6 +28,8 @@ export interface TaskColumnsCallbacks {
   fetchTasks: () => void;
   clearDirectory: (targetPath: string) => void;
   onDeleteTask: (task: Task) => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
 }
 
 export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Task>[] {
@@ -44,9 +47,26 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     fetchTasks,
     clearDirectory,
     onDeleteTask,
+    selectedIds,
+    onToggleSelect,
   } = callbacks;
 
   return [
+    {
+      id: "select",
+      header: () => null,
+      size: 36,
+      cell: ({ row }) => {
+        const task = row.original;
+        return (
+          <Checkbox
+            checked={selectedIds.has(task.id)}
+            onCheckedChange={() => onToggleSelect(task.id)}
+            aria-label={`选择任务 ${task.id}`}
+          />
+        );
+      },
+    },
     {
       accessorKey: "id",
       header: "任务ID",
@@ -64,7 +84,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
     },
     {
       accessorKey: "account",
-      header: "账户",
+      header: "账号",
       size: 100,
       cell: ({ row }) => {
         const task = row.original;

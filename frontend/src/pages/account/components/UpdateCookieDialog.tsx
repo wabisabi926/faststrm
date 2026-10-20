@@ -73,7 +73,7 @@ export function UpdateCookieDialog({ accountName, trigger, onSuccess }: UpdateCo
         {trigger ?? (
           <Button variant="outline" size="sm" className="h-7 text-xs">
             <RefreshCw className="w-3 h-3 mr-1" />
-            更新Cookie
+            更新 Cookie
           </Button>
         )}
       </DialogTrigger>
@@ -82,7 +82,7 @@ export function UpdateCookieDialog({ accountName, trigger, onSuccess }: UpdateCo
         <DialogHeader>
           <DialogTitle>更新 Cookie - {accountName}</DialogTitle>
           <DialogDescription>
-            账户 Cookie 已失效，请使用 115 客户端扫码重新登录以获取新 Cookie
+            账号 Cookie 已失效，请使用 115 客户端扫码重新登录以获取新 Cookie
           </DialogDescription>
         </DialogHeader>
 
@@ -97,7 +97,7 @@ export function UpdateCookieDialog({ accountName, trigger, onSuccess }: UpdateCo
           <Alert className="border-green-200 bg-green-50">
             <CheckCircle className="h-4 w-4 text-green-600" />
             <AlertDescription className="text-green-800">
-              Cookie 更新成功！正在重新检测账户状态...
+              Cookie 更新成功！正在重新检测账号状态...
             </AlertDescription>
           </Alert>
         )}

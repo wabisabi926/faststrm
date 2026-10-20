@@ -39,14 +39,14 @@ export function AdvancedStrmSettings({
       </button>
       {open && (
         <div className="space-y-4 pt-1">
-          {/* Strm 前缀 */}
+          {/* STRM 前缀 */}
           <FormField
             control={control}
             name="strmPrefix"
             render={({ field }) => (
               <FormItem>
-                <HelpLabel help="覆盖全局 Strm 前缀设置，留空使用全局默认">
-                  Strm 前缀
+                <HelpLabel help="覆盖全局 STRM 前缀设置，留空使用全局默认">
+                  STRM 前缀
                 </HelpLabel>
                 <FormControl>
                   <Input {...field} placeholder="留空使用全局默认前缀" className="flex-1" />

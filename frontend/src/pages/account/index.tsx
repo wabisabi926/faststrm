@@ -1,6 +1,7 @@
 import { DataTable } from "@/components/data-table";
 import { AddAccountDialog } from "./components/AddAccountDialog";
 import { UpdateCookieDialog } from "./components/UpdateCookieDialog";
+import { AccountHealthPanel } from "./AccountHealthPanel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,7 +29,11 @@ import {
   AlertTriangle,
   HelpCircle,
   RefreshCw,
-  Loader2
+  Loader2,
+  Copy,
+  Eye,
+  EyeOff,
+  ShieldCheck
 } from "lucide-react";
 
 export type Account = {
@@ -72,7 +77,44 @@ export default function AccountPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<string | null>(null);
   // 删除被引用账号时，后端返回 409 + 引用详情；非空表示当前弹窗处于「二次确认强制删除」状态
   const [pendingDeleteRefs, setPendingDeleteRefs] = useState<PendingDeleteRefs | null>(null);
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const isMobile = useIsMobile();
+
+  const toggleReveal = (key: string) => {
+    setRevealed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const maskSecret = (value?: string) => {
+    if (!value) return "-";
+    if (value.length <= 16) return "••••••••";
+    return `${value.slice(0, 8)}…${value.slice(-6)}`;
+  };
+
+  const copyText = async (text: string, label: string) => {
+    if (!window.confirm(`复制${label}到剪贴板？`)) return;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      toast.success(`${label}已复制`);
+    } catch {
+      toast.error(`${label}复制失败`);
+    }
+  };
 
   const fetchAccounts = useCallback(async () => {
     try {
@@ -80,7 +122,7 @@ export default function AccountPage() {
       const res = await axiosInstance.get("/api/account");
       setData(res.data);
     } catch {
-      toast.error("获取账户列表失败");
+      toast.error("获取账号列表失败");
     } finally {
       setIsLoading(false);
     }
@@ -99,7 +141,7 @@ export default function AccountPage() {
       }
       setStatusMap(map);
     } catch {
-      toast.error("检测账户状态失败");
+      toast.error("检测账号状态失败");
     } finally {
       setIsCheckingStatus(false);
     }
@@ -146,7 +188,7 @@ export default function AccountPage() {
   const columns: ColumnDef<Account>[] = [
     {
       accessorKey: "name",
-      header: "账户名称",
+      header: "账号名称",
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <User className="w-4 h-4 text-muted-foreground" />
@@ -156,7 +198,7 @@ export default function AccountPage() {
     },
     {
       accessorKey: "accountType",
-      header: "账户类型",
+      header: "账号类型",
       cell: ({ row }) => (
         <Badge variant="outline" className="text-xs">
           {row.original.accountType}
@@ -171,36 +213,99 @@ export default function AccountPage() {
         
         if (account.accountType === "115") {
           const cookie = account.cookie ?? "";
+          const revealKey = `${account.name}:cookie`;
+          const isRevealed = revealed.has(revealKey);
           return (
-            <div className="flex items-center gap-2">
-              <Key className="w-4 h-4 text-muted-foreground" />
-              <code 
-                className="text-xs bg-muted px-2 py-1 rounded max-w-xs truncate block"
-              >
-                {cookie || "-"}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Key className="w-4 h-4 text-muted-foreground shrink-0" />
+              <code className="text-xs bg-muted px-2 py-1 rounded max-w-[190px] truncate block">
+                {isRevealed ? cookie || "-" : maskSecret(cookie)}
               </code>
+              {cookie && (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    onClick={() => toggleReveal(revealKey)}
+                    title={isRevealed ? "隐藏 Cookie" : "显示 Cookie"}
+                    aria-label={isRevealed ? "隐藏 Cookie" : "显示 Cookie"}
+                  >
+                    {isRevealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    onClick={() => void copyText(cookie, "Cookie")}
+                    title="复制 Cookie"
+                    aria-label="复制 Cookie"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              )}
             </div>
           );
         } else if (account.accountType === "openlist") {
+          const revealKey = `${account.name}:password`;
+          const isRevealed = revealed.has(revealKey);
           return (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs">
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center justify-center gap-2 text-xs">
                 <User className="w-3 h-3 text-muted-foreground" />
                 <span className="text-muted-foreground">用户:</span>
                 <code className="bg-muted px-1 rounded">{account.account}</code>
               </div>
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex items-center justify-center gap-2 text-xs">
                 <Key className="w-3 h-3 text-muted-foreground" />
                 <span className="text-muted-foreground">密码:</span>
-                <code className="bg-muted px-1 rounded">
-                  {account.password || "********"}
-                </code>
+                <code className="bg-muted px-1 rounded">{isRevealed ? account.password || "-" : maskSecret(account.password)}</code>
+                {account.password && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0"
+                      onClick={() => toggleReveal(revealKey)}
+                      title={isRevealed ? "隐藏密码" : "显示密码"}
+                      aria-label={isRevealed ? "隐藏密码" : "显示密码"}
+                    >
+                      {isRevealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0"
+                      onClick={() => void copyText(account.password || "", "密码")}
+                      title="复制密码"
+                      aria-label="复制密码"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                )}
               </div>
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex items-center justify-center gap-2 text-xs">
                 <span className="text-muted-foreground">URL:</span>
-                <code className="bg-muted px-1 rounded text-blue-500">
-                  {account.url}
-                </code>
+                <code className="bg-muted px-1 rounded text-blue-500">{account.url}</code>
+                {account.url && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    onClick={() => void copyText(account.url || "", "URL")}
+                    title="复制 URL"
+                    aria-label="复制 URL"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </div>
             </div>
           );
@@ -242,7 +347,7 @@ export default function AccountPage() {
               trigger={
                 <Button variant="outline" size="sm" className="h-7 text-xs">
                   <RefreshCw className="w-3 h-3 mr-1" />
-                  更新Cookie
+                  更新 Cookie
                 </Button>
               }
             />
@@ -310,7 +415,7 @@ export default function AccountPage() {
                   variant="ghost" 
                   size="sm"
                   className="h-8 w-8 p-0"
-                  title="编辑账户"
+                  title="编辑账号"
                 >
                   <Edit className="w-4 h-4" />
                 </Button>
@@ -321,7 +426,7 @@ export default function AccountPage() {
               variant="ghost"
               size="sm"
               className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-500/10"
-              title="删除账户"
+              title="删除账号"
               onClick={() => {
                 setPendingDeleteRefs(null);
                 setDeleteDialogOpen(account.name);
@@ -367,12 +472,41 @@ export default function AccountPage() {
 
   const renderCredentials = (account: Account) => {
     if (account.accountType === "115") {
+      const cookie = account.cookie ?? "";
+      const revealKey = `${account.name}:cookie`;
+      const isRevealed = revealed.has(revealKey);
       return (
         <div className="flex items-center gap-1.5 min-w-0">
           <Key className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           <code className="text-xs bg-muted px-1.5 py-0.5 rounded truncate max-w-[180px]">
-            {account.cookie ? account.cookie.substring(0, 40) + "..." : "-"}
+            {isRevealed ? cookie || "-" : maskSecret(cookie)}
           </code>
+          {cookie && (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0"
+                onClick={() => toggleReveal(revealKey)}
+                title={isRevealed ? "隐藏 Cookie" : "显示 Cookie"}
+                aria-label={isRevealed ? "隐藏 Cookie" : "显示 Cookie"}
+              >
+                {isRevealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0"
+                onClick={() => void copyText(cookie, "Cookie")}
+                title="复制 Cookie"
+                aria-label="复制 Cookie"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            </>
+          )}
         </div>
       );
     }
@@ -411,7 +545,7 @@ export default function AccountPage() {
                   trigger={
                     <Button variant="outline" size="sm" className="h-6 text-xs px-2">
                       <RefreshCw className="w-3 h-3 mr-1" />
-                      更新Cookie
+                      更新 Cookie
                     </Button>
                   }
                 />
@@ -449,8 +583,8 @@ export default function AccountPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold">账户管理</h1>
-          <p className="text-muted-foreground mt-1 text-sm">管理你的网盘账户信息</p>
+          <h1 className="text-xl sm:text-2xl font-semibold">账号管理</h1>
+          <p className="text-muted-foreground mt-1 text-sm">管理你的网盘账号信息</p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -467,25 +601,37 @@ export default function AccountPage() {
             trigger={
               <Button size="sm">
                 <Plus className="w-4 h-4 mr-1" />
-                新增账户
+                新增账号
               </Button>
             }
           />
         </div>
       </div>
-      
+
+      <div className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+        <span>凭据默认脱敏展示；点击眼睛临时显示，复制前会二次确认，避免误粘贴到聊天或日志。</span>
+      </div>
+
+      {data.length > 0 && (
+        <AccountHealthPanel
+          accountNames={data.map((account) => account.name)}
+          statusMap={statusMap}
+        />
+      )}
+
       {data.length === 0 ? (
         <div className="text-center py-12 bg-muted/30 rounded-lg border border-border">
           <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground" />
-          <h3 className="mt-4 text-lg font-medium">暂无账户</h3>
-          <p className="mt-2 text-muted-foreground">点击上方按钮添加你的第一个账户</p>
+          <h3 className="mt-4 text-lg font-medium">暂无账号</h3>
+          <p className="mt-2 text-muted-foreground">点击上方按钮添加你的第一个账号</p>
         </div>
       ) : isMobile ? (
         <div className="space-y-2.5">
           {data.map((account) => renderMobileCard(account))}
         </div>
       ) : (
-        <DataTable columns={columns} data={data} />
+        <DataTable columns={columns} data={data} align="center" />
       )}
 
       {/* Delete confirmation dialog（被引用时二次确认强制删除） */}
@@ -498,16 +644,16 @@ export default function AccountPage() {
       >
         <DialogContent className="max-w-[95vw] sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>{pendingDeleteRefs ? "账户仍被引用" : "确认删除"}</DialogTitle>
+            <DialogTitle>{pendingDeleteRefs ? "账号仍被引用" : "确认删除"}</DialogTitle>
             <DialogDescription>
               {pendingDeleteRefs
-                ? `账户 "${pendingDeleteRefs.name}" 仍被以下配置引用。删除后相关 STRM 将无法播放、生活监控会持续报错。`
-                : `你确定要删除账户 "${deleteDialogOpen}" 吗？此操作无法撤销。`}
+                ? `账号 "${pendingDeleteRefs.name}" 仍被以下配置引用。删除后相关 STRM 将无法播放、生活监控会持续报错。`
+                : `你确定要删除账号 "${deleteDialogOpen}" 吗？此操作无法撤销。`}
               {!pendingDeleteRefs && (
                 <>
                   <br />
                   <span className="text-sm text-gray-500 mt-2 block">
-                    账户类型: {data.find((a) => a.name === deleteDialogOpen)?.accountType}
+                    账号类型: {data.find((a) => a.name === deleteDialogOpen)?.accountType}
                   </span>
                 </>
               )}

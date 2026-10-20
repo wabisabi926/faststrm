@@ -1,10 +1,10 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Settings, Filter } from "lucide-react";
+import { ChevronDown, Settings, Filter } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -22,6 +22,44 @@ import type {
   MountDryRunData,
   MountSyncApplyData,
 } from "./types";
+
+/** 低频/进阶配置默认折叠，减少基础设置页的纵向噪音。 */
+function CollapsibleSection({
+  title,
+  description,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  description?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="border rounded-md">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-start gap-3 p-3 text-left sm:p-5"
+      >
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-medium">{title}</h2>
+          {description && (
+            <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+          )}
+        </div>
+        <ChevronDown
+          className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      {open && <div className="space-y-5 border-t p-3 sm:p-5">{children}</div>}
+    </section>
+  );
+}
 
 export interface BasicSettingsTabProps {
   data: SettingsType;
@@ -104,7 +142,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             </p>
           </div>
           <div className="space-y-3">
-            <Label>Strm 文件扩展名</Label>
+            <Label>STRM 文件扩展名</Label>
             <Input
               value={strmExtensionsInput}
               onChange={(e) => setStrmExtensionsInput(e.target.value)}
@@ -115,7 +153,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             </p>
           </div>
           <div className="space-y-3 md:col-span-2">
-            <Label>下载文件扩展名</Label>
+            <Label>附带下载的元数据扩展名</Label>
             <Input
               value={downloadExtensionsInput}
               onChange={(e) => setDownloadExtensionsInput(e.target.value)}
@@ -138,7 +176,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
         </div>
 
         <div className="space-y-3">
-          <Label>Strm 前缀</Label>
+          <Label>STRM 前缀</Label>
           <Input
             value={data.strmPrefix || ""}
             onChange={(e) =>
@@ -151,9 +189,12 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </p>
         </div>
 
-        <div className="space-y-3 pt-2 border-t">
-          <Label>URL 编码</Label>
-          <div className="flex items-start gap-2">
+        <details className="group space-y-3 pt-2 border-t">
+          <summary className="flex cursor-pointer list-none items-center gap-2">
+            <span className="text-sm font-medium">高级：URL 编码</span>
+            <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="flex items-start gap-2 pt-2">
             <Checkbox
               id="enable-path-encoding"
               checked={pathEncodingEnabled}
@@ -171,7 +212,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               </p>
             </div>
           </div>
-        </div>
+        </details>
 
         {/* 全局文件过滤 */}
         <div className="space-y-4 pt-4 border-t">
@@ -231,15 +272,20 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
         </div>
 
         {/* STRM 路由策略配置（始终生效，后端智能路由自动决定 proxy/redirect） */}
-        <div className="space-y-4 pt-4 border-t">
-          <div className="flex items-center gap-2">
+        <details className="group space-y-3 pt-4 border-t">
+          <summary className="flex cursor-pointer list-none items-center gap-2">
             <Settings className="w-4 h-4 text-muted-foreground" />
             <h3 className="text-sm font-medium">STRM 路由策略</h3>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            仅作用于 STRM 端点层（直接打开 .strm 文件的场景）。默认 302 redirect 直连 CDN（不走本机带宽），
-            仅当下方「强制代理 UA 标识」匹配时才强制走 proxy，其余（含 ISO 原盘）均直连。
-          </p>
+            <span className="hidden text-xs text-muted-foreground sm:inline">
+              高级：强制代理 UA / 并发上限 / 重定向检测
+            </span>
+            <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="space-y-4 pt-2">
+            <p className="text-xs text-muted-foreground">
+              仅作用于 STRM 端点层（直接打开 .strm 文件的场景）。默认 302 redirect 直连 CDN（不走本机带宽），
+              仅当下方「强制代理 UA 标识」匹配时才强制走 proxy，其余（含 ISO 原盘）均直连。
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="space-y-3">
                 <Label>强制代理 UA 标识</Label>
@@ -264,11 +310,11 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  超过自动切 redirect
+                  超过后自动切换为 302 重定向
                 </p>
               </div>
               <div className="space-y-3">
-                <Label>Redirect 检测超时（ms）</Label>
+                <Label>重定向检测超时（毫秒）</Label>
                 <Input
                   type="number"
                   min="500"
@@ -280,12 +326,12 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  失败降级 proxy
+                  检测失败时回退到代理
                 </p>
               </div>
             </div>
             <div className="space-y-3">
-              <Label>强制代理格式</Label>
+              <Label>强制代理的容器/扩展名</Label>
               <Input
                 value={forceProxyFormatsInput}
                 onChange={(e) => setForceProxyFormatsInput(e.target.value)}
@@ -296,14 +342,14 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               </p>
             </div>
           </div>
+        </details>
       </section>
 
       {/* 下载限流配置 */}
-      <section className="border rounded-md p-3 sm:p-5 space-y-5">
-        <div>
-          <h2 className="text-base font-medium">下载限流配置</h2>
-          <p className="text-xs text-muted-foreground mt-1">控制 115 API 与下载的并发上限</p>
-        </div>
+      <CollapsibleSection
+        title="下载限流配置"
+        description="控制 115 API 与下载的并发上限"
+      >
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           <div className="space-y-3">
             <Label>链接获取每秒请求数</Label>
@@ -323,7 +369,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               }
               placeholder="2"
             />
-            <p className="text-xs text-muted-foreground">linkMaxPerSecond</p>
+            <p className="text-xs text-muted-foreground">取链请求速率上限</p>
           </div>
           <div className="space-y-3">
             <Label>链接获取并发数</Label>
@@ -343,7 +389,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               }
               placeholder="10"
             />
-            <p className="text-xs text-muted-foreground">linkMaxConcurrent</p>
+            <p className="text-xs text-muted-foreground">同时获取直链的并发上限</p>
           </div>
           <div className="space-y-3">
             <Label>文件下载并发数</Label>
@@ -363,7 +409,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               }
               placeholder="2"
             />
-            <p className="text-xs text-muted-foreground">downloadMaxConcurrent</p>
+            <p className="text-xs text-muted-foreground">同时下载文件的并发上限</p>
           </div>
         </div>
 
@@ -399,16 +445,13 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </p>
         </div>
 
-      </section>
+      </CollapsibleSection>
 
       {/* 115 API 限流（重启生效） */}
-      <section className="border rounded-md p-3 sm:p-5 space-y-5">
-        <div>
-          <h2 className="text-base font-medium">115 API 限流（重启生效）</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            按「账号 × 用途」分桶，避免扫描与播放互相抢占配额。修改后需要重启服务才会重建令牌桶。
-          </p>
-        </div>
+      <CollapsibleSection
+        title="115 API 限流（重启生效）"
+        description="按「账号 × 用途」分桶，避免扫描与播放互相抢占配额。修改后需要重启服务才会重建令牌桶。"
+      >
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="space-y-2">
             <Label>常规 API（每分钟/账号）</Label>
@@ -456,7 +499,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             <p className="text-xs text-muted-foreground">事件轮询，默认 60</p>
           </div>
           <div className="space-y-2">
-            <Label>全局兜底（每分钟）</Label>
+            <Label>全局请求上限（每分钟）</Label>
             <Input
               type="number"
               min="1"
@@ -471,22 +514,23 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             <p className="text-xs text-muted-foreground">多账号叠加上限，默认 300</p>
           </div>
         </div>
-      </section>
+      </CollapsibleSection>
 
       <Separator />
 
-      <section className="space-y-4">
-        <h2 className="text-base font-medium">媒体挂载路径</h2>
+      <CollapsibleSection
+        title="高级维护：媒体挂载路径"
+        description="由系统自动计算并维护，通常无需手动修改；需要核对时展开。"
+      >
         <div className="grid grid-cols-1 gap-4">
           <div className="space-y-2 md:col-span-2">
             <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
               <div>
-                <Label>媒体挂载路径 (mediaMountPath)</Label>
+                <Label>媒体挂载路径</Label>
                 <p className="text-xs text-muted-foreground mt-1">
-                  由系统自动计算并维护（唯一事实来源 SSOT）：根据<span className="font-medium">全局 302 × 账号集</span>、
-                  <span className="font-medium">每个任务的 STRM 设置</span>、
-                  <span className="font-medium">生活事件监控</span> 全量收敛得到。
-                  不建议手工修改 settings.json。
+                  根据<span className="font-medium">全局 STRM 前缀</span>、
+                  <span className="font-medium">任务设置</span>和
+                  <span className="font-medium">生活事件监控</span>自动收敛得到，通常无需手动修改。
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -654,7 +698,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             </div>
           </div>
         </div>
-      </section>
+      </CollapsibleSection>
 
       <div className="pt-2 flex gap-2 items-center sticky bottom-0 bg-background/95 backdrop-blur-sm py-3 -mx-3 sm:-mx-4 md:-mx-6 px-3 sm:px-4 md:px-6 border-t">
         <Button disabled={saving} onClick={onSave} className="flex-1 sm:flex-initial">

@@ -26,7 +26,7 @@ export function TaskPageHeader({
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <h1 className="text-xl sm:text-2xl font-semibold break-words">任务管理</h1>
-        <p className="text-muted-foreground mt-1 text-sm break-words">管理和监控你的下载任务</p>
+        <p className="text-muted-foreground mt-1 text-sm break-words">管理和监控 STRM 生成与同步任务</p>
       </div>
       <div className="flex gap-2 flex-wrap">
         <Button
