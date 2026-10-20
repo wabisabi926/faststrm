@@ -67,7 +67,7 @@
 | ② | UA 命中 `forceProxyUaTokens` 列表 | **强制代理** | 这些客户端 302 + Range 配合会导致拖动进度条失败 |
 | ③ | 其他所有情况 | **默认 redirect** | 开箱即用，零中转 |
 
-> **配置化**：规则 ② 的 UA 列表可在 `settings.json → strm.forceProxyUaTokens` 自定义，默认 `["Infuse","VidHub","SenPlayer","SenPlayerHD"]`。
+> **配置化**：规则 ② 的 UA 列表可在 `settings.json → strm.forceProxyUaTokens` 自定义，默认空列表（不按 UA 强制代理）。
 
 ---
 
@@ -111,7 +111,7 @@
 |------|-----|
 | 容量 | 512 条 |
 | TTL | 5 分钟 |
-| Key | `{accountName}:{pickcode}`（不含 UA） |
+| Key | `{accountName}:{pickcode}\|{UA}`（含 UA） |
 | 用途 | 缓存 `getDownloadUrlWeb()` 结果，避免重复请求 115 接口 |
 
 ### reachableCache（可达性缓存）
@@ -203,9 +203,12 @@ http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&fi
 
 | 配置路径 | 默认值 | 说明 |
 |----------|--------|------|
-| `strm.forceProxyUaTokens` | `["Infuse","VidHub","SenPlayer","SenPlayerHD"]` | 强制代理 UA 列表 |
+| `strm.forceProxyUaTokens` | `[]` | 强制代理 UA 列表（留空 = 不按 UA 强制代理） |
+| `strm.forceProxyFormats` | `iso, bdmv, bdav, dvd, bluray, m2ts, ts, vob, ifo, bup` | Emby 反代层需要代理流的容器/扩展名 |
 | `strm.accountProxyConcurrencyLimit` | `8` | 单账号并发代理上限 |
 | `strm.redirectCheckTimeoutMs` | `5000` | HEAD 预检超时(ms) |
+
+> `forceProxyFormats` 只作用于 Emby 反代（`isSeekRequiredFormat`），不改变 `/api/strm` 端点默认 302 的行为。
 
 > 缓存策略常量（`URL_CACHE_TTL`/`URL_CACHE_SIZE`/`REACHABLE_CACHE_TTL`/`REACHABLE_CACHE_SIZE`）保持内部常量，不暴露给用户。
 > 所有配置修改后实时生效，无需重启容器。

@@ -88,7 +88,7 @@ func (c *CookieInspectSettings) EffectiveIntervalHours() int {
 // 网盘移走 11 个文件就会整批拒绝，自动清理基本失效；而单纯调大又失去防误删能力。
 type CleanupSettings struct {
 	// MaxThreshold 单次清理删除数绝对上限，超过则进入保护态
-	// 语义变更（v1.4.3）：由「硬拒绝阈值」改为「绝对上限」，默认 1000
+	// 语义变更（v1.5.0）：由「硬拒绝阈值」改为「绝对上限」，默认 1000
 	MaxThreshold int `json:"maxThreshold"`
 	// MaxRatio 单次清理删除比例上限（0-1），默认 0.10；<=0 时使用默认值
 	MaxRatio float64 `json:"maxRatio"`

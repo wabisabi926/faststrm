@@ -38,7 +38,7 @@ bash scripts/rebuild_strm.sh -w /path/to/your/strm/
 A: 登录后进入「设置」→ 修改密码。或直接编辑 `config/config.json`：
 
 - **修改**：登录后通过「设置」页面修改（自动写入 salt+SHA-256 哈希）
-- **重置为 admin**：将 `password` 改为明文 `admin`（代码对旧格式有明文兼容），重启后用 `admin/admin` 登录，再进「设置」修改密码
+- **重置为 admin**：将 `password` 改为明文 `admin`（代码对旧格式有明文兼容），重启后用 `admin/admin` 登录；v1.5.0 起会强制先修改密码
 - 修改后重启容器生效
 
 > ⚠️ 不要直接填纯 SHA-256 值（如 `8c6976e5...`），当前密码使用 salt+SHA-256 机制，纯哈希值无法通过验证。

@@ -19,9 +19,9 @@ import (
 
 // 以下变量通过 ldflags 在构建时注入：
 //
-//	go build -ldflags="-X 'main.version=v1.4.3' -X 'main.BuildDate=2026-10-19T00:00:00Z'"
+//	go build -ldflags="-X 'main.version=v1.5.0' -X 'main.BuildDate=2026-10-20T00:00:00Z'"
 var (
-	version   = "v1.4.3"
+	version   = "v1.5.0"
 	BuildDate = "unknown"
 )
 

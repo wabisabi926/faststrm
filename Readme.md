@@ -48,8 +48,8 @@ Telegram 用户群：[t.me/+J6csNlBG6q1iYjBl](https://t.me/+J6csNlBG6q1iYjBl) ·
 ## 📦 快速开始
 
 ```bash
-# 克隆（go 分支为准）
-git clone -b go https://github.com/wabisabi926/faststrm.git
+# 克隆（默认 main 分支）
+git clone https://github.com/wabisabi926/faststrm.git
 cd faststrm
 docker-compose up -d
 
@@ -69,7 +69,7 @@ docker run -d \
 
 启动后访问 `http://localhost:8090`，默认账号密码：**admin / admin**
 
-> ⚠️ 首次登录请立即修改默认密码！
+> ⚠️ v1.5.0 起首次登录会强制修改默认密码；未修改前所有受保护接口会被拒绝。
 
 ---
 
@@ -81,7 +81,7 @@ FastStrm 提供 3 种官方分发方式，任选其一：
 |:----:|----------|-----------------|
 | 🐳 **Docker**（最通用） | Linux / NAS / macOS / Windows，已有 Docker 环境 | `docker pull wabisabi926/faststrm:latest` |
 | 🐂 **飞牛 fNOS .fpk** | 飞牛 NAS（X86/ARM 机型），一键手动安装 | [GitHub Releases → 选择 `faststrm-{amd64\|arm64}-1.0.0.fpk`](https://github.com/wabisabi926/faststrm/releases) |
-| 🖥️ **源码 / 单二进制** | 想自己编译或跑在普通 Linux 主机 | `git clone -b go https://github.com/wabisabi926/faststrm && cd faststrm && go build ./cmd/server/` |
+| 🖥️ **源码 / 单二进制** | 想自己编译或跑在普通 Linux 主机 | `git clone https://github.com/wabisabi926/faststrm && cd faststrm && go build ./cmd/server/` |
 
 > 📘 飞牛打包、定制、运行目录和排错详见 [docs/飞牛打包部署.md](docs/飞牛打包部署.md)
 
@@ -89,7 +89,7 @@ FastStrm 提供 3 种官方分发方式，任选其一：
 
 ## 🏗️ 架构说明
 
-FastStrm v1.1.3 采用纯 Go 架构：
+FastStrm v1.5.0 采用纯 Go 架构：
 
 ```
 ┌─────────────────────────────────────────────────┐

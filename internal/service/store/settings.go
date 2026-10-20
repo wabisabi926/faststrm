@@ -183,7 +183,7 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 			changed = true
 		}
 	}
-	// v1.4.3 清理阈值升级：由「单阈值 10 个」改为「比例 + 绝对 + 目录数」三重保护。
+	// v1.5.0 清理阈值升级：由「单阈值 10 个」改为「比例 + 绝对 + 目录数」三重保护。
 	//
 	// 迁移条件刻意收紧：只有 MaxRatio 尚未出现（==0，说明从未升级过）
 	// 且 MaxThreshold 仍是旧默认 10 时才升级；用户自己调过的值一律不动。
@@ -225,7 +225,7 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		out.CleanupDefaultsV3 = true
 		changed = true
 	}
-	// v1.4.3 强制代理格式改为可配置：旧配置没有该字段，补默认值写回，
+	// v1.5.0 强制代理格式改为可配置：旧配置没有该字段，补默认值写回，
 	// 让用户能在 settings.json 里看到并调整（例如把 .ts 移除）。
 	if len(out.Strm.ForceProxyFormats) == 0 {
 		out.Strm.ForceProxyFormats = def.Strm.ForceProxyFormats

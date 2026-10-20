@@ -17,10 +17,11 @@ STRM 生成是 Fast Strm 的核心功能：扫描 115 网盘目录树，为每�
 | 本地目录 | ✓ | STRM 保存子目录，如 `电影` |
 | STRM 前缀 | - | 任务级覆盖（留空用全局） |
 | 定时任务 | - | cron 表达式，如 `0 3 * * *` |
-| 删除多余文件 | - | 远端不存在时删本地 STRM |
 | 是否生成 STRM | - | 关闭则只下载文件不生成 STRM |
 | 下载扩展名 | - | 任务级覆盖 |
 | STRM 扩展名 | - | 任务级覆盖 |
+
+> 任务级「删除多余文件」已下线；孤儿清理统一由全局「孤儿 STRM 清理」+ 托管所有权处理，见 [STRM 清理对账](STRM-清理对账)。
 
 [📸 此处需截图：新建任务对话框]
 
@@ -55,14 +56,14 @@ STRM:  /电影/2024/星际穿越.iso.strm
 |------|------|------|
 | `{filename}` | 完整文件名（含扩展名） | `星际穿越.iso` |
 | `{stem}` | 去掉最后一个扩展名的文件名 | `星际穿越.iso`（iso 的 stem 保留 iso 后缀） |
-| `{ext}` | 扩展名（不含点） | `iso` |
+| `{ext}` | 扩展名（带点） | `.iso` |
 
 通过任务级「STRM 文件名模板」覆盖，或全局配置 `settings.json → strm.strmFilenameTemplate`。
 
 **v1.2.3+ 统一 STRM 模式**：
 - `strmPrefix = http://服务器:8090`（不含 `/api/strm`，前端自动追加）
 - STRM 内容：`http://服务器:8090/api/strm?account=xxx&pickcode=xxx&file_name=xxx`
-- 播放时 faststrm 接收请求 → 走[智能路由策略](STRM-路由策略)决策（ISO 自动 proxy，mkv/mp4 默认 redirect）
+- 播放时 faststrm 接收请求 → 走[智能路由策略](STRM-路由策略)决策；STRM 层默认 302 直连 CDN，原盘格式的代理流处理在 Emby 反代层
 - **依赖 pickcode**：必须有 `pickcode` 才能生成有效 STRM
 
 > **v1.2.3 架构变更**：旧版 `enable302=false` 的 OpenList 直链模式已废弃（不再生成非 query URL）。所有 STRM 统一经过 faststrm 路由层，获得 force-proxy、并发限流、可达性预检等能力。
@@ -118,24 +119,24 @@ cron 表达式示例：
 ```
 任务触发
   ↓
-suspendMonitorForFullScan(account)  暂停生活监控（防竞争）
+账号探测 + 读取任务/全局设置
   ↓
-递归扫描云端目录
+扫描云端（cur=0 全量清单，异常回退逐目录）
   ↓
-对比本地 STRM + filePathDb
+孤儿预扫清理（托管核对 + 云端复核 + 回收站）
   ↓
-新增：生成 STRM + 写 DB
-删除：直接物理删除 + 删 DB
-更新：覆盖 STRM + 更新 DB
+生成/更新 STRM + 托管登记
   ↓
-清理空目录（removeEmptyParents）
+下载关联文件（可选，幂等）
   ↓
-clearMonitorSuspend(account)  恢复生活监控
+写回 filePathDb
   ↓
 Emby 媒体库刷新（防抖）
   ↓
 TG 通知
 ```
+
+> 任务与生活事件共用同一套 STRM 内容生成（`strm.BuildContent`）与托管登记；清理不会直接物理删除，详见 [STRM 清理对账](STRM-清理对账)。
 
 ## pickcode 获取机制
 
@@ -152,15 +153,15 @@ TG 通知
 
 ### 全量扫描生成
 
-全量扫描时 `exportDirParse` 只返回文件列表（不含 pickcode），需要从 `filePathDb` 反查：
+全量扫描走 115 目录递归清单（`cur=0`）或逐目录扫描，清单条目直接包含 `pick_code`；不再需要 `exportDirParse`，也不需要从 `filePathDb` 反查。
 
 ```
-全量扫描 → getFilePathEntryByPath(account, cloudPath)
-         → 命中：DB 已有记录 → 取 pickcode → 生成 STRM
-         → 未命中：跳过生成，输出警告日志
+全量扫描 → 云端条目 pick_code
+         → 生成 STRM
+         → 写入 filePathDb（供播放/删除/移动反查）
 ```
 
-**首次全量扫描**时 DB 可能为空，`pickcode` 无法获取。执行一次全量扫描后，后续扫描可正常反查。
+只有 pickcode 缺失/非法的文件会跳过，并在任务日志中输出原因。首次全量扫描即可正常生成，无需先跑一轮补 DB。
 
 ### 兜底保护
 
@@ -185,17 +186,19 @@ http://192.168.1.100:8090/api/strm?account=我的115&pickcode=xxxx&file_name=小
 
 ## URL 编码
 
-STRM 内容统一使用 pickcode 式 URL，`account` 与 `file_name` 参数**始终**做百分号编码，
-无需也无法关闭（原 `enablePathEncoding` 开关已废弃，保留字段仅为兼容旧配置）。
+STRM 内容统一使用 pickcode 式 URL，`account` 与 `file_name` 参数默认做百分号编码（空格为 `%20`，不是 `+`）。
 
-## 删除多余文件
+设置页「URL 编码」开关（`enablePathEncoding`）默认开启。关闭后参数原样写入 URL；文件名含 `#`、`&`、`?`、空格等字符时会破坏 URL 解析，仅在确有需要时关闭。
 
-已下线。路径级清理被「孤儿 STRM 清理」取代：按 STRM 内容中的 pickcode 与云端清单对账，
-在设置页「孤儿 STRM 清理」中选择策略（`download.fullSyncCleanupOrphans`）：
+## 孤儿清理
 
-- `off`：不处理
-- `mark_only`：只记录，不删除
-- `auto_clean`：自动清理（推荐，超阈值先进入待确认队列）
+任务执行时的孤儿清理统一走托管所有权：
+
+- 只处理已在 `managed_strms` 登记的 STRM
+- 删除前复核文件指纹与云端状态
+- 删除移入 `.faststrm-trash` 回收站，保留 7 天
+
+详细规则、阈值与恢复方式见 [STRM 清理对账](STRM-清理对账)。
 
 ## 性能参考
 

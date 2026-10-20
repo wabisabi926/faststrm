@@ -13,8 +13,8 @@ type HealthResponse struct {
 }
 
 // appVersion 通过 ldflags 在构建时注入，默认值兜底。
-// 默认 v1.2.2：Emby for Kodi Gen 端点 ISO .strm 「没有兼容的流」修复版本。
-var appVersion = "v1.2.2"
+// 默认 v1.5.0：托管所有权、回收站、scan token 与删前云端复核版本。
+var appVersion = "v1.5.0"
 
 // SetVersion 由 main 在启动时注入当前构建版本，保证本地构建的 /api/health
 // 与启动日志一致；release 构建仍可通过 ldflags 直接覆盖 appVersion。
