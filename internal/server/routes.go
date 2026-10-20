@@ -234,6 +234,9 @@ func RegisterRoutes(
 		{Method: http.MethodGet, Path: "/api/strmCleanup/pending", Handler: corsJWT(handler.HandleStrmCleanupPendingListGET(strmCleanupDeps))},
 		{Method: http.MethodPost, Path: "/api/strmCleanup/pending/cancel", Handler: corsJWT(handler.HandleStrmCleanupPendingCancelPOST(strmCleanupDeps))},
 		{Method: http.MethodPost, Path: "/api/strmCleanup/pending/execute", Handler: corsJWT(handler.HandleStrmCleanupPendingExecutePOST(strmCleanupDeps))},
+		// 回收站：列出可恢复文件 / 恢复到原路径
+		{Method: http.MethodGet, Path: "/api/strmCleanup/trash", Handler: corsJWT(handler.HandleStrmTrashListGET(strmCleanupDeps))},
+		{Method: http.MethodPost, Path: "/api/strmCleanup/trash/restore", Handler: corsJWT(handler.HandleStrmTrashRestorePOST(strmCleanupDeps))},
 	})
 
 	// ==================== 阶段6: 生活监控 + 事件日志 ====================

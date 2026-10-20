@@ -10,6 +10,24 @@ export type StrmPreviewResponse = {
   error?: string;
 };
 
+// 回收站条目（清理时移入 .faststrm-trash，保留 7 天）
+export type TrashEntry = {
+  trashPath: string;
+  originalPath: string;
+  root: string;
+  batch: string;
+  size: number;
+  modTime: number;
+  isStrm: boolean;
+};
+
+export type TrashListResponse = {
+  entries: TrashEntry[];
+  total: number;
+  roots: string[];
+  truncated?: boolean;
+};
+
 export type StaleStrm = {
   relPath: string;
   fullPath?: string;

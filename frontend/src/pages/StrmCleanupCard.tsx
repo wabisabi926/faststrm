@@ -31,6 +31,7 @@ import { CleanupToolbar } from "./strm-cleanup/CleanupToolbar";
 import { CleanupLogPanel } from "./strm-cleanup/CleanupLogPanel";
 import { MappingDetailList } from "./strm-cleanup/MappingDetailList";
 import { PendingBatchesSection } from "./strm-cleanup/PendingBatchesSection";
+import { TrashSection } from "./strm-cleanup/TrashSection";
 
 export function StrmCleanupCard() {
   // 对话框开关由组件层管理
@@ -265,6 +266,9 @@ export function StrmCleanupCard() {
 
             {/* 待确认删除批次（清理转入待确认队列后在此执行/取消） */}
             <PendingBatchesSection />
+
+            {/* 回收站：清理时移入 .faststrm-trash，可一键恢复 */}
+            <TrashSection />
 
             {/* 路径映射扫描明细 */}
             <MappingDetailList mappings={scanResult.mappings} />
