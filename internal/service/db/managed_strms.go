@@ -145,25 +145,25 @@ func MarkManagedStrmDeleted(db *sql.DB, localPath string) error {
 	return err
 }
 
-// ListPickcodesByAccount 一次加载某账号的全部 pickcode，供历史纳管批量匹配。
-func ListPickcodesByAccount(database *sql.DB, account string) (map[string]struct{}, error) {
-	out := make(map[string]struct{})
+// ListPickcodePathsByAccount 一次加载某账号的 pickcode → 云端路径，供历史纳管批量匹配。
+func ListPickcodePathsByAccount(database *sql.DB, account string) (map[string]string, error) {
+	out := make(map[string]string)
 	if database == nil || account == "" {
 		return out, nil
 	}
 	rows, err := database.Query(
-		`SELECT pickcode FROM files WHERE account = ? AND pickcode <> ''`, account,
+		`SELECT pickcode, path FROM files WHERE account = ? AND pickcode <> ''`, account,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var pc string
-		if err := rows.Scan(&pc); err != nil {
+		var pc, p string
+		if err := rows.Scan(&pc, &p); err != nil {
 			return nil, err
 		}
-		out[pc] = struct{}{}
+		out[pc] = p
 	}
 	return out, rows.Err()
 }

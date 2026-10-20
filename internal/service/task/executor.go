@@ -38,6 +38,11 @@ type StrmRefresher interface {
 	RefreshOnDelete(ctx context.Context, filePath string) error
 }
 
+// CloudAbsenceChecker 删前云端复核接口（由 strm.CloudChecker 实现）。
+type CloudAbsenceChecker interface {
+	StillAbsent(ctx context.Context, account, cloudPath, pickcode string) (bool, error)
+}
+
 // TaskNotifier 任务状态通知接口（由 notify.Dispatcher 实现，可为 nil）
 type TaskNotifier interface {
 	NotifyDownloadComplete(ctx context.Context, taskName string, totalFiles, downloaded int, durationMs int64) error
@@ -54,6 +59,7 @@ type ExecutorDeps struct {
 	TasksStore       TasksReaderWriter
 	StrmCache        StrmCacheWriter
 	ManagedStrm      strm.ManagedRecorder  // STRM 托管登记与删除前复核（nil=未启用 SQLite）
+	CloudChecker     CloudAbsenceChecker   // 删前云端复核（nil 时托管文件不自动删除）
 	EmbyRefresh      StrmRefresher         // Emby 刷库服务（可为 nil）
 	CleanupSubmitter CleanupBatchSubmitter // STRM 清理延迟批次提交器（可为 nil）
 	Notifier         TaskNotifier          // 任务完成/失败通知（可为 nil）
@@ -379,7 +385,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			cloudCurrent[f.PickCode] = filepath.Clean(resolveStrmRelPath(strmTemplate, task.Account, f))
 		}
 		orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
-			task.ID, task.TargetPath, cloudCurrent, snapPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh, deps.ManagedStrm)
+			task.ID, task.TargetPath, cloudCurrent, snapPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh, deps.ManagedStrm, deps.CloudChecker)
 		if cerr != nil {
 			sseServer.EmitLog(task.ID, "warn", "全量预扫清理失败: "+cerr.Error())
 			logger.S().Warnf("[Task] 全量预扫清理失败 task=%s: %v", task.ID, cerr)

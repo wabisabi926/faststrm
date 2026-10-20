@@ -35,7 +35,15 @@ type ManagedRecorder interface {
 	Record(ctx context.Context, in ManagedInput) error
 	VerifyFile(ctx context.Context, localPath, pickcode string) (bool, error)
 	MarkDeleted(ctx context.Context, localPath string) error
+	CloudRef(ctx context.Context, localPath string) (*ManagedCloudRef, error)
 	Bootstrap(ctx context.Context, roots []string, accounts []string) (added, skipped int, err error)
+}
+
+// ManagedCloudRef 删除前复核云端所需的最小元数据。
+type ManagedCloudRef struct {
+	Account   string
+	CloudPath string
+	Pickcode  string
 }
 
 type managedRecorder struct {
@@ -152,6 +160,28 @@ func (r *managedRecorder) MarkDeleted(ctx context.Context, localPath string) err
 	return db.MarkManagedStrmDeleted(r.db, localPath)
 }
 
+// CloudRef 返回托管记录的云端元数据；文件未托管/已删除时返回 (nil, nil)。
+func (r *managedRecorder) CloudRef(ctx context.Context, localPath string) (*ManagedCloudRef, error) {
+	if r == nil || r.db == nil {
+		return nil, nil
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	record, err := db.GetManagedStrm(r.db, localPath)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil || record.State != "active" {
+		return nil, nil
+	}
+	return &ManagedCloudRef{
+		Account: record.Account, CloudPath: record.CloudPath, Pickcode: record.Pickcode,
+	}, nil
+}
+
 // ParseManagedContent 从默认 STRM URL 解析 account/pickcode。
 // 自定义模板若不携带这两个查询参数，返回空串（该文件不会被纳管，自动清理会跳过）。
 func ParseManagedContent(content string) (account, pickcode string) {
@@ -201,9 +231,9 @@ func (r *managedRecorder) Bootstrap(ctx context.Context, roots []string, account
 		return 0, 0, nil
 	}
 	// 一次加载各账号 pickcode 集合，避免每个历史文件都查一次 SQLite。
-	pickcodeSets := make(map[string]map[string]struct{}, len(accountSet))
+	pickcodeSets := make(map[string]map[string]string, len(accountSet))
 	for account := range accountSet {
-		set, lerr := db.ListPickcodesByAccount(r.db, account)
+		set, lerr := db.ListPickcodePathsByAccount(r.db, account)
 		if lerr != nil {
 			logger.S().Warnf("[ManagedStrm] 加载账号 %s 的 pickcode 索引失败: %v", account, lerr)
 			continue
@@ -260,13 +290,15 @@ func (r *managedRecorder) Bootstrap(ctx context.Context, roots []string, account
 				skipped++
 				return nil
 			}
-			if _, exists := set[pickcode]; !exists {
+			cloudPath, exists := set[pickcode]
+			if !exists {
 				skipped++
 				return nil
 			}
 			if err := r.Record(ctx, ManagedInput{
 				LocalPath: p,
 				Account:   account,
+				CloudPath: cloudPath,
 				Pickcode:  pickcode,
 				Content:   string(data),
 				Source:    "bootstrap",

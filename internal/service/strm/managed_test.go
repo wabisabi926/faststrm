@@ -84,6 +84,8 @@ func TestManagedRecorderVerifyAndBootstrap(t *testing.T) {
 	}
 	if m, _ := db.GetManagedStrm(database, known); m == nil {
 		t.Fatal("known strm should be managed")
+	} else if m.CloudPath != "电影/movie.mkv" {
+		t.Fatalf("bootstrap cloud path = %q", m.CloudPath)
 	}
 	if m, _ := db.GetManagedStrm(database, foreign); m != nil {
 		t.Fatal("foreign strm must not be managed")

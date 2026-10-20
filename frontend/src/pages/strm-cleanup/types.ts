@@ -100,6 +100,10 @@ export type ExecuteResult = {
   failedCount: number;
   // 因未托管/指纹变化而跳过、未删除的文件数
   skippedUnmanaged?: number;
+  // 删前云端复核发现文件已恢复而保留的数量
+  skippedCloudRestored?: number;
+  // 因缺少云端路径/复核失败而保留的数量
+  skippedCloudUnverified?: number;
   errors: Array<{ path: string; error: string }>;
   removedEmptyDirs: string[];
   dryRun: boolean;

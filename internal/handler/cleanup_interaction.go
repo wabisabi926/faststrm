@@ -53,11 +53,12 @@ type CleanupBatch struct {
 
 // StrmCleanupInteraction STRM 清理待删队列与 TG 按钮二次确认交互
 type StrmCleanupInteraction struct {
-	db       *sql.DB
-	bot      *notify.TelegramBot
-	settings *store.SettingsStore
-	managed  strm.ManagedRecorder
-	mu       sync.Mutex
+	db           *sql.DB
+	bot          *notify.TelegramBot
+	settings     *store.SettingsStore
+	managed      strm.ManagedRecorder
+	cloudChecker CloudAbsenceChecker
+	mu           sync.Mutex
 }
 
 // NewStrmCleanupInteraction 创建交互器（含 lazy migrate）
@@ -73,6 +74,13 @@ func NewStrmCleanupInteraction(db *sql.DB, bot *notify.TelegramBot, settings *st
 		}
 	}
 	return i, nil
+}
+
+// SetCloudChecker 注入删前云端复核器（服务启动装配用）。
+func (i *StrmCleanupInteraction) SetCloudChecker(checker CloudAbsenceChecker) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.cloudChecker = checker
 }
 
 // SetBot 延迟注入 TelegramBot
@@ -331,7 +339,7 @@ func (i *StrmCleanupInteraction) HandleTelegramCallback(ctx context.Context, req
 			logger.S().Infof("[CleanupInteraction] 批次 %s 已过期（age=%s），作废", requestID, age.Truncate(time.Minute))
 			return fmt.Sprintf("⌛ <b>待删批次已过期（超过 24 小时）</b>\n\n扫描结果已不能反映当前云端状态，为避免误删已作废。\n请重新执行「清理孤儿 → 扫描」获取最新结果。"), nil
 		}
-		resp := executePendingBatch(ctx, *batch, i.managed)
+		resp := executePendingBatch(ctx, *batch, i.managed, i.cloudChecker)
 		logger.S().Infof("[CleanupInteraction] TG callback 确认删除 %s: deleted=%d failed=%d dirs=%d duration=%dms",
 			requestID, resp.DeletedCount, resp.FailedCount, len(resp.RemovedEmptyDirs), resp.DurationMs)
 		var sb strings.Builder

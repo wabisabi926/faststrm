@@ -209,11 +209,12 @@ func RegisterRoutes(
 		ClientFactory: func(name string) (*client115.Client, error) {
 			return client115.NewClient(""), nil
 		},
-		TasksStore:  tasksStore,
-		StrmCache:   strmCacheStore,
-		Interaction: cleanupInteraction,
-		SQLiteDB:    execDeps.SQLiteDB,
-		ManagedStrm: execDeps.ManagedStrm,
+		TasksStore:   tasksStore,
+		StrmCache:    strmCacheStore,
+		Interaction:  cleanupInteraction,
+		SQLiteDB:     execDeps.SQLiteDB,
+		ManagedStrm:  execDeps.ManagedStrm,
+		CloudChecker: execDeps.CloudChecker,
 	}
 	// P0 注入 cleanupInteraction 到 TG CommandHandler（处理 inline 按钮回调）
 	if cleanupInteraction != nil && notifyDeps.CommandHandler != nil {

@@ -694,6 +694,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 	cleanup model.CleanupSettings,
 	embyRefresh StrmRefresher,
 	managed strm.ManagedRecorder,
+	cloudChecker CloudAbsenceChecker,
 ) (int, string, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" || mode == "off" {
@@ -896,6 +897,8 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 		deleted := 0
 		relatedDeleted := 0
 		skippedAtDelete := 0
+		cloudRestored := 0
+		cloudUnverified := 0
 		trashDir := strmutil.TrashSessionDir(targetPath)
 		for _, p := range orphans {
 			if managed != nil {
@@ -904,6 +907,27 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 				if verr != nil || !ok {
 					skippedAtDelete++
 					logger.S().Warnf("[cleanupOrphanStrms] 删除前复核未通过，保留 %s", p)
+					continue
+				}
+				if cloudChecker == nil {
+					cloudUnverified++
+					continue
+				}
+				ref, rerr := managed.CloudRef(ctx, p)
+				if rerr != nil || ref == nil || ref.CloudPath == "" {
+					cloudUnverified++
+					logger.S().Warnf("[cleanupOrphanStrms] 缺少云端路径，保留 %s: %v", p, rerr)
+					continue
+				}
+				absent, cerr := cloudChecker.StillAbsent(ctx, ref.Account, ref.CloudPath, ref.Pickcode)
+				if cerr != nil {
+					cloudUnverified++
+					logger.S().Warnf("[cleanupOrphanStrms] 云端复核失败，保留 %s: %v", p, cerr)
+					continue
+				}
+				if !absent {
+					cloudRestored++
+					logger.S().Infof("[cleanupOrphanStrms] 云端文件已恢复，保留 %s (%s)", p, ref.CloudPath)
 					continue
 				}
 			}
@@ -931,6 +955,14 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 		if skippedAtDelete > 0 && sseServer != nil {
 			sseServer.EmitLog(taskID, "info", fmt.Sprintf(
 				"对账清理：%d 个 STRM 在删除前复核时发现变化，已保留", skippedAtDelete))
+		}
+		if cloudRestored > 0 && sseServer != nil {
+			sseServer.EmitLog(taskID, "info", fmt.Sprintf(
+				"对账清理：%d 个 STRM 对应的云端文件已恢复，已保留", cloudRestored))
+		}
+		if cloudUnverified > 0 && sseServer != nil {
+			sseServer.EmitLog(taskID, "warn", fmt.Sprintf(
+				"对账清理：%d 个 STRM 因云端路径缺失或复核失败保留（未删除）", cloudUnverified))
 		}
 		if relatedDeleted > 0 && sseServer != nil {
 			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：连带移入回收站 %d 个关联文件（nfo/海报/字幕）", relatedDeleted))

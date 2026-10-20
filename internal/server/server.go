@@ -147,6 +147,10 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	} else {
 		logger.S().Warnf("[Phase6] sqlite not available, cleanup interaction disabled")
 	}
+	cloudChecker := strm.NewCloudChecker(client, accountStore)
+	if cleanupInteraction != nil {
+		cleanupInteraction.SetCloudChecker(cloudChecker)
+	}
 	execDeps := task.ExecutorDeps{
 		Client115:        client,
 		AccountStore:     accountStore,
@@ -156,6 +160,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 		TasksStore:       tasksStore,
 		StrmCache:        &strmCacheWriterAdapter{inner: strmCacheStore},
 		ManagedStrm:      strm.NewManagedRecorder(sqliteDB),
+		CloudChecker:     cloudChecker,
 		EmbyRefresh:      embyRefresh,
 		CleanupSubmitter: &cleanupSubmitterAdapter{interaction: cleanupInteraction},
 		BaseURL:          baseURL,

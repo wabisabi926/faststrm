@@ -79,6 +79,50 @@ func TestFilterManagedStale(t *testing.T) {
 	}
 }
 
+func TestDeleteAllStaleFromScan_CloudRestoredAndUnverified(t *testing.T) {
+	database, err := db.OpenNew(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	root := t.TempDir()
+	file := filepath.Join(root, "managed.strm")
+	content := "http://nas/api/strm?pickcode=d18nbyd6w552vx2zs"
+	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := strm.NewManagedRecorder(database)
+	if err := rec.Record(context.Background(), strm.ManagedInput{
+		LocalPath: file, Account: "alice", CloudPath: "/电影/managed.strm",
+		Pickcode: "d18nbyd6w552vx2zs", Content: content,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := ExecuteRequest{ScanSummary: &ScanResponse{Mappings: []MappingScanResult{{
+		Account: "alice", CloudPath: "/x", LocalPath: root,
+		StaleStrms: []StaleStrm{{RelPath: "managed.strm"}},
+	}}}}
+	cleanup := model.CleanupSettings{RemoveStrm: true}
+
+	resp := ExecuteResponse{}
+	deleted, _ := deleteAllStaleFromScan(context.Background(), body, &resp, &cleanup, rec, fakeCloudAbsence{absent: false})
+	if deleted != 0 || resp.SkippedCloudRestored != 1 {
+		t.Fatalf("restored: deleted=%d resp=%+v", deleted, resp)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatal("cloud-restored file must be preserved")
+	}
+
+	resp = ExecuteResponse{}
+	deleted, _ = deleteAllStaleFromScan(context.Background(), body, &resp, &cleanup, rec, nil)
+	if deleted != 0 || resp.SkippedCloudUnverified != 1 {
+		t.Fatalf("unverified: deleted=%d resp=%+v", deleted, resp)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatal("unverified file must be preserved")
+	}
+}
+
 func TestExecuteCleanup_DeleteAllRatioProtection(t *testing.T) {
 	root := t.TempDir()
 	files := []string{filepath.Join(root, "a.strm"), filepath.Join(root, "b.strm")}
@@ -109,6 +153,15 @@ func TestExecuteCleanup_DeleteAllRatioProtection(t *testing.T) {
 	}
 }
 
+type fakeCloudAbsence struct {
+	absent bool
+	err    error
+}
+
+func (f fakeCloudAbsence) StillAbsent(context.Context, string, string, string) (bool, error) {
+	return f.absent, f.err
+}
+
 func TestDeleteAllStaleFromScan_OwnershipGuardAndTrash(t *testing.T) {
 	database, err := db.OpenNew(t.TempDir())
 	if err != nil {
@@ -127,7 +180,8 @@ func TestDeleteAllStaleFromScan_OwnershipGuardAndTrash(t *testing.T) {
 	}
 	rec := strm.NewManagedRecorder(database)
 	if err := rec.Record(context.Background(), strm.ManagedInput{
-		LocalPath: managedFile, Account: "alice", Pickcode: "d18nbyd6w552vx2zs", Content: content,
+		LocalPath: managedFile, Account: "alice", CloudPath: "/电影/managed.strm",
+		Pickcode: "d18nbyd6w552vx2zs", Content: content,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +192,7 @@ func TestDeleteAllStaleFromScan_OwnershipGuardAndTrash(t *testing.T) {
 	}}}}
 	resp := ExecuteResponse{}
 	cleanup := model.CleanupSettings{RemoveStrm: true}
-	deleted, failed := deleteAllStaleFromScan(context.Background(), body, &resp, &cleanup, rec)
+	deleted, failed := deleteAllStaleFromScan(context.Background(), body, &resp, &cleanup, rec, fakeCloudAbsence{absent: true})
 	if deleted != 1 || failed != 0 {
 		t.Fatalf("deleted=%d failed=%d resp=%+v", deleted, failed, resp)
 	}

@@ -41,6 +41,13 @@ type StrmCleanupDeps struct {
 	SQLiteDB *sql.DB
 	// ManagedStrm STRM 托管登记/复核（nil=未启用 SQLite，自动删除会被跳过）
 	ManagedStrm strm.ManagedRecorder
+	// CloudChecker 删除前云端复核（nil 时，托管文件不会执行删除）
+	CloudChecker CloudAbsenceChecker
+}
+
+// CloudAbsenceChecker 删除前确认云端仍不存在该 pickcode。
+type CloudAbsenceChecker interface {
+	StillAbsent(ctx context.Context, account, cloudPath, pickcode string) (bool, error)
 }
 
 type MappingScanRequest struct {
@@ -181,6 +188,10 @@ type ExecuteResponse struct {
 	RegeneratedPaths []string `json:"regeneratedPaths,omitempty"`
 	// SkippedUnmanaged 因未托管/指纹变化而跳过的文件数（不会删除）
 	SkippedUnmanaged int `json:"skippedUnmanaged,omitempty"`
+	// SkippedCloudRestored 删前云端复核发现文件已恢复而保留的数量
+	SkippedCloudRestored int `json:"skippedCloudRestored,omitempty"`
+	// SkippedCloudUnverified 因缺少云端路径/复核失败而保留的数量
+	SkippedCloudUnverified int `json:"skippedCloudUnverified,omitempty"`
 	// DeletedAllCount delete_all / delete_and_regenerate 模式下从 ScanSummary 删除的失效 STRM 数
 	DeletedAllCount int `json:"deletedAllCount,omitempty"`
 	// CleanupSummary delete_and_regenerate 组合操作的汇总（前端 cleanupSummary 字段对应）
@@ -1360,7 +1371,7 @@ func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Se
 	// 前者要求阈值检查通过（已在上方完成），后者复用同样语义：只删用户选中的失效 STRM
 	// 注：delete_all 不走这里，走 deleteAllStaleFromScan（从 ScanSummary 全删）
 	if action == "delete" || action == "delete_and_regenerate" {
-		deleteSelectedStale(ctx, body, &resp, &cleanup, deps.ManagedStrm)
+		deleteSelectedStale(ctx, body, &resp, &cleanup, deps.ManagedStrm, deps.CloudChecker)
 	}
 
 	// ====== delete_all / regenerate / delete_and_regenerate 分支 ======
@@ -1368,7 +1379,7 @@ func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Se
 	// 修复后：从 body.ScanSummary.Mappings 取真实失效/漏项路径
 	switch action {
 	case "delete_all":
-		deleted, failed := deleteAllStaleFromScan(ctx, body, &resp, &cleanup, deps.ManagedStrm)
+		deleted, failed := deleteAllStaleFromScan(ctx, body, &resp, &cleanup, deps.ManagedStrm, deps.CloudChecker)
 		resp.DeletedCount += deleted
 		resp.DeletedAllCount = deleted
 		resp.FailedCount += failed
@@ -1419,10 +1430,42 @@ func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Se
 	return resp
 }
 
+// verifyCloudAbsent 删除前确认云端仍不存在该文件。
+// managed 为 nil 时保持旧行为（用于未启用 SQLite 的兼容场景）；一旦启用托管，
+// 缺少 checker/云端路径或目录查询失败一律返回 false（保留文件）。
+func verifyCloudAbsent(ctx context.Context, resp *ExecuteResponse, managed strm.ManagedRecorder, checker CloudAbsenceChecker, localPath string) bool {
+	if managed == nil {
+		return true
+	}
+	if checker == nil {
+		resp.SkippedCloudUnverified++
+		logger.S().Warnf("[strmCleanup] 未配置云端复核器，保留 %s", localPath)
+		return false
+	}
+	ref, err := managed.CloudRef(ctx, localPath)
+	if err != nil || ref == nil || ref.CloudPath == "" {
+		resp.SkippedCloudUnverified++
+		logger.S().Warnf("[strmCleanup] 缺少云端路径，保留 %s: %v", localPath, err)
+		return false
+	}
+	absent, cerr := checker.StillAbsent(ctx, ref.Account, ref.CloudPath, ref.Pickcode)
+	if cerr != nil {
+		resp.SkippedCloudUnverified++
+		logger.S().Warnf("[strmCleanup] 云端复核失败，保留 %s: %v", localPath, cerr)
+		return false
+	}
+	if !absent {
+		resp.SkippedCloudRestored++
+		logger.S().Infof("[strmCleanup] 云端文件已恢复，保留 %s (%s)", localPath, ref.CloudPath)
+		return false
+	}
+	return true
+}
+
 // deleteSelectedStale 按 body.Entries 中选中的条目执行三阶段删除
 // 用于 action=delete 和 action=delete_and_regenerate（只删选中而非全删）
 // 删除前复核托管归属/指纹，移入回收站；未托管项跳过。
-func deleteSelectedStale(ctx context.Context, body ExecuteRequest, resp *ExecuteResponse, cleanup *model.CleanupSettings, managed strm.ManagedRecorder) {
+func deleteSelectedStale(ctx context.Context, body ExecuteRequest, resp *ExecuteResponse, cleanup *model.CleanupSettings, managed strm.ManagedRecorder, checker CloudAbsenceChecker) {
 	for _, entry := range body.Entries {
 		trashDir := ""
 		if !body.DryRun {
@@ -1445,6 +1488,9 @@ func deleteSelectedStale(ctx context.Context, body ExecuteRequest, resp *Execute
 			}
 			if body.DryRun {
 				resp.DeletedCount++
+				continue
+			}
+			if !verifyCloudAbsent(ctx, resp, managed, checker, stalePath) {
 				continue
 			}
 			// 阶段 1：把 STRM 文件移入回收站（RemoveStrm 默认 true）
@@ -1482,7 +1528,7 @@ func deleteSelectedStale(ctx context.Context, body ExecuteRequest, resp *Execute
 // deleteAllStaleFromScan 从 body.ScanSummary.Mappings 收集失效 STRM 完整路径并删除
 // 复用三阶段删除（RemoveStrm / RemoveRelatedFiles / RemoveEmptyDirs）
 // 返回 (deletedCount, failedCount)
-func deleteAllStaleFromScan(ctx context.Context, body ExecuteRequest, resp *ExecuteResponse, cleanup *model.CleanupSettings, managed strm.ManagedRecorder) (int, int) {
+func deleteAllStaleFromScan(ctx context.Context, body ExecuteRequest, resp *ExecuteResponse, cleanup *model.CleanupSettings, managed strm.ManagedRecorder, checker CloudAbsenceChecker) (int, int) {
 	if body.ScanSummary == nil {
 		logger.S().Warnf("[strmCleanup] delete_all: ScanSummary 为空，无法定位失效 STRM")
 		return 0, 0
@@ -1510,6 +1556,9 @@ func deleteAllStaleFromScan(ctx context.Context, body ExecuteRequest, resp *Exec
 			}
 			if body.DryRun {
 				deleted++
+				continue
+			}
+			if !verifyCloudAbsent(ctx, resp, managed, checker, stalePath) {
 				continue
 			}
 			if cleanup.RemoveStrm {
@@ -1602,8 +1651,9 @@ func regenerateMissingStrms(ctx context.Context, body ExecuteRequest, settings *
 				continue
 			}
 			if managed != nil {
+				rebuildCloudPath := path.Join(m.CloudPath, miss.CloudRelPath)
 				if merr := managed.Record(ctx, strm.ManagedInput{
-					LocalPath: strmPath, Account: m.Account, CloudPath: miss.CloudRelPath,
+					LocalPath: strmPath, Account: m.Account, CloudPath: rebuildCloudPath,
 					Pickcode: miss.PickCode, Content: content, Source: "cleanup-rebuild",
 				}); merr != nil {
 					logger.S().Debugf("[strmCleanup] regenerate 托管登记失败 %s: %v", strmPath, merr)
@@ -1701,7 +1751,7 @@ func removeEmptyDirs(root string, removed *[]string) {
 // executePendingBatch 执行单个待删批次（用户二次确认通过后调用）
 // 复用 executeCleanup 的三阶段删除逻辑（RemoveStrm/RemoveRelatedFiles/RemoveEmptyDirs）；
 // 删除前再次复核托管归属与文件指纹，并移入回收站而非硬删。
-func executePendingBatch(ctx context.Context, batch CleanupBatch, managed strm.ManagedRecorder) ExecuteResponse {
+func executePendingBatch(ctx context.Context, batch CleanupBatch, managed strm.ManagedRecorder, checker CloudAbsenceChecker) ExecuteResponse {
 	resp := ExecuteResponse{
 		Errors:              []map[string]string{},
 		RemovedEmptyDirs:    []string{},
@@ -1720,6 +1770,9 @@ func executePendingBatch(ctx context.Context, batch CleanupBatch, managed strm.M
 				logger.S().Warnf("[strmCleanup] pending batch 删除前复核未通过，保留 %s", p)
 				continue
 			}
+		}
+		if !verifyCloudAbsent(ctx, &resp, managed, checker, p) {
+			continue
 		}
 		root := filepath.Dir(p)
 		trashDir := trashDirs[root]
@@ -1842,7 +1895,7 @@ func HandleStrmCleanupPendingExecutePOST(deps StrmCleanupDeps) http.HandlerFunc 
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "batch not found or already executed"})
 			return
 		}
-		resp := executePendingBatch(r.Context(), *batch, deps.ManagedStrm)
+		resp := executePendingBatch(r.Context(), *batch, deps.ManagedStrm, deps.CloudChecker)
 		resp.DurationMs = time.Since(start).Milliseconds()
 		logger.S().Infof("[strmCleanup] pending batch %s executed: deleted=%d failed=%d duration=%dms",
 			body.RequestID, resp.DeletedCount, resp.FailedCount, resp.DurationMs)

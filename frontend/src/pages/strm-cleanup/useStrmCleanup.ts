@@ -36,6 +36,10 @@ function friendlyHttpError(err: AxiosError | undefined, fallback: string): strin
   return fallback;
 }
 
+function hasCleanupSkips(r: ExecuteResult): boolean {
+  return (r.skippedUnmanaged ?? 0) + (r.skippedCloudRestored ?? 0) + (r.skippedCloudUnverified ?? 0) > 0;
+}
+
 export interface UseStrmCleanupResult {
   // 状态
   scanning: boolean;
@@ -262,10 +266,14 @@ export function useStrmCleanup(
   };
 
   const handleDeleteResult = (r: ExecuteResult, explicitDeletedKeys?: Set<string>) => {
-    appendLog("删除", `删除 ${r.deletedCount} 个失效 STRM，失败 ${r.failedCount} 个`, r.failedCount === 0);
+    const skipped =
+      (r.skippedUnmanaged ?? 0) + (r.skippedCloudRestored ?? 0) + (r.skippedCloudUnverified ?? 0);
+    const skippedText = skipped > 0 ? `，${skipped} 个因云端复核/归属变化保留` : "";
+    appendLog("删除", `删除 ${r.deletedCount} 个失效 STRM，失败 ${r.failedCount} 个${skippedText}`, r.failedCount === 0);
     toast.success(
       `已删除 ${r.deletedCount} 个失效 STRM，清理了 ${r.removedEmptyDirs.length} 个空目录` +
-        (r.failedCount > 0 ? `，失败 ${r.failedCount} 个` : "")
+        (r.failedCount > 0 ? `，失败 ${r.failedCount} 个` : "") +
+        skippedText
     );
     // delete_all 一键清理时 selectedStale 可能为空集，此时由调用方传入"本次清理的全部失效 key"，
     // 让 UI 立即移除，不必完全依赖后续复扫结果。
@@ -321,6 +329,9 @@ export function useStrmCleanup(
       parts.push(`补生成 ${summary.regenerated}`);
       if (summary.failed > 0) parts.push(`失败 ${summary.failed}`);
     }
+    const skipped =
+      (r.skippedUnmanaged ?? 0) + (r.skippedCloudRestored ?? 0) + (r.skippedCloudUnverified ?? 0);
+    if (skipped > 0) parts.push(`保留 ${skipped}（云端复核/归属变化）`);
     appendLog("清理+补生成", parts.join(" / "), (summary?.failed || 0) === 0);
     toast.success(`组合操作完成：${parts.join("，")}`);
     // 同步移除：已删失效 STRM + 已生成漏项 STRM
@@ -360,6 +371,10 @@ export function useStrmCleanup(
         dryRun: false,
       });
       handleDeleteResult(res.data);
+      if (hasCleanupSkips(res.data)) {
+        // 有文件因云端复核/归属变化被保留：立即复扫，避免 UI 把保留项当成已删除
+        await refreshAfterBulk();
+      }
     } catch (err) {
       const axiosErr = err as AxiosError;
       const msg = friendlyHttpError(axiosErr, "删除失败");
