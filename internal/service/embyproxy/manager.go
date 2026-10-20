@@ -17,9 +17,10 @@ import (
 
 // Status 当前反代运行状态
 type Status struct {
-	Running bool   `json:"running"`
-	Addr    string `json:"addr,omitempty"`    // 正在监听的 host:port
-	EmbyURL string `json:"embyURL,omitempty"` // 当前代理的 Emby 源 URL
+	Running               bool   `json:"running"`
+	Addr                  string `json:"addr,omitempty"`    // 正在监听的 host:port
+	EmbyURL               string `json:"embyURL,omitempty"` // 当前代理的 Emby 源 URL
+	ExternalPlayerEnabled bool   `json:"externalPlayerEnabled"`
 }
 
 // Manager 管理反代 server 生命周期
@@ -177,8 +178,9 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return Status{
-		Running: m.server != nil,
-		Addr:    m.addr,
-		EmbyURL: m.embyURL,
+		Running:               m.server != nil,
+		Addr:                  m.addr,
+		EmbyURL:               m.embyURL,
+		ExternalPlayerEnabled: m.externalPlayerEnabled,
 	}
 }

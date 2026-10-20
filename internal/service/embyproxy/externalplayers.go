@@ -123,7 +123,11 @@ func (p *Proxy) serveItemExternalURLs(w http.ResponseWriter, r *http.Request) {
 						injected = true
 					}
 				}
+			} else {
+				logger.S().Debugf("[EmbyProxy] 外部播放器注入跳过: item=%s reason=响应不是合法 JSON", itemID)
 			}
+		} else {
+			logger.S().Debugf("[EmbyProxy] 外部播放器注入跳过: item=%s reason=缺少 api_key", itemID)
 		}
 	}
 
@@ -137,10 +141,12 @@ func (p *Proxy) serveItemExternalURLs(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
+	// 外部播放器开启时始终禁用条目缓存：用户刚打开开关或切换媒体后，
+	// 浏览器缓存旧 JSON 会继续显示没有 ExternalUrls 的详情页。
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	if injected {
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		w.Header().Set("Pragma", "no-cache")
-		w.Header().Set("Expires", "0")
 		logger.S().Infof("[EmbyProxy] 已注入外部播放器链接: item=%s", itemID)
 	}
 	w.WriteHeader(resp.StatusCode)
@@ -171,6 +177,7 @@ func (p *Proxy) serveExternalRedirect(w http.ResponseWriter, r *http.Request) {
 func injectExternalURLs(data map[string]interface{}, r *http.Request, embyHost, itemID, apiKey string) bool {
 	sources := mapSlice(data, "MediaSources")
 	if len(sources) == 0 {
+		logger.S().Debugf("[EmbyProxy] 外部播放器注入跳过: item=%s reason=MediaSources 为空", itemID)
 		return false
 	}
 
@@ -220,6 +227,9 @@ func injectExternalURLs(data map[string]interface{}, r *http.Request, embyHost, 
 		}
 	}
 	data["ExternalUrls"] = externalURLs
+	if !injected {
+		logger.S().Debugf("[EmbyProxy] 外部播放器注入跳过: item=%s reason=没有可用的播放器链接", itemID)
+	}
 	return injected
 }
 
@@ -523,7 +533,9 @@ func buildExternalPlayerScript() string {
     return null;
   }
   function showFlag(){
-    return !!document.querySelector("div[is='emby-scroller']:not(.hide) .mediaInfo:not(.hide)");
+    // 不依赖 .mediaInfo：不同 Emby Web 版本详情页结构不一致，
+    // 只要详情页主按钮区存在就允许注入。
+    return !!document.querySelector("div[is='emby-scroller']:not(.hide) .mainDetailButtons");
   }
   var _injecting=false;
   var _lastItemId=null;

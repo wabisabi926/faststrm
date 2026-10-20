@@ -180,6 +180,7 @@ func RegisterRoutes(
 	// ==================== 阶段6: Emby 配置 ====================
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/emby/settings", Handler: corsJWT(handler.HandleEmbySettingsGET(embyDeps))},
+		{Method: http.MethodGet, Path: "/api/emby/proxy/status", Handler: corsJWT(handler.HandleEmbyProxyStatus(embyDeps))},
 		{Method: http.MethodPost, Path: "/api/emby/settings", Handler: corsJWT(handler.HandleEmbySettingsPOST(embyDeps))},
 		{Method: http.MethodPost, Path: "/api/emby/test-connection", Handler: corsJWT(handler.HandleEmbyTestConnection(embyDeps))},
 	})

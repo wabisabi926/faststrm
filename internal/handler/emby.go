@@ -145,6 +145,27 @@ func HandleEmbySettingsGET(deps EmbyDeps) http.HandlerFunc {
 	}
 }
 
+// HandleEmbyProxyStatus GET /api/emby/proxy/status
+// 只读诊断：反代是否运行、监听地址、源地址与外部播放器注入开关。
+func HandleEmbyProxyStatus(deps EmbyDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.EmbyProxyManager == nil {
+			httpx.OkJson(w, map[string]any{
+				"running":               false,
+				"externalPlayerEnabled": false,
+			})
+			return
+		}
+		st := deps.EmbyProxyManager.Status()
+		httpx.OkJson(w, map[string]any{
+			"running":               st.Running,
+			"addr":                  st.Addr,
+			"embyURL":               st.EmbyURL,
+			"externalPlayerEnabled": st.ExternalPlayerEnabled,
+		})
+	}
+}
+
 // embySettingsPatch POST /api/emby/settings 局部 patch（仅允许白名单字段）
 type embySettingsPatch struct {
 	URL                      *string                        `json:"url,omitempty"`
