@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wabisabi926/faststrm/internal/config"
+	"github.com/wabisabi926/faststrm/internal/handler"
 	"github.com/wabisabi926/faststrm/internal/server"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
@@ -68,6 +69,7 @@ func main() {
 	// 4. 启动 HTTP server（在 goroutine 中，以便托盘可以接收就绪信号）
 	//    cfg.Server.Host（可能 0.0.0.0）始终传给 server.Run，保证局域网绑定；
 	//    启动日志在 server.Run 内部按 displayAddr 打印成 http://localhost:PORT 给用户看。
+	handler.SetVersion(version)
 	go func() {
 		if err := server.Run(cfg); err != nil {
 			logger.S().Fatalf("server.Run failed: %v", err)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
@@ -30,6 +31,9 @@ type LoginResponse struct {
 	User    struct {
 		Username string `json:"username"`
 	} `json:"user"`
+	// MustChangePassword 首次登录/仍在使用默认口令时为 true，
+	// 前端据此展示不可关闭的改密门禁。
+	MustChangePassword bool `json:"mustChangePassword"`
 }
 
 // Login POST /api/auth/login 密码校验 + JWT 签发
@@ -38,6 +42,19 @@ type LoginResponse struct {
 //  2. application/x-www-form-urlencoded（HTMX 表单提交）
 func Login(issuer *auth.TokenIssuer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ip := loginClientKey(r)
+		if ok, retry := authLoginGuard.allow(ip); !ok {
+			secs := int(retry.Seconds())
+			if secs < 1 {
+				secs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			httpx.WriteJson(w, http.StatusTooManyRequests, map[string]string{
+				"error": "登录失败次数过多，请稍后再试",
+			})
+			return
+		}
+
 		var req LoginRequest
 
 		ct := r.Header.Get("Content-Type")
@@ -63,9 +80,11 @@ func Login(issuer *auth.TokenIssuer) http.HandlerFunc {
 		// 校验用户名 + 密码
 		if req.Username != cfg.Admin.Username ||
 			!pwdcrypto.VerifyPassword(salt, req.Password, cfg.Admin.Password) {
+			authLoginGuard.fail(ip)
 			httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "账号或密码错误"})
 			return
 		}
+		authLoginGuard.reset(ip)
 
 		// 签发 JWT
 		token, err := issuer.Sign(req.Username)
@@ -95,8 +114,23 @@ func Login(issuer *auth.TokenIssuer) http.HandlerFunc {
 			User: struct {
 				Username string `json:"username"`
 			}{Username: req.Username},
+			MustChangePassword: config.IsDefaultAdminPassword(),
 		})
 	}
+}
+
+// SecurityStatus GET /api/auth/security-status
+// 公开只读接口：供前端判断是否需要强制修改默认口令。
+func SecurityStatus(w http.ResponseWriter, r *http.Request) {
+	cfg := config.Get()
+	username := ""
+	if cfg.Admin != nil {
+		username = cfg.Admin.Username
+	}
+	httpx.OkJson(w, map[string]any{
+		"mustChangePassword": config.IsDefaultAdminPassword(),
+		"username":           username,
+	})
 }
 
 // ==================== Change Password ====================

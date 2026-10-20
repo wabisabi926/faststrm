@@ -50,6 +50,10 @@ func buildStrmE2E(t *testing.T, withSQLite bool) *strmE2E {
 	salt := "strm_e2e_salt_pad_to_32_chars_ok"
 	settings := model.DefaultSettings()
 	settings.StrmPrefix = "http://nas:8090"
+	// 夹具代表已完成迁移的现有安装，显式开启关联文件删除；
+	// 否则首次 ReadSettings 的 V3 迁移会按“破坏性动作默认关闭”重置。
+	settings.CleanupDefaultsV2 = true
+	settings.CleanupDefaultsV3 = true
 	settings.Cleanup.RemoveStrm = true
 	settings.Cleanup.RemoveRelatedFiles = true
 	settings.Cleanup.RemoveEmptyDirs = false

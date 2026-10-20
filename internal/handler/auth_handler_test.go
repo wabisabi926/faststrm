@@ -26,6 +26,7 @@ func setupAuthTestCfg(t *testing.T) *config.AppConfig {
 		Settings: model.DefaultSettings(),
 	}
 	config.SetForTest(cfg)
+	authLoginGuard.resetAll()
 	return cfg
 }
 
@@ -84,6 +85,9 @@ func TestLogin(t *testing.T) {
 		if user["username"] != "admin" {
 			t.Fatalf("expected user.username=admin, got %v", user["username"])
 		}
+		if must, _ := resp["mustChangePassword"].(bool); !must {
+			t.Fatalf("default password should require change, got %v", resp["mustChangePassword"])
+		}
 	})
 
 	t.Run("wrong password", func(t *testing.T) {
@@ -107,6 +111,39 @@ func TestLogin(t *testing.T) {
 			t.Fatalf("expected status 400, got %d", w.Code)
 		}
 	})
+
+	t.Run("rate limited after repeated failures", func(t *testing.T) {
+		setupAuthTestCfg(t)
+		issuer := auth.NewTokenIssuer([]byte("test-secret-32b________________"))
+		for i := 0; i < loginMaxFailures; i++ {
+			w := handlerPost(Login(issuer), `{"username":"admin","password":"wrong"}`)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: expected 401, got %d", i+1, w.Code)
+			}
+		}
+		w := handlerPost(Login(issuer), `{"username":"admin","password":"wrong"}`)
+		if w.Code != http.StatusTooManyRequests {
+			t.Fatalf("expected 429 after %d failures, got %d", loginMaxFailures, w.Code)
+		}
+		if w.Header().Get("Retry-After") == "" {
+			t.Fatal("expected Retry-After header")
+		}
+	})
+}
+
+func TestSecurityStatus(t *testing.T) {
+	setupAuthTestCfg(t)
+	w := handlerGet(SecurityStatus)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if must, _ := resp["mustChangePassword"].(bool); !must {
+		t.Fatalf("expected mustChangePassword=true, got %v", resp)
+	}
 }
 
 // ==================== ChangePassword ====================

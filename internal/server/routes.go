@@ -41,6 +41,7 @@ func RegisterRoutes(
 	publicRoutes := []rest.Route{
 		{Method: http.MethodGet, Path: "/api/health", Handler: middleware.CORS(handler.Health)},
 		{Method: http.MethodPost, Path: "/api/auth/login", Handler: middleware.CORS(handler.Login(issuer))},
+		{Method: http.MethodGet, Path: "/api/auth/security-status", Handler: middleware.CORS(handler.SecurityStatus)},
 		{Method: http.MethodPost, Path: "/api/auth/change-password", Handler: middleware.CORS(handler.ChangePassword())},
 		{Method: http.MethodPost, Path: "/api/auth/change-credentials", Handler: middleware.CORS(handler.ChangeCredentials())},
 		{Method: http.MethodPost, Path: "/api/auth/logout", Handler: middleware.CORS(handler.Logout())},
@@ -72,9 +73,9 @@ func RegisterRoutes(
 
 	// ========== 受保护路由（JWT + CORS） ==========
 
-	// corsJWT 包装器：先 CORS 再 JWT
+	// corsJWT 包装器：先 CORS 再 JWT，最后拦截默认口令未修改
 	corsJWT := func(h http.HandlerFunc) http.HandlerFunc {
-		return middleware.CORS(jwtMW(h))
+		return middleware.CORS(jwtMW(middleware.RequirePasswordChanged()(h)))
 	}
 
 	// 账号改名/删除的引用联动（任务、生活监控映射、文件索引、运行中监控）

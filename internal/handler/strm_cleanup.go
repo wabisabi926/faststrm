@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -239,6 +240,14 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 			return
 		}
 
+		roots := allowedCleanupRoots(settings, deps)
+		for _, m := range mappings {
+			if _, err := validateCleanupRoot(m.LocalPath, roots); err != nil {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+
 		accountMap := make(map[string]string)
 		for _, acc := range accounts {
 			accountMap[acc.Name] = acc.Cookie
@@ -317,6 +326,11 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 			return
 		}
 
+		if err := validateCleanupRequest(body, settings, deps); err != nil {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+
 		accounts := deps.AccountStore.List()
 
 		accountMap := make(map[string]string)
@@ -329,6 +343,140 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 
 		httpx.WriteJson(w, http.StatusOK, resp)
 	}
+}
+
+// allowedCleanupRoots 返回允许清理/预览/扫描的本地根目录：
+// 生活监控路径映射 + 任务目标目录。清理类接口不再信任前端传入的任意路径。
+func allowedCleanupRoots(settings *model.Settings, deps StrmCleanupDeps) []string {
+	roots := make([]string, 0, 8)
+	seen := make(map[string]struct{})
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		key := p
+		if runtime.GOOS == "windows" {
+			key = strings.ToLower(p)
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		roots = append(roots, p)
+	}
+	for _, m := range CleanupMappings(settings) {
+		add(m.LocalPath)
+	}
+	if deps.TasksStore != nil {
+		if tasks, err := deps.TasksStore.ReadTasks(); err == nil {
+			for _, t := range tasks {
+				add(t.TargetPath)
+			}
+		}
+	}
+	return roots
+}
+
+func pathWithinRoot(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
+}
+
+// validateCleanupRequest 校验执行/预览请求中的本地路径：
+//   - LocalPath 必须是已配置的清理映射根（或其子目录）
+//   - RelPath 必须是相对路径，归一化后不得逃出根目录
+//   - 目标必须是 .strm，且现有文件不能是符号链接
+//
+// 这是路径防呆，不替代托管所有权；它能阻止前端伪造路径删除映射外的文件。
+func validateCleanupRequest(body ExecuteRequest, settings *model.Settings, deps StrmCleanupDeps) error {
+	roots := allowedCleanupRoots(settings, deps)
+	if len(roots) == 0 {
+		return fmt.Errorf("没有可用的清理映射，请先在设置中添加生活监控路径映射或任务目标目录")
+	}
+
+	for _, entry := range body.Entries {
+		root, err := validateCleanupRoot(entry.LocalPath, roots)
+		if err != nil {
+			return err
+		}
+		for _, rel := range entry.StaleRelPaths {
+			if err := validateCleanupRelPath(root, rel); err != nil {
+				return err
+			}
+		}
+	}
+	if body.ScanSummary != nil {
+		for _, m := range body.ScanSummary.Mappings {
+			root, err := validateCleanupRoot(m.LocalPath, roots)
+			if err != nil {
+				return err
+			}
+			for _, s := range m.StaleStrms {
+				if err := validateCleanupRelPath(root, s.RelPath); err != nil {
+					return err
+				}
+			}
+			for _, s := range m.MissingStrms {
+				if err := validateCleanupRelPathAny(root, s.RelPath); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateCleanupRoot(localPath string, roots []string) (string, error) {
+	if strings.TrimSpace(localPath) == "" {
+		return "", fmt.Errorf("localPath 不能为空")
+	}
+	absRoot, err := filepath.Abs(localPath)
+	if err != nil {
+		return "", fmt.Errorf("localPath 无效: %w", err)
+	}
+	for _, root := range roots {
+		if pathWithinRoot(root, absRoot) {
+			return absRoot, nil
+		}
+	}
+	return "", fmt.Errorf("localPath 不在已配置的清理映射内: %s", localPath)
+}
+
+func validateCleanupRelPath(root, rel string) error {
+	if err := validateCleanupRelPathAny(root, rel); err != nil {
+		return err
+	}
+	full := filepath.Join(root, rel)
+	if !strings.EqualFold(filepath.Ext(full), ".strm") {
+		return fmt.Errorf("只允许清理 .strm 文件: %q", rel)
+	}
+	if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("拒绝清理符号链接: %q", rel)
+	}
+	return nil
+}
+
+// validateCleanupRelPathAny 只校验相对路径是否越界；补生成的目标可能由源文件
+// 路径派生，允许非 .strm 扩展名。
+func validateCleanupRelPathAny(root, rel string) error {
+	if strings.TrimSpace(rel) == "" || filepath.IsAbs(rel) {
+		return fmt.Errorf("relPath 必须是相对路径: %q", rel)
+	}
+	full := filepath.Join(root, rel)
+	if !pathWithinRoot(root, full) {
+		return fmt.Errorf("relPath 越出映射根目录: %q", rel)
+	}
+	return nil
 }
 
 func getDefaultScanRequestsFromSettings(settings *model.Settings) []MappingScanRequest {
@@ -721,6 +869,19 @@ func HandleStrmCleanupPreviewPOST(deps StrmCleanupDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, resp)
 			return
 		}
+		settings, err := deps.SettingsStore.ReadSettings()
+		if err != nil {
+			resp.Error = "读取配置失败"
+			writeJSON(w, http.StatusInternalServerError, resp)
+			return
+		}
+		if err := validateCleanupRequest(ExecuteRequest{
+			Entries: []ExecuteEntry{{LocalPath: req.LocalPath, StaleRelPaths: []string{req.RelPath}}},
+		}, settings, deps); err != nil {
+			resp.Error = err.Error()
+			writeJSON(w, http.StatusBadRequest, resp)
+			return
+		}
 		full := filepath.Join(req.LocalPath, req.RelPath)
 		st, err := os.Stat(full)
 		if err != nil {
@@ -840,15 +1001,9 @@ func anyInt64(v any) (int64, bool) {
 	return 0, false
 }
 
-// relatedMediaExts P2：与 STRM 同目录的媒体关联文件扩展名集合（对齐 deleteRelatedFilesByStem 列表，额外加 .vtt）
-var relatedMediaExts = map[string]bool{
-	".srt": true, ".ass": true, ".sub": true, ".vtt": true,
-	".nfo": true, ".jpg": true, ".png": true,
-}
-
-// isRelatedMediaFile 判断文件是否为关联媒体信息文件
+// isRelatedMediaFile 判断文件是否为关联媒体信息文件（与删除白名单共用一套扩展名）
 func isRelatedMediaFile(name string) bool {
-	return relatedMediaExts[strings.ToLower(filepath.Ext(name))]
+	return strmutil.IsRelatedAssetPath(name)
 }
 
 // cleanupStrmFileName 将云端源文件名换算为对应的 .strm 文件名
@@ -1098,7 +1253,7 @@ func deleteSelectedStale(body ExecuteRequest, resp *ExecuteResponse, cleanup *mo
 			}
 			// 阶段 2：删关联媒体信息文件（RemoveRelatedFiles 默认 false）
 			if cleanup.RemoveRelatedFiles {
-				removed := deleteRelatedFilesByStem(stalePath)
+				removed := strmutil.DeleteRelatedFilesDetailed(stalePath, strmutil.DefaultRelatedExts)
 				resp.RemovedRelatedFiles = append(resp.RemovedRelatedFiles, removed...)
 			}
 		}
@@ -1147,7 +1302,7 @@ func deleteAllStaleFromScan(body ExecuteRequest, resp *ExecuteResponse, cleanup 
 				}
 			}
 			if cleanup.RemoveRelatedFiles {
-				removed := deleteRelatedFilesByStem(stalePath)
+				removed := strmutil.DeleteRelatedFilesDetailed(stalePath, strmutil.DefaultRelatedExts)
 				resp.RemovedRelatedFiles = append(resp.RemovedRelatedFiles, removed...)
 			}
 		}
@@ -1306,46 +1461,6 @@ func removeEmptyDirs(root string, removed *[]string) {
 	}
 }
 
-// deleteRelatedFilesByStem 删除与 STRM 文件同基名（stem）的关联媒体信息文件
-// 关联扩展名：.srt/.ass/.sub/.nfo/.jpg/.png（对齐 syncdel.go deleteStrmFile 的清理逻辑）
-// 返回实际删除的文件绝对路径列表
-//
-// 注意：传入的 strmPath 可以已经删除，本函数只读取同目录条目按 stem 匹配。
-func deleteRelatedFilesByStem(strmPath string) []string {
-	dir := filepath.Dir(strmPath)
-	base := strings.TrimSuffix(filepath.Base(strmPath), filepath.Ext(strmPath))
-	strmName := filepath.Base(strmPath)
-	relatedExts := map[string]bool{
-		".srt": true, ".ass": true, ".sub": true,
-		".nfo": true, ".jpg": true, ".png": true,
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var removed []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == strmName {
-			continue
-		}
-		nameBase := strings.TrimSuffix(name, filepath.Ext(name))
-		ext := strings.ToLower(filepath.Ext(name))
-		if nameBase == base && relatedExts[ext] {
-			full := filepath.Join(dir, name)
-			if err := os.Remove(full); err == nil {
-				removed = append(removed, full)
-				logger.S().Infof("[strmCleanup] deleted related file: %s", full)
-			}
-		}
-	}
-	return removed
-}
-
 // ==================== 待删批次执行（二次确认后调用）====================
 
 // executePendingBatch 执行单个待删批次（用户二次确认通过后调用）
@@ -1378,7 +1493,7 @@ func executePendingBatch(ctx context.Context, batch CleanupBatch) ExecuteRespons
 		}
 		// 阶段 2：删关联媒体信息文件
 		if batch.RemoveRelatedFiles {
-			removed := deleteRelatedFilesByStem(p)
+			removed := strmutil.DeleteRelatedFilesDetailed(p, strmutil.DefaultRelatedExts)
 			resp.RemovedRelatedFiles = append(resp.RemovedRelatedFiles, removed...)
 		}
 	}

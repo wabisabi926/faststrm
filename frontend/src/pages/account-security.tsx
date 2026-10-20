@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { UserCog } from "lucide-react";
 import { toast } from "sonner";
-import axiosInstance, { getUsername, setUsername, clearToken, clearUsername } from "@/lib/axios";
+import axiosInstance, { getUsername, setUsername, clearToken, clearUsername, setMustChangePassword } from "@/lib/axios";
 
 export default function AccountSecurityPage() {
   const [currentPwd, setCurrentPwd] = useState("");
@@ -79,6 +79,9 @@ export default function AccountSecurityPage() {
       });
 
       toast.success("保存成功");
+      if (hasPasswordChange) {
+        setMustChangePassword(false);
+      }
 
       if (hasUsernameChange) {
         setUsername(trimmedUsername);

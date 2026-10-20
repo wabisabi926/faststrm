@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import axiosInstance, { setToken, setUsername } from "@/lib/axios";
+import axiosInstance, { setToken, setUsername, setMustChangePassword } from "@/lib/axios";
 
 interface LoginForm {
   username: string;
@@ -19,16 +19,22 @@ export default function LoginPage() {
   const onSubmit = async (values: LoginForm) => {
     try {
       const response = await axiosInstance.post("/api/auth/login", values);
-      const { token, user } = response.data;
+      const { token, user, mustChangePassword } = response.data;
       
       setToken(token);
+      setMustChangePassword(!!mustChangePassword);
       if (user?.username) {
         setUsername(user.username);
       }
       
       navigate("/");
-    } catch {
-      alert("登录失败，请检查用户名或密码");
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { status?: number; data?: { error?: string } } } | undefined;
+      if (axiosErr?.response?.status === 429) {
+        alert(axiosErr.response.data?.error || "登录失败次数过多，请稍后再试");
+        return;
+      }
+      alert(axiosErr?.response?.data?.error || "登录失败，请检查用户名或密码");
     }
   };
 

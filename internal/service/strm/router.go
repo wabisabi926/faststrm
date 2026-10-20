@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -289,25 +290,89 @@ func GetClientIp(r *http.Request) string {
 }
 
 // BuildContentDisposition 构造 Content-Disposition 头部（兼容非 ASCII 文件名）
+//
+// 文件名可能来自 115 的 Name 字段，历史上出现过含 '/' 的情况（脏数据/多行标题）。
+// filename* 按 RFC 5987 编码时必须把 '/' 编成 %2F，不能原样保留，否则部分播放器
+// 会把它当成路径分隔符；同时提供 ASCII filename 作为旧客户端兜底。
 func BuildContentDisposition(fileName string) string {
-	asciiOnly := true
-	for _, r := range fileName {
-		if r > 0x7F {
-			asciiOnly = false
-			break
-		}
+	if strings.TrimSpace(fileName) == "" {
+		return `attachment; filename=""`
 	}
-	if asciiOnly {
-		return `attachment; filename="` + fileName + `"`
+	name := sanitizeDispositionName(fileName)
+	if name == "" {
+		return `attachment; filename=""`
 	}
-	return `attachment; filename*=UTF-8''` + percentEncodePath(fileName)
+	fallback := asciiDispositionFallback(name)
+	if isASCII(name) {
+		return `attachment; filename="` + escapeQuotedFileName(name) + `"`
+	}
+	return `attachment; filename="` + escapeQuotedFileName(fallback) + `"; filename*=UTF-8''` + percentEncodePath(name)
 }
 
-// percentEncodePath 做 RFC 5987 风格的百分号编码
+// sanitizeDispositionName 去掉头部非法字符，并把路径分隔符降级为下划线。
+func sanitizeDispositionName(name string) string {
+	name = strings.TrimSpace(name)
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r == '/' || r == '\\':
+			b.WriteByte('_')
+		case r < 0x20 || r == 0x7f:
+			// 控制字符（含 CR/LF/NUL）不能进入响应头
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return "media"
+	}
+	return out
+}
+
+// asciiDispositionFallback 为 filename= 生成纯 ASCII 兜底名，保留扩展名。
+func asciiDispositionFallback(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		if r >= 0x20 && r < 0x7f && r != '"' && r != '\\' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	out := b.String()
+	ext := path.Ext(out)
+	stem := strings.TrimSuffix(out, ext)
+	if strings.Trim(stem, "._- ") == "" {
+		if ext == "" {
+			return "media"
+		}
+		return "media" + ext
+	}
+	return out
+}
+
+func escapeQuotedFileName(name string) string {
+	return strings.ReplaceAll(name, `"`, "'")
+}
+
+func isASCII(s string) bool {
+	for _, r := range s {
+		if r > 0x7F {
+			return false
+		}
+	}
+	return true
+}
+
+// percentEncodePath 做 RFC 5987 风格的百分号编码（'/' 也必须编码为 %2F）
 func percentEncodePath(s string) string {
 	var sb strings.Builder
+	sb.Grow(len(s) * 3)
 	for _, b := range []byte(s) {
-		if isUnreserved(b) || b == '/' {
+		if isUnreserved(b) {
 			sb.WriteByte(b)
 		} else {
 			sb.WriteString(upperHex(b))

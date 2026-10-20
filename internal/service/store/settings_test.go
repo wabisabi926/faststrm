@@ -75,30 +75,47 @@ func TestReadSettings_MigratesCleanupDefaults(t *testing.T) {
 }
 
 // TestReadSettings_CleanupRelatedDefaults 清理连带动作的一次性迁移：
-// 老配置补齐 RemoveRelatedFiles=true 并写入标记；标记存在后尊重用户手动关闭。
+// v1.5 起破坏性动作默认关闭；旧版本自动开过的值在首次升级时统一关闭。
 func TestReadSettings_CleanupRelatedDefaults(t *testing.T) {
-	// 1) 完全没有 cleanup 块 → 补默认（含连带删关联文件）
+	// 1) 完全没有 cleanup 块 → 补默认（连带删除关闭）
 	dir1 := t.TempDir()
 	writeSettings(t, dir1, `{"download":{}}`)
 	s1, err := NewSettingsStore("test_salt", dir1).ReadSettings()
 	if err != nil {
 		t.Fatalf("ReadSettings: %v", err)
 	}
-	if !s1.Cleanup.RemoveRelatedFiles {
-		t.Error("缺 cleanup 块时应补为连带删除关联文件")
+	if s1.Cleanup.RemoveRelatedFiles {
+		t.Error("缺 cleanup 块时不应默认连带删除关联文件")
 	}
-	if !s1.CleanupDefaultsV2 {
-		t.Error("应写入迁移标记")
+	if s1.Cleanup.RemoveEmptyDirs {
+		t.Error("缺 cleanup 块时不应默认清理空目录")
+	}
+	if !s1.CleanupDefaultsV2 || !s1.CleanupDefaultsV3 {
+		t.Error("应写入 V2/V3 迁移标记")
 	}
 
-	// 2) 用户显式关闭 + 标记已存在 → 不得覆盖
+	// 2) 旧版本自动开启 + 尚未有 V3 标记 → 一次性关闭
 	dir2 := t.TempDir()
-	writeSettings(t, dir2, `{"cleanupDefaultsV2":true,"cleanup":{"maxThreshold":1000,"maxRatio":0.1,"maxDirs":20,"removeRelatedFiles":false}}`)
+	writeSettings(t, dir2, `{"cleanupDefaultsV2":true,"cleanup":{"maxThreshold":1000,"maxRatio":0.1,"maxDirs":20,"removeRelatedFiles":true,"removeEmptyDirs":true}}`)
 	s2, err := NewSettingsStore("test_salt", dir2).ReadSettings()
 	if err != nil {
 		t.Fatalf("ReadSettings: %v", err)
 	}
-	if s2.Cleanup.RemoveRelatedFiles {
-		t.Error("标记存在时不应覆盖用户手动关闭")
+	if s2.Cleanup.RemoveRelatedFiles || s2.Cleanup.RemoveEmptyDirs {
+		t.Error("旧版本自动开启的破坏性动作应在 V3 迁移时关闭")
+	}
+	if !s2.CleanupDefaultsV3 {
+		t.Error("应写入 V3 迁移标记")
+	}
+
+	// 3) V3 标记已存在 → 尊重用户之后手动开启
+	dir3 := t.TempDir()
+	writeSettings(t, dir3, `{"cleanupDefaultsV2":true,"cleanupDefaultsV3":true,"cleanup":{"maxThreshold":1000,"maxRatio":0.1,"maxDirs":20,"removeRelatedFiles":true}}`)
+	s3, err := NewSettingsStore("test_salt", dir3).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if !s3.Cleanup.RemoveRelatedFiles {
+		t.Error("V3 标记存在时不应覆盖用户手动开启")
 	}
 }

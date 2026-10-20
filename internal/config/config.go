@@ -331,6 +331,19 @@ func HashPassword(salt, password string) string {
 	return "$sha256$" + hex.EncodeToString(h[:])
 }
 
+// IsDefaultAdminPassword 判断当前管理员密码是否仍为出厂默认（空 / admin / admin 的哈希）。
+// 用于首次登录强制改密门禁；每次只做一次 SHA-256，开销可忽略。
+func IsDefaultAdminPassword() bool {
+	cfg := Get()
+	if cfg.Admin == nil {
+		return false
+	}
+	if cfg.Admin.Password == "" || cfg.Admin.Password == "admin" {
+		return true
+	}
+	return cfg.Admin.Password == HashPassword(cfg.Salt, "admin")
+}
+
 // EnsureSalt 读取或生成 salt
 func EnsureSalt(saltPath string) (string, error) {
 	if data, err := os.ReadFile(saltPath); err == nil {

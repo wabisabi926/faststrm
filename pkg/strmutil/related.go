@@ -31,24 +31,27 @@ func IsRelatedAssetPath(p string) bool {
 }
 
 // DeleteRelatedFiles 删除与 STRM 同名的关联文件（stem + 扩展名），返回删除数量。
-//
-// 匹配规则：文件名以 `<stem>` 开头、剩余部分为空或以 "." 开头，且扩展名在 exts 白名单内。
-// 这样 "movie.nfo" / "movie.zh.srt" 会被删，"movie.mkv" / "movie_trailer.mkv" 不会。
 func DeleteRelatedFiles(strmPath string, exts map[string]struct{}) int {
+	return len(DeleteRelatedFilesDetailed(strmPath, exts))
+}
+
+// DeleteRelatedFilesDetailed 删除关联文件并返回实际删除的绝对路径列表。
+// 调用方需要回显删除结果（如清理页）时使用；任务/监控侧只关心数量。
+func DeleteRelatedFilesDetailed(strmPath string, exts map[string]struct{}) []string {
 	if strmPath == "" {
-		return 0
+		return nil
 	}
 	dir := filepath.Dir(strmPath)
 	base := filepath.Base(strmPath)
 	stem := strings.TrimSuffix(base, ".strm")
 	if stem == "" || stem == base {
-		return 0
+		return nil
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0
+		return nil
 	}
-	deleted := 0
+	var removed []string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -65,9 +68,10 @@ func DeleteRelatedFiles(strmPath string, exts map[string]struct{}) int {
 		if _, ok := exts[strings.ToLower(filepath.Ext(name))]; !ok {
 			continue
 		}
-		if err := os.Remove(filepath.Join(dir, name)); err == nil {
-			deleted++
+		full := filepath.Join(dir, name)
+		if err := os.Remove(full); err == nil {
+			removed = append(removed, full)
 		}
 	}
-	return deleted
+	return removed
 }

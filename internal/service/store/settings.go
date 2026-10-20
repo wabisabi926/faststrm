@@ -170,17 +170,26 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		logger.S().Infof("[SettingsStore] 迁移: 孤儿 STRM 清理默认开启（%s）", out.Download.FullSyncCleanupOrphans)
 	}
 	// 清理默认值一次性迁移（带标记，避免每次启动覆盖用户选择）：
-	//   - 整个 cleanup 块缺失 → 补齐默认值（含 RemoveRelatedFiles=true）
-	//   - 已有 cleanup 但两个连带动作都是关 → 打开关联文件删除（用户从未配置过）
+	//   - 整个 cleanup 块缺失 → 补齐默认值
+	//   - 不再自动打开连带删除；破坏性动作统一默认关闭
 	if !out.CleanupDefaultsV2 {
 		if out.Cleanup.MaxThreshold == 0 && out.Cleanup.MaxRatio == 0 && out.Cleanup.MaxDirs == 0 {
 			out.Cleanup = def.Cleanup
-		} else if !out.Cleanup.RemoveRelatedFiles && !out.Cleanup.RemoveEmptyDirs {
-			out.Cleanup.RemoveRelatedFiles = true
 		}
 		out.CleanupDefaultsV2 = true
 		changed = true
-		logger.S().Infof("[SettingsStore] 迁移: 清理默认值已更新（删 STRM 时连带删同名 nfo/海报/字幕）")
+		logger.S().Infof("[SettingsStore] 迁移: 清理默认值已初始化（破坏性连带动作默认关闭）")
+	}
+	// v1.5 一次性迁移：旧版本自动打开过 RemoveRelatedFiles/RemoveEmptyDirs，
+	// 这里统一关闭，之后用户在设置页手动开启的值会保留。
+	if !out.CleanupDefaultsV3 {
+		if out.Cleanup.RemoveRelatedFiles || out.Cleanup.RemoveEmptyDirs {
+			out.Cleanup.RemoveRelatedFiles = false
+			out.Cleanup.RemoveEmptyDirs = false
+			logger.S().Infof("[SettingsStore] 迁移: 已关闭连带删除关联文件/空目录（默认只删 STRM，需手动开启）")
+		}
+		out.CleanupDefaultsV3 = true
+		changed = true
 	}
 	// v1.4.3 强制代理格式改为可配置：旧配置没有该字段，补默认值写回，
 	// 让用户能在 settings.json 里看到并调整（例如把 .ts 移除）。

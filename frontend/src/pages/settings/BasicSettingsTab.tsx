@@ -29,7 +29,7 @@ const CLEANUP_MODE_HINTS: Record<string, string> = {
   mark_only:
     "只在任务日志里列出孤儿 STRM，不动任何文件。适合先观察一段时间，确认判定准确后再切到自动清理。",
   auto_clean:
-    "直接删除孤儿 STRM。命中保护阈值时会自动停手，或转入待确认队列——可在 Telegram 按钮或清理页「待确认删除批次」中确认；超过 24 小时未确认的批次会自动作废。",
+    "直接删除孤儿 STRM（只删托管 STRM，不连带删关联文件/空目录）。命中保护阈值时会自动停手，或转入待确认队列——可在 Telegram 按钮或清理页「待确认删除批次」中确认；超过 24 小时未确认的批次会自动作废。",
 };
 
 export interface BasicSettingsTabProps {
@@ -284,7 +284,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               <Checkbox
                 id="cleanup-remove-related"
                 disabled={cleanupMode === "off"}
-                checked={data.cleanup?.removeRelatedFiles ?? true}
+                checked={data.cleanup?.removeRelatedFiles ?? false}
                 onCheckedChange={(checked) =>
                   setData({
                     ...data,
@@ -293,11 +293,11 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 }
               />
               <label htmlFor="cleanup-remove-related" className="text-sm cursor-pointer">
-                删除孤儿 STRM 时，连带删除同名 nfo / 海报 / 字幕
+                删除孤儿 STRM 时，连带删除同名 nfo / 海报 / 字幕（默认关闭）
               </label>
             </div>
             <p className="text-xs text-muted-foreground">
-              只删 .nfo/.jpg/.png/.srt/.ass 等元数据与字幕，<span className="font-medium">绝不会删 .mkv/.mp4 等视频文件</span>。
+              只删 .nfo/.jpg/.png/.srt/.ass/.vtt 等元数据与字幕，<span className="font-medium">绝不会删 .mkv/.mp4 等视频文件</span>。开启前请确认目录里的关联文件都由本工具管理。
             </p>
             <div className="flex items-center gap-2">
               <Checkbox
@@ -312,7 +312,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 }
               />
               <label htmlFor="cleanup-remove-empty-dirs" className="text-sm cursor-pointer">
-                删完后清理空目录
+                删完后清理空目录（默认关闭）
               </label>
             </div>
           </div>

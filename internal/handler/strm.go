@@ -305,6 +305,7 @@ func writeStrmHeadResponse(
 	}
 	if finalName != "" {
 		h.Set("Content-Disposition", strm.BuildContentDisposition(finalName))
+		applyMediaContentType(h, finalName)
 	}
 	origin := r.Header.Get("origin")
 	if origin == "" {
@@ -315,6 +316,20 @@ func writeStrmHeadResponse(
 		"Content-Disposition, Content-Length, Content-Type, Accept-Ranges, Content-Range")
 	logger.S().Infof("[STRM/HEAD] pc=%s cl_source=%s size=%d ua=%s", shortPc, sizeFrom, size, userAgent)
 	w.WriteHeader(http.StatusOK)
+}
+
+// applyMediaContentType 在已知容器类型时补齐 Content-Type。
+// 上游 115 CDN 对部分格式返回 application/octet-stream，播放器拿不到
+// 容器类型时会误判；已知扩展名时用更精确的类型覆盖。
+func applyMediaContentType(h http.Header, fileName string) {
+	ct := strm.ContentTypeForName(fileName)
+	if ct == "" {
+		return
+	}
+	existing := strings.ToLower(strings.TrimSpace(h.Get("Content-Type")))
+	if existing == "" || strings.HasPrefix(existing, "application/octet-stream") {
+		h.Set("Content-Type", ct)
+	}
 }
 
 // pickOneFileName 选择文件名，三档优先级：
@@ -446,6 +461,7 @@ func handleProxy(
 	if fileName != "" {
 		respHeader.Set("Content-Disposition", strm.BuildContentDisposition(fileName))
 	}
+	applyMediaContentType(respHeader, fileName)
 	origin := r.Header.Get("origin")
 	if origin == "" {
 		origin = "*"

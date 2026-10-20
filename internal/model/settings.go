@@ -27,7 +27,9 @@ type Settings struct {
 	Telegram           TelegramSettings    `json:"telegram"`
 	LifeMonitor        LifeMonitorSettings `json:"lifeMonitor"`
 	// CleanupDefaultsV2 标记「清理默认值已迁移」，避免每次启动反复覆盖用户的选择
-	CleanupDefaultsV2 bool                  `json:"cleanupDefaultsV2"`
+	CleanupDefaultsV2 bool `json:"cleanupDefaultsV2"`
+	// CleanupDefaultsV3 标记「破坏性连带动作已关闭」的一次性迁移（v1.5）
+	CleanupDefaultsV3 bool                  `json:"cleanupDefaultsV3"`
 	Cleanup           CleanupSettings       `json:"cleanup"`
 	CookieInspect     CookieInspectSettings `json:"cookieInspect"`
 }
@@ -410,7 +412,7 @@ func DefaultSettings() *Settings {
 			ConfirmMode:        "none",
 			RemoveStrm:         true,
 			RemoveEmptyDirs:    false,
-			RemoveRelatedFiles: true,
+			RemoveRelatedFiles: false,
 		},
 		CookieInspect: CookieInspectSettings{
 			Enabled:       boolPtr(true), // 默认开启主动巡检

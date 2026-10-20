@@ -29,6 +29,20 @@ export function clearUsername(): void {
   localStorage.removeItem('auth-username');
 }
 
+const MUST_CHANGE_PASSWORD_KEY = 'must-change-password';
+
+export function setMustChangePassword(required: boolean): void {
+  if (required) {
+    localStorage.setItem(MUST_CHANGE_PASSWORD_KEY, '1');
+  } else {
+    localStorage.removeItem(MUST_CHANGE_PASSWORD_KEY);
+  }
+}
+
+export function getMustChangePassword(): boolean {
+  return localStorage.getItem(MUST_CHANGE_PASSWORD_KEY) === '1';
+}
+
 export const axiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
@@ -50,7 +64,15 @@ axiosInstance.interceptors.request.use(
 axiosInstance.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const url = String(error.config?.url || '');
+    const code = error.response?.data?.code;
+    if (error.response?.status === 403 && code === 'PASSWORD_CHANGE_REQUIRED') {
+      setMustChangePassword(true);
+      window.dispatchEvent(new Event('auth:password-change-required'));
+      return Promise.reject(error);
+    }
+    // 登录/改密接口的 401 由页面自行展示，不能把用户踢回登录页
+    if (error.response?.status === 401 && !url.includes('/api/auth/')) {
       clearToken();
       clearUsername();
       window.location.href = '/login';

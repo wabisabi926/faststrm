@@ -396,40 +396,11 @@ func deleteStrmFile(strmPath string, rootDirs []string, opts SyncDeleteOptions) 
 	}
 	deletedFiles = 1
 
-	// 删除关联文件（字幕、nfo、图片）
-	dir := filepath.Dir(strmPath)
-	base := strings.TrimSuffix(filepath.Base(strmPath), filepath.Ext(strmPath))
-	relatedExts := []string{".srt", ".ass", ".sub", ".nfo", ".jpg", ".png"}
-
-	entries, err := os.ReadDir(dir)
-	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			// 跳过主文件（已删除）
-			if name == filepath.Base(strmPath) {
-				continue
-			}
-			nameBase := strings.TrimSuffix(name, filepath.Ext(name))
-			ext := strings.ToLower(filepath.Ext(name))
-			// 匹配同基名的关联文件
-			if nameBase == base {
-				for _, relExt := range relatedExts {
-					if ext == relExt {
-						if err := os.Remove(filepath.Join(dir, name)); err == nil {
-							deletedFiles++
-						}
-						break
-					}
-				}
-			}
-		}
-	}
+	// 删除关联文件（字幕、nfo、图片）：统一白名单与匹配规则
+	deletedFiles += strmutil.DeleteRelatedFiles(strmPath, strmutil.DefaultRelatedExts)
 
 	// 清理空父目录
-	removedDirs := removeEmptyParents(dir, rootDirs)
+	removedDirs := removeEmptyParents(filepath.Dir(strmPath), rootDirs)
 	return deletedFiles, removedDirs
 }
 

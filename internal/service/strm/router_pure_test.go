@@ -2,6 +2,7 @@ package strm
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -125,6 +126,37 @@ func TestBuildContentDisposition(t *testing.T) {
 		if !contains(got, "UTF-8''") {
 			t.Fatalf("should contain UTF-8'' prefix, got %q", got)
 		}
+		if !contains(got, `filename="media.mkv"`) {
+			t.Fatalf("should include ascii fallback, got %q", got)
+		}
+	})
+
+	t.Run("slash in filename", func(t *testing.T) {
+		got := BuildContentDisposition("电影/台/粤语.iso")
+		if contains(got, "%E7%94%B5%E5%BD%B1/%E5%8F%B0") {
+			t.Fatalf("filename* must not keep raw '/', got %q", got)
+		}
+		star := got
+		if i := strings.Index(got, "; filename*="); i >= 0 {
+			star = got[i:]
+			fallback := got[:i]
+			if strings.Contains(fallback, "/") {
+				t.Fatalf("ascii fallback must not contain '/', got %q", fallback)
+			}
+			if !strings.Contains(fallback, `.iso"`) {
+				t.Fatalf("ascii fallback should keep .iso, got %q", fallback)
+			}
+		}
+		if strings.Contains(star, "/") {
+			t.Fatalf("filename* must not contain raw '/', got %q", star)
+		}
+	})
+
+	t.Run("control chars stripped", func(t *testing.T) {
+		got := BuildContentDisposition("movie\r\n\t.iso")
+		if contains(got, "\r") || contains(got, "\n") {
+			t.Fatalf("control chars must be stripped, got %q", got)
+		}
 	})
 
 	t.Run("empty filename", func(t *testing.T) {
@@ -145,7 +177,7 @@ func TestPercentEncodePath(t *testing.T) {
 		want  string
 	}{
 		{"plain ascii", "abc123", "abc123"},
-		{"with slash", "a/b", "a/b"},
+		{"with slash", "a/b", "a%2Fb"},
 		{"with space", "a b", "a%20b"},
 		{"with chinese", "电影", "%E7%94%B5%E5%BD%B1"},
 		{"unreserved", "a-_.~", "a-_.~"},
