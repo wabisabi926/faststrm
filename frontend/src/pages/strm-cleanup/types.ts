@@ -104,6 +104,15 @@ export type ExecuteResult = {
   skippedCloudRestored?: number;
   // 因缺少云端路径/复核失败而保留的数量
   skippedCloudUnverified?: number;
+  // 是否已转入待确认批次（此时 deletedCount 为 0）
+  pending?: boolean;
+  pendingRequestId?: string;
+  // 保护阈值/入队失败原因；非空表示本次未执行删除
+  thresholdError?: string;
+  appliedMaxThreshold?: number;
+  appliedStableThreshold?: number;
+  appliedConfirmMode?: string;
+  totalStaleCount?: number;
   errors: Array<{ path: string; error: string }>;
   removedEmptyDirs: string[];
   dryRun: boolean;

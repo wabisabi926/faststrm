@@ -102,6 +102,33 @@ export function useStrmCleanup(
 
   const clearLogs = () => setLogs([]);
 
+  // 后端在保护阈值命中或转入待确认批次时仍返回 HTTP 200，但 deletedCount=0。
+  // 这类结果不能走 handleDeleteResult，否则会把选中项从 UI 误移除。
+  const handleBlockedExecuteResult = (r: ExecuteResult): boolean => {
+    if (r.pending) {
+      appendLog(
+        "待确认",
+        `已转入待确认批次 ${r.pendingRequestId || "-"}，确认后才会删除`,
+        true
+      );
+      toast.warning("清理已转入待确认批次", {
+        description: `请在下方「待确认删除批次」中确认；批次 ${r.pendingRequestId || "-"}`,
+        duration: 10000,
+      });
+      window.dispatchEvent(new Event("strm-cleanup:pending-changed"));
+      return true;
+    }
+    if (r.thresholdError) {
+      appendLog("保护", r.thresholdError, false);
+      toast.error("清理被保护阈值拦截", {
+        description: r.thresholdError,
+        duration: 10000,
+      });
+      return true;
+    }
+    return false;
+  };
+
   const toggleAllStale = (checked: boolean) => {
     setSelectedStale(selectAllStale(allStale, checked));
   };
@@ -370,6 +397,7 @@ export function useStrmCleanup(
         scanId,
         dryRun: false,
       });
+      if (handleBlockedExecuteResult(res.data)) return;
       handleDeleteResult(res.data);
       if (hasCleanupSkips(res.data)) {
         // 有文件因云端复核/归属变化被保留：立即复扫，避免 UI 把保留项当成已删除
@@ -401,6 +429,7 @@ export function useStrmCleanup(
         scanSummary: { mappings: scanResult!.mappings },
         dryRun: false,
       });
+      if (handleBlockedExecuteResult(res.data)) return;
       // delete_all 删除的是全部失效项，前端用后端权威的 deletedAllCount 判定是否真正删除了文件，
       // 立即将全部失效从 UI 移除（selectedStale 可能为空集，需显式传入），避免刷新前仍显示旧计数。
       const deleted = res.data?.deletedAllCount ?? 0;
@@ -439,6 +468,7 @@ export function useStrmCleanup(
         missingItems,
         dryRun: false,
       });
+      if (handleBlockedExecuteResult(res.data)) return;
       handleCombinedResult(res.data);
       await refreshAfterBulk();
     } catch (err) {

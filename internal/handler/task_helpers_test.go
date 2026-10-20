@@ -7,6 +7,8 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/task"
 )
 
+func strPtrTest(v string) *string { return &v }
+
 func TestParseBoolAny(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -315,7 +317,7 @@ func TestUpsertTaskRequest_ToTask_FullRequestNilExisting(t *testing.T) {
 		OriginPath:    "/data/origin",
 		TargetPath:    "/data/target",
 		StrmType:      "remote",
-		StrmPrefix:    "PREFIX_",
+		StrmPrefix:    strPtrTest("PREFIX_"),
 		EnableEnc:     ptrBool("TRUE"),
 		ScheduleMode:  "interval",
 		ScheduleValue: "120",
@@ -548,5 +550,20 @@ func TestUpsertTaskRequest_ToTask_EmptyReqIDKeepsExisting(t *testing.T) {
 	got := req.toTask(existing)
 	if got.ID != "keep-me" {
 		t.Fatalf("ID = %q, want 'keep-me' (existing.ID preserved when req.ID empty)", got.ID)
+	}
+}
+
+func TestUpsertTaskRequest_ToTask_ClearStrmPrefix(t *testing.T) {
+	existing := &task.Task{ID: "existing-002", StrmPrefix: "OLD_"}
+	empty := ""
+	got := (&UpsertTaskRequest{StrmPrefix: &empty}).toTask(existing)
+	if got.StrmPrefix != "" {
+		t.Fatalf("StrmPrefix should be cleared by explicit empty value, got %q", got.StrmPrefix)
+	}
+
+	// 未提供（nil）时仍保留旧值
+	got = (&UpsertTaskRequest{}).toTask(existing)
+	if got.StrmPrefix != "OLD_" {
+		t.Fatalf("StrmPrefix should be preserved when omitted, got %q", got.StrmPrefix)
 	}
 }

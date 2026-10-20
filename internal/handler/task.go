@@ -73,7 +73,7 @@ func HandleStartTask(deps TaskHandlerDeps) http.HandlerFunc {
 		}
 		if foundTask == nil {
 			httpx.WriteJson(w, http.StatusOK, task.ExecuteResult{
-				Success: false, Reason: "not_found", Message: "Task not found",
+				Success: false, Reason: "not_found", Message: "任务不存在",
 			})
 			return
 		}
@@ -89,7 +89,7 @@ func HandleStartTask(deps TaskHandlerDeps) http.HandlerFunc {
 
 		// 立即返回启动成功
 		httpx.WriteJson(w, http.StatusOK, task.ExecuteResult{
-			Success: true, TaskID: req.TaskID, Message: "Task started",
+			Success: true, TaskID: req.TaskID, Message: "任务已启动",
 		})
 	}
 }
@@ -181,6 +181,30 @@ func HandleListTasks(deps TaskHandlerDeps) http.HandlerFunc {
 			en := enriched{Task: t}
 			if rs, ok := running[t.ID]; ok {
 				en.Runtime = rs
+			} else if deps.TaskHistoryRepo != nil {
+				// 服务重启后内存运行态会丢失：用最近一次执行历史回填状态，
+				// 否则前端会把所有历史任务都显示成“待处理”。
+				if execs, err := deps.TaskHistoryRepo.Query(r.Context(), db.TaskHistoryQuery{
+					TaskID: t.ID, Limit: 1,
+				}); err != nil {
+					logger.S().Warnf("[HandleListTasks] query latest execution for %s: %v", t.ID, err)
+				} else if len(execs) > 0 {
+					e := execs[0]
+					status := task.Status(e.Status)
+					if status == task.StatusRunning {
+						// 没有运行态却有 running 历史：要么刚启动尚未注册，要么上次进程异常退出。
+						status = task.StatusPending
+					}
+					en.Runtime = &task.RuntimeState{
+						Status:          status,
+						StartedAt:       e.StartedAt,
+						EndedAt:         e.EndedAt,
+						Error:           e.Error,
+						TotalFiles:      e.Summary.TotalFiles,
+						DownloadedFiles: e.Summary.DownloadedFiles,
+						DeletedFiles:    e.Summary.DeletedFiles,
+					}
+				}
 			}
 			if t.Schedule != nil && t.Schedule.Enabled {
 				en.ScheduleNext = schedNext[t.ID]
@@ -216,7 +240,11 @@ func HandleTaskLog(deps TaskHandlerDeps) http.HandlerFunc {
 		sseLogs := sse.GetServer().GetTaskLogs(tid)
 		if len(runtimeLogs) > 0 || len(sseLogs) > 0 {
 			merged := append([]string(nil), runtimeLogs...)
-			merged = append(merged, sseLogs...)
+			for _, frame := range sseLogs {
+				if line, ok := sseFrameLine(frame); ok {
+					merged = append(merged, line)
+				}
+			}
 			WriteTextLines(w, merged)
 			return
 		}
@@ -260,6 +288,17 @@ func lastSeg(p string) string {
 	return p[idx+1:]
 }
 
+// sseFrameLine 把 SSE 编码帧（"data: {json}\n\n"）还原成纯 JSON 行，
+// 供 /api/taskLog 以纯文本格式返回，避免前端把 "data:" 前缀当成原始日志。
+func sseFrameLine(frame string) (string, bool) {
+	frame = strings.TrimSpace(frame)
+	frame = strings.TrimSpace(strings.TrimPrefix(frame, "data:"))
+	if frame == "" {
+		return "", false
+	}
+	return frame, true
+}
+
 // WriteTextLines 写纯文本多行到响应
 func WriteTextLines(w http.ResponseWriter, lines []string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -288,7 +327,7 @@ type UpsertTaskRequest struct {
 	ScheduleValue  string             `json:"scheduleValue" form:"scheduleValue"`
 	Schedule       *task.TaskSchedule `json:"schedule,omitempty"` // 嵌套 schedule 对象（前端 TaskScheduleDialog 发）
 	StrmType       string             `json:"strmType" form:"strmType"`
-	StrmPrefix     string             `json:"strmPrefix" form:"strmPrefix"`
+	StrmPrefix     *string            `json:"strmPrefix" form:"-"`
 	EnableEnc      *bool              `json:"enablePathEncoding" form:"-"`
 	AccountCookie  string             `json:"cookie" form:"cookie"` // 兼容旧前端
 	AccountAccount string             `json:"account_" form:"account_"`
@@ -373,9 +412,12 @@ func fillUpsertFromBody(r *http.Request, req *UpsertTaskRequest) {
 	req.Enabled = ptrBool(r.FormValue("enabled"))
 	req.ScheduleMode = r.FormValue("scheduleMode")
 	req.ScheduleValue = r.FormValue("scheduleValue")
-	req.StrmPrefix = r.FormValue("strmPrefix")
+	// 表单路径需要区分“字段未提交”和“提交空值”，后者用于清空任务级 STRM 前缀
+	if vals, ok := r.Form["strmPrefix"]; ok && len(vals) > 0 {
+		v := vals[0]
+		req.StrmPrefix = &v
+	}
 	req.EnableEnc = ptrBool(r.FormValue("enablePathEncoding"))
-	req.StrmPrefix = r.FormValue("strmPrefix")
 }
 
 func (req *UpsertTaskRequest) toTask(existing *task.Task) task.Task {
@@ -411,8 +453,8 @@ func (req *UpsertTaskRequest) toTask(existing *task.Task) task.Task {
 	if req.StrmType != "" {
 		t.StrmType = req.StrmType
 	}
-	if req.StrmPrefix != "" {
-		t.StrmPrefix = req.StrmPrefix
+	if req.StrmPrefix != nil {
+		t.StrmPrefix = strings.TrimSpace(*req.StrmPrefix)
 	}
 	// nil = 请求未传，保留 existing；非 nil = 显式覆盖
 	if req.EnableEnc != nil {

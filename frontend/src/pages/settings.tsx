@@ -8,6 +8,7 @@ import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog
 import { LocalDirectoryTreeDialog } from "@/pages/task/components/LocalDirectoryTreeDialog";
 import type {
   PathMapping,
+  PathMappingType,
   Settings as SettingsType,
   MonitorState,
   MountDryRunData,
@@ -28,6 +29,7 @@ export default function SettingsPage() {
   const [downloadExtensionsInput, setDownloadExtensionsInput] = useState("");
   // STRM 路由策略配置
   const [forceProxyUaInput, setForceProxyUaInput] = useState("");
+  const [forceProxyFormatsInput, setForceProxyFormatsInput] = useState("");
   // 全局文件过滤
   const [globalMinFileSizeMb, setGlobalMinFileSizeMb] = useState("");
   const [globalBlacklistInput, setGlobalBlacklistInput] = useState("");
@@ -52,6 +54,7 @@ export default function SettingsPage() {
   const [pollInterval, setPollInterval] = useState(10);
   const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
   const [newMappingAccount, setNewMappingAccount] = useState<string>("__all__");
+  const [newMappingType, setNewMappingType] = useState<PathMappingType>("media");
   const [removeEmptyDirs, setRemoveEmptyDirs] = useState(true);
   const [notifyOnlyOnError, setNotifyOnlyOnError] = useState(false);
   const [eventTypes, setEventTypes] = useState({
@@ -116,6 +119,7 @@ export default function SettingsPage() {
         setStrmExtensionsInput((settings.strmExtensions || []).join(", "));
         setDownloadExtensionsInput((settings.downloadExtensions || []).join(", "));
         setForceProxyUaInput((settings.strm?.forceProxyUaTokens || []).join(", "));
+        setForceProxyFormatsInput((settings.strm?.forceProxyFormats || []).join(", "));
 
         // 全局文件过滤
         const loadedGlobalMin = typeof settings.download?.minFileSize === "number" ? settings.download.minFileSize : 0;
@@ -176,7 +180,7 @@ export default function SettingsPage() {
     }
   };
 
-  const fetchMountDryRun = async () => {
+  const fetchMountDryRun = async (): Promise<MountDryRunData> => {
     setMountDryRunLoading(true);
     try {
       const resp = await axiosInstance.get("/api/mediaMountSync");
@@ -193,8 +197,10 @@ export default function SettingsPage() {
         }
       }
       setMountDryRun(d || null);
+      return d || null;
     } catch (e) {
       console.error("获取媒体挂载试运行数据失败:", e);
+      return null;
     } finally {
       setMountDryRunLoading(false);
     }
@@ -262,14 +268,20 @@ export default function SettingsPage() {
       .map(token => token.trim())
       .filter(token => token.length > 0);
 
+    // 解析强制代理格式（容器名/扩展名，点号可选；后端按小写匹配）
+    const forceProxyFormats = forceProxyFormatsInput
+      .split(",")
+      .map(token => token.trim().toLowerCase())
+      .filter(token => token.length > 0);
+
     // 解析全局文件名黑名单关键词
     const globalBlacklist = globalBlacklistInput
       .split(",")
       .map(keyword => keyword.trim())
       .filter(keyword => keyword.length > 0);
 
-    // 注意：mediaMountPath 不在此处手工写入，由 SSOT 的 syncMediaMountPaths() 统一维护
-    //       （PUT /api/settings 内部会自动触发 sync，并返回同步详情）
+    // 注意：mediaMountPath 不在此处手工写入，由 SSOT 统一维护；
+    //       保存设置不会自动同步挂载路径，需在「媒体挂载路径」区块手动点「立即同步并持久化」。
     return {
       ...data,
       strmExtensions: parseExts(strmExtensionsInput),
@@ -284,6 +296,7 @@ export default function SettingsPage() {
       strm: {
         ...data.strm,
         forceProxyUaTokens,
+        forceProxyFormats,
       },
       lifeMonitor: {
         enabled: monitorEnabled,
@@ -291,6 +304,7 @@ export default function SettingsPage() {
         pollInterval,
         pathMappings,
         removeEmptyDirs,
+        notifyOnlyOnError,
         eventTypes,
         minFileSize: parseMb(minFileSizeMb),
         firstPullMode,
@@ -306,32 +320,22 @@ export default function SettingsPage() {
     try {
       const saveData = buildSaveData();
 
-      const saveResp = await axiosInstance.post("/api/settings", saveData);
+      await axiosInstance.post("/api/settings", saveData);
       setData(saveData);
-      // 保存后自动刷新试运行视图（因为全局 strmPrefix/任务/生活事件 都可能影响）
-      await fetchMountDryRun();
-      const syncInfo = (saveResp.data as { mediaMountSync?: { changed?: boolean; nginx?: { attempted?: boolean; ok?: boolean; message?: string } } } | undefined)?.mediaMountSync;
-      const syncSummaries: string[] = [];
-      if (syncInfo) {
-        syncSummaries.push(syncInfo.changed ? "挂载路径：已更新" : "挂载路径：无变化");
-        if (syncInfo.nginx?.attempted) {
-          syncSummaries.push(syncInfo.nginx.ok ? "nginx：重载成功" : `nginx：重载失败 - ${syncInfo.nginx.message}`);
-        }
-      }
-      toast.success(syncSummaries.length ? `保存成功（${syncSummaries.join("；")}）` : "保存成功");
+      // 保存后刷新试运行视图；mediaMountPath 不会随设置保存自动落盘，需在上方手动同步。
+      const dry = await fetchMountDryRun();
+      toast.success(
+        dry?.diff.changed
+          ? "保存成功；挂载路径有变化，请点“立即同步并持久化”"
+          : "保存成功"
+      );
     } catch (error: unknown) {
-      if (error && typeof error === 'object' && 'response' in error) {
-        const apiError = error as { response?: { status?: number; data?: { message?: string } } };
-        if (apiError.response?.status === 409) {
-          toast.error(apiError.response.data?.message || "有任务正在执行中，无法保存设置。请等待任务完成后再试。");
-        } else if (apiError.response?.status === 400) {
-          toast.error("保存失败：参数错误");
-        } else {
-          toast.error("保存失败");
-        }
-      } else {
-        toast.error("保存失败");
-      }
+      const apiError = error as { response?: { data?: { message?: string; error?: string } } };
+      toast.error(
+        apiError.response?.data?.message ||
+          apiError.response?.data?.error ||
+          "保存失败"
+      );
     } finally {
       setSaving(false);
     }
@@ -354,9 +358,11 @@ export default function SettingsPage() {
       account: newMappingAccount !== "__all__" ? newMappingAccount : undefined,
       cloudPath: newCloudPath.trim(),
       localPath: newLocalPath.trim(),
+      mappingType: newMappingType,
     }]);
     setNewCloudPath("");
     setNewLocalPath("");
+    setNewMappingType("media");
   };
 
   const removePathMapping = (index: number) => {
@@ -515,36 +521,26 @@ export default function SettingsPage() {
       // 与 onSave 共用同一组装逻辑，重点覆盖 lifeMonitor.accounts，避免字段漂移
       const saveData = buildSaveData({ accounts: nextSelected });
 
-      const saveResp = await axiosInstance.post("/api/settings", saveData);
+      await axiosInstance.post("/api/settings", saveData);
 
       // 与 onSave 同步更新本地 state，避免「移除后再点保存又回退」
       setData(saveData);
       setSelectedAccounts(nextSelected);
 
-      await fetchMountDryRun();
-      const syncInfo = (saveResp.data as { mediaMountSync?: { changed?: boolean; nginx?: { attempted?: boolean; ok?: boolean; message?: string } } } | undefined)?.mediaMountSync;
-      const syncSummaries: string[] = [];
-      if (syncInfo) {
-        syncSummaries.push(syncInfo.changed ? "挂载路径：已更新" : "挂载路径：无变化");
-        if (syncInfo.nginx?.attempted) {
-          syncSummaries.push(syncInfo.nginx.ok ? "nginx：重载成功" : `nginx：重载失败 - ${syncInfo.nginx.message}`);
-        }
-      }
-      toast.success(syncSummaries.length
-        ? `已从监控列表移除「${account}」（${syncSummaries.join("；")}）`
-        : `已从监控列表移除「${account}」`);
+      const dry = await fetchMountDryRun();
+      toast.success(
+        dry?.diff.changed
+          ? `已从监控列表移除「${account}」；挂载路径有变化，请手动同步`
+          : `已从监控列表移除「${account}」`
+      );
 
       // 移除后刷新 monitor states，让卡片消失
       await refreshMonitorStates();
     } catch (error: unknown) {
       let msg = `从监控列表移除「${account}」失败`;
       if (error && typeof error === 'object' && 'response' in error) {
-        const apiError = error as { response?: { status?: number; data?: { message?: string; error?: string } } };
-        if (apiError.response?.status === 409) {
-          msg = apiError.response.data?.message || "有任务正在执行中，暂无法移除监控项";
-        } else if (apiError.response?.data?.message || apiError.response?.data?.error) {
-          msg = apiError.response.data.message || apiError.response.data.error || msg;
-        }
+        const apiError = error as { response?: { data?: { message?: string; error?: string } } };
+        msg = apiError.response?.data?.message || apiError.response?.data?.error || msg;
       }
       toast.error(msg);
       await refreshMonitorStates();
@@ -637,6 +633,8 @@ export default function SettingsPage() {
           setDownloadExtensionsInput={setDownloadExtensionsInput}
           forceProxyUaInput={forceProxyUaInput}
           setForceProxyUaInput={setForceProxyUaInput}
+          forceProxyFormatsInput={forceProxyFormatsInput}
+          setForceProxyFormatsInput={setForceProxyFormatsInput}
           globalMinFileSizeMb={globalMinFileSizeMb}
           setGlobalMinFileSizeMb={setGlobalMinFileSizeMb}
           globalBlacklistInput={globalBlacklistInput}
@@ -668,6 +666,8 @@ export default function SettingsPage() {
           setEventTypes={setEventTypes}
           removeEmptyDirs={removeEmptyDirs}
           setRemoveEmptyDirs={setRemoveEmptyDirs}
+          notifyOnlyOnError={notifyOnlyOnError}
+          setNotifyOnlyOnError={setNotifyOnlyOnError}
           minFileSizeMb={minFileSizeMb}
           setMinFileSizeMb={setMinFileSizeMb}
           firstPullMode={firstPullMode}
@@ -680,6 +680,8 @@ export default function SettingsPage() {
           setPathMappings={setPathMappings}
           newMappingAccount={newMappingAccount}
           setNewMappingAccount={setNewMappingAccount}
+          newMappingType={newMappingType}
+          setNewMappingType={setNewMappingType}
           newCloudPath={newCloudPath}
           setNewCloudPath={setNewCloudPath}
           newLocalPath={newLocalPath}

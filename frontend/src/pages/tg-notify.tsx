@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Bot, MessageSquare, CheckCircle, XCircle, RefreshCw, Play, Square, AlertCircle } from "lucide-react";
+import { Bot, MessageSquare, CheckCircle, XCircle, RefreshCw, Play, Square, AlertCircle, Users, UserPlus, X, Loader2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import axiosInstance from "@/lib/axios";
 import { logger } from "@/lib/logger";
@@ -53,10 +53,15 @@ export default function TelegramNotifyPage() {
   const [tokenModified, setTokenModified] = useState<boolean>(false);
   // webhook secret 输入值：空串=保持现状（后端沿用旧值）；"-"=清除；其他=设置新值
   const [webhookSecretInput, setWebhookSecretInput] = useState<string>("");
+  // 授权用户白名单：空列表表示允许所有 Telegram 用户
+  const [allowedUsers, setAllowedUsers] = useState<Array<{ id: number }>>([]);
+  const [newUserID, setNewUserID] = useState<string>("");
+  const [usersLoading, setUsersLoading] = useState<boolean>(false);
 
   useEffect(() => {
     void loadBotInfo();
     void checkPollingStatus();
+    void loadUsers();
     // 依赖为 setState + axios 单例，引用稳定；故意不写依赖避免重复加载
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -165,6 +170,62 @@ export default function TelegramNotifyPage() {
       setPollingStatus(response.data);
     } catch (error) {
       logger.error("检查轮询状态失败:", error);
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      setUsersLoading(true);
+      const response = await axiosInstance.get("/api/notify/users");
+      const list = Array.isArray(response.data?.users) ? response.data.users : [];
+      setAllowedUsers(
+        list
+          .map((u: { id?: number | string }) => Number(u?.id))
+          .filter((id: number) => Number.isFinite(id) && id > 0)
+          .map((id: number) => ({ id }))
+      );
+    } catch (error) {
+      logger.error("加载授权用户失败:", error);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const addAllowedUser = async () => {
+    const raw = newUserID.trim();
+    if (!raw) {
+      setError("请输入 Telegram 用户 ID");
+      return;
+    }
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+      await axiosInstance.post("/api/notify/users", { userId: raw });
+      setNewUserID("");
+      setSuccess(`已添加授权用户 ${raw}`);
+      await loadUsers();
+    } catch (error) {
+      const axiosError = error as { response?: { data?: { error?: string } } };
+      setError(axiosError.response?.data?.error || "添加授权用户失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeAllowedUser = async (id: number) => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+      await axiosInstance.delete(`/api/notify/users?userId=${encodeURIComponent(String(id))}`);
+      setSuccess(`已移除授权用户 ${id}`);
+      await loadUsers();
+    } catch (error) {
+      const axiosError = error as { response?: { data?: { error?: string } } };
+      setError(axiosError.response?.data?.error || "移除授权用户失败");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -387,6 +448,70 @@ export default function TelegramNotifyPage() {
           <p className="text-sm text-muted-foreground">保存配置后显示 Bot 状态</p>
         </section>
       ) : null}
+
+      {/* 授权用户白名单 */}
+      <section className="border rounded-md p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Users className="h-5 w-5" />
+          <h2 className="text-base font-medium">授权用户</h2>
+          <Badge variant="outline" className="text-[10px]">
+            {allowedUsers.length === 0 ? "允许所有" : `${allowedUsers.length} 人`}
+          </Badge>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
+            onClick={() => void loadUsers()}
+            disabled={usersLoading}
+          >
+            {usersLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          限制哪些 Telegram 用户可以使用 Bot。列表为空时允许所有用户；建议添加自己的 User ID 后立即生效。
+          用户 ID 可向 Bot 发送任意消息后从日志查看。
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Input
+            placeholder="Telegram User ID（如 123456789）"
+            value={newUserID}
+            onChange={(e) => setNewUserID(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void addAllowedUser();
+              }
+            }}
+            disabled={loading}
+          />
+          <Button onClick={() => void addAllowedUser()} disabled={loading || !newUserID.trim()}>
+            <UserPlus className="mr-1 h-4 w-4" />
+            添加
+          </Button>
+        </div>
+        {usersLoading ? (
+          <p className="text-xs text-muted-foreground">加载授权用户...</p>
+        ) : allowedUsers.length === 0 ? (
+          <p className="text-xs text-amber-600">当前未配置任何用户，Bot 对所有能发起会话的用户开放。</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {allowedUsers.map((u) => (
+              <Badge key={u.id} variant="secondary" className="gap-1 font-mono text-xs">
+                {u.id}
+                <button
+                  type="button"
+                  className="rounded-full opacity-70 hover:opacity-100"
+                  title="移除授权"
+                  onClick={() => void removeAllowedUser(u.id)}
+                  disabled={loading}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* 轮询控制 */}
       <section className="border rounded-md p-4 space-y-3">

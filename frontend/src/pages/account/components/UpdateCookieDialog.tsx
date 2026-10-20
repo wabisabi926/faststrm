@@ -25,8 +25,8 @@ interface UpdateCookieDialogProps {
 
 /**
  * 更新 Cookie 对话框（用于账户异常恢复）
- * 扫码成功后通过 PUT /api/account 更新指定账户的 Cookie 字段
- * 后端 qrcode/cookie 路由会异步触发状态重检，让 TG 恢复通知能立即发送
+ * 扫码成功后通过 PUT /api/account 更新指定账户的 Cookie 字段；
+ * 随后账户页会触发一次 deep 状态检测，确认新 Cookie 是否存活。
  */
 export function UpdateCookieDialog({ accountName, trigger, onSuccess }: UpdateCookieDialogProps) {
   const [open, setOpen] = React.useState(false);
@@ -38,9 +38,10 @@ export function UpdateCookieDialog({ accountName, trigger, onSuccess }: UpdateCo
     async (cookie: string) => {
       setUpdating(true);
       try {
-        // 通过 PUT /api/account 更新 Cookie 字段
+        // 通过 PUT /api/account 更新 Cookie 字段；带上 accountType 让后端校验格式并重置旧的三态状态
         await axiosInstance.put("/api/account", {
           name: accountName,
+          accountType: "115",
           cookie,
         });
 

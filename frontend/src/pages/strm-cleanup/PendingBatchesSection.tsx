@@ -57,6 +57,17 @@ export function PendingBatchesSection() {
     void fetchBatches();
   }, [fetchBatches]);
 
+  // 清理执行转入待确认批次时，useStrmCleanup 会派发该事件刷新列表
+  React.useEffect(() => {
+    const onPendingChanged = () => {
+      void fetchBatches();
+    };
+    window.addEventListener("strm-cleanup:pending-changed", onPendingChanged);
+    return () => {
+      window.removeEventListener("strm-cleanup:pending-changed", onPendingChanged);
+    };
+  }, [fetchBatches]);
+
   const handleCancel = async (b: PendingBatch) => {
     setBusyId(b.requestId);
     try {

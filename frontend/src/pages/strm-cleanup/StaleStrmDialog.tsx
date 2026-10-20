@@ -169,7 +169,7 @@ export function StaleStrmDialog({
                   <AlertDialogHeader>
                     <AlertDialogTitle>确认删除 {selectedStale.size} 个失效 STRM？</AlertDialogTitle>
                     <AlertDialogDescription>
-                      删除后将自动清理空父目录。此操作不可撤销。
+                      删除的文件会移入 .faststrm-trash，可在清理页回收站恢复；是否清理空父目录取决于设置。
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>

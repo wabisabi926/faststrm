@@ -59,6 +59,22 @@ export function ConnectionSection({
               在 Emby 后台「设置 → 高级设置 → API Key」获取
             </p>
           </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="embyWebhookAuth">
+              Webhook 鉴权密钥 <span className="text-xs text-muted-foreground">（可选）</span>
+            </Label>
+            <Input
+              id="embyWebhookAuth"
+              type="password"
+              placeholder="留空不校验；设置后 Webhook URL 自动带 ?auth=..."
+              value={settings.webhookAuth || ""}
+              onChange={(e) => updateSetting("webhookAuth", e.target.value)}
+              autoComplete="off"
+            />
+            <p className="text-xs text-muted-foreground">
+              设置后，只有携带同一密钥的 Webhook 请求才会被接受；Emby 侧请使用下方“Webhook 配置指引”里复制出的带 auth 参数 URL。
+            </p>
+          </div>
         </div>
 
         {/* Emby 反向代理（PlaybackInfo 拦截） */}

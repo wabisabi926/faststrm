@@ -212,8 +212,8 @@ func TestFillUpsertFromBody(t *testing.T) {
 			t.Fatalf("TargetPath: got %q, want %q", u.TargetPath, "/dst")
 		}
 		// StrmType is not read from form data (only from JSON)
-		if u.StrmPrefix != "/prefix" {
-			t.Fatalf("StrmPrefix: got %q, want %q", u.StrmPrefix, "/prefix")
+		if u.StrmPrefix == nil || *u.StrmPrefix != "/prefix" {
+			t.Fatalf("StrmPrefix: got %v, want %q", u.StrmPrefix, "/prefix")
 		}
 		if u.EnableEnc == nil || !*u.EnableEnc {
 			var got any = u.EnableEnc

@@ -222,3 +222,98 @@ func TestSettingsContract_PartialPostPreservesOmittedFields(t *testing.T) {
 		t.Fatalf("omitted emby proxyPort lost: %d", stored.Emby.ProxyPort)
 	}
 }
+
+func TestSettingsContract_CanClearOptionalStringsAndMinFileSize(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
+	pre := model.DefaultSettings()
+	pre.UserAgent = "custom-agent"
+	pre.StrmPrefix = "http://old-prefix:8090"
+	pre.LifeMonitor.MinFileSize = 12345
+	if err := settingsStore.SaveSettings(pre); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"user-agent":"","strmPrefix":"","lifeMonitor":{"minFileSize":0}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(EmbyDeps{SettingsStore: settingsStore})(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err := settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.StrmPrefix != "" {
+		t.Fatalf("strmPrefix should be cleared, got %q", stored.StrmPrefix)
+	}
+	if stored.LifeMonitor.MinFileSize != 0 {
+		t.Fatalf("minFileSize should be cleared to 0, got %d", stored.LifeMonitor.MinFileSize)
+	}
+	// 空 UA 会由 SettingsStore 的默认值迁移补回默认 UA，而不是保留旧自定义值
+	if stored.UserAgent == "custom-agent" {
+		t.Fatalf("user-agent should not keep old custom value, got %q", stored.UserAgent)
+	}
+}
+
+func TestSettingsContract_CleanupPatch(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
+	if err := settingsStore.SaveSettings(model.DefaultSettings()); err != nil {
+		t.Fatal(err)
+	}
+	deps := EmbyDeps{SettingsStore: settingsStore}
+
+	body := []byte(`{"cleanup":{"maxThreshold":50,"maxRatio":0.2,"maxDirs":10,"stableThreshold":3,"confirmMode":"plugin_ui","removeRelatedFiles":true}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(deps)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Cleanup.MaxThreshold != 50 || stored.Cleanup.MaxRatio != 0.2 || stored.Cleanup.MaxDirs != 10 ||
+		stored.Cleanup.StableThreshold != 3 || stored.Cleanup.ConfirmMode != "plugin_ui" || !stored.Cleanup.RemoveRelatedFiles {
+		t.Fatalf("cleanup patch not applied: %+v", stored.Cleanup)
+	}
+
+	invalid := []byte(`{"cleanup":{"confirmMode":"unknown"}}`)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(invalid))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(deps)(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid confirmMode status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSettingsContract_RateLimitPatch(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
+	if err := settingsStore.SaveSettings(model.DefaultSettings()); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"rateLimit":{"api115Qpm":70,"playbackQpm":130,"lifeQpm":50,"globalCapQpm":400}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(EmbyDeps{SettingsStore: settingsStore})(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := model.RateLimitSettings{API115Qpm: 70, PlaybackQpm: 130, LifeQpm: 50, GlobalCapQpm: 400}
+	if stored.RateLimit != want {
+		t.Fatalf("rateLimit = %+v, want %+v", stored.RateLimit, want)
+	}
+}

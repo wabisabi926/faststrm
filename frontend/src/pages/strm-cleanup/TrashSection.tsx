@@ -85,7 +85,7 @@ export function TrashSection() {
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        清理的文件会移到对应目录的 <code>.faststrm-trash</code>，保留 7 天后自动清除。恢复会回到原路径；
+        清理的文件会移到对应目录的 <code>.faststrm-trash</code>，保留 7 天，过期项会在后续清理/任务执行时清除。恢复会回到原路径；
         原路径已有文件时会被拒绝，避免覆盖。
       </p>
 

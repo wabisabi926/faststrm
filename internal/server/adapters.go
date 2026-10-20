@@ -524,6 +524,11 @@ func (a *menuActionsAdapter) ListCleanupMappings() ([]map[string]string, error) 
 		return nil, fmt.Errorf("读取设置失败: %w", err)
 	}
 	reqs := handler.CleanupMappings(s)
+	var accounts []*model.AccountInfo
+	if a.accountStore != nil {
+		accounts = a.accountStore.List()
+	}
+	reqs = handler.ExpandCleanupMappingsForAccounts(reqs, accounts)
 	out := make([]map[string]string, 0, len(reqs))
 	for _, r := range reqs {
 		out = append(out, map[string]string{

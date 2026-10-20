@@ -240,6 +240,9 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 			UseSettingsDefaults bool                 `json:"useSettingsDefaults"`
 			Mappings            []MappingScanRequest `json:"mappings"`
 			Action              string               `json:"action"`
+			// 顶层缓存开关：设置页扫描默认不传 mappings，需要在此统一下发给每条默认映射
+			UseCache   bool  `json:"useCache"`
+			CacheTTLMs int64 `json:"cacheTTLMs"`
 		}
 		if r.Body != nil {
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -257,11 +260,25 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 		if body.UseSettingsDefaults || len(mappings) == 0 {
 			mappings = getDefaultScanRequestsFromSettings(settings)
 		}
+		if body.UseCache {
+			for i := range mappings {
+				mappings[i].UseCache = true
+				if body.CacheTTLMs > 0 {
+					mappings[i].CacheTTLMs = body.CacheTTLMs
+				}
+			}
+		}
+		rawMappingCount := len(mappings)
+		mappings = ExpandCleanupMappingsForAccounts(mappings, accounts)
 
 		if len(mappings) == 0 {
+			msg := "请在设置中先添加 115 生活事件监控的路径映射"
+			if rawMappingCount > 0 {
+				msg = "路径映射使用了“遍历全部账号”，但没有可用的 115 账号（或 Cookie 为空）"
+			}
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
 				"message": "未找到扫描配置",
-				"error":   "请在设置中先添加 115 生活事件监控的路径映射",
+				"error":   msg,
 			})
 			return
 		}
@@ -534,22 +551,19 @@ func validateCleanupRelPathAny(root, rel string) error {
 }
 
 func getDefaultScanRequestsFromSettings(settings *model.Settings) []MappingScanRequest {
-	if settings == nil || !settings.LifeMonitor.Enabled {
-		return nil
-	}
+	// 清理是独立动作：即使生活监控关闭，只要配置了路径映射也应允许扫描。
 	return CleanupMappings(settings)
 }
 
 // CleanupMappings 返回可用于清理扫描的路径映射（来自生活监控路径映射）。
-// 与 getDefaultScanRequestsFromSettings 的区别：不要求监控已启用——
-// 清理是独立动作，监控关着也可能需要清理历史残留。
+// account 为空表示“遍历全部账号”，由 ExpandCleanupMappingsForAccounts 展开为具体账号。
 func CleanupMappings(settings *model.Settings) []MappingScanRequest {
 	if settings == nil {
 		return nil
 	}
 	mappings := make([]MappingScanRequest, 0, len(settings.LifeMonitor.PathMappings))
 	for _, pm := range settings.LifeMonitor.PathMappings {
-		if pm.Account != "" && pm.CloudPath != "" && pm.LocalPath != "" {
+		if pm.CloudPath != "" && pm.LocalPath != "" {
 			mappings = append(mappings, MappingScanRequest{
 				Account:   pm.Account,
 				CloudPath: pm.CloudPath,
@@ -558,6 +572,45 @@ func CleanupMappings(settings *model.Settings) []MappingScanRequest {
 		}
 	}
 	return mappings
+}
+
+// ExpandCleanupMappingsForAccounts 把 account=="" 的“遍历全部账号”映射展开为每个
+// 可用 115 账号一条；显式指定账号的映射原样保留。结果按 account/cloudPath/localPath 去重。
+// 生活事件侧把空 account 视为全部账号（见 monitor.matchPathMapping），清理侧必须做同样的展开，
+// 否则用户在设置页按默认方式添加的映射会被清理/回收站静默忽略。
+func ExpandCleanupMappingsForAccounts(mappings []MappingScanRequest, accounts []*model.AccountInfo) []MappingScanRequest {
+	names := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		if a == nil || a.AccountType != "115" || strings.TrimSpace(a.Cookie) == "" {
+			continue
+		}
+		if name := strings.TrimSpace(a.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+
+	out := make([]MappingScanRequest, 0, len(mappings))
+	seen := make(map[string]struct{}, len(mappings))
+	add := func(m MappingScanRequest) {
+		key := m.Account + "\x00" + m.CloudPath + "\x00" + m.LocalPath
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, m)
+	}
+	for _, m := range mappings {
+		if strings.TrimSpace(m.Account) != "" {
+			add(m)
+			continue
+		}
+		for _, name := range names {
+			expanded := m
+			expanded.Account = name
+			add(expanded)
+		}
+	}
+	return out
 }
 
 // ScanCleanupMapping 扫描单个路径映射（供 TG 等非 HTTP 入口复用同一套扫描逻辑）。

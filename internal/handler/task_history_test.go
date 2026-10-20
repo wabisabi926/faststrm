@@ -204,3 +204,15 @@ func TestHandleTaskHistoryDelete_InvalidParams(t *testing.T) {
 		}
 	}
 }
+
+func TestSSEFrameLine(t *testing.T) {
+	if got, ok := sseFrameLine("data: {\"event\":\"log\",\"message\":\"x\"}\n\n"); !ok || got != `{"event":"log","message":"x"}` {
+		t.Fatalf("sse frame decode = %q, %v", got, ok)
+	}
+	if got, ok := sseFrameLine(`{"plain":1}`); !ok || got != `{"plain":1}` {
+		t.Fatalf("plain json line = %q, %v", got, ok)
+	}
+	if _, ok := sseFrameLine("  \n"); ok {
+		t.Fatal("empty frame should be skipped")
+	}
+}

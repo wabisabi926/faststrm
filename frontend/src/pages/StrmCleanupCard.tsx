@@ -264,16 +264,14 @@ export function StrmCleanupCard() {
             {/* 操作日志 */}
             <CleanupLogPanel logs={logs} onClear={clearLogs} />
 
-            {/* 待确认删除批次（清理转入待确认队列后在此执行/取消） */}
-            <PendingBatchesSection />
-
-            {/* 回收站：清理时移入 .faststrm-trash，可一键恢复 */}
-            <TrashSection />
-
             {/* 路径映射扫描明细 */}
             <MappingDetailList mappings={scanResult.mappings} />
           </>
         )}
+
+        {/* 待确认批次/回收站不依赖本次扫描结果：未扫描时也应能看到并处理 */}
+        <PendingBatchesSection />
+        <TrashSection />
       </CardContent>
     </Card>
   );

@@ -235,6 +235,12 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		out.UserAgent = def.UserAgent
 		changed = true
 	}
+	// 老配置没有 rateLimit 块时补默认值，避免前端只改其中一项导致其余配额被写成 0（不限流）。
+	if out.RateLimit == (model.RateLimitSettings{}) {
+		out.RateLimit = def.RateLimit
+		changed = true
+		logger.S().Infof("[SettingsStore] 迁移: 补齐 115 API 限流默认值: %+v", out.RateLimit)
+	}
 	if len(out.DownloadExtensions) == 0 {
 		out.DownloadExtensions = append([]string{}, def.DownloadExtensions...)
 		changed = true

@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Settings, Filter } from "lucide-react";
+import { Settings, Filter, ShieldAlert } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -41,6 +41,8 @@ export interface BasicSettingsTabProps {
   setDownloadExtensionsInput: Dispatch<SetStateAction<string>>;
   forceProxyUaInput: string;
   setForceProxyUaInput: Dispatch<SetStateAction<string>>;
+  forceProxyFormatsInput: string;
+  setForceProxyFormatsInput: Dispatch<SetStateAction<string>>;
   globalMinFileSizeMb: string;
   setGlobalMinFileSizeMb: Dispatch<SetStateAction<string>>;
   globalBlacklistInput: string;
@@ -51,7 +53,7 @@ export interface BasicSettingsTabProps {
   mountDryRunLoading: boolean;
   mountSyncing: boolean;
   lastSyncApply: MountSyncApplyData;
-  fetchMountDryRun: () => Promise<void>;
+  fetchMountDryRun: () => Promise<MountDryRunData>;
   applyMountSync: () => Promise<void>;
   saving: boolean;
   onSave: () => Promise<void>;
@@ -67,6 +69,8 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
     setDownloadExtensionsInput,
     forceProxyUaInput,
     setForceProxyUaInput,
+    forceProxyFormatsInput,
+    setForceProxyFormatsInput,
     globalMinFileSizeMb,
     setGlobalMinFileSizeMb,
     globalBlacklistInput,
@@ -316,6 +320,122 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               </label>
             </div>
           </div>
+
+          {/* 保护阈值 + 二次确认 */}
+          <div className="rounded-md border p-3 space-y-3 bg-muted/20">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-amber-500" />
+              <h4 className="text-sm font-medium">清理保护阈值与二次确认</h4>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              保护阈值命中时只停删除、不停生成；超过稳定阈值且开启确认模式时，会先转入「待确认删除批次」。
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="cleanup-max-threshold">单次删除绝对上限</Label>
+                <Input
+                  id="cleanup-max-threshold"
+                  type="number"
+                  min="1"
+                  value={data.cleanup?.maxThreshold ?? 1000}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      cleanup: {
+                        ...(data.cleanup || {}),
+                        maxThreshold: Math.max(1, parseInt(e.target.value) || 1000),
+                      },
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">默认 1000</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="cleanup-max-ratio">比例上限（%）</Label>
+                <Input
+                  id="cleanup-max-ratio"
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={Math.round((data.cleanup?.maxRatio ?? 0.1) * 100)}
+                  onChange={(e) => {
+                    const pct = Math.min(100, Math.max(1, parseInt(e.target.value) || 10));
+                    setData({
+                      ...data,
+                      cleanup: { ...(data.cleanup || {}), maxRatio: pct / 100 },
+                    });
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">默认 10%</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="cleanup-max-dirs">涉及目录数上限</Label>
+                <Input
+                  id="cleanup-max-dirs"
+                  type="number"
+                  min="1"
+                  value={data.cleanup?.maxDirs ?? 20}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      cleanup: {
+                        ...(data.cleanup || {}),
+                        maxDirs: Math.max(1, parseInt(e.target.value) || 20),
+                      },
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">默认 20，防止分散目录的小批量删除绕过阈值</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="cleanup-stable-threshold">稳定阈值</Label>
+                <Input
+                  id="cleanup-stable-threshold"
+                  type="number"
+                  min="1"
+                  value={data.cleanup?.stableThreshold ?? 5}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      cleanup: {
+                        ...(data.cleanup || {}),
+                        stableThreshold: Math.max(1, parseInt(e.target.value) || 5),
+                      },
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">超过该数量才进入二次确认，默认 5</p>
+              </div>
+              <div className="space-y-1.5 md:col-span-2">
+                <Label htmlFor="cleanup-confirm-mode">二次确认模式</Label>
+                <Select
+                  value={data.cleanup?.confirmMode ?? "none"}
+                  onValueChange={(value) =>
+                    setData({
+                      ...data,
+                      cleanup: {
+                        ...(data.cleanup || {}),
+                        confirmMode: value as "none" | "plugin_ui" | "telegram",
+                      },
+                    })
+                  }
+                >
+                  <SelectTrigger id="cleanup-confirm-mode" className="w-full md:w-72">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">关闭（超过稳定阈值直接执行）</SelectItem>
+                    <SelectItem value="plugin_ui">Web UI 待确认批次</SelectItem>
+                    <SelectItem value="telegram">Telegram 按钮确认</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  选择 Web UI 或 Telegram 后，超过稳定阈值的清理会先进入待确认队列；保护阈值（比例/绝对/目录数）仍会强制拦截。
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* STRM 路由策略配置（始终生效，后端智能路由自动决定 proxy/redirect） */}
@@ -371,6 +491,17 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   失败降级 proxy
                 </p>
               </div>
+            </div>
+            <div className="space-y-3">
+              <Label>强制代理格式</Label>
+              <Input
+                value={forceProxyFormatsInput}
+                onChange={(e) => setForceProxyFormatsInput(e.target.value)}
+                placeholder="iso, bdmv, m2ts, ts"
+              />
+              <p className="text-xs text-muted-foreground">
+                逗号分隔，大小写不敏感、点号可省略。这些格式需要服务端代理流（避免 CDN 的 UA/签名导致 Range 被拒）；留空恢复默认值。
+              </p>
             </div>
           </div>
       </section>
@@ -476,6 +607,78 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </p>
         </div>
 
+      </section>
+
+      {/* 115 API 限流（重启生效） */}
+      <section className="border rounded-md p-3 sm:p-5 space-y-5">
+        <div>
+          <h2 className="text-base font-medium">115 API 限流（重启生效）</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            按「账号 × 用途」分桶，避免扫描与播放互相抢占配额。修改后需要重启服务才会重建令牌桶。
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="space-y-2">
+            <Label>常规 API（每分钟/账号）</Label>
+            <Input
+              type="number"
+              min="1"
+              value={data.rateLimit?.api115Qpm ?? 60}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  rateLimit: { ...(data.rateLimit || {}), api115Qpm: Math.max(1, parseInt(e.target.value) || 60) },
+                })
+              }
+            />
+            <p className="text-xs text-muted-foreground">扫描/目录/元数据，默认 60</p>
+          </div>
+          <div className="space-y-2">
+            <Label>播放取链（每分钟/账号）</Label>
+            <Input
+              type="number"
+              min="1"
+              value={data.rateLimit?.playbackQpm ?? 120}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  rateLimit: { ...(data.rateLimit || {}), playbackQpm: Math.max(1, parseInt(e.target.value) || 120) },
+                })
+              }
+            />
+            <p className="text-xs text-muted-foreground">播放直链，默认 120</p>
+          </div>
+          <div className="space-y-2">
+            <Label>生活事件轮询（每分钟/账号）</Label>
+            <Input
+              type="number"
+              min="1"
+              value={data.rateLimit?.lifeQpm ?? 60}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  rateLimit: { ...(data.rateLimit || {}), lifeQpm: Math.max(1, parseInt(e.target.value) || 60) },
+                })
+              }
+            />
+            <p className="text-xs text-muted-foreground">事件轮询，默认 60</p>
+          </div>
+          <div className="space-y-2">
+            <Label>全局兜底（每分钟）</Label>
+            <Input
+              type="number"
+              min="1"
+              value={data.rateLimit?.globalCapQpm ?? 300}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  rateLimit: { ...(data.rateLimit || {}), globalCapQpm: Math.max(1, parseInt(e.target.value) || 300) },
+                })
+              }
+            />
+            <p className="text-xs text-muted-foreground">多账号叠加上限，默认 300</p>
+          </div>
+        </div>
       </section>
 
       <Separator />

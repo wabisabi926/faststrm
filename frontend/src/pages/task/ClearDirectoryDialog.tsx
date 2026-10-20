@@ -34,16 +34,16 @@ export function ClearDirectoryDialog({
     >
       <DialogContent className="max-w-[95vw] sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>确认清空目录</DialogTitle>
+          <DialogTitle>确认清理目录</DialogTitle>
           <DialogDescription>
-            你确定要清空目标路径下的所有文件吗？此操作无法撤销。
+            将清理目标路径下不属于 .strm / 视频 / 字幕 / 元数据扩展名的其他文件，并删除空目录。此操作无法撤销。
             <br />
             <span className="text-sm text-gray-500 mt-2 block">
               目标路径: {targetPath}
             </span>
             <br />
             <span className="text-sm text-red-600 mt-2 block font-medium">
-              ⚠️ 这将删除该目录下的所有文件和子目录！
+              ⚠️ 仅保留 .strm、视频、字幕/元数据文件；其他文件会被删除！
             </span>
           </DialogDescription>
         </DialogHeader>
@@ -52,7 +52,7 @@ export function ClearDirectoryDialog({
             取消
           </Button>
           <Button variant="destructive" onClick={onConfirm}>
-            确认清空
+            确认清理
           </Button>
         </DialogFooter>
       </DialogContent>

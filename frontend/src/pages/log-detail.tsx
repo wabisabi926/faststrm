@@ -179,10 +179,16 @@ export default function DownloadProgressPage() {
       const raw: string[] = [];
       for (const line of lines) {
         try {
-          const obj = JSON.parse(line);
-          if (obj && typeof obj === "object" && ("filePath" in obj || "error" in obj)) {
-            parsed.push(obj as Progress);
-            continue;
+          const obj = JSON.parse(line) as Record<string, unknown>;
+          if (obj && typeof obj === "object") {
+            if ("filePath" in obj || "error" in obj) {
+              parsed.push(obj as Progress);
+              continue;
+            }
+            if (obj.event === "log" && typeof obj.message === "string") {
+              raw.push(obj.message);
+              continue;
+            }
           }
         } catch {
           // 非 JSON 行

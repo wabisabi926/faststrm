@@ -76,7 +76,7 @@ export function CleanupToolbar({
                   一键清理全部 {totalStale} 个失效 STRM？
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  将删除扫描发现的全部失效 STRM 文件，并自动清理空父目录。此操作不可撤销。
+                  将把扫描发现的全部失效 STRM 移入各映射根下的 .faststrm-trash（可在回收站恢复）；是否清理空父目录取决于设置。
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

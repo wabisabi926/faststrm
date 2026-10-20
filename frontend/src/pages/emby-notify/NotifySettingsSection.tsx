@@ -105,6 +105,28 @@ export function NotifySettingsSection({
               </p>
             </div>
           </div>
+
+          <div className="flex items-center space-x-2 p-3 rounded-lg border">
+            <Checkbox
+              id="playbackShowOverview"
+              checked={!!settings.playbackShowOverview}
+              onCheckedChange={(checked) =>
+                updateSetting("playbackShowOverview", checked === true)
+              }
+              disabled={!settings.notifyPlayback}
+            />
+            <div className="flex-1">
+              <Label
+                htmlFor="playbackShowOverview"
+                className={`cursor-pointer ${!settings.notifyPlayback ? "text-muted-foreground" : ""}`}
+              >
+                显示剧情简介
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                在播放通知中附带影片简介
+              </p>
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">

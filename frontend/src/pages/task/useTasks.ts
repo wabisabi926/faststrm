@@ -214,7 +214,11 @@ export function useTasks(): UseTasksResult {
         { taskId: id },
         { timeout: 180000 } // 设置180秒超时
       );
-      toast.success(`任务已开始: ${res.data.message}`);
+      if (res.data?.success === false) {
+        toast.error(res.data.message || "任务启动失败");
+        return;
+      }
+      toast.success(res.data?.message || "任务已开始");
 
       // 只有在API成功返回后才更新状态为processing
       setData((prevData) =>
@@ -282,7 +286,7 @@ export function useTasks(): UseTasksResult {
   const clearDirectory = async (targetPath: string) => {
     try {
       await axiosInstance.post("/api/directory/clear", { targetPath });
-      toast.success(`目录 ${targetPath} 清空成功`);
+      toast.success(`目录 ${targetPath} 清理完成`);
     } catch (error: unknown) {
       const errorMessage = (error as { response?: { data?: { error?: string } } })?.response?.data?.error || "清空目录失败";
       toast.error(errorMessage);

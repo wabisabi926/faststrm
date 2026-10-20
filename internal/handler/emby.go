@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -43,6 +44,26 @@ func maskAPIKey(key string) string {
 
 // ==================== Webhook（公开回调） ====================
 
+// embyWebhookAuthorized 校验 Emby Webhook 共享密钥。
+// 支持 ?auth=、X-Webhook-Auth 或 Authorization: Bearer <token>；expected 为空表示不校验（兼容旧配置）。
+func embyWebhookAuthorized(r *http.Request, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return true
+	}
+	provided := strings.TrimSpace(r.Header.Get("X-Webhook-Auth"))
+	if provided == "" {
+		provided = strings.TrimSpace(r.URL.Query().Get("auth"))
+	}
+	if provided == "" {
+		authz := strings.TrimSpace(r.Header.Get("Authorization"))
+		if len(authz) > len("Bearer ") && strings.EqualFold(authz[:len("Bearer ")], "Bearer ") {
+			provided = strings.TrimSpace(authz[len("Bearer "):])
+		}
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+}
+
 // HandleEmbyWebhook POST /api/emby/webhook （公开，无 JWT）
 // 接受 application/json 或 form-data 中 data=<JSON 字符串>，分发到 EmbyNotifier
 func HandleEmbyWebhook(deps EmbyDeps) http.HandlerFunc {
@@ -50,6 +71,14 @@ func HandleEmbyWebhook(deps EmbyDeps) http.HandlerFunc {
 		if deps.EmbyNotifier == nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "EmbyNotifier 未初始化"})
 			return
+		}
+		if deps.SettingsStore != nil {
+			if settings, err := deps.SettingsStore.ReadSettings(); err == nil && settings != nil &&
+				!embyWebhookAuthorized(r, settings.Emby.WebhookAuth) {
+				logger.S().Warnf("[emby/webhook] 鉴权失败 remote=%s", r.RemoteAddr)
+				httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
 		}
 
 		var event emby.WebhookEvent
@@ -292,6 +321,28 @@ type embyTestConnRequest struct {
 	APIKey string `json:"apiKey"`
 }
 
+// resolveEmbyTestCredentials 解析测试连接凭据：
+// 前端从 /api/settings 拿到的是脱敏 APIKey（含 *），空值/掩码值时回退到已保存明文，
+// 否则页面加载后直接点“测试连接”会用掩码去请求 Emby，必然 401。
+func resolveEmbyTestCredentials(deps EmbyDeps, url, apiKey string) (string, string) {
+	url = strings.TrimSpace(url)
+	apiKey = strings.TrimSpace(apiKey)
+	if deps.SettingsStore == nil || (apiKey != "" && !containsAsterisk(apiKey)) {
+		return url, apiKey
+	}
+	saved, err := deps.SettingsStore.ReadSettings()
+	if err != nil || saved == nil {
+		return url, apiKey
+	}
+	if url == "" {
+		url = strings.TrimSpace(saved.Emby.URL)
+	}
+	if apiKey == "" || containsAsterisk(apiKey) {
+		apiKey = strings.TrimSpace(saved.Emby.APIKey)
+	}
+	return url, apiKey
+}
+
 // HandleEmbyTestConnection POST /api/emby/test-connection 测试 Emby 连通性
 // 接受 JSON body 或 query 参数；使用临时 emby.Client 调用 GetItemDetail 验证 URL+APIKey
 func HandleEmbyTestConnection(deps EmbyDeps) http.HandlerFunc {
@@ -308,12 +359,12 @@ func HandleEmbyTestConnection(deps EmbyDeps) http.HandlerFunc {
 		if req.APIKey == "" {
 			req.APIKey = r.URL.Query().Get("apiKey")
 		}
-		req.URL = strings.TrimSpace(req.URL)
-		req.APIKey = strings.TrimSpace(req.APIKey)
-		if req.URL == "" || req.APIKey == "" {
+		req.URL, req.APIKey = resolveEmbyTestCredentials(deps, req.URL, req.APIKey)
+
+		if req.URL == "" || req.APIKey == "" || containsAsterisk(req.APIKey) {
 			httpx.OkJson(w, map[string]any{
 				"success": false,
-				"message": "请先填写 Emby URL 和 API Key",
+				"message": "请先填写 Emby URL 和 API Key（若页面显示的是脱敏 Key，请重新输入完整 Key）",
 			})
 			return
 		}
@@ -402,7 +453,7 @@ type LifeMonitorPatch struct {
 	PathMappings    any      `json:"pathMappings"`
 	RemoveEmptyDirs *bool    `json:"removeEmptyDirs"`
 	EventTypes      any      `json:"eventTypes"`
-	MinFileSize     int64    `json:"minFileSize"`
+	MinFileSize     *int64   `json:"minFileSize"`
 	FirstPullMode   string   `json:"firstPullMode"`
 	MoveMediaMode   string   `json:"moveMediaMode"`
 	// 移出映射（移到非媒体目录）时是否删除本地旧 STRM；默认 true
@@ -414,22 +465,62 @@ type LifeMonitorPatch struct {
 	NotifyOnlyOnError      *bool    `json:"notifyOnlyOnError"`
 }
 
+// cleanupPatch 清理策略局部更新：指针区分“未提供”和显式 0/false。
+type cleanupPatch struct {
+	MaxThreshold       *int     `json:"maxThreshold"`
+	MaxRatio           *float64 `json:"maxRatio"`
+	MaxDirs            *int     `json:"maxDirs"`
+	StableThreshold    *int     `json:"stableThreshold"`
+	ConfirmMode        *string  `json:"confirmMode"`
+	RemoveStrm         *bool    `json:"removeStrm"`
+	RemoveEmptyDirs    *bool    `json:"removeEmptyDirs"`
+	RemoveRelatedFiles *bool    `json:"removeRelatedFiles"`
+}
+
+// validateCleanupPatch 校验清理策略数值/枚举，返回空串表示通过。
+func validateCleanupPatch(p *cleanupPatch) string {
+	if p == nil {
+		return ""
+	}
+	if p.MaxThreshold != nil && *p.MaxThreshold <= 0 {
+		return "清理绝对上限 maxThreshold 必须大于 0"
+	}
+	if p.MaxDirs != nil && *p.MaxDirs <= 0 {
+		return "清理目录数上限 maxDirs 必须大于 0"
+	}
+	if p.StableThreshold != nil && *p.StableThreshold < 0 {
+		return "清理稳定阈值 stableThreshold 不能为负数"
+	}
+	if p.MaxRatio != nil && (*p.MaxRatio <= 0 || *p.MaxRatio > 1) {
+		return "清理比例上限 maxRatio 必须在 (0,1] 范围内"
+	}
+	if p.ConfirmMode != nil {
+		switch strings.TrimSpace(*p.ConfirmMode) {
+		case "", "none", "plugin_ui", "telegram":
+		default:
+			return "清理确认模式 confirmMode 必须是 none/plugin_ui/telegram"
+		}
+	}
+	return ""
+}
+
 // settingsPostBody 前端 Settings 页提交的嵌套 JSON 结构
 // 与 model.Settings 的 JSON 标签对齐，兼容 React SPA 的保存格式
 type settingsPostBody struct {
-	UserAgent          string   `json:"user-agent"`
+	UserAgent          *string  `json:"user-agent"`
 	StrmExtensions     []string `json:"strmExtensions"`
 	DownloadExtensions []string `json:"downloadExtensions"`
 	MediaMountPath     []string `json:"mediaMountPath"`
-	StrmPrefix         string   `json:"strmPrefix"`
+	StrmPrefix         *string  `json:"strmPrefix"`
 	// EnablePathEncoding URL 参数编码开关（默认开启）；指针区分「未提供」与显式 false
-	EnablePathEncoding *bool                   `json:"enablePathEncoding"`
-	Download           *model.DownloadSettings `json:"download"`
-	Strm               *model.StrmSettings     `json:"strm"`
-	Emby               *model.EmbySettings     `json:"emby"`
-	Telegram           *model.TelegramSettings `json:"telegram"`
-	LifeMonitor        *LifeMonitorPatch       `json:"lifeMonitor"`
-	Cleanup            *model.CleanupSettings  `json:"cleanup"`
+	EnablePathEncoding *bool                    `json:"enablePathEncoding"`
+	Download           *model.DownloadSettings  `json:"download"`
+	Strm               *model.StrmSettings      `json:"strm"`
+	Emby               *model.EmbySettings      `json:"emby"`
+	Telegram           *model.TelegramSettings  `json:"telegram"`
+	LifeMonitor        *LifeMonitorPatch        `json:"lifeMonitor"`
+	Cleanup            *cleanupPatch            `json:"cleanup"`
+	RateLimit          *model.RateLimitSettings `json:"rateLimit"`
 }
 
 // containsAsterisk 判定是否是脱敏值（含 *）
@@ -447,14 +538,18 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
 			return
 		}
+		if msg := validateCleanupPatch(body.Cleanup); msg != "" {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": msg})
+			return
+		}
 
 		savedSettings, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
-			// ====== 通用字段 ======
-			if body.UserAgent != "" {
-				settings.UserAgent = strings.TrimSpace(body.UserAgent)
+			// ====== 通用字段（指针区分“未提供”和显式清空） ======
+			if body.UserAgent != nil {
+				settings.UserAgent = strings.TrimSpace(*body.UserAgent)
 			}
-			if body.StrmPrefix != "" {
-				settings.StrmPrefix = strings.TrimSpace(body.StrmPrefix)
+			if body.StrmPrefix != nil {
+				settings.StrmPrefix = strings.TrimSpace(*body.StrmPrefix)
 			}
 			if len(body.StrmExtensions) > 0 {
 				settings.StrmExtensions = body.StrmExtensions
@@ -470,10 +565,43 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				settings.EnablePathEncoding = *body.EnablePathEncoding
 			}
 
-			// ====== Cleanup：只接受两个「连带动作」开关，阈值等保持后端值 ======
+			// ====== Cleanup：阈值/确认模式/连带动作（指针字段，未提供的保持原值） ======
 			if body.Cleanup != nil {
-				settings.Cleanup.RemoveRelatedFiles = body.Cleanup.RemoveRelatedFiles
-				settings.Cleanup.RemoveEmptyDirs = body.Cleanup.RemoveEmptyDirs
+				c := settings.Cleanup
+				if p := body.Cleanup.MaxThreshold; p != nil {
+					c.MaxThreshold = *p
+				}
+				if p := body.Cleanup.MaxRatio; p != nil {
+					c.MaxRatio = *p
+				}
+				if p := body.Cleanup.MaxDirs; p != nil {
+					c.MaxDirs = *p
+				}
+				if p := body.Cleanup.StableThreshold; p != nil {
+					c.StableThreshold = *p
+				}
+				if p := body.Cleanup.ConfirmMode; p != nil {
+					mode := strings.TrimSpace(*p)
+					if mode == "" {
+						mode = "none"
+					}
+					c.ConfirmMode = mode
+				}
+				if p := body.Cleanup.RemoveStrm; p != nil {
+					c.RemoveStrm = *p
+				}
+				if p := body.Cleanup.RemoveEmptyDirs; p != nil {
+					c.RemoveEmptyDirs = *p
+				}
+				if p := body.Cleanup.RemoveRelatedFiles; p != nil {
+					c.RemoveRelatedFiles = *p
+				}
+				settings.Cleanup = c
+			}
+
+			// ====== 115 API 限流（服务启动时生效，保存后需重启） ======
+			if body.RateLimit != nil {
+				settings.RateLimit = *body.RateLimit
 			}
 
 			// ====== Download 嵌套对象 ======
@@ -617,8 +745,8 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 						}
 					}
 				}
-				if body.LifeMonitor.MinFileSize > 0 {
-					lm.MinFileSize = body.LifeMonitor.MinFileSize
+				if body.LifeMonitor.MinFileSize != nil {
+					lm.MinFileSize = *body.LifeMonitor.MinFileSize
 				}
 				if body.LifeMonitor.FirstPullMode != "" {
 					lm.FirstPullMode = body.LifeMonitor.FirstPullMode

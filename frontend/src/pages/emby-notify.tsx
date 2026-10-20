@@ -52,8 +52,14 @@ export default function EmbyNotifyPage() {
     openCloudPickerForMapping,
   } = useEmbySettings();
 
+  // FastStrm 是纯浏览器 SPA，无 SSR：组件渲染时 window 永远存在，
+  // 直接用 location.origin 跟随当前访问端口（开发 5173 / 生产 8090 都正确）。
+  const webhookAuth = (settings.webhookAuth || "").trim();
+  const webhookUrl = `${window.location.origin}/api/emby/webhook${
+    webhookAuth ? `?auth=${encodeURIComponent(webhookAuth)}` : ""
+  }`;
+
   const copyWebhookUrl = async () => {
-    const webhookUrl = `${window.location.origin}/api/emby/webhook`;
     try {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(webhookUrl);
@@ -74,11 +80,6 @@ export default function EmbyNotifyPage() {
       setError("复制失败，请手动复制");
     }
   };
-
-  // FastStrm 是纯浏览器 SPA，无 SSR：组件渲染时 window 永远存在，
-  // 直接用 location.origin 跟随当前访问端口（开发 5173 / 生产 8090 都正确），
-  // 不再回退到旧版本中写死的历史默认端口。
-  const webhookUrl = `${window.location.origin}/api/emby/webhook`;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">

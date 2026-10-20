@@ -1,7 +1,11 @@
+export type PathMappingType = "media" | "transfer" | "unrecognized";
+
 export type PathMapping = {
   account?: string;
   cloudPath: string;
   localPath: string;
+  /** 生活事件映射类型：media=媒体库；transfer=整理目录；unrecognized=未识别目录 */
+  mappingType?: PathMappingType;
 };
 
 export type LifeMonitorConfig = {
@@ -35,8 +39,14 @@ export type Settings = {
   strmPrefix?: string;
   // URL 参数编码开关（默认 true）：关闭后 file_name 等参数原样写入 URL
   enablePathEncoding?: boolean;
-  // 清理：删除孤儿 STRM 时的连带动作
+  // 清理：阈值、确认模式与连带动作
   cleanup?: {
+    maxThreshold?: number;
+    maxRatio?: number;
+    maxDirs?: number;
+    stableThreshold?: number;
+    confirmMode?: "none" | "plugin_ui" | "telegram";
+    removeStrm?: boolean;
     removeRelatedFiles?: boolean;
     removeEmptyDirs?: boolean;
   };
@@ -45,8 +55,17 @@ export type Settings = {
     forceProxyUaTokens?: string[];
     accountProxyConcurrencyLimit?: number;
     redirectCheckTimeoutMs?: number;
+    // 需要服务端代理流的容器/扩展名
+    forceProxyFormats?: string[];
     // STRM URL 模板：由「标准 URL + 附加参数勾选」生成；空 = 走后端硬编码默认
     strmUrlTemplate?: string;
+  };
+  // 115 API 限流（服务启动时生效，修改后需重启）
+  rateLimit?: {
+    api115Qpm?: number;
+    playbackQpm?: number;
+    lifeQpm?: number;
+    globalCapQpm?: number;
   };
   emby?: {
     url?: string;

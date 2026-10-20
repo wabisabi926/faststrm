@@ -123,7 +123,11 @@ export function TaskScheduleDialog({
   async function handleFireNow() {
     try {
       const res = await axiosInstance.post("/api/startTask", { taskId: task.id });
-      toast.success(`立即执行：${res.data.message}`);
+      if (res.data?.success === false) {
+        toast.error(res.data.message || "执行失败");
+        return;
+      }
+      toast.success(res.data?.message || "任务已启动");
       onSuccess?.();
     } catch (err: unknown) {
       const msg =

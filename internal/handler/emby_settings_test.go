@@ -225,3 +225,54 @@ func TestHandleSettingsPOST_EnablePathEncodingAndTemplate(t *testing.T) {
 		t.Fatal("未提交 strmUrlTemplate 时不应被清空")
 	}
 }
+
+func TestResolveEmbyTestCredentials_FallbackToSaved(t *testing.T) {
+	ss := newTestSettingsStore(t)
+	s := model.DefaultSettings()
+	s.Emby.URL = "http://emby-saved:8096"
+	s.Emby.APIKey = "real-saved-key"
+	if err := ss.SaveSettings(s); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	deps := EmbyDeps{SettingsStore: ss}
+
+	url, key := resolveEmbyTestCredentials(deps, "", "abcd****wxyz")
+	if url != "http://emby-saved:8096" || key != "real-saved-key" {
+		t.Fatalf("masked key fallback failed: url=%q key=%q", url, key)
+	}
+
+	url, key = resolveEmbyTestCredentials(deps, "http://emby-new:8096", "new-key")
+	if url != "http://emby-new:8096" || key != "new-key" {
+		t.Fatalf("explicit credentials should not be overwritten: url=%q key=%q", url, key)
+	}
+
+	url, key = resolveEmbyTestCredentials(deps, "http://emby-new:8096", "***")
+	if url != "http://emby-new:8096" || key != "real-saved-key" {
+		t.Fatalf("masked key fallback should keep explicit URL: url=%q key=%q", url, key)
+	}
+}
+
+func TestEmbyWebhookAuthorized(t *testing.T) {
+	newReq := func(target string) *http.Request {
+		return httptest.NewRequest(http.MethodPost, target, nil)
+	}
+	if !embyWebhookAuthorized(newReq("/api/emby/webhook"), "") {
+		t.Fatal("empty expected should allow all")
+	}
+	if !embyWebhookAuthorized(newReq("/api/emby/webhook?auth=s3cret"), "s3cret") {
+		t.Fatal("query auth should pass")
+	}
+	r := newReq("/api/emby/webhook")
+	r.Header.Set("X-Webhook-Auth", "s3cret")
+	if !embyWebhookAuthorized(r, "s3cret") {
+		t.Fatal("X-Webhook-Auth should pass")
+	}
+	r = newReq("/api/emby/webhook")
+	r.Header.Set("Authorization", "Bearer s3cret")
+	if !embyWebhookAuthorized(r, "s3cret") {
+		t.Fatal("Bearer token should pass")
+	}
+	if embyWebhookAuthorized(newReq("/api/emby/webhook?auth=wrong"), "s3cret") {
+		t.Fatal("wrong auth must be rejected")
+	}
+}
