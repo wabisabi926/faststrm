@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -45,11 +47,12 @@ func maskAPIKey(key string) string {
 // ==================== Webhook（公开回调） ====================
 
 // embyWebhookAuthorized 校验 Emby Webhook 共享密钥。
-// 支持 ?auth=、X-Webhook-Auth 或 Authorization: Bearer <token>；expected 为空表示不校验（兼容旧配置）。
+// 支持 ?auth=、X-Webhook-Auth 或 Authorization: Bearer <token>。
+// expected 为空时失败关闭：Webhook 可以触发删除同步，不能依赖“默认放行”。
 func embyWebhookAuthorized(r *http.Request, expected string) bool {
 	expected = strings.TrimSpace(expected)
 	if expected == "" {
-		return true
+		return false
 	}
 	provided := strings.TrimSpace(r.Header.Get("X-Webhook-Auth"))
 	if provided == "" {
@@ -64,6 +67,34 @@ func embyWebhookAuthorized(r *http.Request, expected string) bool {
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
 }
 
+// sanitizeSyncDeleteMappings 过滤危险的删除同步映射：
+// EmbyPath 必须是绝对路径、清理后无 .. 段；CloudPath 必须非空。
+func sanitizeSyncDeleteMappings(mappings []model.SyncDeletePathMapping) []model.SyncDeletePathMapping {
+	cleaned := make([]model.SyncDeletePathMapping, 0, len(mappings))
+	for _, m := range mappings {
+		embyPath := strings.TrimSpace(m.EmbyPath)
+		cloudPath := strings.TrimSpace(m.CloudPath)
+		if embyPath == "" || cloudPath == "" || strings.Contains(embyPath, "..") {
+			continue
+		}
+		// 配置可能来自 Linux 容器（/mnt/...）也可能来自 Windows（D:\...）；
+		// 在 Windows 上开发/测试时仍要保留 Unix 绝对路径的原始形态。
+		if strings.HasPrefix(embyPath, "/") {
+			m.EmbyPath = path.Clean(embyPath)
+		} else if filepath.IsAbs(embyPath) {
+			m.EmbyPath = filepath.Clean(embyPath)
+		} else {
+			continue
+		}
+		m.CloudPath = strings.TrimRight(strings.ReplaceAll(cloudPath, "\\", "/"), "/")
+		if m.CloudPath == "" {
+			continue
+		}
+		cleaned = append(cleaned, m)
+	}
+	return cleaned
+}
+
 // HandleEmbyWebhook POST /api/emby/webhook （公开，无 JWT）
 // 接受 application/json 或 form-data 中 data=<JSON 字符串>，分发到 EmbyNotifier
 func HandleEmbyWebhook(deps EmbyDeps) http.HandlerFunc {
@@ -72,15 +103,25 @@ func HandleEmbyWebhook(deps EmbyDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "EmbyNotifier 未初始化"})
 			return
 		}
-		if deps.SettingsStore != nil {
-			if settings, err := deps.SettingsStore.ReadSettings(); err == nil && settings != nil &&
-				!embyWebhookAuthorized(r, settings.Emby.WebhookAuth) {
-				logger.S().Warnf("[emby/webhook] 鉴权失败 remote=%s", r.RemoteAddr)
-				httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-				return
-			}
+		if deps.SettingsStore == nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "settings unavailable"})
+			return
+		}
+		settings, err := deps.SettingsStore.ReadSettings()
+		if err != nil || settings == nil {
+			logger.S().Errorf("[emby/webhook] 读取设置失败，拒绝请求: %v", err)
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "settings unavailable"})
+			return
+		}
+		if !embyWebhookAuthorized(r, settings.Emby.WebhookAuth) {
+			logger.S().Warnf("[emby/webhook] 鉴权失败 remote=%s", r.RemoteAddr)
+			httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{
+				"error": "unauthorized：请先在 Emby 通知设置中配置 Webhook 鉴权密钥",
+			})
+			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var event emby.WebhookEvent
 		contentType := r.Header.Get("Content-Type")
 
@@ -236,15 +277,7 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 				em.SyncDeleteEnabled = *patch.SyncDeleteEnabled
 			}
 			if patch.SyncDeletePathMappings != nil {
-				mappings := *patch.SyncDeletePathMappings
-				cleaned := make([]model.SyncDeletePathMapping, 0, len(mappings))
-				for _, m := range mappings {
-					if m.EmbyPath == "" || m.CloudPath == "" {
-						continue
-					}
-					cleaned = append(cleaned, m)
-				}
-				em.SyncDeletePathMappings = cleaned
+				em.SyncDeletePathMappings = sanitizeSyncDeleteMappings(*patch.SyncDeletePathMappings)
 			}
 			if patch.SyncDeleteNotify != nil {
 				em.SyncDeleteNotify = *patch.SyncDeleteNotify
@@ -705,7 +738,7 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				em.SyncDeleteEnabled = body.Emby.SyncDeleteEnabled
 				em.SyncDeleteDryRun = body.Emby.SyncDeleteDryRun
 				if body.Emby.SyncDeletePathMappings != nil {
-					em.SyncDeletePathMappings = body.Emby.SyncDeletePathMappings
+					em.SyncDeletePathMappings = sanitizeSyncDeleteMappings(body.Emby.SyncDeletePathMappings)
 				}
 				settings.Emby = em
 			}

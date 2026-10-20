@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/zeromicro/go-zero/rest"
 
@@ -37,16 +38,18 @@ func RegisterRoutes(
 	lifeMonitorDeps handler.LifeMonitorDeps,
 	cleanupInteraction *handler.StrmCleanupInteraction,
 ) {
+	jwtMW := middleware.JWTMiddleware(issuer)
+
 	// ========== 公开路由（无需 JWT，仅 CORS） ==========
 	publicRoutes := []rest.Route{
 		{Method: http.MethodGet, Path: "/api/health", Handler: middleware.CORS(handler.Health)},
 		{Method: http.MethodPost, Path: "/api/auth/login", Handler: middleware.CORS(handler.Login(issuer))},
-		{Method: http.MethodGet, Path: "/api/auth/security-status", Handler: middleware.CORS(handler.SecurityStatus)},
-		{Method: http.MethodPost, Path: "/api/auth/change-password", Handler: middleware.CORS(handler.ChangePassword())},
-		{Method: http.MethodPost, Path: "/api/auth/change-credentials", Handler: middleware.CORS(handler.ChangeCredentials())},
-		{Method: http.MethodPost, Path: "/api/auth/logout", Handler: middleware.CORS(handler.Logout())},
-		// SSE 事件流（公开，客户端凭 taskId 订阅）
-		{Method: http.MethodGet, Path: "/api/events/stream", Handler: middleware.CORS(sse.Handler())},
+		{Method: http.MethodGet, Path: "/api/auth/security-status", Handler: middleware.CORS(jwtMW(handler.SecurityStatus))},
+		{Method: http.MethodPost, Path: "/api/auth/change-password", Handler: middleware.CORS(jwtMW(handler.ChangePassword()))},
+		{Method: http.MethodPost, Path: "/api/auth/change-credentials", Handler: middleware.CORS(jwtMW(handler.ChangeCredentials()))},
+		{Method: http.MethodPost, Path: "/api/auth/logout", Handler: middleware.CORS(jwtMW(handler.Logout()))},
+		// SSE 事件流（JWT Cookie 鉴权）
+		{Method: http.MethodGet, Path: "/api/events/stream", Handler: middleware.CORS(sse.Handler(issuer))},
 		// 阶段6: Emby Webhook 回调（公开，无 JWT）
 		{Method: http.MethodPost, Path: "/api/emby/webhook", Handler: middleware.CORS(handler.HandleEmbyWebhook(embyDeps))},
 		// 阶段6: Telegram Webhook 回调（公开，无 JWT，自带 secret_token 校验）
@@ -55,7 +58,6 @@ func RegisterRoutes(
 	server.AddRoutes(publicRoutes)
 
 	// ========== 阶段4: STRM 路由（播放器无 token，公开） ==========
-	jwtMW := middleware.JWTMiddleware(issuer)
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/strm", Handler: middleware.CORS(handler.HandleStrm(handler.StrmOptions{
 			Cfg: cfg, Client115: client, AccountStore: accountStore,
@@ -152,6 +154,22 @@ func RegisterRoutes(
 					return nil
 				}
 				return s
+			},
+			AllowedRoots: func() []string {
+				roots := make([]string, 0, 8)
+				if s, err := settingsStore.ReadSettings(); err == nil && s != nil {
+					for _, m := range handler.CleanupMappings(s) {
+						roots = append(roots, m.LocalPath)
+					}
+				}
+				if tasks, err := tasksStore.ReadTasks(); err == nil {
+					for _, t := range tasks {
+						if strings.TrimSpace(t.TargetPath) != "" {
+							roots = append(roots, t.TargetPath)
+						}
+					}
+				}
+				return roots
 			},
 		}))},
 	})

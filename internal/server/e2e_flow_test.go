@@ -405,8 +405,10 @@ func TestE2E_FlowB_SSEProgress(t *testing.T) {
 func TestE2E_FlowC_EmbyWebhookLifeMonitor(t *testing.T) {
 	f := setupE2E(t)
 
-	// 初始写入空 settings
-	if err := f.settingsStore.SaveSettings(model.DefaultSettings()); err != nil {
+	// 初始写入空 settings（Emby Webhook 现在失败关闭，测试需配置鉴权密钥）
+	settings := model.DefaultSettings()
+	settings.Emby.WebhookAuth = "e2e-webhook-secret"
+	if err := f.settingsStore.SaveSettings(settings); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
 	}
 
@@ -434,6 +436,7 @@ func TestE2E_FlowC_EmbyWebhookLifeMonitor(t *testing.T) {
 		raw, _ := json.Marshal(event)
 		req := httptest.NewRequest("POST", "/api/emby/webhook", bytes.NewReader(raw))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Webhook-Auth", "e2e-webhook-secret")
 		rr := httptest.NewRecorder()
 		handler.HandleEmbyWebhook(embyDeps)(rr, req)
 		if rr.Code != 200 {
@@ -460,6 +463,7 @@ func TestE2E_FlowC_EmbyWebhookLifeMonitor(t *testing.T) {
 		raw, _ := json.Marshal(event)
 		req := httptest.NewRequest("POST", "/api/emby/webhook", bytes.NewReader(raw))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Webhook-Auth", "e2e-webhook-secret")
 		rr := httptest.NewRecorder()
 		handler.HandleEmbyWebhook(embyDeps)(rr, req)
 		if rr.Code != 200 {

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -992,25 +993,41 @@ func HandleTelegramWebhook(deps NotifyDeps) http.HandlerFunc {
 		}
 		tg := settings.Telegram
 
-		// 校验 secret_token（若配置了）—— 提前到 token 检查之前，避免未授权请求浪费后续流程
-		if tg.WebhookSecretToken != "" {
+		// Webhook 可以触发清理/任务等高风险动作，必须要求 secret_token。
+		// BotToken 为空时先返回 400（未配置 Bot 本身不可用）；配置了 Bot 但没有 secret 时失败关闭。
+		secret := strings.TrimSpace(tg.WebhookSecretToken)
+		if secret != "" {
 			provided := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
-			if provided != tg.WebhookSecretToken {
+			if subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) != 1 {
 				logger.S().Warnf("[Telegram] Webhook secret_token 验证失败")
 				httpx.WriteJson(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 				return
 			}
+		} else if tg.BotToken != "" {
+			logger.S().Warnf("[Telegram] Webhook 未配置 secret_token，已拒绝请求")
+			httpx.WriteJson(w, http.StatusForbidden, map[string]string{
+				"error": "webhook secret_token 未配置，请先配置后再启用 Webhook",
+			})
+			return
 		}
-
 		if tg.BotToken == "" {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "Telegram not configured"})
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var update notify.Update
 		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid update payload"})
 			return
+		}
+		if want := strings.TrimSpace(tg.ChatID); want != "" {
+			got := telegramUpdateChatID(update)
+			if got == "" || got != want {
+				logger.S().Warnf("[Telegram] Webhook 拒绝非配置会话: got=%s want=%s", got, want)
+				httpx.WriteJson(w, http.StatusForbidden, map[string]string{"error": "chat not allowed"})
+				return
+			}
 		}
 
 		ctx := r.Context()
@@ -1027,6 +1044,17 @@ func HandleTelegramWebhook(deps NotifyDeps) http.HandlerFunc {
 
 		httpx.OkJson(w, map[string]bool{"ok": true})
 	}
+}
+
+// telegramUpdateChatID 提取 Update 所属会话 ID，用于 Webhook 会话白名单校验。
+func telegramUpdateChatID(update notify.Update) string {
+	if update.Message != nil && update.Message.Chat != nil {
+		return fmt.Sprintf("%d", update.Message.Chat.ID)
+	}
+	if update.CallbackQuery != nil && update.CallbackQuery.Message != nil && update.CallbackQuery.Message.Chat != nil {
+		return fmt.Sprintf("%d", update.CallbackQuery.Message.Chat.ID)
+	}
+	return ""
 }
 
 // classifyTelegramInitError 把 Telegram 初始化/探测的底层错误翻译为前台友好中文提示。

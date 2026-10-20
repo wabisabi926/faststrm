@@ -111,6 +111,22 @@ func (s *SyncDelete) HandleSyncDelete(ctx context.Context, item ItemInfo) error 
 		logger.S().Infof("[%s] 路径未匹配任何映射，跳过: %s", SyncDeleteTag, embyPath)
 		return s.skip(item, "path_not_matched")
 	}
+	// 清理路径并做根目录包含校验，拒绝 .. / 根目录删除。
+	embyPath = filepath.Clean(embyPath)
+	if !pathWithinRoot(mapping.EmbyPath, embyPath) {
+		logger.S().Warnf("[%s] 拒绝映射根目录外的路径: %s (root=%s)", SyncDeleteTag, embyPath, mapping.EmbyPath)
+		return s.skip(item, "path_outside_mapping")
+	}
+	if filepath.Clean(mapping.EmbyPath) == embyPath && (itemType == "Series" || itemType == "Season") {
+		logger.S().Warnf("[%s] 拒绝对映射根目录执行整目录删除: %s", SyncDeleteTag, embyPath)
+		return s.skip(item, "mapping_root_refused")
+	}
+	if itemType == "Movie" || itemType == "Episode" {
+		if !strings.EqualFold(filepath.Ext(embyPath), ".strm") {
+			logger.S().Warnf("[%s] 拒绝删除非 STRM 文件: %s", SyncDeleteTag, embyPath)
+			return s.skip(item, "not_strm")
+		}
+	}
 
 	// 计算网盘路径
 	cloudPath := MapEmbyPathToCloud(embyPath, *mapping)
@@ -174,6 +190,9 @@ func MatchPathMapping(embyPath string, mappings []model.SyncDeletePathMapping) *
 
 	for i := range mappings {
 		prefix := normalizePath(mappings[i].EmbyPath)
+		if prefix == "" {
+			continue
+		}
 		if normalized == prefix || strings.HasPrefix(normalized, prefix+"/") {
 			if len(prefix) > bestPrefixLen {
 				bestPrefixLen = len(prefix)
@@ -204,6 +223,26 @@ func MapEmbyPathToCloud(embyPath string, mapping model.SyncDeletePathMapping) st
 	// Emby 路径是本地落盘名（':' 已转全角 '：'、'/' 已转 '_'），DB 存的是云端形态（':' ASCII）。
 	// 逐段做可逆还原（'：'→':'），否则含冒号的片名（如 "复仇者联盟:终局之战"）删不掉对应 DB 记录。
 	return cloudPrefix + "/" + strmutil.LocalRelToCloudRel(relativePath)
+}
+
+// pathWithinRoot 判断 target 是否在 root 内（含 root 本身），并拒绝 .. 逃逸。
+func pathWithinRoot(root, target string) bool {
+	absRoot, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(filepath.Clean(target))
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absTarget)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // normalizePath 规范化路径：统一为正斜杠
@@ -328,15 +367,9 @@ func (s *SyncDelete) deleteByItemType(
 			return 0, 0
 		}
 
-		// 目录级删除
-		if err := os.RemoveAll(dirPath); err != nil {
-			logger.S().Errorf("[%s] 目录删除失败: %s err=%v", SyncDeleteTag, dirPath, err)
-			return 0, 0
-		}
-
-		// 清理空父目录
-		removedDirs := removeEmptyParents(dirPath, rootDirs)
-		return fileCount, 1 + removedDirs
+		// 目录级删除：只删除目录内的 .strm 及关联文件，绝不 RemoveAll 整个目录。
+		deleted, dirs := deleteStrmTree(dirPath, rootDirs, opts)
+		return deleted, dirs
 
 	default:
 		logger.S().Warnf("[%s] 未知类型: %s", SyncDeleteTag, itemType)
@@ -385,6 +418,10 @@ func deleteStrmFile(strmPath string, rootDirs []string, opts SyncDeleteOptions) 
 	if info.IsDir() {
 		// 目录走 deleteStrmDir 逻辑
 		return deleteStrmDir(strmPath, rootDirs, opts)
+	}
+	if !strings.EqualFold(filepath.Ext(strmPath), ".strm") {
+		logger.S().Warnf("[%s] 拒绝删除非 STRM 文件: %s", SyncDeleteTag, strmPath)
+		return 0, 0
 	}
 
 	// 防误删2：标题校验由调用方负责（faststrm 场景宽松）
@@ -518,13 +555,35 @@ func deleteStrmDir(dirPath string, rootDirs []string, opts SyncDeleteOptions) (d
 		return 0, 0
 	}
 
-	if err := os.RemoveAll(dirPath); err != nil {
-		logger.S().Errorf("[%s] 目录删除失败: %s err=%v", SyncDeleteTag, dirPath, err)
-		return 0, 0
-	}
+	deleted, dirs := deleteStrmTree(dirPath, rootDirs, opts)
+	return deleted, dirs
+}
 
+// deleteStrmTree 只删除目录树内的 .strm 文件及其关联文件，然后清理空目录。
+// 不使用 os.RemoveAll，避免误删真实媒体或用户文件。
+func deleteStrmTree(dirPath string, rootDirs []string, opts SyncDeleteOptions) (deletedFiles int, deletedDirs int) {
+	var strmPaths []string
+	_ = filepath.WalkDir(dirPath, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if d.Name() == strmutil.TrashDirName {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(p), ".strm") {
+			strmPaths = append(strmPaths, p)
+		}
+		return nil
+	})
+	for _, p := range strmPaths {
+		files, _ := deleteStrmFile(p, rootDirs, opts)
+		deletedFiles += files
+	}
 	removedDirs := removeEmptyParents(dirPath, rootDirs)
-	return fileCount, 1 + removedDirs
+	return deletedFiles, removedDirs
 }
 
 // ==================== 文件操作辅助 ====================

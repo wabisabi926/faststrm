@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wabisabi926/faststrm/internal/service/auth"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -79,15 +80,29 @@ type Subscriber struct {
 	ID     string
 	TaskID string // "" 表示订阅全部（全局仪表盘）
 	send   chan string
+	done   chan struct{}
+	once   sync.Once
 }
 
-// Send 发送一帧给订阅者（非阻塞；超过缓冲就丢弃，避免背压拖垮服务器）
+// Send 发送一帧给订阅者（非阻塞；超过缓冲就丢弃，避免背压拖垮服务器）。
+// done 关闭后不再发送，避免 Unsubscribe 后重放 goroutine 写已关闭 channel 导致进程 panic。
 func (s *Subscriber) Send(frame string) {
 	select {
+	case <-s.done:
+		return
+	default:
+	}
+	select {
 	case s.send <- frame:
+	case <-s.done:
 	default:
 		logger.S().Warnf("[SSE] sub=%s task=%s channel full, dropping frame", s.ID, s.TaskID)
 	}
+}
+
+// close 标记订阅结束；不关闭 send，避免并发 Send 触发 send on closed channel。
+func (s *Subscriber) close() {
+	s.once.Do(func() { close(s.done) })
 }
 
 // ==================== 服务端 ====================
@@ -128,6 +143,7 @@ func (s *Server) Subscribe(taskID string) *Subscriber {
 		ID:     fmt.Sprintf("sub-%d-%s", time.Now().UnixNano(), randomHex(4)),
 		TaskID: taskID,
 		send:   make(chan string, 256),
+		done:   make(chan struct{}),
 	}
 	s.mu.Lock()
 	s.subscribers[sub.ID] = sub
@@ -157,7 +173,7 @@ func (s *Server) Unsubscribe(sub *Subscriber) {
 	s.mu.Lock()
 	if _, ok := s.subscribers[sub.ID]; ok {
 		delete(s.subscribers, sub.ID)
-		close(sub.send)
+		sub.close()
 	}
 	s.mu.Unlock()
 	logger.S().Debugf("[SSE] unsubscribe id=%s (total=%d)", sub.ID, len(s.subscribers))
@@ -237,8 +253,20 @@ func (s *Server) ClearTaskLogs(taskID string) {
 
 // Handler 默认 SSE HTTP handler（GET /api/events/stream?taskId=xxx）
 // Content-Type: text/event-stream，禁用缓存，支持心跳
-func Handler() http.HandlerFunc {
+func Handler(issuers ...*auth.TokenIssuer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// EventSource 无法携带 Authorization 头，使用登录时下发的 HttpOnly Cookie 鉴权。
+		if len(issuers) > 0 && issuers[0] != nil {
+			cookie, err := r.Cookie("token")
+			if err != nil || cookie.Value == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if _, err := issuers[0].Parse(cookie.Value); err != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
 		taskID := r.URL.Query().Get("taskId")
 
 		flusher, ok := w.(http.Flusher)
@@ -253,7 +281,6 @@ func Handler() http.HandlerFunc {
 		h.Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		h.Set("Connection", "keep-alive")
 		h.Set("X-Accel-Buffering", "no") // nginx 禁用缓冲
-		h.Set("Access-Control-Allow-Origin", "*")
 		w.WriteHeader(http.StatusOK)
 		flusher.Flush()
 
@@ -276,6 +303,8 @@ func Handler() http.HandlerFunc {
 			select {
 			case <-ctx.Done():
 				logger.S().Debugf("[SSE] client disconnected task=%s", taskID)
+				return
+			case <-sub.done:
 				return
 			case <-heartbeat.C:
 				if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {

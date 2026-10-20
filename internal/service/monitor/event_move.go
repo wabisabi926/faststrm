@@ -64,10 +64,10 @@ func (m *Monitor) handleMoveOutEvent(
 
 	// 文件夹移出：递归删除旧本地目录（P1-5 Delete 安全兜底）
 	if event.FileCategory == 0 {
-		if err := strmutil.DeletePath(oldLocalPath); err != nil {
+		if _, err := m.deleteManagedStrmTree(ctx, account, oldLocalPath); err != nil {
 			m.appendLog(ctx, account, "move-out", false, oldCloudPath, oldLocalPath,
-				fmt.Sprintf("移出映射删除目录失败: %v", err))
-			return fmt.Errorf("移出映射删除目录失败: %w", err)
+				fmt.Sprintf("移出映射安全清理目录失败: %v", err))
+			return fmt.Errorf("移出映射安全清理目录失败: %w", err)
 		}
 		if config.RemoveEmptyDirs {
 			removeEmptyParents(filepath.Dir(oldLocalPath), config.PathMappings)
@@ -139,8 +139,8 @@ func (m *Monitor) cleanupOldStrmAssets(
 	}
 	// 文件夹：递归删除旧本地目录 + DB 按前缀清理（P1-5 Delete 安全兜底）
 	if event.FileCategory == 0 {
-		if err := strmutil.DeletePath(oldLocalPath); err != nil {
-			logger.S().Warnf("[Monitor] recreate 清理旧目录失败 %s: %v", oldLocalPath, err)
+		if _, err := m.deleteManagedStrmTree(ctx, account, oldLocalPath); err != nil {
+			logger.S().Warnf("[Monitor] recreate 安全清理旧目录失败 %s: %v", oldLocalPath, err)
 		}
 		if config.RemoveEmptyDirs {
 			removeEmptyParents(filepath.Dir(oldLocalPath), config.PathMappings)
@@ -244,6 +244,10 @@ func (m *Monitor) findLocalStrmByFileName(account, fileName string, fileCategory
 	// 先在映射目录中搜索
 	for _, mp := range mappings {
 		if mp.LocalPath == "" {
+			continue
+		}
+		// 裸文件名兜底只允许当前事件账号的映射，避免同名文件跨账号误删。
+		if mp.Account != "" && account != "" && mp.Account != account {
 			continue
 		}
 		// 文件夹：在 LocalPath 下查找同名目录

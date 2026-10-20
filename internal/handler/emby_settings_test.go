@@ -256,8 +256,8 @@ func TestEmbyWebhookAuthorized(t *testing.T) {
 	newReq := func(target string) *http.Request {
 		return httptest.NewRequest(http.MethodPost, target, nil)
 	}
-	if !embyWebhookAuthorized(newReq("/api/emby/webhook"), "") {
-		t.Fatal("empty expected should allow all")
+	if embyWebhookAuthorized(newReq("/api/emby/webhook"), "") {
+		t.Fatal("empty expected must fail closed")
 	}
 	if !embyWebhookAuthorized(newReq("/api/emby/webhook?auth=s3cret"), "s3cret") {
 		t.Fatal("query auth should pass")

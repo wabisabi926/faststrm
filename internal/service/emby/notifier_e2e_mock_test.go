@@ -99,32 +99,15 @@ func (d *capturingDispatcher) photoCountLocked() int {
 // waitForPhoto 阻塞直到 photoCount 达到 target，或超时。返回最终次数。
 func (d *capturingDispatcher) waitForPhoto(target int, timeout time.Duration) int {
 	deadline := time.Now().Add(timeout)
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for d.photoCountLocked() < target {
-		remain := time.Until(deadline)
-		if remain <= 0 {
-			return d.photoCountLocked()
+	for {
+		d.mu.Lock()
+		count := d.photoCountLocked()
+		d.mu.Unlock()
+		if count >= target || time.Now().After(deadline) {
+			return count
 		}
-		// Cond.Wait 不支持超时，用 goroutine + 超时信号避免无限挂起
-		signaled := make(chan struct{}, 1)
-		go func() {
-			d.photoCond.Wait()
-			select {
-			case signaled <- struct{}{}:
-			default:
-			}
-		}()
-		select {
-		case <-signaled:
-			// 继续判断条件
-		case <-time.After(remain):
-			// 超时：唤醒 cond waiter 以便它退出，返回当前计数
-			d.photoCond.Broadcast()
-			return d.photoCountLocked()
-		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	return d.photoCountLocked()
 }
 
 // lastCall 返回最后一条通知（测试前需确认至少有 1 条）

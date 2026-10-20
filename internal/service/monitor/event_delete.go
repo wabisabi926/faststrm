@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wabisabi926/faststrm/internal/model"
@@ -57,18 +58,19 @@ func (m *Monitor) handleDeleteEvent(
 			pollCountsAddSkipped(ctx, "delete_local_dir_not_found")
 			return nil
 		}
-		if err := strmutil.DeletePath(targetDir); err != nil {
+		deleted, delErr := m.deleteManagedStrmTree(ctx, account, targetDir)
+		if delErr != nil {
 			m.appendLog(ctx, account, "delete", false, cloudPath, targetDir,
-				fmt.Sprintf("删除目录失败: %v", err))
-			return fmt.Errorf("删除目录失败: %w", err)
+				fmt.Sprintf("安全清理目录失败: %v", delErr))
+			return fmt.Errorf("安全清理目录失败: %w", delErr)
 		}
-		// 清理空父目录
 		if config.RemoveEmptyDirs {
 			removeEmptyParents(filepath.Dir(targetDir), config.PathMappings)
 		}
-		m.appendLog(ctx, account, "delete", true, cloudPath, targetDir, "文件夹已删除")
+		m.appendLog(ctx, account, "delete", true, cloudPath, targetDir,
+			fmt.Sprintf("目录已安全清理（仅托管 STRM，%d 项移入回收站）", deleted))
 		m.notifyDelete(ctx, account, cloudPath, "目录", targetDir)
-		logger.S().Infof("[Monitor] 文件夹已删除: %s", targetDir)
+		logger.S().Infof("[Monitor] 文件夹安全清理完成: %s moved=%d", targetDir, deleted)
 		return nil
 	}
 
@@ -142,6 +144,14 @@ func (m *Monitor) handleMoveRenameQuadrant(
 	config model.LifeMonitorSettings,
 	lifeClient *client115.LifeClient,
 ) (handled bool, err error) {
+	// 路径解析失败/只剩裸文件名时不能可靠判断“移出媒体库”：
+	// 若继续走 MEDIA_TO_OTHER 会删除仍然有效的旧 STRM，必须直接跳过等待下一轮解析。
+	if strings.TrimSpace(newRawCloudPath) == "" || cloudPathSource == srcFallback {
+		logger.S().Warnf("[Monitor] move/rename 路径未完整解析，跳过四象限决策: fid=%s name=%s newCloudPath=%q source=%s",
+			event.FileID, event.FileName, newRawCloudPath, cloudPathSource)
+		return true, nil
+	}
+
 	// 1. 获取旧路径（DB 反查，对齐参考项目 client.py L1094-1098 get_by_id(file_id)）
 	// 关键：必须在写新路径到 DB 之前反查，否则反查到的是新路径，handler 无法定位旧 STRM
 	oldCloudPath := m.resolveOldCloudPathByFileID(account, event.FileID)

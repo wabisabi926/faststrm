@@ -102,6 +102,10 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
 
   const handleSave = async () => {
     try {
+      if (config.webhookUrl?.trim() && !config.hasWebhookSecret && !webhookSecretInput.trim()) {
+        setError("启用 Webhook 前必须设置 Webhook 密钥，否则回调会被拒绝");
+        return;
+      }
       setLoading(true);
       setError(null);
       setSuccess(null);
@@ -374,7 +378,7 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
                   {config.hasWebhookSecret && (
                     <span className="text-xs text-green-600">（已设置）</span>
                   )}
-                  <span className="text-xs text-muted-foreground">（可选，防伪造请求）</span>
+                  <span className="text-xs text-muted-foreground">（Webhook 模式必填，防伪造请求）</span>
                 </Label>
                 <Input
                   id="webhookSecret"

@@ -19,12 +19,20 @@ func DeleteStrmFile(strmPath string) error {
 	return nil
 }
 
-// DeletePath 删除目录或单文件（硬删除）
+// DeletePath 只允许删除单个文件；目录删除必须走回收站/安全清理流程。
+// 保留此函数名是为了兼容旧调用，但不再提供 RemoveAll 能力。
 func DeletePath(localPath string) error {
-	if _, err := os.Stat(localPath); os.IsNotExist(err) {
+	info, err := os.Lstat(localPath)
+	if os.IsNotExist(err) {
 		return nil
 	}
-	return os.RemoveAll(localPath)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return os.ErrInvalid
+	}
+	return os.Remove(localPath)
 }
 
 // pickcodeRe 匹配 STRM 内容中 pickcode=xxx 部分（17位字母数字）

@@ -58,11 +58,11 @@ func TestDeletePath_Dir(t *testing.T) {
 	if err := os.MkdirAll(sub, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := DeletePath(sub); err != nil {
-		t.Errorf("DeletePath on existing dir should return nil, got %v", err)
+	if err := DeletePath(sub); err == nil {
+		t.Error("DeletePath on existing dir must be refused")
 	}
-	if _, err := os.Stat(sub); !os.IsNotExist(err) {
-		t.Error("dir should be deleted")
+	if _, err := os.Stat(sub); err != nil {
+		t.Error("dir must be kept after refused delete")
 	}
 }
 

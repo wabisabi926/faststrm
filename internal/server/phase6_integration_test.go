@@ -356,6 +356,15 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 	}
 
 	t.Run("emby_webhook_json", func(t *testing.T) {
+		// Webhook 现在失败关闭，必须配置鉴权密钥
+		settings, err := settingsStore.ReadSettings()
+		if err != nil {
+			t.Fatalf("ReadSettings: %v", err)
+		}
+		settings.Emby.WebhookAuth = "test-webhook-secret"
+		if err := settingsStore.SaveSettings(settings); err != nil {
+			t.Fatalf("SaveSettings: %v", err)
+		}
 		// 发送 library.new 事件（NotifyMediaAdded 默认 false → handler 异步处理但不发通知，返回 ok）
 		event := emby.WebhookEvent{
 			Event: "library.new",
@@ -365,7 +374,13 @@ func TestPhase6_HttpHandlers(t *testing.T) {
 				Type: "Movie",
 			},
 		}
-		code, respBody := doJSON(handler.HandleEmbyWebhook(embyDeps), http.MethodPost, "/api/emby/webhook", event)
+		raw, _ := json.Marshal(event)
+		req := httptest.NewRequest(http.MethodPost, "/api/emby/webhook", bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Webhook-Auth", "test-webhook-secret")
+		rr := httptest.NewRecorder()
+		handler.HandleEmbyWebhook(embyDeps)(rr, req)
+		code, respBody := rr.Code, rr.Body.Bytes()
 		if code != http.StatusOK {
 			t.Fatalf("want 200, got %d, body=%s", code, respBody)
 		}

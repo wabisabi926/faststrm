@@ -98,11 +98,13 @@ func Login(issuer *auth.TokenIssuer) http.HandlerFunc {
 
 		// 设置 token Cookie（用于页面路由自动携带：/ → /dashboard）
 		// SameSite=Lax 防止 CSRF，Path=/ 全站有效，Secure 仅 HTTPS 生效
+		secureCookie := r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 		cookie := &http.Cookie{
 			Name:     "token",
 			Value:    token,
 			Path:     "/",
-			HttpOnly: false, // 允许前端 JS 从 cookie 读取（用于后续 API 调用或调试）
+			HttpOnly: true, // 前端 API 使用 localStorage Bearer；Cookie 只给 SSE 等浏览器原生请求
+			Secure:   secureCookie,
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   7 * 24 * 3600, // 7 天
 		}
@@ -142,8 +144,26 @@ type ChangePasswordRequest struct {
 }
 
 // ChangePassword POST /api/auth/change-password
+// allowCredentialChange 对改密/改用户名应用与登录相同的限流，避免绕过登录锁定在线爆破。
+func allowCredentialChange(w http.ResponseWriter, r *http.Request) bool {
+	ok, retry := authLoginGuard.allow(loginClientKey(r))
+	if ok {
+		return true
+	}
+	secs := int(retry.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	httpx.WriteJson(w, http.StatusTooManyRequests, map[string]string{"error": "尝试过于频繁，请稍后再试"})
+	return false
+}
+
 func ChangePassword() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !allowCredentialChange(w, r) {
+			return
+		}
 		var req ChangePasswordRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
@@ -211,6 +231,9 @@ var (
 // ChangeCredentials POST /api/auth/change-credentials
 func ChangeCredentials() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !allowCredentialChange(w, r) {
+			return
+		}
 		var req ChangeCredentialsRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})

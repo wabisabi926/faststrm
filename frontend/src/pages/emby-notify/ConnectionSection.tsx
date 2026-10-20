@@ -91,7 +91,7 @@ export function ConnectionSection({
           </div>
           <div className="space-y-2 md:col-span-2">
             <Label htmlFor="embyWebhookAuth">
-              Webhook 鉴权密钥 <span className="text-xs text-muted-foreground">（可选）</span>
+              Webhook 鉴权密钥 <span className="text-xs text-muted-foreground">（Webhook 必填）</span>
             </Label>
             <Input
               id="embyWebhookAuth"
@@ -102,7 +102,7 @@ export function ConnectionSection({
               autoComplete="off"
             />
             <p className="text-xs text-muted-foreground">
-              设置后，只有携带同一密钥的 Webhook 请求才会被接受；Emby 侧请使用下方“Webhook 配置指引”里复制出的带 auth 参数 URL。
+              现在必须配置：未设置密钥时 Emby Webhook 会被直接拒绝。Emby 侧请使用下方“Webhook 配置指引”里复制出的带 auth 参数 URL。
             </p>
           </div>
         </div>

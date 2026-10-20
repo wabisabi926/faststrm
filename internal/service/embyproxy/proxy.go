@@ -191,6 +191,12 @@ type playbackCacheKey struct {
 	headerHash    string
 }
 
+// strmCacheKey 必须包含认证/设备头哈希，避免无 Token 请求复用其他用户的缓存。
+type strmCacheKey struct {
+	itemID     string
+	headerHash string
+}
+
 // playbackCacheEntry 已解析的最终 CDN URL
 type playbackCacheEntry struct {
 	finalURL string
@@ -267,7 +273,7 @@ type Proxy struct {
 	playbackUserCacheMu sync.Mutex
 
 	// 3. strmSourcesCache PlaybackInfo 阶段识别到的 STRM 源
-	strmSourcesCache map[string]strmCacheEntry // itemID → strmCacheEntry
+	strmSourcesCache map[strmCacheKey]strmCacheEntry // (itemID, auth/header hash) → strmCacheEntry
 	strmSourcesMu    sync.RWMutex
 }
 
@@ -338,7 +344,7 @@ func New(embyHost string, forceProxyUaTokens ...[]string) (*Proxy, error) {
 		playbackURLCache:     make(map[playbackCacheKey]playbackCacheEntry),
 		playbackCacheOrder:   make([]playbackCacheKey, 0, MaxCacheSize),
 		playbackUserCache:    make(map[playbackUserKey]playbackUserEntry),
-		strmSourcesCache:     make(map[string]strmCacheEntry),
+		strmSourcesCache:     make(map[strmCacheKey]strmCacheEntry),
 	}, nil
 }
 
@@ -666,7 +672,7 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 
 	// 缓存 STRM 源映射（带 TTL 过期）
 	if itemID != "" && len(strmMap) > 0 {
-		p.cacheStrmSources(itemID, strmMap)
+		p.cacheStrmSources(itemID, computeHeaderHash(resp.Request), strmMap)
 		logger.S().Infof("[EmbyProxy] STRM 缓存: item=%s sources=%d", itemID, len(strmMap))
 	}
 
@@ -1244,7 +1250,7 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	// 1b. strmSourcesCache — PlaybackInfo 阶段缓存的 STRM 源元数据
 	meta := strmSourceMeta{}
 	if itemID != "" {
-		if strmEntry, ok := p.getCachedStrmSources(itemID); ok {
+		if strmEntry, ok := p.getCachedStrmSources(itemID, headerHash); ok {
 			if sourceID != "" {
 				if m, ok2 := strmEntry.sources[sourceID]; ok2 {
 					meta = m
@@ -1539,7 +1545,7 @@ func (p *Proxy) removeOrderKeyLocked(key playbackCacheKey) {
 }
 
 // cacheStrmSources 缓存 PlaybackInfo 阶段识别到的 STRM 源（带 TTL 过期）
-func (p *Proxy) cacheStrmSources(itemID string, sources map[string]strmSourceMeta) {
+func (p *Proxy) cacheStrmSources(itemID, headerHash string, sources map[string]strmSourceMeta) {
 	p.strmSourcesMu.Lock()
 	defer p.strmSourcesMu.Unlock()
 
@@ -1554,18 +1560,19 @@ func (p *Proxy) cacheStrmSources(itemID string, sources map[string]strmSourceMet
 		}
 	}
 
-	p.strmSourcesCache[itemID] = strmCacheEntry{
+	key := strmCacheKey{itemID: itemID, headerHash: headerHash}
+	p.strmSourcesCache[key] = strmCacheEntry{
 		sources: sources,
 		expiry:  time.Now().Add(strmSourcesCacheTTL),
 	}
 }
 
 // getCachedStrmSources 从缓存获取 STRM 源（带 TTL 过期检查）
-func (p *Proxy) getCachedStrmSources(itemID string) (strmCacheEntry, bool) {
+func (p *Proxy) getCachedStrmSources(itemID, headerHash string) (strmCacheEntry, bool) {
 	p.strmSourcesMu.RLock()
 	defer p.strmSourcesMu.RUnlock()
 
-	entry, ok := p.strmSourcesCache[itemID]
+	entry, ok := p.strmSourcesCache[strmCacheKey{itemID: itemID, headerHash: headerHash}]
 	if !ok {
 		return strmCacheEntry{}, false
 	}
