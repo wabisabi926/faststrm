@@ -173,23 +173,6 @@ export function SyncDeleteSection({
               <p className="text-xs text-muted-foreground">按标题模糊匹配清理所有版本</p>
             </div>
           </div>
-
-          <div className="flex items-center space-x-2 p-3 rounded-lg border border-red-500/30">
-            <Checkbox
-              id="syncDeleteSource"
-              checked={!!settings.syncDeleteSource}
-              onCheckedChange={(checked) =>
-                updateSetting("syncDeleteSource", checked === true)
-              }
-              disabled={!settings.syncDeleteEnabled}
-            />
-            <div className="flex-1">
-              <Label htmlFor="syncDeleteSource" className="cursor-pointer text-red-600 dark:text-red-400">
-                同时删除网盘源文件
-              </Label>
-              <p className="text-xs text-muted-foreground">危险：会删除 115 网盘原文件</p>
-            </div>
-          </div>
         </div>
 
         {/* 路径映射表（严格对齐用户"移动端 4 行规格"文字图，1:1；与 MonitorSettingsTab 同构仅方向相反）

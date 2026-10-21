@@ -247,9 +247,6 @@ type EmbySettings struct {
 	// SyncDeleteRemoveVersions 是否启用多版本删除（按 title 模糊匹配清理所有版本）
 	// 对齐 sync_del_remove_versions，默认 false
 	SyncDeleteRemoveVersions bool `json:"syncDeleteRemoveVersions"`
-	// SyncDeleteSource 是否同步删除源文件（115 网盘原文件）
-	// 对齐 sync_del_source，默认 false（敏感操作，谨慎开启）
-	SyncDeleteSource bool `json:"syncDeleteSource"`
 	// 媒体库刷库配置
 	RefreshOnCreate bool `json:"refreshOnCreate"` // 创建 STRM 后是否刷库
 	RefreshOnDelete bool `json:"refreshOnDelete"` // 删除 STRM 后是否刷库

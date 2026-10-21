@@ -21,7 +21,6 @@ export interface EmbySettings {
   /** 按标题模糊匹配清理同名多版本 */
   syncDeleteRemoveVersions?: boolean;
   /** 同步删除 115 网盘源文件（敏感） */
-  syncDeleteSource?: boolean;
   // 媒体库刷库配置
   refreshOnCreate?: boolean;  // 创建 STRM 后是否刷库
   refreshOnDelete?: boolean;  // 删除 STRM 后是否刷库
@@ -53,7 +52,6 @@ export const DEFAULT_NOTIFY_SETTINGS: EmbySettings = {
   syncDeleteNotify: true,
   syncDeleteDeleteSymlink: false,
   syncDeleteRemoveVersions: false,
-  syncDeleteSource: false,
   refreshOnCreate: true,
   refreshOnDelete: true,
   debounceSeconds: 10,

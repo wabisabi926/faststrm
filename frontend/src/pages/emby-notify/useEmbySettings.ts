@@ -105,16 +105,18 @@ export function useEmbySettings(): UseEmbySettingsResult {
     }
   };
 
-  const handleSave = async () => {
+  // persistSettings 统一的保存实现：/api/emby/settings 收全量 EmbySettings，
+  // 所以「保存设置」与「添加路径映射」可以共用同一条落库路径。
+  const persistSettings = async (next: EmbySettings, successMsg: string) => {
     try {
       setLoading(true);
       setError(null);
       setSuccess(null);
 
-      const response = await axiosInstance.post("/api/emby/settings", settings);
+      const response = await axiosInstance.post("/api/emby/settings", next);
 
       if (response.data?.success) {
-        setSuccess("Emby 通知设置已保存！");
+        setSuccess(successMsg);
       }
     } catch (raw) {
       const err = raw as {
@@ -127,6 +129,38 @@ export function useEmbySettings(): UseEmbySettingsResult {
     } finally {
       setLoading(false);
     }
+  };
+
+  // takePendingMapping 把「添加」行里已填好的内容并入 mappings。
+  // 两个字段都填齐才算完整；只填一半时忽略（保持原有校验），由调用方决定是否提示。
+  const takePendingMapping = (): PathMapping | null => {
+    const embyPath = newMappingEmbyPath.trim();
+    const cloudPath = newMappingCloudPath.trim();
+    if (!embyPath || !cloudPath) return null;
+    return { embyPath, cloudPath, account: newMappingAccount || undefined };
+  };
+
+  const clearPendingMapping = () => {
+    setNewMappingEmbyPath("");
+    setNewMappingCloudPath("");
+    setNewMappingAccount("");
+  };
+
+  const handleSave = async () => {
+    // 「保存设置」也要吸收还没点「添加」的那一行：用户填完路径直接点保存时，
+    // 不该因为少点一次「添加」而丢掉刚填的映射（原来必须先添加再保存，两次点击才生效）。
+    const pending = takePendingMapping();
+    if (pending) {
+      const next: EmbySettings = {
+        ...settings,
+        syncDeletePathMappings: [...(settings.syncDeletePathMappings || []), pending],
+      };
+      setSettings(next);
+      clearPendingMapping();
+      await persistSettings(next, "Emby 通知设置已保存（含新增路径映射）！");
+      return;
+    }
+    await persistSettings(settings, "Emby 通知设置已保存！");
   };
 
   const testConnection = async () => {
@@ -183,18 +217,18 @@ export function useEmbySettings(): UseEmbySettingsResult {
     updateSetting("syncDeletePathMappings", mappings);
   };
 
-  const addPathMapping = () => {
-    if (!newMappingEmbyPath || !newMappingCloudPath) return;
-    const mappings: PathMapping[] = [...(settings.syncDeletePathMappings || [])];
-    mappings.push({
-      embyPath: newMappingEmbyPath,
-      cloudPath: newMappingCloudPath,
-      account: newMappingAccount || undefined,
-    });
-    updateSetting("syncDeletePathMappings", mappings);
-    setNewMappingEmbyPath("");
-    setNewMappingCloudPath("");
-    setNewMappingAccount("");
+  // 添加即生效：点「添加」直接落库，不必再点一次「保存设置」。
+  // 删除仍保留「点保存才生效」——减法操作留一步缓冲，避免误点立即丢配置。
+  const addPathMapping = async () => {
+    const pending = takePendingMapping();
+    if (!pending) return;
+    const next: EmbySettings = {
+      ...settings,
+      syncDeletePathMappings: [...(settings.syncDeletePathMappings || []), pending],
+    };
+    setSettings(next);
+    clearPendingMapping();
+    await persistSettings(next, "路径映射已添加并保存");
   };
 
   const removePathMapping = (index: number) => {

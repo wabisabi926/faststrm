@@ -225,7 +225,6 @@ type embySettingsPatch struct {
 	SyncDeleteDryRun         *bool                          `json:"syncDeleteDryRun,omitempty"`
 	SyncDeleteDeleteSymlink  *bool                          `json:"syncDeleteDeleteSymlink,omitempty"`
 	SyncDeleteRemoveVersions *bool                          `json:"syncDeleteRemoveVersions,omitempty"`
-	SyncDeleteSource         *bool                          `json:"syncDeleteSource,omitempty"`
 	RefreshOnCreate          *bool                          `json:"refreshOnCreate,omitempty"`
 	RefreshOnDelete          *bool                          `json:"refreshOnDelete,omitempty"`
 	DebounceSeconds          *int                           `json:"debounceSeconds,omitempty"`
@@ -291,9 +290,6 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			}
 			if patch.SyncDeleteRemoveVersions != nil {
 				em.SyncDeleteRemoveVersions = *patch.SyncDeleteRemoveVersions
-			}
-			if patch.SyncDeleteSource != nil {
-				em.SyncDeleteSource = *patch.SyncDeleteSource
 			}
 			if patch.RefreshOnCreate != nil {
 				em.RefreshOnCreate = *patch.RefreshOnCreate

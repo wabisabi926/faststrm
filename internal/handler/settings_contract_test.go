@@ -49,7 +49,6 @@ func newContractSettings() *model.Settings {
 	s.Emby.SyncDeleteDryRun = true
 	s.Emby.SyncDeleteDeleteSymlink = true
 	s.Emby.SyncDeleteRemoveVersions = true
-	s.Emby.SyncDeleteSource = true
 	s.Emby.SyncDeletePathMappings = []model.SyncDeletePathMapping{
 		{EmbyPath: "/mnt/emby", CloudPath: "/电影", Account: "alice"},
 	}
