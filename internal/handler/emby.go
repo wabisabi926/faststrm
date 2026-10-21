@@ -713,6 +713,14 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				if time.Duration(body.Strm.RedirectCheckTimeoutMs)*time.Millisecond >= 500*time.Millisecond {
 					settings.Strm.RedirectCheckTimeoutMs = body.Strm.RedirectCheckTimeoutMs
 				}
+				// 分片并发代理：Disable 语义（false=启用，默认），直接赋值即可
+				settings.Strm.DisableRangeProxy = body.Strm.DisableRangeProxy
+				if v := body.Strm.ProxyChunkSizeMB; v >= 1 && v <= 64 {
+					settings.Strm.ProxyChunkSizeMB = v
+				}
+				if v := body.Strm.ProxyConcurrency; v >= 1 && v <= 4 {
+					settings.Strm.ProxyConcurrency = v
+				}
 			}
 
 			// ====== Emby 嵌套对象 ======

@@ -53,6 +53,10 @@ export type Settings = {
     redirectCheckTimeoutMs?: number;
     // 需要服务端代理流的容器/扩展名
     forceProxyFormats?: string[];
+    // 代理流分片并发（大原盘单连接带宽不足时显著改善）
+    disableRangeProxy?: boolean;
+    proxyChunkSizeMB?: number;
+    proxyConcurrency?: number;
     // STRM URL 模板：由「标准 URL + 附加参数勾选」生成；空 = 走后端硬编码默认
     strmUrlTemplate?: string;
   };

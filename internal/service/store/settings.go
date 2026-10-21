@@ -249,16 +249,23 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		out.DownloadExtensions = norm
 		changed = true
 	}
-	if len(out.Strm.ForceProxyUaTokens) == 0 && len(def.Strm.ForceProxyUaTokens) > 0 {
-		out.Strm.ForceProxyUaTokens = def.Strm.ForceProxyUaTokens
-		changed = true
-	}
+	// 注意：ForceProxyUaTokens 不做零值回填——用户主动清空表示「全部直连」，
+	// 回填默认值会让这个选择失效（默认值仅对全新安装生效）。
 	if out.Strm.AccountProxyConcurrencyLimit == 0 {
 		out.Strm.AccountProxyConcurrencyLimit = def.Strm.AccountProxyConcurrencyLimit
 		changed = true
 	}
 	if out.Strm.RedirectCheckTimeoutMs == 0 {
 		out.Strm.RedirectCheckTimeoutMs = def.Strm.RedirectCheckTimeoutMs
+		changed = true
+	}
+	// 分片并发代理：0 表示未配置（旧配置文件），回填默认值
+	if out.Strm.ProxyChunkSizeMB == 0 {
+		out.Strm.ProxyChunkSizeMB = def.Strm.ProxyChunkSizeMB
+		changed = true
+	}
+	if out.Strm.ProxyConcurrency == 0 {
+		out.Strm.ProxyConcurrency = def.Strm.ProxyConcurrency
 		changed = true
 	}
 	return changed

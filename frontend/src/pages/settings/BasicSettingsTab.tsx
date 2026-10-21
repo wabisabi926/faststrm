@@ -340,6 +340,52 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 逗号分隔，大小写不敏感、点号可省略。这些格式需要服务端代理流（避免 CDN 的 UA/签名导致 Range 被拒）；留空恢复默认值。
               </p>
             </div>
+            <div className="space-y-3 rounded-md border p-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="disableRangeProxy"
+                  checked={!(data.strm?.disableRangeProxy ?? false)}
+                  onCheckedChange={(checked) =>
+                    setData({ ...data, strm: { ...data.strm, disableRangeProxy: checked !== true } })
+                  }
+                />
+                <Label htmlFor="disableRangeProxy" className="cursor-pointer">
+                  代理流分片并发（推荐开启）
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                按 Range 分片并行拉取再按序输出，解决大原盘（50GB+）单连接带宽不足导致的卡顿、超时、播不出来。
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>分片大小（MB）</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="64"
+                    value={data.strm?.proxyChunkSizeMB ?? 10}
+                    onChange={(e) =>
+                      setData({ ...data, strm: { ...data.strm, proxyChunkSizeMB: parseInt(e.target.value) || 10 } })
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>分片并发数</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="4"
+                    value={data.strm?.proxyConcurrency ?? 2}
+                    onChange={(e) =>
+                      setData({ ...data, strm: { ...data.strm, proxyConcurrency: parseInt(e.target.value) || 2 } })
+                    }
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                并发数计入上方「单账号代理并发上限」。115 有风控，建议 2；带宽充足且稳定可试 3。
+              </p>
+            </div>
           </div>
         </details>
       </section>

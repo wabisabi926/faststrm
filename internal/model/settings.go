@@ -159,6 +159,14 @@ type StrmSettings struct {
 	// 默认值为原盘类格式 + ts/m2ts；空则使用内置默认值。
 	// 注意：.ts 是常见的录播格式而非原盘，若带宽紧张可把它从列表中移除。
 	ForceProxyFormats []string `json:"forceProxyFormats"`
+	// RangeProxy 代理流是否按 Range 分片并发拉取（默认开）。
+	// 大原盘单连接带宽不足会卡顿/超时，分片并发可显著改善；关闭则回退单连接 io.Copy。
+	// 用 Disable 语义：零值 = 启用，旧配置文件无需迁移。
+	DisableRangeProxy bool `json:"disableRangeProxy"`
+	// ProxyChunkSizeMB 分片大小（MB），默认 10。
+	ProxyChunkSizeMB int `json:"proxyChunkSizeMB"`
+	// ProxyConcurrency 单次播放的分片并发数，默认 2（计入 AccountProxyConcurrencyLimit 额度）。
+	ProxyConcurrency int `json:"proxyConcurrency"`
 }
 
 // DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）
@@ -349,11 +357,16 @@ func DefaultSettings() *Settings {
 		},
 		Strm: StrmSettings{
 			// ForceProxyUaTokens 仅对 STRM 端点层生效（命中则强制走 proxy）。
-			// 默认空：STRM 端点默认全部直连，仅 seek 格式或直连失败时走 proxy。
-			ForceProxyUaTokens:           []string{},
+			// 默认预置已知「坑客户端」：这些客户端对 302 直链/签名/UA 绑定处理不佳，
+			// 直连 115 CDN 时 Range 请求常被拒，表现为原盘/大文件播不出来。
+			// 若带宽紧张，可在设置页清空（清空后全部直连）。
+			ForceProxyUaTokens:           []string{"Infuse", "VidHub", "SenPlayer", "SenPlayerHD"},
 			AccountProxyConcurrencyLimit: 8,
 			RedirectCheckTimeoutMs:       5000,
 			ForceProxyFormats:            append([]string{}, DefaultForceProxyFormats...),
+			// 分片并发代理默认启用（DisableRangeProxy 零值 false 即启用）
+			ProxyChunkSizeMB: 10,
+			ProxyConcurrency: 2,
 		},
 		RateLimit: RateLimitSettings{
 			API115Qpm:    60,  // 扫描/目录类，保守
