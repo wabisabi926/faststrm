@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -34,132 +35,175 @@ type ClearDirRequest struct {
 // 对齐 TS clearDirectory：
 // - 仅删除 .settings.ignoreExtensions / .strm 之外的文件？（不，TS 实现是：删除除 ignoreExtensions 之外的全部文件
 // - 清理后删除空目录
+// clearDirError 清空目录时带 HTTP 状态码的错误。
+type clearDirError struct {
+	status int
+	msg    string
+}
+
+func (e *clearDirError) Error() string { return e.msg }
+
+func newClearDirError(status int, msg string) error { return &clearDirError{status: status, msg: msg} }
+
+func writeClearDirError(w http.ResponseWriter, err error) {
+	var ce *clearDirError
+	if errors.As(err, &ce) {
+		httpx.WriteJson(w, ce.status, map[string]string{"error": ce.msg})
+		return
+	}
+	httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+}
+
+func parseClearDirRequest(r *http.Request) (ClearDirRequest, error) {
+	var req ClearDirRequest
+	if r.Body != nil {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return req, newClearDirError(http.StatusBadRequest, "read body failed: "+err.Error())
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			return req, newClearDirError(http.StatusBadRequest, "invalid json: "+err.Error())
+		}
+	}
+	if req.TargetPath == "" {
+		req.TargetPath = r.URL.Query().Get("targetPath")
+	}
+	if req.TargetPath == "" {
+		return req, newClearDirError(http.StatusBadRequest, "targetPath required")
+	}
+	return req, nil
+}
+
+func resolveClearDirTarget(path string) (string, error) {
+	// Path traversal protection: reject paths with ".." segments
+	cleaned := filepath.Clean(path)
+	if cleaned != path || strings.Contains(path, "..") {
+		return "", newClearDirError(http.StatusBadRequest, "invalid path")
+	}
+	absPath, err := filepath.Abs(cleaned)
+	if err != nil {
+		return "", newClearDirError(http.StatusBadRequest, "invalid path")
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		return "", newClearDirError(http.StatusBadRequest, "targetPath does not exist")
+	}
+	if filepath.Dir(absPath) == absPath {
+		return "", newClearDirError(http.StatusBadRequest, "refuse to clear filesystem root")
+	}
+	return absPath, nil
+}
+
+// resolveClearDirAllowedRoot 只允许任务输出目录或监控映射根目录（及其子目录）。
+func resolveClearDirAllowedRoot(target string, allowedRoots func() []string) (string, error) {
+	allowedRoot := ""
+	if allowedRoots != nil {
+		for _, root := range allowedRoots() {
+			root = strings.TrimSpace(root)
+			if root == "" {
+				continue
+			}
+			absRoot, err := filepath.Abs(root)
+			if err != nil {
+				continue
+			}
+			if pathWithinRoot(absRoot, target) && len(absRoot) > len(allowedRoot) {
+				allowedRoot = absRoot
+			}
+		}
+	}
+	if allowedRoot == "" {
+		return "", newClearDirError(
+			http.StatusForbidden,
+			"targetPath 不在任务输出目录或生活监控映射范围内，已拒绝清理",
+		)
+	}
+	return allowedRoot, nil
+}
+
+func clearDirSettings(provider func() *model.Settings) *model.Settings {
+	if provider != nil {
+		if settings := provider(); settings != nil {
+			return settings
+		}
+	}
+	return model.DefaultSettings()
+}
+
+func clearDirKeepExtensions(settings *model.Settings) map[string]struct{} {
+	keep := make(map[string]struct{})
+	for _, ext := range settings.StrmExtensions {
+		keep[strings.ToLower(normalizeExt(ext))] = struct{}{}
+	}
+	for _, ext := range settings.DownloadExtensions {
+		keep[strings.ToLower(normalizeExt(ext))] = struct{}{}
+	}
+	keep[".strm"] = struct{}{}
+	return keep
+}
+
+// trashClearDirFiles 把非保留扩展名的文件移入回收站，并返回数量。
+func trashClearDirFiles(target, allowedRoot, trashDir string, settings *model.Settings) (int, error) {
+	ignoreExts := clearDirKeepExtensions(settings)
+	deleted := 0
+	err := filepath.Walk(target, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			logger.S().Warnf("[clearDir] walk error at %s: %v", p, err)
+			return nil
+		}
+		if info.IsDir() {
+			if info.Name() == strmutil.TrashDirName {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := info.Name()
+		if strings.HasPrefix(name, ".") {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		if _, keep := ignoreExts[ext]; keep {
+			return nil
+		}
+		if _, terr := strmutil.MoveToTrash(p, allowedRoot, trashDir); terr != nil {
+			logger.S().Warnf("[clearDir] trash %s failed: %v", p, terr)
+			return nil
+		}
+		deleted++
+		return nil
+	})
+	return deleted, err
+}
+
 func HandleClearDir(deps ClearDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req ClearDirRequest
-		if r.Body != nil {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "read body failed: " + err.Error()})
-				return
-			}
-			if err := json.Unmarshal(body, &req); err != nil {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid json: " + err.Error()})
-				return
-			}
-		}
-		if req.TargetPath == "" {
-			req.TargetPath = r.URL.Query().Get("targetPath")
-		}
-		if req.TargetPath == "" {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "targetPath required"})
-			return
-		}
-
-		// Path traversal protection: reject paths with ".." segments
-		cleaned := filepath.Clean(req.TargetPath)
-		if cleaned != req.TargetPath || strings.Contains(req.TargetPath, "..") {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
-			return
-		}
-
-		// Resolve to absolute path to ensure it's safe
-		absPath, err := filepath.Abs(cleaned)
+		req, err := parseClearDirRequest(r)
 		if err != nil {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+			writeClearDirError(w, err)
 			return
 		}
-		req.TargetPath = absPath
-
-		if _, err := os.Stat(req.TargetPath); err != nil {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "targetPath does not exist"})
+		targetPath, err := resolveClearDirTarget(req.TargetPath)
+		if err != nil {
+			writeClearDirError(w, err)
 			return
 		}
-		if filepath.Dir(req.TargetPath) == req.TargetPath {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "refuse to clear filesystem root"})
-			return
-		}
-
-		// 只允许任务输出目录或监控映射根目录（及其子目录）。
-		allowedRoot := ""
-		if deps.AllowedRoots != nil {
-			for _, root := range deps.AllowedRoots() {
-				root = strings.TrimSpace(root)
-				if root == "" {
-					continue
-				}
-				absRoot, aerr := filepath.Abs(root)
-				if aerr != nil {
-					continue
-				}
-				if pathWithinRoot(absRoot, req.TargetPath) && len(absRoot) > len(allowedRoot) {
-					allowedRoot = absRoot
-				}
-			}
-		}
-		if allowedRoot == "" {
-			httpx.WriteJson(w, http.StatusForbidden, map[string]string{
-				"error": "targetPath 不在任务输出目录或生活监控映射范围内，已拒绝清理",
-			})
+		allowedRoot, err := resolveClearDirAllowedRoot(targetPath, deps.AllowedRoots)
+		if err != nil {
+			writeClearDirError(w, err)
 			return
 		}
 
-		settings := model.DefaultSettings()
-		if deps.SettingsProvider != nil {
-			if s := deps.SettingsProvider(); s != nil {
-				settings = s
-			}
-		}
-		// 保留扩展名集合：STRM + DOWNLOAD（也就是我们实际要处理的媒体文件类型）
-		ignoreExts := make(map[string]struct{})
-		for _, e := range settings.StrmExtensions {
-			ignoreExts[strings.ToLower(normalizeExt(e))] = struct{}{}
-		}
-		for _, e := range settings.DownloadExtensions {
-			ignoreExts[strings.ToLower(normalizeExt(e))] = struct{}{}
-		}
-		// 也保留 .strm 文件本身
-		ignoreExts[".strm"] = struct{}{}
-
-		deleted := 0
 		trashDir := strmutil.TrashSessionDir(allowedRoot)
-		// 第一遍：把非保留扩展名的文件移入回收站，而不是永久删除
-		err = filepath.Walk(req.TargetPath, func(p string, info os.FileInfo, err error) error {
-			if err != nil {
-				logger.S().Warnf("[clearDir] walk error at %s: %v", p, err)
-				return nil
-			}
-			if info.IsDir() {
-				if info.Name() == strmutil.TrashDirName {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			name := info.Name()
-			if strings.HasPrefix(name, ".") {
-				return nil
-			}
-			ext := strings.ToLower(filepath.Ext(name))
-			if _, keep := ignoreExts[ext]; keep {
-				return nil
-			}
-			if _, terr := strmutil.MoveToTrash(p, allowedRoot, trashDir); terr != nil {
-				logger.S().Warnf("[clearDir] trash %s failed: %v", p, terr)
-				return nil
-			}
-			deleted++
-			return nil
-		})
+		deleted, err := trashClearDirFiles(targetPath, allowedRoot, trashDir, clearDirSettings(deps.SettingsProvider))
 		if err != nil {
-			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeClearDirError(w, err)
 			return
 		}
-		// 第二遍：后序删除空目录（最多 3 轮，避免 O(n^2)）
-		rmEmptyDirs(req.TargetPath)
-		httpx.WriteJson(w, http.StatusOK, map[string]any{
+		// 后序删除空目录（最多 3 轮，避免 O(n^2)）
+		rmEmptyDirs(targetPath)
+		httpx.OkJson(w, map[string]any{
 			"ok":         true,
 			"deleted":    deleted,
-			"targetPath": req.TargetPath,
+			"targetPath": targetPath,
 			"trashDir":   trashDir,
 		})
 	}
