@@ -54,14 +54,14 @@ func TestCleanupOrphanStrms_CloudRecheck(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec := &fakeManagedRecorder{allow: map[string]bool{filepath.Clean(file): true}}
-			n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+			_, deleted, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
 				"t", target, map[string]string{}, map[string]struct{}{"other": {}}, nil,
 				"auto_clean", model.CleanupSettings{RemoveStrm: true}, nil, rec, c.checker)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if n != 0 {
-				t.Fatalf("deleted=%d, cloud check should preserve file", n)
+			if deleted != 0 {
+				t.Fatalf("deleted=%d, cloud check should preserve file", deleted)
 			}
 			if _, err := os.Stat(file); err != nil {
 				t.Fatal("file must be preserved")
@@ -85,7 +85,7 @@ func TestCleanupOrphanStrms_OwnershipGuardAndTrash(t *testing.T) {
 	}
 	rec := &fakeManagedRecorder{allow: map[string]bool{filepath.Clean(managedFile): true}}
 
-	n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+	n, _, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
 		"t", target, map[string]string{}, map[string]struct{}{"other": {}}, nil,
 		"auto_clean", model.CleanupSettings{RemoveStrm: true}, nil, rec, fakeCloudAbsence{absent: true})
 	if err != nil {

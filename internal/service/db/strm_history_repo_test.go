@@ -138,7 +138,7 @@ func TestStrmHistoryListByTaskID(t *testing.T) {
 	// 插入2条taskA, 1条taskB
 	entries := []StrmHistoryEntry{
 		{TaskID: "taskA", Kind: StrmHistoryKindFull, Account: "acc1", Success: true, TotalFiles: 10, SuccessFiles: 10},
-		{TaskID: "taskA", Kind: StrmHistoryKindIncrement, Account: "acc1", Success: true, TotalFiles: 5, SuccessFiles: 5},
+		{TaskID: "taskA", Kind: StrmHistoryKindMonitor, Account: "acc1", Success: true, TotalFiles: 5, SuccessFiles: 5},
 		{TaskID: "taskB", Kind: StrmHistoryKindFull, Account: "acc2", Success: false, TotalFiles: 3, FailedFiles: 3},
 	}
 	for _, e := range entries {

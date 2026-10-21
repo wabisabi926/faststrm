@@ -374,3 +374,43 @@ func listTrashEntries(root string, limit int) ([]TrashEntry, bool, error) {
 	})
 	return entries, truncated, walkErr
 }
+
+// HandleStrmTrashPurgePOST POST /api/strmCleanup/trash/purge
+// 清空回收站（不可恢复）。body 可选 localPath 限定单个映射根；缺省清空所有已配置根。
+func HandleStrmTrashPurgePOST(deps StrmCleanupDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		settings, err := deps.SettingsStore.ReadSettings()
+		if err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		roots := allowedCleanupRoots(settings, deps)
+		var body struct {
+			LocalPath string `json:"localPath"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		if p := strings.TrimSpace(body.LocalPath); p != "" {
+			root, rerr := validateCleanupRoot(p, roots)
+			if rerr != nil {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": rerr.Error()})
+				return
+			}
+			roots = []string{root}
+		}
+
+		total := 0
+		seen := make(map[string]struct{}, len(roots))
+		for _, root := range roots {
+			root = filepath.Clean(root)
+			if _, ok := seen[root]; ok {
+				continue
+			}
+			seen[root] = struct{}{}
+			total += strmutil.PurgeAllTrash(root)
+		}
+		logger.S().Infof("[trash] purge all: %d batches removed", total)
+		httpx.WriteJson(w, http.StatusOK, map[string]any{"removedBatches": total})
+	}
+}

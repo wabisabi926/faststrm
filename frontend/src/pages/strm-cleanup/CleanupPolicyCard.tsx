@@ -13,14 +13,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { Settings as SettingsType } from "@/pages/settings/types";
+import { AUTO_MODE_HINTS, CLEANUP_DEFAULTS } from "./cleanup-constants";
 
 type CleanupSettings = NonNullable<SettingsType["cleanup"]>;
-
-const AUTO_MODE_HINTS: Record<string, string> = {
-  off: "不检查、不处理。",
-  mark_only: "只写日志，不删除文件。",
-  auto_clean: "按下方阈值清理；命中保护阈值时停止或转入待确认队列。",
-};
 
 export interface CleanupPolicyCardProps {
   data: SettingsType;
@@ -106,9 +101,9 @@ export function CleanupPolicyCard({ data, setData, saving, onSave }: CleanupPoli
               id="cleanup-max-threshold"
               type="number"
               min="1"
-              value={cleanup.maxThreshold ?? 1000}
+              value={cleanup.maxThreshold ?? CLEANUP_DEFAULTS.maxThreshold}
               onChange={(e) =>
-                updateCleanup({ maxThreshold: Math.max(1, parseInt(e.target.value) || 1000) })
+                updateCleanup({ maxThreshold: Math.max(1, parseInt(e.target.value) || CLEANUP_DEFAULTS.maxThreshold) })
               }
             />
             <p className="text-xs text-muted-foreground">默认 1000</p>
@@ -121,7 +116,7 @@ export function CleanupPolicyCard({ data, setData, saving, onSave }: CleanupPoli
               min="1"
               max="100"
               step="1"
-              value={Math.round((cleanup.maxRatio ?? 0.1) * 100)}
+              value={Math.round((cleanup.maxRatio ?? CLEANUP_DEFAULTS.maxRatio) * 100)}
               onChange={(e) => {
                 const pct = Math.min(100, Math.max(1, parseInt(e.target.value) || 10));
                 updateCleanup({ maxRatio: pct / 100 });
@@ -135,9 +130,9 @@ export function CleanupPolicyCard({ data, setData, saving, onSave }: CleanupPoli
               id="cleanup-max-dirs"
               type="number"
               min="1"
-              value={cleanup.maxDirs ?? 20}
+              value={cleanup.maxDirs ?? CLEANUP_DEFAULTS.maxDirs}
               onChange={(e) =>
-                updateCleanup({ maxDirs: Math.max(1, parseInt(e.target.value) || 20) })
+                updateCleanup({ maxDirs: Math.max(1, parseInt(e.target.value) || CLEANUP_DEFAULTS.maxDirs) })
               }
             />
             <p className="text-xs text-muted-foreground">默认 20，防止分散目录的小批量删除绕过阈值</p>

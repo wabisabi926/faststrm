@@ -51,7 +51,7 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
     label: "日志",
     items: [
       { title: "生活事件", url: "/life-events", icon: Activity },
-      { title: "执行历史", url: "/history", icon: History },
+      { title: "运行记录", url: "/history", icon: History },
       { title: "播放诊断", url: "/diagnose", icon: Stethoscope },
     ],
   },
@@ -67,7 +67,7 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
 
 function isNavActive(url: string, pathname: string): boolean {
   if (url === "/") return pathname === "/";
-  // 日志详情从执行历史打开，归属于执行历史
+  // 日志详情从运行记录打开，归属于运行记录
   if (url === "/history") return pathname === "/history" || pathname.startsWith("/log/");
   return pathname === url || pathname.startsWith(url + "/");
 }

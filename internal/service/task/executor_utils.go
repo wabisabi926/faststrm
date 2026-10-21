@@ -698,7 +698,7 @@ func shouldPurgeTrash(root string, now time.Time) bool {
 	return true
 }
 
-func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 + 路径不符判定 + 连带删关联文件/空目录）
+func cleanupOrphanStrms( //nolint:cyclop // complexity: 83（失败目录保护 + 路径不符判定 + 云端复核 + 连带删关联文件/空目录）
 	ctx context.Context,
 	submitter CleanupBatchSubmitter,
 	sseServer *sse.Server,
@@ -711,14 +711,14 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 	embyRefresh StrmRefresher,
 	managed strm.ManagedRecorder,
 	cloudChecker CloudAbsenceChecker,
-) (int, string, error) {
+) (candidates, deleted int, requestID string, err error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" || mode == "off" {
-		return 0, "", nil
+		return 0, 0, "", nil
 	}
 	if len(cloudCurrent) == 0 && len(cloudSnapshot) == 0 {
 		// 云端集合为空时不做对账：避免在 fileEntries 还未填充阶段误删全部本地 STRM
-		return 0, "", nil
+		return 0, 0, "", nil
 	}
 	if mode == "auto_clean" && shouldPurgeTrash(targetPath, time.Now()) {
 		if n := strmutil.PurgeTrashTree(targetPath, 7*24*time.Hour); n > 0 && sseServer != nil {
@@ -813,7 +813,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 		return nil
 	})
 	if werr != nil {
-		return 0, "", werr
+		return 0, 0, "", werr
 	}
 
 	if len(orphans) == 0 {
@@ -821,7 +821,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 			sseServer.EmitLog(taskID, "info", fmt.Sprintf(
 				"对账清理：%d 个 STRM 位于列目录失败的目录下，本次跳过对账（防止误删）", failedSkipped))
 		}
-		return 0, "", nil
+		return 0, 0, "", nil
 	}
 	if failedSkipped > 0 && sseServer != nil {
 		sseServer.EmitLog(taskID, "info", fmt.Sprintf(
@@ -863,7 +863,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 			sseServer.EmitLog(taskID, "info", "如需强制清理，请到 Web UI 清理页手动执行")
 		}
 		// 即使拒绝也返回孤儿数（供调用方统计）
-		return len(orphans), "", nil
+		return len(orphans), 0, "", nil
 	}
 
 	// mark_only 模式：仅日志
@@ -874,7 +874,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 				sseServer.EmitLog(taskID, "info", "  孤儿STRM: "+p)
 			}
 		}
-		return len(orphans), "", nil
+		return len(orphans), 0, "", nil
 	}
 
 	// auto_clean 模式：需二次确认且 ConfirmMode != "none" → 入队
@@ -904,7 +904,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 				sseServer.EmitLog(taskID, "warn", fmt.Sprintf(
 					"对账清理：孤儿 %d 个超稳定阈值，已入队待二次确认 (requestID=%s)", len(orphans), reqID))
 			}
-			return len(orphans), reqID, nil
+			return len(orphans), 0, reqID, nil
 		}
 	}
 
@@ -992,10 +992,10 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 				logger.S().Debugf("[cleanupOrphanStrms] Emby 刷库失败 path=%s: %v", targetPath, rerr)
 			}
 		}
-		return deleted, "", nil
+		return len(orphans), deleted, "", nil
 	}
 
-	return 0, "", nil
+	return 0, 0, "", nil
 }
 
 // buildCloudPickcodeSetFromSnapshot 从 DB 快照构建云端 pickcode 集合

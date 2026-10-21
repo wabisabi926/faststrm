@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -7,25 +7,16 @@ import type { Settings as SettingsType } from "@/pages/settings/types";
 import { CleanupPolicyCard } from "@/pages/strm-cleanup/CleanupPolicyCard";
 import { StrmCleanupCard } from "@/pages/StrmCleanupCard";
 
-const AUTO_CLEANUP_LABELS: Record<string, string> = {
-  off: "关闭",
-  mark_only: "仅标记",
-  auto_clean: "自动清理",
-};
-
-const CLEANUP_CONFIRM_LABELS: Record<string, string> = {
-  none: "关闭",
-  plugin_ui: "Web UI",
-  telegram: "Telegram",
-};
-
 export default function CleanupPage() {
   const [data, setData] = useState<SettingsType>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // 页头「刷新」不只刷策略：扫描结果统计、待确认批次、回收站一起刷。
+  // 递增 token 让子组件重新拉取，避免三个刷新按钮语义不一致（P2-3）。
+  const [refreshToken, setRefreshToken] = useState(0);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -37,11 +28,11 @@ export default function CleanupPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   const save = async (): Promise<boolean> => {
     setSaving(true);
@@ -58,13 +49,10 @@ export default function CleanupPage() {
     }
   };
 
-  const cleanup = data.cleanup || {};
-  const autoMode = data.download?.fullSyncCleanupOrphans ?? "auto_clean";
-  const policySummary = [
-    `任务同步自动清理：${AUTO_CLEANUP_LABELS[autoMode] ?? autoMode}`,
-    `阈值 ${cleanup.maxThreshold ?? 1000} / ${Math.round((cleanup.maxRatio ?? 0.1) * 100)}% / ${cleanup.maxDirs ?? 20}`,
-    `确认：${CLEANUP_CONFIRM_LABELS[cleanup.confirmMode ?? "none"] ?? cleanup.confirmMode}`,
-  ].join(" · ");
+  const refreshAll = () => {
+    void load();
+    setRefreshToken((n) => n + 1);
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -75,7 +63,7 @@ export default function CleanupPage() {
             策略、扫描、待确认批次和回收站集中在这里。
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading || saving}>
+        <Button variant="outline" size="sm" onClick={refreshAll} disabled={loading || saving}>
           <RefreshCw className={`mr-1 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           刷新
         </Button>
@@ -95,15 +83,12 @@ export default function CleanupPage() {
       ) : (
         <>
           <CleanupPolicyCard data={data} setData={setData} saving={saving} onSave={save} />
-          <section className="border rounded-md p-3 sm:p-5 space-y-5">
-            <div>
-              <h2 className="text-base font-medium">扫描与执行</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                扫描本地与网盘的一致性，清理失效 STRM 或补生成漏项。
-              </p>
-            </div>
-            <StrmCleanupCard policySummary={policySummary} />
-          </section>
+          {/* 标题层级收敛：页头 h1 + 卡片 CardTitle 已经够了，
+              中间的「扫描与执行」section 标题只是重复（P2-1）。 */}
+          <StrmCleanupCard
+            refreshToken={refreshToken}
+            removeStrm={data.cleanup?.removeStrm !== false}
+          />
         </>
       )}
     </div>

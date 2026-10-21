@@ -235,7 +235,14 @@ export function useStrmCleanup(
     }
   };
 
-  const handleDeleteResult = (r: ExecuteResult, explicitDeletedKeys?: Set<string>) => {
+  // localUpdate=false 表示调用方紧接着会全量复扫（refreshAfterBulk），
+  // 此时不必再手工改 scanResult——两处同时改同一份状态属于重复写（P2-6）。
+  const handleDeleteResult = (
+    r: ExecuteResult,
+    explicitDeletedKeys?: Set<string>,
+    opts?: { localUpdate?: boolean }
+  ) => {
+    const localUpdate = opts?.localUpdate !== false;
     const skipped =
       (r.skippedUnmanaged ?? 0) + (r.skippedCloudRestored ?? 0) + (r.skippedCloudUnverified ?? 0);
     const skippedText = skipped > 0 ? `，${skipped} 个因云端复核/归属变化保留` : "";
@@ -267,6 +274,12 @@ export function useStrmCleanup(
         (r.failedCount > 0 ? `，失败 ${r.failedCount} 个` : "") +
         skippedText
     );
+    // 紧接着会全量复扫的路径不需要本地改状态（P2-6）
+    if (!localUpdate) {
+      setSelectedStale(new Set());
+      callbacks.setStaleDialogOpen(false);
+      return;
+    }
     // delete_all 一键清理时 selectedStale 可能为空集，此时由调用方传入"本次清理的全部失效 key"，
     // 让 UI 立即移除，不必完全依赖后续复扫结果。
     const deletedKeys = explicitDeletedKeys ?? new Set(selectedStale);
@@ -291,12 +304,13 @@ export function useStrmCleanup(
     callbacks.setStaleDialogOpen(false);
   };
 
-  const handleRegenerateResult = (r: ExecuteResult) => {
+  const handleRegenerateResult = (r: ExecuteResult, opts?: { localUpdate?: boolean }) => {
     appendLog("补生成", `生成 ${r.regeneratedCount || 0} 个 STRM，失败 ${r.failedCount} 个`, r.failedCount === 0);
     toast.success(
       `已补生成 ${r.regeneratedCount || 0} 个 STRM` +
         (r.failedCount > 0 ? `，失败 ${r.failedCount} 个` : "")
     );
+    if (opts?.localUpdate === false) return;
     // 从 scanResult.mappings[].missingStrms 中移除已成功生成的项，避免重复点击覆盖
     const regenSet = new Set(r.regeneratedPaths || []);
     const hasStats = r.refreshedMappingStats && r.refreshedMappingStats.length > 0;
@@ -313,7 +327,7 @@ export function useStrmCleanup(
     });
   };
 
-  const handleCombinedResult = (r: ExecuteResult) => {
+  const handleCombinedResult = (r: ExecuteResult, opts?: { localUpdate?: boolean }) => {
     const summary = r.cleanupSummary;
     const parts: string[] = [];
     if (summary) {
@@ -326,6 +340,7 @@ export function useStrmCleanup(
     if (skipped > 0) parts.push(`保留 ${skipped}（云端复核/归属变化）`);
     appendLog("清理+补生成", parts.join(" / "), (summary?.failed || 0) === 0);
     toast.success(`组合操作完成：${parts.join("，")}`);
+    if (opts?.localUpdate === false) return;
     // 同步移除：已删失效 STRM + 已生成漏项 STRM
     const regenSet = new Set(r.regeneratedPaths || []);
     const deletedKeys = new Set(selectedStale);
@@ -391,7 +406,6 @@ export function useStrmCleanup(
         entries: [],
         action: "delete_all",
         scanId,
-        scanSummary: { mappings: scanResult!.mappings },
         dryRun: false,
       });
       if (handleBlockedExecuteResult(res.data)) return;
@@ -399,7 +413,7 @@ export function useStrmCleanup(
       // 立即将全部失效从 UI 移除（selectedStale 可能为空集，需显式传入），避免刷新前仍显示旧计数。
       const deleted = res.data?.deletedAllCount ?? 0;
       const allStaleKeys = new Set(allStale.map((s) => staleKey(s.mappingId, s.relPath)));
-      handleDeleteResult(res.data, deleted > 0 ? allStaleKeys : new Set());
+      handleDeleteResult(res.data, deleted > 0 ? allStaleKeys : new Set(), { localUpdate: false });
       await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
@@ -429,12 +443,11 @@ export function useStrmCleanup(
         entries,
         action: "delete_and_regenerate",
         scanId,
-        scanSummary: { mappings: scanResult!.mappings },
         missingItems,
         dryRun: false,
       });
       if (handleBlockedExecuteResult(res.data)) return;
-      handleCombinedResult(res.data);
+      handleCombinedResult(res.data, { localUpdate: false });
       await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;
@@ -463,11 +476,10 @@ export function useStrmCleanup(
         entries: [],
         action: "regenerate",
         scanId,
-        scanSummary: { mappings: scanResult!.mappings },
         missingItems,
         dryRun: false,
       });
-      handleRegenerateResult(res.data);
+      handleRegenerateResult(res.data, { localUpdate: false });
       await refreshAfterBulk();
     } catch (err) {
       const axiosErr = err as AxiosError;

@@ -600,12 +600,14 @@ func (a *menuActionsAdapter) ScanCleanupMappingAsync(ctx context.Context, index 
 			paths = append(paths, filepath.Join(req.LocalPath, s.RelPath))
 		}
 		batch := handler.CleanupBatch{
-			RequestID:          handler.GenerateRequestID(),
-			CreatedAt:          time.Now().UnixMilli(),
-			Paths:              paths,
-			SamplePaths:        handler.BuildSamplePaths(paths),
-			PathCount:          len(paths),
-			RemoveStrm:         true,
+			RequestID:   handler.GenerateRequestID(),
+			CreatedAt:   time.Now().UnixMilli(),
+			Paths:       paths,
+			SamplePaths: handler.BuildSamplePaths(paths),
+			PathCount:   len(paths),
+			// 与 Web UI 保持一致：读配置，不再硬编码 true。
+			// 用户在设置里关掉「删除 STRM 本身」后，TG 确认删除也不该删文件。
+			RemoveStrm:         cleanupCfg.RemoveStrm,
 			RemoveEmptyDirs:    cleanupCfg.RemoveEmptyDirs,
 			RemoveRelatedFiles: cleanupCfg.RemoveRelatedFiles,
 		}

@@ -209,7 +209,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 			if client115.RenameEventTypes[eventType] {
 				kind = db.StrmHistoryKindRename
 			}
-			m.recordMonitorHistory(account, kind, err, time.Since(start))
+			m.recordMonitorHistory(account, event.ID, kind, err, time.Since(start))
 			if err == nil {
 				pollCountsAddEffective(ctx)
 				m.markDedupProcessed(event)
@@ -298,7 +298,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 
 	// P0-5 超时检测：若 handler 因 stall timeout 中止，按 TransferWaitMode 决策
 	handlerErr = m.handleStallError(ctx, account, event, cloudPath, handlerErr, stallTimeout)
-	m.recordMonitorHistory(account, histKind, handlerErr, time.Since(start))
+	m.recordMonitorHistory(account, event.ID, histKind, handlerErr, time.Since(start))
 	// —— Phase 1.1：累计 effective/skipped（handler 无 err → effective=1；stallWaitMode=skip 消错 → skipped=1）
 	if handlerErr == nil {
 		// "abort 模式下 handlerErr 非 nil=走 pollOnce 的 Errors；nil 则 effective"
@@ -521,9 +521,12 @@ func (m *Monitor) handleStallError(
 }
 
 // recordMonitorHistory P0-4 埋点：记录生活事件 STRM 处理历史到 DB
-// 每个事件记录1条（对齐 executor.go 的1任务1记录模式），失败不阻断主流程。
-// taskID 用 "monitor:{eventID}" 格式，便于按生活事件检索
-func (m *Monitor) recordMonitorHistory(account string, kind db.StrmHistoryKind, err error, elapsed time.Duration) {
+// 每个事件记录 1 条（对齐 executor.go 的 1 任务 1 记录模式），失败不阻断主流程。
+//
+// taskID 用 "monitor:{eventID}" 格式便于按事件检索——此前硬编码 "monitor"，
+// 与注释不符，导致所有事件挤在同一个 taskId 下无法定位。
+// totalFiles 恒为 1：这里统计的「条目」是一次事件处理，不是文件数（前端列名已改为「条目」）。
+func (m *Monitor) recordMonitorHistory(account, eventID string, kind db.StrmHistoryKind, err error, elapsed time.Duration) {
 	if m.sqliteDB == nil {
 		return
 	}
@@ -532,8 +535,12 @@ func (m *Monitor) recordMonitorHistory(account string, kind db.StrmHistoryKind, 
 	if err != nil {
 		errMsg = err.Error()
 	}
+	taskID := "monitor"
+	if eventID != "" {
+		taskID = "monitor:" + eventID
+	}
 	entry := db.StrmHistoryEntry{
-		TaskID:       "monitor",
+		TaskID:       taskID,
 		Kind:         kind,
 		Account:      account,
 		Success:      success,

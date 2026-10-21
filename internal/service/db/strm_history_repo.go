@@ -14,12 +14,11 @@ import (
 type StrmHistoryKind string
 
 const (
-	StrmHistoryKindFull      StrmHistoryKind = "full"      // 全量同步
-	StrmHistoryKindIncrement StrmHistoryKind = "increment" // 增量同步
-	StrmHistoryKindMonitor   StrmHistoryKind = "monitor"   // 生活事件 STRM 生成
-	StrmHistoryKindRename    StrmHistoryKind = "rename"    // 重命名 STRM
-	StrmHistoryKindMove      StrmHistoryKind = "move"      // 移动 STRM
-	StrmHistoryKindDelete    StrmHistoryKind = "delete"    // 删除 STRM
+	StrmHistoryKindFull    StrmHistoryKind = "full"    // 全量同步
+	StrmHistoryKindMonitor StrmHistoryKind = "monitor" // 生活事件 STRM 生成
+	StrmHistoryKindRename  StrmHistoryKind = "rename"  // 重命名 STRM
+	StrmHistoryKindMove    StrmHistoryKind = "move"    // 移动 STRM
+	StrmHistoryKindDelete  StrmHistoryKind = "delete"  // 删除 STRM
 )
 
 // StrmHistoryEntry 单条 STRM 执行历史记录

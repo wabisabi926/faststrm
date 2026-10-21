@@ -12,17 +12,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import {
   Table,
   TableBody,
   TableCell,
@@ -33,6 +22,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchX, Zap } from "lucide-react";
+import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import type { MappingResult, MissingStrm } from "./types";
 
 export interface MissingStrmDialogProps {
@@ -41,8 +31,6 @@ export interface MissingStrmDialogProps {
   allMissing: MissingStrm[];
   mappings: MappingResult[];
   executing: boolean;
-  regenConfirmOpen: boolean;
-  setRegenConfirmOpen: (open: boolean) => void;
   onRegenerate: () => void;
 }
 
@@ -52,8 +40,6 @@ export function MissingStrmDialog({
   allMissing,
   mappings,
   executing,
-  regenConfirmOpen,
-  setRegenConfirmOpen,
   onRegenerate,
 }: MissingStrmDialogProps) {
   if (allMissing.length === 0) return null;
@@ -104,30 +90,18 @@ export function MissingStrmDialog({
           </Table>
         </div>
         <DialogFooter>
-          <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
-            <AlertDialogTrigger asChild>
+          <ConfirmActionDialog
+            title={`确认补生成 ${allMissing.length} 个 STRM？`}
+            description="将为所有漏生成的文件创建 STRM，使用扫描得到的云端路径与 pickcode。"
+            confirmLabel="确认生成"
+            onConfirm={onRegenerate}
+            trigger={
               <Button disabled={executing}>
                 <Zap className="mr-2 size-4" />
                 {executing ? "生成中..." : "批量补生成"}
               </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>
-                  确认补生成 {allMissing.length} 个 STRM？
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  将为所有漏生成的文件创建 STRM，使用扫描得到的云端路径与 pickcode。
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>取消</AlertDialogCancel>
-                <AlertDialogAction onClick={onRegenerate}>
-                  确认生成
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+            }
+          />
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             关闭
           </Button>

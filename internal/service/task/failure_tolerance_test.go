@@ -219,7 +219,7 @@ func TestCleanupOrphanStrms_FailedDirProtected(t *testing.T) {
 	cloud := map[string]string{"zzzzzzzzzzzzzzz99": "无关/x.strm"}
 
 	// 带失败目录前缀：前缀内的 x.strm 被跳过，前缀外的 y.strm 仍判孤儿
-	n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+	n, _, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
 		"task1", target, cloud, nil, []string{"电影/失败目录"}, "mark_only",
 		model.CleanupSettings{}, nil, nil, nil)
 	if err != nil {
@@ -230,7 +230,7 @@ func TestCleanupOrphanStrms_FailedDirProtected(t *testing.T) {
 	}
 
 	// 不带前缀：两个都算孤儿
-	n2, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+	n2, _, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
 		"task1", target, cloud, nil, nil, "mark_only",
 		model.CleanupSettings{}, nil, nil, nil)
 	if err != nil {
@@ -258,7 +258,7 @@ func TestCleanupOrphanStrms_StalePathDetected(t *testing.T) {
 
 	// 云端期望路径：电影/新片名/movie.strm
 	cloud := map[string]string{pc: filepath.Join("电影", "新片名", "movie.strm")}
-	n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+	n, _, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
 		"t", target, cloud, nil, nil, "mark_only", model.CleanupSettings{}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("cleanupOrphanStrms: %v", err)
@@ -269,7 +269,7 @@ func TestCleanupOrphanStrms_StalePathDetected(t *testing.T) {
 
 	// 期望路径与本地一致 → 不算孤儿
 	same := map[string]string{pc: filepath.Join("电影", "旧片名", "movie.strm")}
-	n2, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+	n2, _, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
 		"t", target, same, nil, nil, "mark_only", model.CleanupSettings{}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("cleanupOrphanStrms: %v", err)
@@ -292,7 +292,7 @@ func TestCleanupOrphanStrms_SnapshotOnlyKept(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
+	n, _, _, err := cleanupOrphanStrms(context.Background(), nil, nil,
 		"t", target, nil, map[string]struct{}{pc: {}}, nil, "mark_only", model.CleanupSettings{}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("cleanupOrphanStrms: %v", err)

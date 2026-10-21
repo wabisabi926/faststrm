@@ -187,3 +187,25 @@
 | 附带修正 | `buildStrmForMissing` 不再用 `stem + .strm` 二次推导文件名——`RelPath` 已是按模板算好的 .strm 路径，二次加工会破坏模板结果（`[小号] 沙丘.strm`）。 |
 
 **未做（按第六节建议顺序）**：P1-4 删除逻辑合并、P1-5 抽 `readStrmBytes`、P2 前端精简、P3 原因分组、P2-7 回收站清空。
+
+---
+
+## 八、实施记录（2026-10-21 第二轮，P1-4 / P1-5 / P2 / P3 已完成）
+
+| 项 | 结果 |
+|---|---|
+| P1-4 删除逻辑 4 份 → 1 份 | 新增 `deleteOneStaleStrm(ctx, staleDeleteOpts)`，`deleteSelectedStale` / `deleteAllStaleFromScan` / `executePendingBatch` 全部改为调它。`deleteAllStaleFromScan` 改为用「执行前后 DeletedCount 差值」返回本批次数量，`executeCleanup` 里去掉原来的 `+=`（否则会重复计数）。 |
+| P1-5 两份读文件 | `readStrmHead` → `readStrmBytes`（语义不变），Preview 的内联 `os.Open/Read` 改为调它。 |
+| P2-1 标题三层 | 删掉中间那层「扫描与执行」section 标题，页头 h1 + 卡片 CardTitle 两层足够。 |
+| P2-2 `policySummary` | 删除。它取的是**未保存**的 `data`，未点保存就宣称「当前策略」属于误导；策略卡本身就是权威展示。 |
+| P2-3 三个刷新按钮 | 页头「刷新」改为 `refreshAll()`：重载策略 + 递增 `refreshToken` 让待确认批次/回收站一起重拉。子区块各自的刷新按钮保留（局部刷新仍有用）。 |
+| P2-4 5 个确认弹窗 | 新增 `ConfirmActionDialog`（内部管理 open 状态，统一「移入 .faststrm-trash 可恢复」口径）。CleanupToolbar 的 3 个、StaleStrmDialog 的 1 个、MissingStrmDialog 的 1 个全部替换；`StrmCleanupCard` 里的 `confirmOpen` / `regenConfirmOpen` 两个状态随之删除。 |
+| P2-5 默认值硬编码 | 新增 `cleanup-constants.ts`（`CLEANUP_DEFAULTS` / `AUTO_CLEANUP_LABELS` / `AUTO_MODE_HINTS` / `CLEANUP_CONFIRM_LABELS`），`CleanupPolicyCard` 与 `cleanup.tsx` 改为引用。 |
+| P2-6 批量后双写 | `handleDeleteResult` / `handleRegenerateResult` / `handleCombinedResult` 增加 `{ localUpdate: false }`：紧接着会 `refreshAfterBulk()` 全量复扫的路径不再手工改 `scanResult`（同一份状态被两处写）。「删除选中」不触发复扫时仍保留本地更新。 |
+| P2-7 回收站清空 | 新增 `strmutil.PurgeAllTrash` + `POST /api/strmCleanup/trash/purge` + `TrashSection` 的「清空」按钮（走 ConfirmActionDialog，永久删除需二次确认）。单测 `TestPurgeAllTrash`。 |
+| P2-8 待确认执行后不刷新 | `PendingBatchesSection` 增加 `refreshToken` / `onExecuted`：执行成功后回调父级递增 token，回收站与统计一起刷新。 |
+| P2-9 `ScanSummary` 死负载 | 后端字段改为 `json:"-"`（只由 `bindExecuteToScan` 从服务端快照填充），前端不再上传全量 mappings。 |
+| P2-10 ConfirmMode 枚举收敛 | **不做**。`plugin_ui`（静默入队、Web UI 确认）与 `telegram`（入队 + 发 TG 按钮）行为不同，收敛成 `none/telegram` 会丢掉「不配置 Telegram 也能二次确认」这个选项；界面上已显示为「Web UI 待确认批次」，改名只是内部键变更。 |
+| P2-11 TG 链路 `RemoveStrm` 硬编码 | `adapters.go` 改为读 `cleanupCfg.RemoveStrm`，与 Web UI 一致。 |
+| P3-1 扫描结果按原因分组 | `StaleStrmDialog` 顶部增加「云端已删 / 账号已不存在 / 未托管」计数，行内原有的「账号失效」徽标保留。 |
+| P3-3 清理影响预估 | 以「确认弹窗说真话」的形式实现：`removeStrm` 从设置页透传到 CleanupToolbar / StaleStrmDialog，关闭时弹窗明确写「只清理 nfo/海报/字幕，STRM 会保留，失效项仍会出现在列表里」。 |

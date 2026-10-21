@@ -209,7 +209,7 @@ func (m *Monitor) handleMoveRenameQuadrant(
 		// OTHER_TO_MEDIA 始终走 create（新路径首次进入媒体目录）
 		histKind := db.StrmHistoryKindMonitor
 		err = m.handleCreateEvent(ctx, account, event, mapping, newCloudPath, lifeClient, false)
-		m.recordMonitorHistory(account, histKind, err, time.Since(start))
+		m.recordMonitorHistory(account, event.ID, histKind, err, time.Since(start))
 		if err == nil {
 			pollCountsAddEffective(ctx)
 			m.markDedupProcessed(event)
@@ -231,7 +231,7 @@ func (m *Monitor) handleMoveRenameQuadrant(
 			histKind = db.StrmHistoryKindRename
 			err = m.handleRenameEvent(ctx, account, event, mapping, newCloudPath, lifeClient)
 		}
-		m.recordMonitorHistory(account, histKind, err, time.Since(start))
+		m.recordMonitorHistory(account, event.ID, histKind, err, time.Since(start))
 		if err == nil {
 			pollCountsAddEffective(ctx)
 			m.markDedupProcessed(event)
@@ -246,7 +246,7 @@ func (m *Monitor) handleMoveRenameQuadrant(
 		if client115.RenameEventTypes[event.Type] {
 			kind = db.StrmHistoryKindRename
 		}
-		m.recordMonitorHistory(account, kind, err, time.Since(start))
+		m.recordMonitorHistory(account, event.ID, kind, err, time.Since(start))
 		if err == nil {
 			pollCountsAddEffective(ctx)
 			m.markDedupProcessed(event)
@@ -263,7 +263,7 @@ func (m *Monitor) handleMoveRenameQuadrant(
 					event.FileName, localPath)
 				start := time.Now()
 				err = m.handleMoveOutEvent(ctx, account, event, newCloudPath)
-				m.recordMonitorHistory(account, db.StrmHistoryKindMove, err, time.Since(start))
+				m.recordMonitorHistory(account, event.ID, db.StrmHistoryKindMove, err, time.Since(start))
 				if err == nil {
 					pollCountsAddEffective(ctx)
 					m.markDedupProcessed(event)

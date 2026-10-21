@@ -166,7 +166,9 @@ type ExecuteRequest struct {
 	DryRun       bool                 `json:"dryRun"`
 	Action       string               `json:"action"`
 	MissingItems []ExecuteMissingItem `json:"missingItems"`
-	ScanSummary  *ScanResponse        `json:"scanSummary,omitempty"`
+	// ScanSummary 由服务端扫描快照填充（bindExecuteToScan），客户端提交的值一律丢弃：
+	// 此前前端仍上传全量 mappings，后端立即被快照覆盖，属于纯死负载。
+	ScanSummary *ScanResponse `json:"-"`
 	// ScanId 扫描接口返回的服务端快照 ID；执行时只认快照中的路径。
 	ScanId string `json:"scanId"`
 }
@@ -743,7 +745,7 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 
 	for name, info := range localStrmFiles {
 		if _, exists := cloudStrmSet[name]; !exists {
-			content, truncated := readStrmHead(filepath.Join(m.LocalPath, name), 512)
+			content, truncated := readStrmBytes(filepath.Join(m.LocalPath, name), 512)
 			result.StaleStrms = append(result.StaleStrms, StaleStrm{
 				RelPath:   name,
 				Size:      info.Size(),
@@ -846,7 +848,7 @@ func scanMappingFromCache(m MappingScanRequest, entry *store.StrmCacheEntry, acc
 	for cleanPath := range actualLocalRel {
 		if _, ok := cachedSet[cleanPath]; !ok {
 			rp := actualLocalRel[cleanPath]
-			content, truncated := readStrmHead(filepath.Join(m.LocalPath, rp), 512)
+			content, truncated := readStrmBytes(filepath.Join(m.LocalPath, rp), 512)
 			var size int64
 			if fi, err := os.Stat(filepath.Join(m.LocalPath, rp)); err == nil {
 				size = fi.Size()
@@ -945,7 +947,7 @@ func strmAccountFromContent(content string) string {
 func collectAccountMismatchStrms(localPath string, localFiles map[string]os.FileInfo, validAccounts map[string]struct{}) []StaleStrm {
 	result := make([]StaleStrm, 0)
 	for rel, info := range localFiles {
-		content, truncated := readStrmHead(filepath.Join(localPath, rel), 256)
+		content, truncated := readStrmBytes(filepath.Join(localPath, rel), 256)
 		if content == "" {
 			continue
 		}
@@ -999,9 +1001,11 @@ func mergeAccountMismatch(result *MappingScanResult, localPath string, localFile
 	sort.Slice(result.StaleStrms, func(i, j int) bool { return result.StaleStrms[i].RelPath < result.StaleStrms[j].RelPath })
 }
 
-// readStrmHead P3：读取本地 .strm 文件前 maxBytes 字节，返回 (content, truncated)
-// 失败时返回空字符串（不把 preview 失败上升为扫描失败），内容里 CR/LF 保留原样
-func readStrmHead(fullPath string, maxBytes int) (string, bool) {
+// readStrmBytes 读取本地 .strm 文件的前 maxBytes 字节，返回 (content, truncated)。
+// 扫描（批量读 512B 只取 pickcode）与预览（单文件读全文）共用这一份实现，
+// 避免两处各写一遍打开/读取/清理逻辑。
+// 失败时返回空字符串（不把预览失败上升为扫描失败），内容里 CR/LF 保留原样。
+func readStrmBytes(fullPath string, maxBytes int) (string, bool) {
 	fi, err := os.Open(fullPath)
 	if err != nil {
 		return "", false
@@ -1084,27 +1088,13 @@ func HandleStrmCleanupPreviewPOST(deps StrmCleanupDeps) http.HandlerFunc {
 				maxBytes = int(resp.Size) // 负数 → 读整个
 			}
 		}
-		if maxBytes >= int(resp.Size) {
-			content, err := os.ReadFile(full)
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				resp.Content = string(content)
-				resp.Truncated = false
-			}
+		// 统一走 readStrmBytes：maxBytes >= 文件大小时等价于读全文
+		content, truncated := readStrmBytes(full, maxBytes)
+		if content == "" && resp.Size > 0 {
+			resp.Error = "读取文件失败"
 		} else {
-			fi, err := os.Open(full)
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				defer fi.Close()
-				buf := make([]byte, maxBytes)
-				n, _ := fi.Read(buf)
-				if n > 0 {
-					resp.Content = string(buf[:n])
-				}
-				resp.Truncated = true
-			}
+			resp.Content = content
+			resp.Truncated = truncated
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}
@@ -1509,10 +1499,10 @@ func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Se
 	// 修复后：从 body.ScanSummary.Mappings 取真实失效/漏项路径
 	switch action {
 	case "delete_all":
-		deleted, failed := deleteAllStaleFromScan(ctx, body, &resp, &cleanup, deps.ManagedStrm, deps.CloudChecker)
-		resp.DeletedCount += deleted
+		// deleteAllStaleFromScan 与 delete 分支共用 deleteOneStaleStrm，已直接写入
+		// resp.DeletedCount / FailedCount，这里只取本批次的数量用于 deletedAllCount
+		deleted, _ := deleteAllStaleFromScan(ctx, body, &resp, &cleanup, deps.ManagedStrm, deps.CloudChecker)
 		resp.DeletedAllCount = deleted
-		resp.FailedCount += failed
 	case "regenerate":
 		regenCount, regenFailed := regenerateMissingStrms(ctx, body, settings, &resp, deps.ManagedStrm)
 		resp.RegeneratedCount = regenCount
@@ -1592,6 +1582,72 @@ func verifyCloudAbsent(ctx context.Context, resp *ExecuteResponse, managed strm.
 	return true
 }
 
+// staleDeleteOpts 单个失效 STRM 的删除参数。
+type staleDeleteOpts struct {
+	Path          string // 绝对路径
+	Root          string // 映射根：回收站定位 + 关联文件清理范围
+	TrashDir      string // 本次会话的回收站目录（DryRun 时为空）
+	DryRun        bool
+	RemoveStrm    bool
+	RemoveRelated bool
+	Managed       strm.ManagedRecorder
+	Checker       CloudAbsenceChecker
+	Resp          *ExecuteResponse
+	LogTag        string // 日志前缀，便于区分 delete / delete_all / pending batch
+}
+
+// deleteOneStaleStrm 删除单个失效 STRM：托管复核 → 云端复核 → 移入回收站 → 标记删除 → 连带关联文件。
+//
+// handler 内三处删除（deleteSelectedStale / deleteAllStaleFromScan / executePendingBatch）
+// 共用这一份实现。此前是三份逐行重复的代码，修一个 bug 要改三处——P0-2
+// （恢复后 cloud_path 被清空）正是这种分散实现留下的坑。
+//
+// 返回 counted 表示已计入 DeletedCount（DryRun 或实际删除成功），failed 表示移入回收站失败。
+func deleteOneStaleStrm(ctx context.Context, o staleDeleteOpts) (counted, failed bool) {
+	if o.Managed != nil {
+		pc, perr := strmutil.ExtractPickcode(o.Path)
+		if perr != nil || pc == "" {
+			o.Resp.SkippedUnmanaged++
+			return false, false
+		}
+		ok, verr := o.Managed.VerifyFile(ctx, o.Path, pc)
+		if verr != nil || !ok {
+			o.Resp.SkippedUnmanaged++
+			logger.S().Warnf("[strmCleanup] %s 删除前复核未通过，保留 %s", o.LogTag, o.Path)
+			return false, false
+		}
+	}
+	if o.DryRun {
+		o.Resp.DeletedCount++
+		return true, false
+	}
+	if !verifyCloudAbsent(ctx, o.Resp, o.Managed, o.Checker, o.Path) {
+		return false, false
+	}
+	// 阶段 1：把 STRM 文件移入回收站
+	if o.RemoveStrm {
+		if dest, err := strmutil.MoveToTrash(o.Path, o.Root, o.TrashDir); err != nil {
+			o.Resp.FailedCount++
+			o.Resp.Errors = append(o.Resp.Errors, map[string]string{"path": o.Path, "error": err.Error()})
+			logger.S().Warnf("[strmCleanup] %s trash %s failed: %v", o.LogTag, o.Path, err)
+			return false, true
+		} else {
+			o.Resp.DeletedCount++
+			counted = true
+			if o.Managed != nil {
+				_ = o.Managed.MarkDeleted(ctx, o.Path)
+			}
+			logger.S().Infof("[strmCleanup] %s moved to trash: %s -> %s", o.LogTag, o.Path, dest)
+		}
+	}
+	// 阶段 2：关联文件移入回收站
+	if o.RemoveRelated {
+		moved := strmutil.MoveRelatedFilesToTrash(o.Path, o.Root, o.TrashDir, strmutil.DefaultRelatedExts)
+		o.Resp.RemovedRelatedFiles = append(o.Resp.RemovedRelatedFiles, moved...)
+	}
+	return counted, false
+}
+
 // deleteSelectedStale 按 body.Entries 中选中的条目执行三阶段删除
 // 用于 action=delete 和 action=delete_and_regenerate（只删选中而非全删）
 // 删除前复核托管归属/指纹，移入回收站；未托管项跳过。
@@ -1602,49 +1658,18 @@ func deleteSelectedStale(ctx context.Context, body ExecuteRequest, resp *Execute
 			trashDir = strmutil.TrashSessionDir(entry.LocalPath)
 		}
 		for _, staleRelPath := range entry.StaleRelPaths {
-			stalePath := filepath.Join(entry.LocalPath, staleRelPath)
-			if managed != nil {
-				pc, perr := strmutil.ExtractPickcode(stalePath)
-				if perr != nil || pc == "" {
-					resp.SkippedUnmanaged++
-					continue
-				}
-				ok, verr := managed.VerifyFile(ctx, stalePath, pc)
-				if verr != nil || !ok {
-					resp.SkippedUnmanaged++
-					logger.S().Warnf("[strmCleanup] 删除前复核未通过，保留 %s", stalePath)
-					continue
-				}
-			}
-			if body.DryRun {
-				resp.DeletedCount++
-				continue
-			}
-			if !verifyCloudAbsent(ctx, resp, managed, checker, stalePath) {
-				continue
-			}
-			// 阶段 1：把 STRM 文件移入回收站（RemoveStrm 默认 true）
-			if cleanup.RemoveStrm {
-				if dest, err := strmutil.MoveToTrash(stalePath, entry.LocalPath, trashDir); err != nil {
-					resp.FailedCount++
-					resp.Errors = append(resp.Errors, map[string]string{
-						"path":  stalePath,
-						"error": err.Error(),
-					})
-					logger.S().Warnf("[strmCleanup] trash %s failed: %v", stalePath, err)
-				} else {
-					resp.DeletedCount++
-					if managed != nil {
-						_ = managed.MarkDeleted(ctx, stalePath)
-					}
-					logger.S().Infof("[strmCleanup] stale strm moved to trash: %s -> %s", stalePath, dest)
-				}
-			}
-			// 阶段 2：关联文件移入回收站（RemoveRelatedFiles 默认 false）
-			if cleanup.RemoveRelatedFiles {
-				moved := strmutil.MoveRelatedFilesToTrash(stalePath, entry.LocalPath, trashDir, strmutil.DefaultRelatedExts)
-				resp.RemovedRelatedFiles = append(resp.RemovedRelatedFiles, moved...)
-			}
+			deleteOneStaleStrm(ctx, staleDeleteOpts{
+				Path:          filepath.Join(entry.LocalPath, staleRelPath),
+				Root:          entry.LocalPath,
+				TrashDir:      trashDir,
+				DryRun:        body.DryRun,
+				RemoveStrm:    cleanup.RemoveStrm,
+				RemoveRelated: cleanup.RemoveRelatedFiles,
+				Managed:       managed,
+				Checker:       checker,
+				Resp:          resp,
+				LogTag:        "delete",
+			})
 		}
 	}
 	// 阶段 3：删无 STRM 的空目录（RemoveEmptyDirs 默认 false）
@@ -1663,54 +1688,25 @@ func deleteAllStaleFromScan(ctx context.Context, body ExecuteRequest, resp *Exec
 		logger.S().Warnf("[strmCleanup] delete_all: ScanSummary 为空，无法定位失效 STRM")
 		return 0, 0
 	}
-	deleted, failed := 0, 0
+	before, beforeFailed := resp.DeletedCount, resp.FailedCount
 	for _, m := range body.ScanSummary.Mappings {
 		trashDir := ""
 		if !body.DryRun {
 			trashDir = strmutil.TrashSessionDir(m.LocalPath)
 		}
 		for _, stale := range m.StaleStrms {
-			stalePath := filepath.Join(m.LocalPath, stale.RelPath)
-			if managed != nil {
-				pc, perr := strmutil.ExtractPickcode(stalePath)
-				if perr != nil || pc == "" {
-					resp.SkippedUnmanaged++
-					continue
-				}
-				ok, verr := managed.VerifyFile(ctx, stalePath, pc)
-				if verr != nil || !ok {
-					resp.SkippedUnmanaged++
-					logger.S().Warnf("[strmCleanup] delete_all 删除前复核未通过，保留 %s", stalePath)
-					continue
-				}
-			}
-			if body.DryRun {
-				deleted++
-				continue
-			}
-			if !verifyCloudAbsent(ctx, resp, managed, checker, stalePath) {
-				continue
-			}
-			if cleanup.RemoveStrm {
-				if dest, err := strmutil.MoveToTrash(stalePath, m.LocalPath, trashDir); err != nil {
-					failed++
-					resp.Errors = append(resp.Errors, map[string]string{
-						"path":  stalePath,
-						"error": err.Error(),
-					})
-					logger.S().Warnf("[strmCleanup] delete_all trash %s failed: %v", stalePath, err)
-				} else {
-					deleted++
-					if managed != nil {
-						_ = managed.MarkDeleted(ctx, stalePath)
-					}
-					logger.S().Infof("[strmCleanup] delete_all moved to trash: %s -> %s", stalePath, dest)
-				}
-			}
-			if cleanup.RemoveRelatedFiles {
-				moved := strmutil.MoveRelatedFilesToTrash(stalePath, m.LocalPath, trashDir, strmutil.DefaultRelatedExts)
-				resp.RemovedRelatedFiles = append(resp.RemovedRelatedFiles, moved...)
-			}
+			deleteOneStaleStrm(ctx, staleDeleteOpts{
+				Path:          filepath.Join(m.LocalPath, stale.RelPath),
+				Root:          m.LocalPath,
+				TrashDir:      trashDir,
+				DryRun:        body.DryRun,
+				RemoveStrm:    cleanup.RemoveStrm,
+				RemoveRelated: cleanup.RemoveRelatedFiles,
+				Managed:       managed,
+				Checker:       checker,
+				Resp:          resp,
+				LogTag:        "delete_all",
+			})
 		}
 	}
 	if !body.DryRun && cleanup.RemoveEmptyDirs {
@@ -1718,7 +1714,7 @@ func deleteAllStaleFromScan(ctx context.Context, body ExecuteRequest, resp *Exec
 			removeEmptyDirs(m.LocalPath, &resp.RemovedEmptyDirs)
 		}
 	}
-	return deleted, failed
+	return resp.DeletedCount - before, resp.FailedCount - beforeFailed
 }
 
 // regenerateMissingStrms 从 body.ScanSummary.Mappings 的 MissingStrms 生成 STRM 文件
@@ -1919,50 +1915,25 @@ func executePendingBatch(ctx context.Context, batch CleanupBatch, managed strm.M
 		TotalStaleCount:     batch.PathCount,
 	}
 	trashDirs := make(map[string]string)
-
 	for _, p := range batch.Paths {
-		pickcode, _ := strmutil.ExtractPickcode(p)
-		if managed != nil {
-			ok, verr := managed.VerifyFile(ctx, p, pickcode)
-			if verr != nil || !ok {
-				resp.SkippedUnmanaged++
-				logger.S().Warnf("[strmCleanup] pending batch 删除前复核未通过，保留 %s", p)
-				continue
-			}
-		}
-		if !verifyCloudAbsent(ctx, &resp, managed, checker, p) {
-			continue
-		}
 		root := filepath.Dir(p)
 		trashDir := trashDirs[root]
 		if trashDir == "" {
 			trashDir = strmutil.TrashSessionDir(root)
 			trashDirs[root] = trashDir
 		}
-		// 阶段 1：把 STRM 文件移入回收站
-		if batch.RemoveStrm {
-			dest, terr := strmutil.MoveToTrash(p, root, trashDir)
-			if terr != nil {
-				resp.FailedCount++
-				resp.Errors = append(resp.Errors, map[string]string{"path": p, "error": terr.Error()})
-				logger.S().Warnf("[strmCleanup] pending batch trash %s failed: %v", p, terr)
-			} else {
-				if dest != "" {
-					resp.DeletedCount++
-				}
-				if managed != nil {
-					_ = managed.MarkDeleted(ctx, p)
-				}
-				logger.S().Infof("[strmCleanup] pending batch moved to trash: %s -> %s", p, dest)
-			}
-		}
-		// 阶段 2：关联文件移入回收站
-		if batch.RemoveRelatedFiles {
-			moved := strmutil.MoveRelatedFilesToTrash(p, root, trashDir, strmutil.DefaultRelatedExts)
-			resp.RemovedRelatedFiles = append(resp.RemovedRelatedFiles, moved...)
-		}
+		deleteOneStaleStrm(ctx, staleDeleteOpts{
+			Path:          p,
+			Root:          root,
+			TrashDir:      trashDir,
+			RemoveStrm:    batch.RemoveStrm,
+			RemoveRelated: batch.RemoveRelatedFiles,
+			Managed:       managed,
+			Checker:       checker,
+			Resp:          &resp,
+			LogTag:        "pending batch",
+		})
 	}
-
 	// 阶段 3：删无 STRM 的空目录
 	if batch.RemoveEmptyDirs {
 		dirSet := make(map[string]bool)
@@ -1973,7 +1944,6 @@ func executePendingBatch(ctx context.Context, batch CleanupBatch, managed strm.M
 			removeEmptyDirs(dir, &resp.RemovedEmptyDirs)
 		}
 	}
-
 	return resp
 }
 

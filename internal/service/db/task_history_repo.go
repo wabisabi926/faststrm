@@ -8,6 +8,8 @@ import (
 	"fmt"
 
 	"modernc.org/sqlite"
+
+	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // ==================== 表结构（首次打开自动建） ====================
@@ -104,6 +106,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	if err != nil {
 		return 0, err
 	}
+	// 顺手裁剪超限的旧记录（含其日志），保证 task_executions/task_logs 有界
+	if terr := r.TrimExecutions(ctx, TaskHistoryKeepExecutions); terr != nil {
+		logger.S().Warnf("[TaskHistory] trim executions failed: %v", terr)
+	}
 	return res.LastInsertId()
 }
 
@@ -153,6 +159,12 @@ func (r *TaskHistoryRepo) CompleteExecution(ctx context.Context, id int64, statu
 	return r.UpdateExecution(ctx, id, patch)
 }
 
+// 保留策略：执行记录只留最近 N 条（含日志）。任务日志按行存，不设上限会无限增长。
+const (
+	TaskHistoryKeepExecutions = 200
+	taskLogMaxLinesPerExec    = 2000
+)
+
 // AddLog 追加一条日志
 func (r *TaskHistoryRepo) AddLog(ctx context.Context, executionID int64, seq int, line string) error {
 	if r == nil || r.db == nil {
@@ -160,6 +172,57 @@ func (r *TaskHistoryRepo) AddLog(ctx context.Context, executionID int64, seq int
 	}
 	_, err := r.db.ExecContext(ctx, `INSERT INTO task_logs(execution_id, seq, line, created_at) VALUES (?, ?, ?, ?)`,
 		executionID, seq, line, NowMs())
+	return err
+}
+
+// AddLogs 批量追加日志（单事务），只保留最后 maxLines 行。
+// 任务结束时一次性落库，避免「历史记录的日志按钮点开是空白」。
+func (r *TaskHistoryRepo) AddLogs(ctx context.Context, executionID int64, lines []string) error {
+	if r == nil || r.db == nil || executionID <= 0 || len(lines) == 0 {
+		return nil
+	}
+	if len(lines) > taskLogMaxLinesPerExec {
+		lines = lines[len(lines)-taskLogMaxLinesPerExec:]
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO task_logs(execution_id, seq, line, created_at) VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	now := NowMs()
+	for i, line := range lines {
+		if _, err := stmt.ExecContext(ctx, executionID, i, line, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// TrimExecutions 只保留最近 keep 条执行记录（日志随 execution 一起删）。
+// 在创建新记录时调用，成本是一次索引范围删除。
+func (r *TaskHistoryRepo) TrimExecutions(ctx context.Context, keep int) error {
+	if r == nil || r.db == nil {
+		return nil
+	}
+	if keep <= 0 {
+		keep = TaskHistoryKeepExecutions
+	}
+	// 先删日志再删主表，避免依赖 PRAGMA foreign_keys=ON 的级联
+	if _, err := r.db.ExecContext(ctx, `
+		DELETE FROM task_logs WHERE execution_id IN (
+			SELECT id FROM task_executions ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?
+		)`, keep); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM task_executions WHERE id IN (
+			SELECT id FROM task_executions ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?
+		)`, keep)
 	return err
 }
 

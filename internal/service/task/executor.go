@@ -122,11 +122,12 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 
 	// P0-4 STRM 执行历史埋点状态（defer 统一记录，避免每个 return 点重复代码）
 	// downloaded 提前声明，供 defer 闭包引用（后续 worker pool 累加）
-	histKind := db.StrmHistoryKindFull
 	histSuccess := true
 	histErrMsg := ""
 	totalFiles := 0
 	downloaded := new(int64)
+	// cleanupDeleted 本次对账清理实际移入回收站的 STRM 数（供任务历史展示「删 N」）
+	cleanupDeleted := 0
 
 	// TaskHistory 执行记录（与 strm_exec_history 并行，前端「任务历史」页面用）
 	var execID int64
@@ -148,13 +149,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		if downloaded != nil {
 			dl = atomic.LoadInt64(downloaded)
 		}
-		failed := 0
-		if totalFiles >= int(dl) {
-			failed = totalFiles - int(dl)
-		}
-		recordStrmHistory(deps, task.ID, task.Account, histKind, histSuccess,
-			totalFiles, int(dl), failed, elapsedMs, histErrMsg)
-
+		// 全量任务只写 task_executions：任务级信息已足够，「事件处理」Tab 只放生活事件，
+		// 两边各写一条会让同一次运行在两个 Tab 里各出现一次。
 		// 完成 TaskHistory 执行记录
 		if deps.TaskHistory != nil && execID > 0 {
 			status := "completed"
@@ -167,8 +163,17 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				db.TaskExecutionSummary{
 					TotalFiles:      totalFiles,
 					DownloadedFiles: int(dl),
-					DeletedFiles:    0, // cleanup 阶段暂未统计
+					DeletedFiles:    cleanupDeleted,
 				}, errMsg, elapsedMs)
+
+			// 把内存日志落库：否则历史记录点「日志」永远是空白页
+			// （此前 AddLog 没有任何调用方，task_logs 表恒为 0 行）。
+			// 单次最多保留 2000 行，写入失败不影响任务结果。
+			if logs := rt.GetLogs(task.ID); len(logs) > 0 {
+				if lerr := deps.TaskHistory.AddLogs(context.Background(), execID, logs); lerr != nil {
+					logger.S().Warnf("[Task] persist logs failed exec=%d: %v", execID, lerr)
+				}
+			}
 		}
 	}()
 
@@ -384,8 +389,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			}
 			cloudCurrent[f.PickCode] = filepath.Clean(resolveStrmRelPath(strmTemplate, task.Account, f))
 		}
-		orphanN, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
+		orphanN, orphanDeleted, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
 			task.ID, task.TargetPath, cloudCurrent, snapPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh, deps.ManagedStrm, deps.CloudChecker)
+		cleanupDeleted = orphanDeleted
 		if cerr != nil {
 			sseServer.EmitLog(task.ID, "warn", "全量预扫清理失败: "+cerr.Error())
 			logger.S().Warnf("[Task] 全量预扫清理失败 task=%s: %v", task.ID, cerr)
@@ -733,29 +739,6 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 }
 
 // ==================== 内部：辅助 ====================
-
-// recordStrmHistory P0-4 埋点 helper：记录 STRM 执行历史到 DB
-// 失败不阻断主流程，仅日志。对齐参考项目 core/history/strm.py
-func recordStrmHistory(deps ExecutorDeps, taskID, account string, kind db.StrmHistoryKind,
-	success bool, total, successN, failedN int, elapsedMs int64, errMsg string) {
-	if deps.SQLiteDB == nil {
-		return
-	}
-	entry := db.StrmHistoryEntry{
-		TaskID:       taskID,
-		Kind:         kind,
-		Account:      account,
-		Success:      success,
-		TotalFiles:   total,
-		SuccessFiles: successN,
-		FailedFiles:  failedN,
-		ElapsedMs:    elapsedMs,
-		ErrorMsg:     errMsg,
-	}
-	if _, err := db.InsertStrmHistory(deps.SQLiteDB, entry); err != nil {
-		logger.S().Warnf("[Task] recordStrmHistory failed task=%s: %v", taskID, err)
-	}
-}
 
 type fileKind int
 

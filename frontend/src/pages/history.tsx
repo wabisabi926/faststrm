@@ -74,13 +74,14 @@ interface StrmHistoryStats {
 type HistoryTab = "tasks" | "strm";
 
 const HISTORY_TABS: readonly PageTabItem<HistoryTab>[] = [
-  { id: "tasks", label: "任务执行", icon: FileText },
-  { id: "strm", label: "STRM 记录", icon: Activity },
+  { id: "tasks", label: "任务运行", icon: FileText },
+  { id: "strm", label: "事件处理", icon: Activity },
 ];
 
+// 任务运行 = 一次全量/定时任务运行；事件处理 = 生活事件逐条处理结果。
+// 「增量任务」标签已随增量同步下线（v1.4.3），这里不再保留。
 const STRM_KIND_LABELS: Record<string, string> = {
-  full: "全量任务",
-  increment: "增量任务",
+  full: "全量任务（旧记录）",
   monitor: "生活事件",
   rename: "重命名",
   move: "移动",
@@ -217,8 +218,8 @@ export default function TaskHistoryPage() {
       setStrmStats((statsResp.data || null) as StrmHistoryStats | null);
     } catch (error) {
       logger.error("Failed to fetch STRM history:", error);
-      setStrmError("获取 STRM 执行历史失败");
-      toast.error("获取 STRM 执行历史失败");
+      setStrmError("获取事件处理记录失败");
+      toast.error("获取事件处理记录失败");
     } finally {
       setStrmLoading(false);
     }
@@ -254,9 +255,9 @@ export default function TaskHistoryPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
-          <h1 className="text-xl sm:text-2xl font-semibold break-words">执行历史</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold break-words">运行记录</h1>
           <p className="text-sm text-muted-foreground mt-1 break-words">
-            查看任务级执行记录与 STRM 生成/删除明细
+            任务运行看每次全量/定时任务的结果；事件处理看网盘改名/移动/删除的逐条结果
           </p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
@@ -281,7 +282,7 @@ export default function TaskHistoryPage() {
         tabs={HISTORY_TABS}
         value={activeTab}
         onChange={setActiveTab}
-        ariaLabel="执行历史类型"
+        ariaLabel="运行记录类型"
       />
 
       {activeTab === "tasks" ? (
@@ -294,7 +295,7 @@ export default function TaskHistoryPage() {
             <CardContent className="flex items-center justify-center h-32">
               <div className="text-center">
                 <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">暂无任务执行历史</p>
+                <p className="text-sm text-muted-foreground">暂无任务运行记录</p>
               </div>
             </CardContent>
           </Card>
@@ -312,7 +313,7 @@ export default function TaskHistoryPage() {
                   </>
                 }
               />
-              <HistoryStatCard label="文件成功 / 总数" value={`${taskStats.filesOk} / ${taskStats.filesTotal}`} />
+              <HistoryStatCard label="条目成功 / 总数" value={`${taskStats.filesOk} / ${taskStats.filesTotal}`} />
               <HistoryStatCard label="平均耗时" value={formatElapsed(taskStats.avgDurationMs)} />
             </div>
 
@@ -324,7 +325,7 @@ export default function TaskHistoryPage() {
                     <TableHead>任务 / 路径</TableHead>
                     <TableHead className="whitespace-nowrap">账号</TableHead>
                     <TableHead className="whitespace-nowrap">状态</TableHead>
-                    <TableHead className="whitespace-nowrap">文件</TableHead>
+                    <TableHead className="whitespace-nowrap">条目</TableHead>
                     <TableHead className="whitespace-nowrap">耗时</TableHead>
                     <TableHead className="whitespace-nowrap">操作</TableHead>
                   </TableRow>
@@ -410,7 +411,7 @@ export default function TaskHistoryPage() {
         )
       ) : strmLoading ? (
         <div className="flex items-center justify-center h-64">
-          <p className="text-muted-foreground">加载 STRM 执行历史...</p>
+          <p className="text-muted-foreground">加载事件处理记录...</p>
         </div>
       ) : strmError ? (
         <Card>
@@ -432,10 +433,15 @@ export default function TaskHistoryPage() {
                 }
               />
               <HistoryStatCard
-                label="文件成功 / 总数"
+                label="条目成功 / 总数"
                 value={`${strmStats.successFiles} / ${strmStats.totalFiles}`}
               />
-              <HistoryStatCard label="API 请求" value={strmStats.totalApiRequests} />
+              <HistoryStatCard
+                label="平均耗时"
+                value={formatElapsed(
+                  strmStats.totalCount > 0 ? strmStats.totalElapsedMs / strmStats.totalCount : 0
+                )}
+              />
             </div>
           )}
 
@@ -455,7 +461,7 @@ export default function TaskHistoryPage() {
                     <TableHead className="whitespace-nowrap">任务</TableHead>
                     <TableHead className="whitespace-nowrap">账号</TableHead>
                     <TableHead className="whitespace-nowrap">结果</TableHead>
-                    <TableHead className="whitespace-nowrap">文件</TableHead>
+                    <TableHead className="whitespace-nowrap">条目</TableHead>
                     <TableHead className="whitespace-nowrap">耗时</TableHead>
                     <TableHead className="whitespace-nowrap">API</TableHead>
                     <TableHead className="whitespace-nowrap">错误</TableHead>

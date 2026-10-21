@@ -102,6 +102,37 @@ func PurgeTrashTree(root string, maxAge time.Duration) int {
 	return removed
 }
 
+// PurgeAllTrash 清空 root 下所有 .faststrm-trash 的内容（不论是否过期），返回删除的批次数。
+// 供 Web UI「清空回收站」使用：用户明确知道自己在丢弃可恢复副本。
+func PurgeAllTrash(root string) int {
+	if root == "" {
+		return 0
+	}
+	removed := 0
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && d.Name() == TrashDirName {
+			entries, rerr := os.ReadDir(p)
+			if rerr != nil {
+				return filepath.SkipDir
+			}
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				if rerr := os.RemoveAll(filepath.Join(p, e.Name())); rerr == nil {
+					removed++
+				}
+			}
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return removed
+}
+
 func purgeTrashDir(base string, maxAge time.Duration) int {
 	if base == "" || maxAge <= 0 {
 		return 0

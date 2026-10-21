@@ -31,7 +31,14 @@ interface PendingBatch {
   removeEmptyDirs?: boolean;
 }
 
-export function PendingBatchesSection() {
+export interface PendingBatchesSectionProps {
+  /** 父级刷新计数：变化时重新拉取（页头「刷新」或其它区块操作后） */
+  refreshToken?: number;
+  /** 批次执行成功后回调：让父级刷新回收站与统计（P2-8） */
+  onExecuted?: () => void;
+}
+
+export function PendingBatchesSection({ refreshToken = 0, onExecuted }: PendingBatchesSectionProps) {
   const [batches, setBatches] = React.useState<PendingBatch[]>([]);
   const [enabled, setEnabled] = React.useState<boolean>(true);
   const [loading, setLoading] = React.useState<boolean>(true);
@@ -56,6 +63,11 @@ export function PendingBatchesSection() {
   React.useEffect(() => {
     void fetchBatches();
   }, [fetchBatches]);
+
+  // 父级刷新（页头按钮 / 其它区块操作）时同步重拉
+  React.useEffect(() => {
+    if (refreshToken > 0) void fetchBatches();
+  }, [refreshToken, fetchBatches]);
 
   // 清理执行转入待确认批次时，useStrmCleanup 会派发该事件刷新列表
   React.useEffect(() => {
@@ -90,6 +102,7 @@ export function PendingBatchesSection() {
       const failed = res.data?.failedCount ?? 0;
       toast.success(`删除完成：成功 ${deleted} 个${failed > 0 ? `，失败 ${failed} 个` : ""}`);
       void fetchBatches();
+      onExecuted?.();
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } } }).response?.data?.error || "执行删除失败";
       toast.error(msg);

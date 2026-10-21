@@ -34,19 +34,18 @@ import { PendingBatchesSection } from "./strm-cleanup/PendingBatchesSection";
 import { TrashSection } from "./strm-cleanup/TrashSection";
 
 export interface StrmCleanupCardProps {
-  /** 当前清理策略摘要（由设置页传入，避免用户忘记已保存的策略） */
-  policySummary?: string;
+  /** 父级刷新计数：变化时重新拉取待确认批次与回收站（页头「刷新」触发） */
+  refreshToken?: number;
+  /** 是否删除 STRM 本身（设置项）。false 时确认弹窗要说明「只清关联文件」，避免用户以为会删 STRM。 */
+  removeStrm?: boolean;
 }
 
-export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
-  // 对话框开关由组件层管理
-  // 注：confirmOpen 仅用于 StaleStrmDialog 内的「删除选中」二次确认。
-  // CleanupToolbar 的三个 AlertDialog 已内聚状态（独立 useState），
-  // 不再共享 confirmOpen，避免多个 AlertDialog 同时 open 导致弹窗叠加。
+export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCleanupCardProps) {
   const [staleDialogOpen, setStaleDialogOpen] = React.useState(false);
   const [missingDialogOpen, setMissingDialogOpen] = React.useState(false);
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
-  const [regenConfirmOpen, setRegenConfirmOpen] = React.useState(false);
+  // 子区块（待确认批次/回收站）的刷新计数：页头刷新或批次执行后递增
+  const [subRefresh, setSubRefresh] = React.useState(0);
+  const token = refreshToken + subRefresh;
 
   const {
     scanning,
@@ -79,11 +78,6 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
             <CardDescription className="mt-2 break-words">
               对比 115 网盘与本地 STRM，清理失效项并补生成漏项。
             </CardDescription>
-            {policySummary && (
-              <p className="mt-2 text-xs text-muted-foreground break-words">
-                当前清理策略：{policySummary}
-              </p>
-            )}
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <Button onClick={handleScan} disabled={scanning}>
@@ -199,8 +193,7 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
                     allStale={allStale}
                     selectedStale={selectedStale}
                     executing={executing}
-                    confirmOpen={confirmOpen}
-                    setConfirmOpen={setConfirmOpen}
+                    removeStrm={removeStrm}
                     toggleAllStale={toggleAllStale}
                     toggleStale={toggleStale}
                     onExecuteDelete={handleExecuteDelete}
@@ -221,8 +214,6 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
                     allMissing={allMissing}
                     mappings={scanResult.mappings}
                     executing={executing}
-                    regenConfirmOpen={regenConfirmOpen}
-                    setRegenConfirmOpen={setRegenConfirmOpen}
                     onRegenerate={handleRegenerate}
                   />
                 )}
@@ -250,6 +241,7 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
               onRegenerate={handleRegenerate}
               onDeleteAndRegenerate={handleDeleteAndRegenerate}
               selectedStaleCount={selectedStale.size}
+              removeStrm={removeStrm}
             />
 
             {/* 操作日志 */}
@@ -261,8 +253,8 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
         )}
 
         {/* 待确认批次/回收站不依赖本次扫描结果：未扫描时也应能看到并处理 */}
-        <PendingBatchesSection />
-        <TrashSection />
+        <PendingBatchesSection refreshToken={token} onExecuted={() => setSubRefresh((n) => n + 1)} />
+        <TrashSection refreshToken={token} />
       </CardContent>
     </Card>
   );

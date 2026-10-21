@@ -12,17 +12,6 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import {
   Table,
   TableBody,
   TableCell,
@@ -34,6 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FileWarning, Loader2, Maximize2, Trash2 } from "lucide-react";
+import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import type { StaleStrm, StrmPreviewResponse } from "./types";
 import { staleKey } from "./types";
 
@@ -43,8 +33,8 @@ export interface StaleStrmDialogProps {
   allStale: StaleStrm[];
   selectedStale: Set<string>;
   executing: boolean;
-  confirmOpen: boolean;
-  setConfirmOpen: (open: boolean) => void;
+  /** 设置项「删除 STRM 本身」；false 时确认弹窗说明只清关联文件 */
+  removeStrm?: boolean;
   toggleAllStale: (checked: boolean) => void;
   toggleStale: (key: string, checked: boolean) => void;
   onExecuteDelete: () => void;
@@ -58,8 +48,7 @@ export function StaleStrmDialog({
   allStale,
   selectedStale,
   executing,
-  confirmOpen,
-  setConfirmOpen,
+  removeStrm,
   toggleAllStale,
   toggleStale,
   onExecuteDelete,
@@ -134,6 +123,27 @@ export function StaleStrmDialog({
               这些 STRM 指向的媒体文件在 115 网盘树中不存在，或引用的账户已失效（账户改名/删除后的残留），可能已被删除或移动。点击任意内容单元格可预览 STRM 文件。
             </DialogDescription>
           </DialogHeader>
+          <div className="flex flex-wrap items-center gap-3 py-1 text-xs text-muted-foreground">
+            <span>
+              云端已删{" "}
+              <b className="text-foreground">
+                {allStale.filter((s) => !s.reason || s.reason === "not_in_cloud").length}
+              </b>
+            </span>
+            {allStale.some((s) => s.reason === "account_missing") && (
+              <span>
+                账号已不存在{" "}
+                <b className="text-destructive">
+                  {allStale.filter((s) => s.reason === "account_missing").length}
+                </b>
+              </span>
+            )}
+            {allStale.some((s) => s.reason === "unmanaged") && (
+              <span>
+                未托管 <b className="text-foreground">{allStale.filter((s) => s.reason === "unmanaged").length}</b>
+              </span>
+            )}
+          </div>
           <div className="flex items-center justify-between py-2 text-sm">
             <div className="flex items-center gap-2">
               <Checkbox
@@ -147,13 +157,18 @@ export function StaleStrmDialog({
               <span className="text-muted-foreground">已选 {selectedStale.size} 个</span>
             </div>
             <div className="flex gap-2">
-              <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    disabled={selectedStale.size === 0 || executing}
-                  >
+              <ConfirmActionDialog
+                destructive
+                title={`确认删除 ${selectedStale.size} 个失效 STRM？`}
+                description={
+                  removeStrm === false
+                    ? "⚠️ 设置里「删除 STRM 本身」已关闭：本次只清理同名 nfo/海报/字幕，STRM 文件会保留。"
+                    : "删除的文件会移入 .faststrm-trash，可在清理页回收站恢复；是否清理空父目录取决于设置。"
+                }
+                confirmLabel="确认删除"
+                onConfirm={onExecuteDelete}
+                trigger={
+                  <Button variant="destructive" size="sm" disabled={selectedStale.size === 0 || executing}>
                     {executing ? (
                       <Loader2 className="mr-2 size-4 animate-spin" />
                     ) : (
@@ -161,25 +176,8 @@ export function StaleStrmDialog({
                     )}
                     删除选中 ({selectedStale.size})
                   </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>确认删除 {selectedStale.size} 个失效 STRM？</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      删除的文件会移入 .faststrm-trash，可在清理页回收站恢复；是否清理空父目录取决于设置。
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>取消</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={onExecuteDelete}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    >
-                      确认删除
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                }
+              />
             </div>
           </div>
           <div className="flex-1 overflow-auto rounded border">
