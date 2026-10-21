@@ -80,8 +80,9 @@ func (l *Limiter) Acquire(ctx context.Context) error {
 		l.mu.Unlock()
 		return nil
 	}
-	// 需要等待
-	ch := make(chan struct{})
+	// 需要等待。缓冲 1 避免 scheduleRefill 在 waiter 尚未进入 select 时
+	// 非阻塞发送失败、令牌被丢弃导致永久等待。
+	ch := make(chan struct{}, 1)
 	l.waitQueue = append(l.waitQueue, ch)
 	l.mu.Unlock()
 
