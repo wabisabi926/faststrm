@@ -30,6 +30,48 @@ import (
 // metadataMaxBytes 辅助文件大小上限（200MB）。
 const metadataMaxBytes = 200 << 20
 
+// metadataWorkerLimit 同时进行的辅助文件下载数；不要让字幕下载占满事件轮询线程。
+const metadataWorkerLimit = 2
+
+// enqueueMetadataSync 异步同步一个辅助文件。失败会做少量重试；队列满时丢弃并记录，
+// 避免拖慢生活事件主链路。
+func (m *Monitor) enqueueMetadataSync(
+	ctx context.Context,
+	account string,
+	event client115.LifeEventItem,
+	localDir string,
+	lifeClient *client115.LifeClient,
+) {
+	m.metadataOnce.Do(func() {
+		m.metadataSem = make(chan struct{}, metadataWorkerLimit)
+	})
+	select {
+	case m.metadataSem <- struct{}{}:
+	default:
+		logger.S().Warnf("[Monitor] 辅助文件同步队列已满，跳过: %s", event.FileName)
+		return
+	}
+	go func() {
+		defer func() { <-m.metadataSem }()
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				delay := time.Duration(attempt*attempt) * time.Second
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(delay):
+				}
+			}
+			// 使用独立 context：不能跟随本轮轮询结束而取消已开始的下载。
+			if _, err := m.syncMetadataFile(context.Background(), account, event, localDir, lifeClient); err == nil {
+				return
+			} else {
+				logger.S().Warnf("[Monitor] 辅助文件同步失败（第 %d 次）: %s: %v", attempt+1, event.FileName, err)
+			}
+		}
+	}()
+}
+
 // isDownloadExtFile 判断文件名是否属于「辅助文件」（下载到本地而非生成 STRM）。
 // 同时命中 StrmExtensions 时按 STRM 处理（优先）。
 func (m *Monitor) isDownloadExtFile(fileName string) bool {

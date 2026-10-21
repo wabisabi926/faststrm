@@ -103,7 +103,10 @@ type Monitor struct {
 	managed          strm.ManagedRecorder     // STRM 托管登记（可为 nil）
 	// appSettingsFn 全局设置读取器（读取 DownloadExtensions 等），可为 nil
 	appSettingsFn func() *model.Settings
-	mu            sync.RWMutex
+	// 字幕/元数据同步用有界并发，避免大文件下载阻塞事件轮询。
+	metadataSem  chan struct{}
+	metadataOnce sync.Once
+	mu           sync.RWMutex
 
 	// prefixCIDCache 映射云端前缀 → cid 缓存（P0-2 前缀反查用，避免每个事件都打 /files/getid）
 	prefixCIDMu    sync.Mutex

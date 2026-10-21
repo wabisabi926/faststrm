@@ -304,13 +304,8 @@ func (m *Monitor) handleCreateEvent(
 	// 字幕/nfo/海报等辅助文件：不生成 STRM，直接下载到本地（网盘后续补字幕自动同步）。
 	// 必须在构造单文件输入前判断，避免为辅助文件白解析一次 pickcode。
 	if m.isDownloadExtFile(event.FileName) {
-		path, derr := m.syncMetadataFile(ctx, account, event, localParentDir, lifeClient)
-		if derr != nil {
-			m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath,
-				fmt.Sprintf("辅助文件同步失败: %v", derr))
-			return derr
-		}
-		m.appendLog(ctx, account, "create", true, cloudPath, path, "辅助文件已同步")
+		m.enqueueMetadataSync(ctx, account, event, localParentDir, lifeClient)
+		m.appendLog(ctx, account, "create", true, cloudPath, localParentDir, "辅助文件已加入同步队列")
 		return nil
 	}
 
