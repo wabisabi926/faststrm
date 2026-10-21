@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -692,6 +693,25 @@ func normalizeExt(ext string) string { return strmutil.NormalizeExt(ext) }
 // mode: "off"(跳过) / "mark_only"(仅日志) / "auto_clean"(软删 + 超阈值二次确认)
 // 返回：(孤儿数, 延迟批次ID, error)。延迟批次ID 非空表示已入队待二次确认。
 
+const trashPurgeInterval = time.Hour
+
+var (
+	trashPurgeMu   sync.Mutex
+	trashPurgeLast = make(map[string]time.Time)
+)
+
+// shouldPurgeTrash 限制回收站过期清理频率：7 天保留期内每小时扫一次足够，
+// 避免每次自动对账都对超大媒体根做一次全树遍历。
+func shouldPurgeTrash(root string, now time.Time) bool {
+	trashPurgeMu.Lock()
+	defer trashPurgeMu.Unlock()
+	if last, ok := trashPurgeLast[root]; ok && now.Sub(last) < trashPurgeInterval {
+		return false
+	}
+	trashPurgeLast[root] = now
+	return true
+}
+
 func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 + 路径不符判定 + 连带删关联文件/空目录）
 	ctx context.Context,
 	submitter CleanupBatchSubmitter,
@@ -714,7 +734,7 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 57（失败目录保护 
 		// 云端集合为空时不做对账：避免在 fileEntries 还未填充阶段误删全部本地 STRM
 		return 0, "", nil
 	}
-	if mode == "auto_clean" {
+	if mode == "auto_clean" && shouldPurgeTrash(targetPath, time.Now()) {
 		if n := strmutil.PurgeTrashTree(targetPath, 7*24*time.Hour); n > 0 && sseServer != nil {
 			sseServer.EmitLog(taskID, "info", fmt.Sprintf("对账清理：回收站已清理 %d 个过期批次", n))
 		}
