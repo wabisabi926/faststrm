@@ -371,4 +371,3 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	server.Start()
 	return nil
 }
-
