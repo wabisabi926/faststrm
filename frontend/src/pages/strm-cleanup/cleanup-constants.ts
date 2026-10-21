@@ -10,8 +10,8 @@ export const CLEANUP_DEFAULTS = {
   maxRatio: 0.1,
   /** 单次删除涉及的目录数上限 */
   maxDirs: 20,
-  /** 超过该数量转入待确认批次 */
-  stableThreshold: 100,
+  /** 超过该数量转入待确认批次（后端 DefaultSettings 为 5） */
+  stableThreshold: 5,
   /** 二次确认模式：none 立即删除 / plugin_ui Web UI 待确认 / telegram 通知按钮确认 */
   confirmMode: "none",
 } as const;

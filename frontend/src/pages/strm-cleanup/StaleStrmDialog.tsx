@@ -138,11 +138,6 @@ export function StaleStrmDialog({
                 </b>
               </span>
             )}
-            {allStale.some((s) => s.reason === "unmanaged") && (
-              <span>
-                未托管 <b className="text-foreground">{allStale.filter((s) => s.reason === "unmanaged").length}</b>
-              </span>
-            )}
           </div>
           <div className="flex items-center justify-between py-2 text-sm">
             <div className="flex items-center gap-2">

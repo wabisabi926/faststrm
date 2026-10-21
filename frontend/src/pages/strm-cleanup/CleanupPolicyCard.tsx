@@ -143,9 +143,9 @@ export function CleanupPolicyCard({ data, setData, saving, onSave }: CleanupPoli
               id="cleanup-stable-threshold"
               type="number"
               min="1"
-              value={cleanup.stableThreshold ?? 5}
+              value={cleanup.stableThreshold ?? CLEANUP_DEFAULTS.stableThreshold}
               onChange={(e) =>
-                updateCleanup({ stableThreshold: Math.max(1, parseInt(e.target.value) || 5) })
+                updateCleanup({ stableThreshold: Math.max(1, parseInt(e.target.value) || CLEANUP_DEFAULTS.stableThreshold) })
               }
             />
             <p className="text-xs text-muted-foreground">超过该数量才进入二次确认，默认 5</p>
