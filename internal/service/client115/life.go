@@ -139,10 +139,22 @@ type LifeClient struct {
 
 	// API 域名轮换
 	useAlternateHost bool
+	// rateLimit 生产环境启用按账号 × TypeLife 的 QPM 限流；
+	// 测试用 NewLifeClient 默认关闭，避免全局令牌桶污染用例。
+	rateLimit bool
 }
 
-// NewLifeClient 创建生活事件客户端
+// NewLifeClient 创建生活事件客户端（不启用请求级限流，供测试/单次工具使用）。
 func NewLifeClient(cookie string) *LifeClient {
+	return newLifeClient(cookie, false)
+}
+
+// NewLifeClientWithRateLimit 创建启用 TypeLife QPM 限流的生活事件客户端（生产用）。
+func NewLifeClientWithRateLimit(cookie string) *LifeClient {
+	return newLifeClient(cookie, true)
+}
+
+func newLifeClient(cookie string, rateLimit bool) *LifeClient {
 	return &LifeClient{
 		cookie: cookie,
 		httpClient: &http.Client{
@@ -150,6 +162,7 @@ func NewLifeClient(cookie string) *LifeClient {
 		},
 		fsClient:     newLifeFsClient(cookie),
 		pathCacheTTL: 5 * time.Minute,
+		rateLimit:    rateLimit,
 	}
 }
 
@@ -533,7 +546,20 @@ func (c *LifeClient) doRequest(ctx context.Context, method, urlStr, body string)
 		headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
 	}
 
+	acquire := func() error {
+		if !c.rateLimit {
+			return nil
+		}
+		if err := rate.GetRegistry().Acquire(ctx, rate.AccountKeyFromCookie(c.cookie), rate.TypeLife); err != nil {
+			return fmt.Errorf("rate limited: %w", err)
+		}
+		return nil
+	}
+
 	if !isIdempotentMethod(method) {
+		if err := acquire(); err != nil {
+			return nil, err
+		}
 		data, _, err := c.doLifeHTTPOnce(ctx, method, urlStr, body, headers)
 		return data, err
 	}
@@ -549,6 +575,9 @@ func (c *LifeClient) doRequest(ctx context.Context, method, urlStr, body string)
 				return nil, ctx.Err()
 			case <-time.After(delay):
 			}
+		}
+		if err := acquire(); err != nil {
+			return nil, err
 		}
 
 		data, status, err := c.doLifeHTTPOnce(ctx, method, urlStr, body, headers)
@@ -573,7 +602,7 @@ func (c *LifeClient) doRequest(ctx context.Context, method, urlStr, body string)
 		return data, nil
 	}
 
-	return nil, fmt.Errorf("请求重试 %d 次仍失败: %w", requestMaxAttempts, lastErr)
+	return nil, fmt.Errorf("%w: 请求重试 %d 次仍失败: %v", ErrRequestRetried, requestMaxAttempts, lastErr)
 }
 
 // doLifeHTTPOnce 执行单次 HTTP 往返，返回响应体与状态码（不判定业务状态）

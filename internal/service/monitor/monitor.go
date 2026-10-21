@@ -295,6 +295,9 @@ func (m *Monitor) Refresh() {
 	if config.EnableDedup && m.dedup == nil {
 		m.dedup = NewEventDeduplicator(config.DedupWindow())
 	} else if !config.EnableDedup {
+		if m.dedup != nil {
+			m.dedup.Close()
+		}
 		m.dedup = nil
 	}
 
@@ -393,7 +396,7 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 		return err
 	}
 
-	lifeClient := client115.NewLifeClient(cookie)
+	lifeClient := client115.NewLifeClientWithRateLimit(cookie)
 
 	// 测试生活事件开关
 	if err := lifeClient.LifeShow(ctx); err != nil {
@@ -522,7 +525,7 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 	}
 
 	// 3. 创建 LifeClient（用于拉取事件和路径解析）
-	lifeClient := client115.NewLifeClient(cookie)
+	lifeClient := client115.NewLifeClientWithRateLimit(cookie)
 
 	// 4. 拉取事件（含重试和 API 冷却）
 	config := m.settingsFn()
@@ -685,6 +688,10 @@ func (m *Monitor) pullEventsWithRetry(
 		}
 
 		lastErr = err
+		// 请求层已耗尽重试，轮询层再叠加只会放大 599/连接拒绝。
+		if errors.Is(err, client115.ErrRequestRetried) {
+			return nil, err
+		}
 		// 认证/限流错误不应在轮询内继续重试；交给 handlePollError 进入更长冷却。
 		if client115.IsAuthError(client115.ClassifyError(err)) ||
 			client115.IsRateLimitError(client115.ClassifyError(err)) {

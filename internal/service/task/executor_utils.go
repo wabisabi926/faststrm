@@ -256,7 +256,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 	}
 
 	cidSeen := make(map[int64]struct{})
-	dirCount, fileCount, matchCount := 0, 0, 0
+	var dirCount, fileCount, matchCount atomic.Int64
 	bdmvSkipped := 0
 	logger.S().Infof("[listAllFilesRecursive] start cid=%d originPath=%s", rootCID, originPath)
 
@@ -266,7 +266,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
-		lastDir, lastFile, lastMatch := -1, -1, -1
+		lastDir, lastFile, lastMatch := int64(-1), int64(-1), int64(-1)
 		for {
 			select {
 			case <-heartbeatStop:
@@ -274,12 +274,13 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				dirs, files, matched := dirCount.Load(), fileCount.Load(), matchCount.Load()
 				// 只有数字有变化时才广播，减少无意义流量
-				if dirCount == lastDir && fileCount == lastFile && matchCount == lastMatch {
+				if dirs == lastDir && files == lastFile && matched == lastMatch {
 					continue
 				}
-				lastDir, lastFile, lastMatch = dirCount, fileCount, matchCount
-				detail := fmt.Sprintf("已扫描 %d 个目录, %d 个文件 (命中 %d 个媒体)", dirCount, fileCount, matchCount)
+				lastDir, lastFile, lastMatch = dirs, files, matched
+				detail := fmt.Sprintf("已扫描 %d 个目录, %d 个文件 (命中 %d 个媒体)", dirs, files, matched)
 				if taskID != "" && rt != nil {
 					rt.SetState(taskID, func(s *RuntimeState) {
 						s.Stage = StageScanning
@@ -307,7 +308,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 	failedDirs := make([]string, 0, 4)
 
 	defer func() {
-		logger.S().Infof("[listAllFilesRecursive] done dirs=%d files=%d matched=%d totalOut=%d failedDirs=%d", dirCount, fileCount, matchCount, len(out), len(failedDirs))
+		logger.S().Infof("[listAllFilesRecursive] done dirs=%d files=%d matched=%d totalOut=%d failedDirs=%d", dirCount.Load(), fileCount.Load(), matchCount.Load(), len(out), len(failedDirs))
 		if bdmvSkipped > 0 {
 			logger.S().Infof("[listAllFilesRecursive] 跳过 %d 个 BDMV/STREAM 原盘视频流（不生成 STRM）", bdmvSkipped)
 		}
@@ -315,9 +316,9 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 			logger.S().Warnf("[listAllFilesRecursive] %d 个目录列目录最终失败（其下 STRM 本次不参与清理对账）: %v", len(failedDirs), failedDirs)
 		}
 		if stats != nil {
-			stats.Dirs = dirCount
-			stats.Files = fileCount
-			stats.Matched = matchCount
+			stats.Dirs = int(dirCount.Load())
+			stats.Files = int(fileCount.Load())
+			stats.Matched = int(matchCount.Load())
 			stats.BdmvSkipped = bdmvSkipped
 			stats.FailedDirs = failedDirs
 		}
@@ -416,10 +417,10 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 							continue
 						}
 						stk = append(stk, stackEntry{cid: cid, relPath: relName, parentCID: top.cid})
-						dirCount++
+						dirCount.Add(1)
 						continue
 					}
-					fileCount++
+					fileCount.Add(1)
 					ext := strings.ToLower(filepath.Ext(e.Name))
 					kind := kindSkip
 					if _, ok := strmExts[ext]; ok {
@@ -440,7 +441,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 						continue
 					}
 					pageMatched++
-					matchCount++
+					matchCount.Add(1)
 					out = append(out, &fileItem{
 						CloudPath: cloudPath,
 						RelPath:   relName,
@@ -566,6 +567,9 @@ func runDownloads(
 	pool.Wait()
 }
 
+// downloadHTTPClient 关联文件/元数据下载使用，避免网络卡死无限占用任务。
+var downloadHTTPClient = &http.Client{Timeout: 30 * time.Minute}
+
 // downloadFileWithProgress 下载单个文件并广播进度
 func downloadFileWithProgress(
 	ctx context.Context,
@@ -591,7 +595,7 @@ func downloadFileWithProgress(
 	if cookie != "" {
 		req.Header.Set("Cookie", cookie)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := downloadHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}

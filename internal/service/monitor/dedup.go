@@ -15,6 +15,8 @@ type EventDeduplicator struct {
 	mu   sync.Mutex
 	seen map[string]int64 // eventKey -> timestamp
 	ttl  time.Duration    // 去重窗口
+	stop chan struct{}
+	once sync.Once
 }
 
 // NewEventDeduplicator 创建去重器
@@ -26,10 +28,19 @@ func NewEventDeduplicator(ttl time.Duration) *EventDeduplicator {
 	d := &EventDeduplicator{
 		seen: make(map[string]int64),
 		ttl:  ttl,
+		stop: make(chan struct{}),
 	}
 	go d.cleanupLoop()
 	logger.S().Infof("[Dedup] 事件去重器已启动, TTL=%v", ttl)
 	return d
+}
+
+// Close 停止后台清理 goroutine；可重复调用。
+func (d *EventDeduplicator) Close() {
+	if d == nil {
+		return
+	}
+	d.once.Do(func() { close(d.stop) })
 }
 
 // IsDuplicate 检查事件是否重复（仅检查，不标记）
@@ -71,7 +82,12 @@ func (d *EventDeduplicator) cleanupLoop() {
 	ticker := time.NewTicker(d.ttl)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-d.stop:
+			return
+		case <-ticker.C:
+		}
 		d.mu.Lock()
 		now := time.Now().UnixMilli()
 		expiredCount := 0

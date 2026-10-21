@@ -82,3 +82,9 @@ func TestEventDeduplicator_Stats(t *testing.T) {
 		t.Fatalf("Stats want 2 got %d", got)
 	}
 }
+
+func TestEventDeduplicator_CloseIsIdempotent(t *testing.T) {
+	d := NewEventDeduplicator(time.Hour)
+	d.Close()
+	d.Close()
+}

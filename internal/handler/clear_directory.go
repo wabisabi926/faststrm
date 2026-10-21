@@ -75,11 +75,11 @@ func parseClearDirRequest(r *http.Request) (ClearDirRequest, error) {
 }
 
 func resolveClearDirTarget(path string) (string, error) {
-	// Path traversal protection: reject paths with ".." segments
-	cleaned := filepath.Clean(path)
-	if cleaned != path || strings.Contains(path, "..") {
+	// 只拒绝真正的 ".." 路径段；允许结尾分隔符、"D:\\Media\\." 等等价写法。
+	if hasDotDotSegment(path) {
 		return "", newClearDirError(http.StatusBadRequest, "invalid path")
 	}
+	cleaned := filepath.Clean(path)
 	absPath, err := filepath.Abs(cleaned)
 	if err != nil {
 		return "", newClearDirError(http.StatusBadRequest, "invalid path")
@@ -91,6 +91,15 @@ func resolveClearDirTarget(path string) (string, error) {
 		return "", newClearDirError(http.StatusBadRequest, "refuse to clear filesystem root")
 	}
 	return absPath, nil
+}
+
+func hasDotDotSegment(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveClearDirAllowedRoot 只允许任务输出目录或监控映射根目录（及其子目录）。
@@ -189,6 +198,10 @@ func HandleClearDir(deps ClearDeps) http.HandlerFunc {
 		allowedRoot, err := resolveClearDirAllowedRoot(targetPath, deps.AllowedRoots)
 		if err != nil {
 			writeClearDirError(w, err)
+			return
+		}
+		if err := strmutil.EnsureNoSymlinkComponents(allowedRoot, targetPath); err != nil {
+			writeClearDirError(w, newClearDirError(http.StatusForbidden, err.Error()))
 			return
 		}
 

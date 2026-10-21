@@ -34,6 +34,20 @@ func TestClearDirRejectsOutsideAllowedRoots(t *testing.T) {
 	}
 }
 
+func TestClearDirTargetAllowsTrailingSeparator(t *testing.T) {
+	root := t.TempDir()
+	if _, err := resolveClearDirTarget(root + string(os.PathSeparator)); err != nil {
+		t.Fatalf("trailing separator should be accepted: %v", err)
+	}
+}
+
+func TestClearDirTargetRejectsDotDotSegment(t *testing.T) {
+	root := t.TempDir()
+	if _, err := resolveClearDirTarget(filepath.Join(root, "..", "outside")); err == nil {
+		t.Fatal(".. segment must be rejected")
+	}
+}
+
 func TestClearDirMovesJunkToTrashKeepsStrm(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte("http://x/api/strm?pickcode=d18nbyd6w552vx2zs\n"), 0o644); err != nil {

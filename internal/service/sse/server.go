@@ -114,6 +114,7 @@ type Server struct {
 	// 每个任务的环形日志缓冲（内存里保存最近 N 条，新客户端连接时重放）
 	logMu     sync.Mutex
 	taskLogs  map[string][]string // taskId -> frames（已编码）
+	taskLogAt map[string]time.Time
 	maxLogPer int
 }
 
@@ -122,7 +123,11 @@ var (
 	instOnce sync.Once
 )
 
-const defaultMaxLogPerTask = 500
+const (
+	defaultMaxLogPerTask = 500
+	maxTaskLogBuffers    = 64
+	taskLogBufferTTL     = 2 * time.Hour
+)
 
 // GetServer 获取全局单例
 func GetServer() *Server {
@@ -130,6 +135,7 @@ func GetServer() *Server {
 		inst = &Server{
 			subscribers: make(map[string]*Subscriber),
 			taskLogs:    make(map[string][]string),
+			taskLogAt:   make(map[string]time.Time),
 			maxLogPer:   defaultMaxLogPerTask,
 		}
 	})
@@ -196,6 +202,9 @@ func (s *Server) Broadcast(taskID string, payload any) {
 			buf = buf[len(buf)-s.maxLogPer:]
 		}
 		s.taskLogs[taskID] = buf
+		now := time.Now()
+		s.taskLogAt[taskID] = now
+		s.gcTaskLogsLocked(now)
 		s.logMu.Unlock()
 	}
 
@@ -233,6 +242,32 @@ func (s *Server) EmitComplete(c CompletePayload) {
 	s.Broadcast(c.TaskID, c)
 }
 
+// gcTaskLogsLocked 按 TTL 与最大任务数淘汰日志缓冲，防止长期运行内存增长。
+// 调用方需持有 logMu。
+func (s *Server) gcTaskLogsLocked(now time.Time) {
+	for id, at := range s.taskLogAt {
+		if now.Sub(at) > taskLogBufferTTL {
+			delete(s.taskLogs, id)
+			delete(s.taskLogAt, id)
+		}
+	}
+	for len(s.taskLogs) > maxTaskLogBuffers {
+		oldestID := ""
+		var oldest time.Time
+		for id := range s.taskLogs {
+			at := s.taskLogAt[id]
+			if oldestID == "" || at.Before(oldest) {
+				oldestID, oldest = id, at
+			}
+		}
+		if oldestID == "" {
+			return
+		}
+		delete(s.taskLogs, oldestID)
+		delete(s.taskLogAt, oldestID)
+	}
+}
+
 // GetTaskLogs 读取某个任务的内存缓冲日志（历史条数返回，已编码）
 func (s *Server) GetTaskLogs(taskID string) []string {
 	s.logMu.Lock()
@@ -246,6 +281,7 @@ func (s *Server) GetTaskLogs(taskID string) []string {
 func (s *Server) ClearTaskLogs(taskID string) {
 	s.logMu.Lock()
 	delete(s.taskLogs, taskID)
+	delete(s.taskLogAt, taskID)
 	s.logMu.Unlock()
 }
 

@@ -33,6 +33,8 @@ var (
 	ErrRateLimited = errors.New("115 rate limited")
 	// ErrTransient 临时性错误（未知 errno / 服务端异常），不改变账号状态。
 	ErrTransient = errors.New("115 transient error")
+	// ErrRequestRetried 请求层已耗尽自动重试；上层不要再叠加轮询级重试。
+	ErrRequestRetried = errors.New("115 request retries exhausted")
 )
 
 // authErrnos 认证类错误码：需重新登录。

@@ -239,7 +239,7 @@ func (c *Client) request115(
 		return data, nil
 	}
 
-	return nil, fmt.Errorf("请求重试 %d 次仍失败: %w", requestMaxAttempts, lastErr)
+	return nil, fmt.Errorf("%w: 请求重试 %d 次仍失败: %v", ErrRequestRetried, requestMaxAttempts, lastErr)
 }
 
 // ==================== 下载链接解析 ====================
