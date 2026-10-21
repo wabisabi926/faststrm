@@ -10,6 +10,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,18 @@ type PollingManager struct {
 	mu       sync.Mutex
 	running  bool
 	conflict atomic.Bool // 是否检测到 409（多实例抢同一 Token）
+
+	lastConflictLog time.Time
+}
+
+// telegramBotTokenRe 匹配 URL 中的 bot<id>:<token>，日志必须脱敏。
+var telegramBotTokenRe = regexp.MustCompile(`bot[0-9]+:[A-Za-z0-9_-]+`)
+
+func redactTelegramError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return telegramBotTokenRe.ReplaceAllString(err.Error(), "bot<redacted>")
 }
 
 // NewPollingManager 创建轮询管理器
@@ -86,13 +99,35 @@ func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler, c *
 		updates, err := c.GetUpdates(cfg)
 		if err != nil {
 			// 409：同一 Bot Token 被另一个实例（或 webhook）占用
-			if isPollingConflict(err) {
-				if m.conflict.CompareAndSwap(false, true) {
+			conflict := isPollingConflict(err)
+			if conflict {
+				m.conflict.Store(true)
+				// 409 可能持续很久，日志 10 分钟最多一条；退避至少 30s，避免反复抢锁。
+				m.mu.Lock()
+				now := time.Now()
+				logIt := m.lastConflictLog.IsZero() || now.Sub(m.lastConflictLog) >= 10*time.Minute
+				if logIt {
+					m.lastConflictLog = now
+				}
+				m.mu.Unlock()
+				if logIt {
 					logger.S().Errorf("[Telegram] 检测到 409 冲突：同一 Bot Token 可能被另一个实例轮询，"+
-						"或 Webhook 与轮询同时启用。请停掉重复实例 / 关闭其中一个接收方式。(%v)", err)
+						"或 Webhook 与轮询同时启用。请停掉重复实例 / 关闭其中一个接收方式。(%s)",
+						redactTelegramError(err))
+				}
+				if backoff < 30*time.Second {
+					backoff = 30 * time.Second
+				} else if backoff < 5*time.Minute {
+					backoff *= 2
+					if backoff > 5*time.Minute {
+						backoff = 5 * time.Minute
+					}
 				}
 			} else {
-				logger.S().Warnf("[Telegram] getUpdates 失败: %v（%v 后重试）", err, backoff)
+				logger.S().Warnf("[Telegram] getUpdates 失败: %s（%v 后重试）", redactTelegramError(err), backoff)
+				if backoff < 30*time.Second {
+					backoff *= 2
+				}
 			}
 			select {
 			case <-ctx.Done():
@@ -102,9 +137,6 @@ func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler, c *
 				m.markStopped()
 				return
 			case <-time.After(backoff):
-			}
-			if backoff < 30*time.Second {
-				backoff *= 2
 			}
 			continue
 		}
@@ -119,7 +151,7 @@ func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler, c *
 				continue
 			}
 			if herr := handler(ctx, u); herr != nil {
-				logger.S().Errorf("update handler failed: %v", herr)
+				logger.S().Errorf("update handler failed: %s", redactTelegramError(herr))
 			}
 		}
 	}
