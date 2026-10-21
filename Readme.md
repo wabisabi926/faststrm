@@ -67,9 +67,9 @@ docker run -d \
   wabisabi926/faststrm:latest
 ```
 
-启动后访问 `http://localhost:8090`，默认账号密码：**admin / admin**
+启动后访问 `http://localhost:8090`。v1.5.2 起全新安装会先进入初始化页面，创建管理员账号后即可使用；已有安装继续使用原密码。
 
-> ⚠️ v1.5.0 起首次登录会强制修改默认密码；未修改前所有受保护接口会被拒绝。
+> 无界面部署可通过 `FASTSTRM_ADMIN_USERNAME` / `FASTSTRM_ADMIN_PASSWORD` 跳过初始化向导。
 
 ---
 

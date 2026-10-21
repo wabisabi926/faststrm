@@ -27,5 +27,6 @@
 
 ## 部署建议
 
-- v1.5.0 起默认 `admin/admin` 首次登录会强制改密（未修改前受保护接口返回 `PASSWORD_CHANGE_REQUIRED`）；旧版本请首次登录后立即修改默认账号密码
+- v1.5.2 起全新安装必须先通过 `/setup` 创建管理员账号；已有安装继续使用原密码，默认 `admin/admin` 仍会被强制要求改密
+- 在公网暴露服务前先完成初始化；无界面部署使用 `FASTSTRM_ADMIN_USERNAME` / `FASTSTRM_ADMIN_PASSWORD` 时也请使用强密码
 - 在公网暴露服务时务必启用反向代理 + TLS + 强密码
