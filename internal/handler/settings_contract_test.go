@@ -27,8 +27,6 @@ func newContractSettings() *model.Settings {
 	s.CleanupDefaultsV2 = true
 	s.CleanupDefaultsV3 = true
 
-	s.Download.LinkMaxPerSecond = intPtrTest(3)
-	s.Download.LinkMaxConcurrent = intPtrTest(4)
 	s.Download.DownloadMaxConcurrent = intPtrTest(2)
 	s.Download.StrmMaxConcurrent = intPtrTest(9)
 	s.Download.AutoDownloadMetadata = false

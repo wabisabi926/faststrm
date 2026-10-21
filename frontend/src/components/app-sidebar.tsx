@@ -42,7 +42,7 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
   {
     label: "媒体库",
     items: [
-      { title: "账号管理", url: "/account", icon: Users },
+      { title: "网盘账号", url: "/account", icon: Users },
       { title: "任务管理", url: "/task", icon: ListChecks },
       { title: "STRM 清理", url: "/cleanup", icon: Trash2 },
     ],

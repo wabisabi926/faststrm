@@ -4,28 +4,58 @@ import (
 	"testing"
 )
 
-// resetForceProxyFormats 恢复默认格式列表，避免用例间相互污染
+// resetForceProxyFormats 恢复默认格式列表与开关，避免用例间相互污染
 func resetForceProxyFormats(t *testing.T) {
 	t.Helper()
 	SetForceProxyFormats(nil)
-	t.Cleanup(func() { SetForceProxyFormats(nil) })
+	SetSeekFormatProxyEnabled(true)
+	t.Cleanup(func() {
+		SetForceProxyFormats(nil)
+		SetSeekFormatProxyEnabled(true)
+	})
 }
 
-// TestIsSeekRequiredFormat_Default 默认列表行为保持不变（本轮只做「可配置化」）
+// TestSetSeekFormatProxyEnabled_DisablesAll 统一开关关闭后，原盘也不再按格式代理
+func TestSetSeekFormatProxyEnabled_DisablesAll(t *testing.T) {
+	resetForceProxyFormats(t)
+
+	SetSeekFormatProxyEnabled(false)
+	if isSeekRequiredFormat("iso", "movie.iso") {
+		t.Fatal("开关关闭后 iso 不应再走代理")
+	}
+	if isSeekRequiredFormat("m2ts", "00000.m2ts") {
+		t.Fatal("开关关闭后 m2ts 不应再走代理")
+	}
+
+	SetSeekFormatProxyEnabled(true)
+	if !isSeekRequiredFormat("iso", "movie.iso") {
+		t.Fatal("开关恢复后 iso 应重新走代理")
+	}
+}
+
+// TestIsSeekRequiredFormat_Default 默认列表行为：纯原盘格式命中，ts 不再命中。
+// 两层（EmbyProxy / STRM 端点）共用同一份默认列表，均不含 ts。
 func TestIsSeekRequiredFormat_Default(t *testing.T) {
 	resetForceProxyFormats(t)
 
 	// 容器名匹配
-	for _, c := range []string{"iso", "ISO", "bdmv", "m2ts", "ts", "vob"} {
+	for _, c := range []string{"iso", "ISO", "bdmv", "m2ts", "vob"} {
 		if !isSeekRequiredFormat(c, "") {
 			t.Fatalf("container %q should require proxy by default", c)
 		}
 	}
 	// 扩展名匹配
-	for _, n := range []string{"movie.iso", "00000.m2ts", "record.ts", "VTS_01_1.VOB"} {
+	for _, n := range []string{"movie.iso", "00000.m2ts", "VTS_01_1.VOB"} {
 		if !isSeekRequiredFormat("", n) {
 			t.Fatalf("name %q should require proxy by default", n)
 		}
+	}
+	// ts 是录播格式而非原盘，默认走 302（不占 NAS 带宽）
+	if isSeekRequiredFormat("ts", "") {
+		t.Fatal("container ts should NOT require proxy by default (ts is not a disc format)")
+	}
+	if isSeekRequiredFormat("", "record.ts") {
+		t.Fatal("name record.ts should NOT require proxy by default")
 	}
 	// 普通格式不应命中
 	for _, n := range []string{"movie.mkv", "movie.mp4", "movie.avi"} {

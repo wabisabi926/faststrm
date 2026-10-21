@@ -219,7 +219,7 @@ export default function AccountAlertsPage({
           <li>
             账号状态由生活事件监控更新，也可在
             <Link to="/account" className="mx-1 text-primary hover:underline">
-              账号管理
+              网盘账号
             </Link>
             页主动巡检
           </li>

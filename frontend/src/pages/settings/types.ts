@@ -80,8 +80,6 @@ export type Settings = {
     libraryId?: string;
   };
   download?: {
-    linkMaxPerSecond?: number;
-    linkMaxConcurrent?: number;
     downloadMaxConcurrent?: number;
     autoDownloadMetadata?: boolean;
     // 全局文件过滤：最小文件大小阈值（字节，0 表示不过滤）

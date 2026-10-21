@@ -583,7 +583,7 @@ export default function AccountPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold">账号管理</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold">网盘账号</h1>
           <p className="text-muted-foreground mt-1 text-sm">管理你的网盘账号信息</p>
         </div>
         <div className="flex gap-2">

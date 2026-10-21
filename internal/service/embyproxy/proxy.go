@@ -791,9 +791,26 @@ func SetForceProxyFormats(formats []string) {
 	logger.S().Infof("[EmbyProxy] 强制代理格式: %v", formats)
 }
 
+// seekFormatProxyDisabled 「按格式强制代理」的统一关闭标记。
+//
+// 与 STRM 端点层（handler/strm.go 的 DecideRoute）共用 settings.strm.disableSeekFormatProxy：
+// 开启时两层都按 forceProxyFormats 强制代理，关闭时两层都退回 UA 白名单 / 302。
+var seekFormatProxyDisabled atomic.Bool
+
+// SetSeekFormatProxyEnabled 设置是否启用「按格式强制代理」（两层统一开关）。
+// 由 server 启动装配与 Emby 设置保存时调用，对后续请求立即生效。
+func SetSeekFormatProxyEnabled(enabled bool) {
+	seekFormatProxyDisabled.Store(!enabled)
+	logger.S().Infof("[EmbyProxy] 按格式强制代理: %v", enabled)
+}
+
 // isSeekRequiredFormat 判断 STRM 源是否需要代理流（而非 302）。
 // 依据：Emby 的 Container 字段，或文件名扩展名。
+// 「按格式强制代理」被关闭时直接返回 false（原盘也走 302）。
 func isSeekRequiredFormat(container, name string) bool {
+	if seekFormatProxyDisabled.Load() {
+		return false
+	}
 	set, _ := forceProxyFormats.Load().(map[string]struct{})
 	if set == nil {
 		set = buildForceProxySet(nil)

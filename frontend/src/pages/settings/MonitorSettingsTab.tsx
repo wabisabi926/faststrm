@@ -165,7 +165,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
             <Label>监控账号</Label>
             <div className="flex flex-wrap gap-5 p-3 border rounded-md">
               {accounts.length === 0 ? (
-                <p className="text-sm text-muted-foreground">暂无可用账号，请先在账号管理中添加 115 账号</p>
+                <p className="text-sm text-muted-foreground">暂无可用账号，请先在「网盘账号」页添加 115 账号</p>
               ) : (
                 accounts.map(account => (
                   <div key={account} className="flex items-center gap-2">

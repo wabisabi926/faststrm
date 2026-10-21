@@ -1401,7 +1401,7 @@ func TestIsSeekRequiredFormat_StrmURL(t *testing.T) {
 		want bool
 	}{
 		{"movie.iso", true},
-		{"movie.ts", true},
+		{"movie.ts", false}, // ts 是录播格式，默认不代理
 		{"movie.m2ts", true},
 		{"movie.mkv", false},
 	}
@@ -1417,7 +1417,7 @@ func TestIsSeekRequiredFormat_StrmURL(t *testing.T) {
 		want      bool
 	}{
 		{"iso", true},
-		{"ts", true},
+		{"ts", false}, // ts 是录播格式，默认不代理
 		{"m2ts", true},
 		{"mkv", false},
 	}
@@ -1426,7 +1426,7 @@ func TestIsSeekRequiredFormat_StrmURL(t *testing.T) {
 			t.Errorf("isSeekRequiredFormat(container=%q) = %v, want %v", c.container, got, c.want)
 		}
 	}
-	t.Logf("✅ 修复1：ISO/TS/M2TS seek 判断来源验证通过")
+	t.Logf("✅ 修复1：ISO/M2TS seek 判断来源验证通过（ts 默认不代理）")
 }
 
 // ================================================================
@@ -1924,7 +1924,8 @@ func TestISOPlayback_EndToEnd(t *testing.T) {
 	// 由其 ffmpeg 拉流失败，表现为 8097 端口「无法兼容的流」。
 	// 注意：必须用裸 /stream；带扩展名（如 /stream.iso）会被 matchMediaRoute 命中，无法复现。
 	t.Run("emby_prefix_bare_stream_route", func(t *testing.T) {
-		for _, ext := range []string{"iso", "ts", "m2ts"} {
+		// 只验证纯原盘格式：ts 已从默认强制代理列表移除（录播格式，302 可用）
+		for _, ext := range []string{"iso", "m2ts"} {
 			ext := ext
 			t.Run(ext, func(t *testing.T) {
 				src := isoSrc.URL + "/原盘/阿凡达." + ext

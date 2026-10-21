@@ -718,11 +718,11 @@ func StrmRouteConfig(cfg *config.AppConfig) struct {
 	if len(formats) == 0 {
 		formats = model.DefaultForceProxyFormats
 	}
-	seekFormats := st.ForceProxySeekFormats
+	// 按格式强制代理：两层（EmbyProxy / STRM 端点）共用 ForceProxyFormats，
+	// DisableSeekFormatProxy 为统一开关——关闭后两层都不再按格式代理。
+	seekFormats := formats
 	if st.DisableSeekFormatProxy {
 		seekFormats = nil // 显式关闭：原盘按普通格式处理
-	} else if len(seekFormats) == 0 {
-		seekFormats = model.DefaultForceProxySeekFormats
 	}
 	return struct {
 		ForceProxyUaTokens           []string

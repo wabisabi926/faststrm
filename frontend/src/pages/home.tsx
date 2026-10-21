@@ -274,12 +274,29 @@ export default function OverviewPage() {
             <RefreshCw className={`mr-1 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
             刷新
           </Button>
-          <Button size="sm" asChild>
-            <Link to="/task">
-              <ListChecks className="mr-1 h-4 w-4" />
-              管理任务
-            </Link>
-          </Button>
+          {/* 主按钮随状态引导下一步：没账号先加账号，有账号没任务就建任务 */}
+          {accounts.length === 0 ? (
+            <Button size="sm" asChild>
+              <Link to="/account">
+                <Users className="mr-1 h-4 w-4" />
+                添加网盘账号
+              </Link>
+            </Button>
+          ) : tasks.length === 0 ? (
+            <Button size="sm" asChild>
+              <Link to="/task">
+                <ListChecks className="mr-1 h-4 w-4" />
+                新建任务
+              </Link>
+            </Button>
+          ) : (
+            <Button size="sm" asChild>
+              <Link to="/task">
+                <ListChecks className="mr-1 h-4 w-4" />
+                任务管理
+              </Link>
+            </Button>
+          )}
         </div>
       </div>
 

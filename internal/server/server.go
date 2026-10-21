@@ -127,10 +127,12 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	}
 	// 限流参数装配：按「账号 × 用途」分桶，扫描与播放互不抢占配额。
 	// 必须在任何 115 请求发生前调用，否则已创建的令牌桶会固化旧额度。
-	applyRateLimits(initSettings)
+	rate.ApplySettings(initSettings)
 	// 强制代理格式（原盘/TS 等）：可配置，空则回落内置默认值
 	if initSettings != nil {
 		embyproxy.SetForceProxyFormats(initSettings.Strm.ForceProxyFormats)
+		// 按格式强制代理的统一开关（与 STRM 端点层共用同一配置）
+		embyproxy.SetSeekFormatProxyEnabled(!initSettings.Strm.DisableSeekFormatProxy)
 	}
 	embyRefresh := emby.NewMediaServerRefresh(embyClient, embySettingsFn)
 
@@ -370,35 +372,3 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	return nil
 }
 
-// applyRateLimits 把 settings 中的限流参数装配到全局 Registry。
-//
-// 规则：未配置（0）的项回落到 Registry 内置默认值，
-// 这样老版本 settings.json（没有 rateLimit 段）升级后行为等价于新默认值。
-// GlobalCapQpm 传负数表示显式关闭全进程兜底。
-func applyRateLimits(s *model.Settings) {
-	lim := rate.Limits{
-		API115QPM:    rate.RegistryDefaultAPI115QPM,
-		PlaybackQPM:  rate.RegistryDefaultPlaybackQPM,
-		LifeQPM:      rate.RegistryDefaultLifeQPM,
-		GlobalCapQPM: rate.RegistryDefaultGlobalCapQPM,
-	}
-	if s != nil {
-		if v := s.RateLimit.API115Qpm; v > 0 {
-			lim.API115QPM = v
-		}
-		if v := s.RateLimit.PlaybackQpm; v > 0 {
-			lim.PlaybackQPM = v
-		}
-		if v := s.RateLimit.LifeQpm; v > 0 {
-			lim.LifeQPM = v
-		}
-		if v := s.RateLimit.GlobalCapQpm; v < 0 {
-			lim.GlobalCapQPM = 0 // 负数 = 关闭兜底
-		} else if v > 0 {
-			lim.GlobalCapQPM = v
-		}
-	}
-	rate.GetRegistry().Configure(lim)
-	logger.S().Infof("[RateLimit] 分桶限流已装配: api115=%d/min playback=%d/min life=%d/min globalCap=%d/min",
-		lim.API115QPM, lim.PlaybackQPM, lim.LifeQPM, lim.GlobalCapQPM)
-}

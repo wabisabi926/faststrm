@@ -465,7 +465,7 @@ func (h *CommandHandler) handleAccounts(ctx context.Context, chatID string) erro
 		sb.WriteString(fmt.Sprintf("%s <b>%s</b>\n", emoji, acc.Name))
 		sb.WriteString(fmt.Sprintf("\u00a0\u00a0\u00a0Cookie: %s\n\n", cookieState))
 	}
-	sb.WriteString("💡 Cookie 过期时可在 Web UI 账号管理页扫码刷新。")
+	sb.WriteString("💡 Cookie 过期时可在 Web UI「网盘账号」页扫码刷新。")
 	return h.tg().SendMessage(ctx, chatID, sb.String(), "HTML")
 }
 

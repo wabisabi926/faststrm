@@ -16,6 +16,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
 	"github.com/wabisabi926/faststrm/internal/service/embyproxy"
+	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
@@ -660,12 +661,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 			// ====== Download 嵌套对象 ======
 			if body.Download != nil {
-				if body.Download.LinkMaxPerSecond != nil {
-					settings.Download.LinkMaxPerSecond = body.Download.LinkMaxPerSecond
-				}
-				if body.Download.LinkMaxConcurrent != nil {
-					settings.Download.LinkMaxConcurrent = body.Download.LinkMaxConcurrent
-				}
 				if body.Download.DownloadMaxConcurrent != nil {
 					settings.Download.DownloadMaxConcurrent = body.Download.DownloadMaxConcurrent
 				}
@@ -705,9 +700,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				}
 				if body.Strm.ForceProxyFormats != nil {
 					settings.Strm.ForceProxyFormats = body.Strm.ForceProxyFormats
-				}
-				if body.Strm.ForceProxySeekFormats != nil {
-					settings.Strm.ForceProxySeekFormats = body.Strm.ForceProxySeekFormats
 				}
 				if body.Strm.AccountProxyConcurrencyLimit > 0 {
 					settings.Strm.AccountProxyConcurrencyLimit = body.Strm.AccountProxyConcurrencyLimit
@@ -852,6 +844,12 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存失败"})
 			return
 		}
+
+		// 限流参数保存即生效：重建各桶令牌额度，避免必须重启服务
+		rate.ApplySettings(savedSettings)
+		// 按格式强制代理：格式列表 + 两层统一开关，保存即生效
+		embyproxy.SetForceProxyFormats(savedSettings.Strm.ForceProxyFormats)
+		embyproxy.SetSeekFormatProxyEnabled(!savedSettings.Strm.DisableSeekFormatProxy)
 
 		// 返回保存后的聚合（脱敏）供前端对比
 		saved := *savedSettings

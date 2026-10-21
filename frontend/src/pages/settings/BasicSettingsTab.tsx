@@ -1,4 +1,5 @@
 import { useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -161,6 +162,37 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             />
             <p className="text-xs text-muted-foreground">
               用逗号分隔，自动添加点号前缀
+            </p>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <Label>自动下载媒体元数据</Label>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={data.download?.autoDownloadMetadata ?? true}
+                onClick={() =>
+                  setData({
+                    ...data,
+                    download: {
+                      ...(data.download || {}),
+                      autoDownloadMetadata: !(data.download?.autoDownloadMetadata ?? true)
+                    },
+                  })
+                }
+                className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  (data.download?.autoDownloadMetadata ?? true) ? "bg-primary" : "bg-muted"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    (data.download?.autoDownloadMetadata ?? true) ? "translate-x-4" : "translate-x-0.5"
+                  }`}
+                />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              全量同步时自动下载上方扩展名对应的 nfo/jpg/png/srt 等元数据。关闭后只生成 STRM 视频索引文件。
             </p>
           </div>
         </div>
@@ -330,18 +362,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 </p>
               </div>
             </div>
-            <div className="space-y-3">
-              <Label>强制代理的容器/扩展名</Label>
-              <Input
-                value={forceProxyFormatsInput}
-                onChange={(e) => setForceProxyFormatsInput(e.target.value)}
-                placeholder="iso, bdmv, m2ts, ts"
-              />
-              <p className="text-xs text-muted-foreground">
-                逗号分隔，大小写不敏感、点号可省略。这些格式需要服务端代理流（避免 CDN 的 UA/签名导致 Range 被拒）；留空恢复默认值。
-              </p>
-            </div>
-            <div className="space-y-2 rounded-md border p-3">
+            <div className="space-y-3 rounded-md border p-3">
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="disableSeekFormatProxy"
@@ -351,13 +372,26 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   }
                 />
                 <Label htmlFor="disableSeekFormatProxy" className="cursor-pointer">
-                  原盘强制走代理（推荐开启）
+                  按格式强制代理（推荐开启）
                 </Label>
               </div>
               <p className="text-xs text-muted-foreground">
+                开启后，下方列表内的格式在 <b>Emby 反代</b> 和 <b>STRM 端点</b> 两层都走服务端代理——
                 ISO / BDMV / M2TS 等原盘直接 302 到 CDN 常因 UA/签名绑定失败（卡住或无法播放）。
-                开启后由服务端代理，不依赖客户端和反代端口；关闭则回退为 302。
+                关闭后两层都不再按格式代理，原盘也走 302（可能播放失败）。
               </p>
+              <div className="space-y-2 pt-1">
+                <Label>强制代理的容器/扩展名</Label>
+                <Input
+                  value={forceProxyFormatsInput}
+                  onChange={(e) => setForceProxyFormatsInput(e.target.value)}
+                  placeholder="iso, bdmv, m2ts, vob"
+                />
+                <p className="text-xs text-muted-foreground">
+                  逗号分隔，大小写不敏感、点号可省略。两层共用这一份列表；留空恢复默认值
+                  （iso/bdmv/bdav/dvd/bluray/m2ts/vob/ifo/bup，不含 ts）。
+                </p>
+              </div>
             </div>
             <div className="space-y-3 rounded-md border p-3">
               <div className="flex items-center gap-2">
@@ -409,173 +443,103 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
         </details>
       </section>
 
-      {/* 下载限流配置 */}
+
+      {/* 115 请求控制：QPM 分桶 + 并发 */}
       <CollapsibleSection
-        title="下载限流配置"
-        description="控制 115 API 与下载的并发上限"
+        title="115 请求控制"
+        description="按「账号 × 用途」分桶限流，避免扫描与播放互相抢占配额。保存后立即生效。"
       >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="space-y-5">
           <div className="space-y-3">
-            <Label>链接获取每秒请求数</Label>
-            <Input
-              type="number"
-              min="1"
-              max="100"
-              value={data.download?.linkMaxPerSecond || 2}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  download: {
-                    ...(data.download || {}),
-                    linkMaxPerSecond: parseInt(e.target.value) || 2
-                  },
-                })
-              }
-              placeholder="2"
-            />
-            <p className="text-xs text-muted-foreground">取链请求速率上限</p>
+            <h3 className="text-sm font-medium">每账号配额（每分钟）</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>扫描与元数据</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={data.rateLimit?.api115Qpm ?? 60}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      rateLimit: { ...(data.rateLimit || {}), api115Qpm: Math.max(1, parseInt(e.target.value) || 60) },
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">列目录、元数据读取，默认 60</p>
+              </div>
+              <div className="space-y-2">
+                <Label>播放取直链</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={data.rateLimit?.playbackQpm ?? 120}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      rateLimit: { ...(data.rateLimit || {}), playbackQpm: Math.max(1, parseInt(e.target.value) || 120) },
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">起播与 seek 取链，默认 120</p>
+              </div>
+              <div className="space-y-2">
+                <Label>生活事件轮询</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={data.rateLimit?.lifeQpm ?? 60}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      rateLimit: { ...(data.rateLimit || {}), lifeQpm: Math.max(1, parseInt(e.target.value) || 60) },
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  与监控页「轮询间隔」联动：10s 间隔约 6 次/分，默认 60 足够
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="space-y-3">
-            <Label>链接获取并发数</Label>
-            <Input
-              type="number"
-              min="1"
-              max="50"
-              value={data.download?.linkMaxConcurrent || 10}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  download: {
-                    ...(data.download || {}),
-                    linkMaxConcurrent: parseInt(e.target.value) || 10
-                  },
-                })
-              }
-              placeholder="10"
-            />
-            <p className="text-xs text-muted-foreground">同时获取直链的并发上限</p>
-          </div>
-          <div className="space-y-3">
-            <Label>文件下载并发数</Label>
-            <Input
-              type="number"
-              min="1"
-              max="50"
-              value={data.download?.downloadMaxConcurrent || 2}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  download: {
-                    ...(data.download || {}),
-                    downloadMaxConcurrent: parseInt(e.target.value) || 2
-                  },
-                })
-              }
-              placeholder="2"
-            />
-            <p className="text-xs text-muted-foreground">同时下载文件的并发上限</p>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Label>自动下载媒体元数据</Label>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={data.download?.autoDownloadMetadata ?? true}
-              onClick={() =>
-                setData({
-                  ...data,
-                  download: {
-                    ...(data.download || {}),
-                    autoDownloadMetadata: !(data.download?.autoDownloadMetadata ?? true)
-                  },
-                })
-              }
-              className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                (data.download?.autoDownloadMetadata ?? true) ? "bg-primary" : "bg-muted"
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  (data.download?.autoDownloadMetadata ?? true) ? "translate-x-4" : "translate-x-0.5"
-                }`}
-              />
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            全量同步时自动下载 nfo/jpg/png/srt 等媒体元数据文件。关闭后只生成 STRM 视频索引文件。
-          </p>
-        </div>
-
-      </CollapsibleSection>
-
-      {/* 115 API 限流（重启生效） */}
-      <CollapsibleSection
-        title="115 API 限流（重启生效）"
-        description="按「账号 × 用途」分桶，避免扫描与播放互相抢占配额。修改后需要重启服务才会重建令牌桶。"
-      >
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="space-y-2">
-            <Label>常规 API（每分钟/账号）</Label>
-            <Input
-              type="number"
-              min="1"
-              value={data.rateLimit?.api115Qpm ?? 60}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  rateLimit: { ...(data.rateLimit || {}), api115Qpm: Math.max(1, parseInt(e.target.value) || 60) },
-                })
-              }
-            />
-            <p className="text-xs text-muted-foreground">扫描/目录/元数据，默认 60</p>
-          </div>
-          <div className="space-y-2">
-            <Label>播放取链（每分钟/账号）</Label>
-            <Input
-              type="number"
-              min="1"
-              value={data.rateLimit?.playbackQpm ?? 120}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  rateLimit: { ...(data.rateLimit || {}), playbackQpm: Math.max(1, parseInt(e.target.value) || 120) },
-                })
-              }
-            />
-            <p className="text-xs text-muted-foreground">播放直链，默认 120</p>
-          </div>
-          <div className="space-y-2">
-            <Label>生活事件轮询（每分钟/账号）</Label>
-            <Input
-              type="number"
-              min="1"
-              value={data.rateLimit?.lifeQpm ?? 60}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  rateLimit: { ...(data.rateLimit || {}), lifeQpm: Math.max(1, parseInt(e.target.value) || 60) },
-                })
-              }
-            />
-            <p className="text-xs text-muted-foreground">事件轮询，默认 60</p>
-          </div>
-          <div className="space-y-2">
-            <Label>全局请求上限（每分钟）</Label>
-            <Input
-              type="number"
-              min="1"
-              value={data.rateLimit?.globalCapQpm ?? 300}
-              onChange={(e) =>
-                setData({
-                  ...data,
-                  rateLimit: { ...(data.rateLimit || {}), globalCapQpm: Math.max(1, parseInt(e.target.value) || 300) },
-                })
-              }
-            />
-            <p className="text-xs text-muted-foreground">多账号叠加上限，默认 300</p>
+          <div className="space-y-3 border-t pt-4">
+            <h3 className="text-sm font-medium">全局与并发</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>全局兜底上限（每分钟）</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={data.rateLimit?.globalCapQpm ?? 300}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      rateLimit: { ...(data.rateLimit || {}), globalCapQpm: Math.max(1, parseInt(e.target.value) || 300) },
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">多账号叠加时的风控保护，默认 300</p>
+              </div>
+              <div className="space-y-2">
+                <Label>文件下载并发</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={data.download?.downloadMaxConcurrent || 2}
+                  onChange={(e) =>
+                    setData({
+                      ...data,
+                      download: {
+                        ...(data.download || {}),
+                        downloadMaxConcurrent: parseInt(e.target.value) || 2,
+                      },
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">同时下载元数据/关联文件的并发上限，默认 2</p>
+              </div>
+            </div>
           </div>
         </div>
       </CollapsibleSection>
@@ -763,6 +727,14 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </div>
         </div>
       </CollapsibleSection>
+
+      {/* 其他配置入口：这些配置按业务归属在其他页面，这里只做指引 */}
+      <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+        <span>其他配置入口：</span>
+        <Link to="/cleanup" className="text-primary hover:underline">清理策略</Link>
+        <Link to="/notify" className="text-primary hover:underline">Emby / Telegram 通知</Link>
+        <Link to="/account" className="text-primary hover:underline">Cookie 巡检</Link>
+      </div>
 
       <div className="pt-2 flex gap-2 items-center sticky bottom-0 bg-background/95 backdrop-blur-sm py-3 -mx-3 sm:-mx-4 md:-mx-6 px-3 sm:px-4 md:px-6 border-t">
         <Button disabled={saving} onClick={onSave} className="flex-1 sm:flex-initial">

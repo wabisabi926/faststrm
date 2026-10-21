@@ -113,8 +113,6 @@ type CleanupSettings struct {
 
 // DownloadSettings download 子项
 type DownloadSettings struct {
-	LinkMaxPerSecond      *int     `json:"linkMaxPerSecond,omitempty"`
-	LinkMaxConcurrent     *int     `json:"linkMaxConcurrent,omitempty"`
 	DownloadMaxConcurrent *int     `json:"downloadMaxConcurrent,omitempty"`
 	StrmMaxConcurrent     *int     `json:"strmMaxConcurrent,omitempty"` // STRM 写入并发数，默认 20
 	AutoDownloadMetadata  bool     `json:"autoDownloadMetadata"`        // 是否自动下载媒体元数据（nfo/jpg/png 等）
@@ -169,13 +167,15 @@ type StrmSettings struct {
 	// ProxyConcurrency 单次播放的分片并发数，默认 2。
 	// 每个播放请求占用 1 个代理槽位；分片会额外建立 CDN 连接，不等同于槽位数。
 	ProxyConcurrency int `json:"proxyConcurrency"`
-	// ForceProxySeekFormats 在 STRM 端点层就强制代理的原盘扩展名（不含 ts）。
-	// 背景：ISO/BDMV 等镜像走 302 后客户端直连 CDN，Range/UA 绑定极易被拒，
-	// 表现为「有时能播、有时卡住」。这里下沉到 /api/strm 决策层，保证原盘始终走代理。
-	// 与 forceProxyFormats 的区别：后者作用于 Emby 反代层且默认包含 ts（录播）。
-	ForceProxySeekFormats []string `json:"forceProxySeekFormats"`
-	// DisableSeekFormatProxy 关闭「原盘在 STRM 端点层强制代理」。
-	// 关闭后原盘与普通格式一样按 UA 白名单/默认 302 处理（ISO 可能因 CDN 拒绝而播放失败）。
+	// DisableSeekFormatProxy 关闭「按格式强制代理」（两层统一开关）。
+	//
+	// faststrm 有两处按格式强制代理的决策点，二者共用本开关与 ForceProxyFormats：
+	//  1. EmbyProxy 层（Emby 反代拦截 media stream）
+	//  2. STRM 端点层（/api/strm 决策 302 还是代理流）
+	//
+	// 开启（默认）：列表内格式在两层都走服务端代理，保证 ISO/BDMV 等原盘的 Range 不被 CDN 拒绝。
+	// 关闭：两层都不再按格式代理，原盘与普通格式一样走 UA 白名单 / 默认 302
+	//（ISO 可能因 CDN 拒绝而播放失败）。
 	DisableSeekFormatProxy bool `json:"disableSeekFormatProxy"`
 
 	disableRangeProxySet      bool
@@ -208,14 +208,11 @@ func (s *StrmSettings) DisableSeekFormatProxyProvided() bool {
 	return s != nil && s.disableSeekFormatProxySet
 }
 
-// DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）
+// DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）。
+//
+// 两层（EmbyProxy / STRM 端点）共用这一份列表。
+// 不含 ts：ts 是常见录播格式而非原盘，302 通常可用，没必要占 NAS 带宽。
 var DefaultForceProxyFormats = []string{
-	"iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "ts", "vob", "ifo", "bup",
-}
-
-// DefaultForceProxySeekFormats STRM 端点层强制代理的纯原盘格式（不含 ts）。
-// ts 是常见录播格式，302 通常可用，没必要占 NAS 带宽。
-var DefaultForceProxySeekFormats = []string{
 	"iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "vob", "ifo", "bup",
 }
 
@@ -409,7 +406,6 @@ func DefaultSettings() *Settings {
 			AccountProxyConcurrencyLimit: 8,
 			RedirectCheckTimeoutMs:       5000,
 			ForceProxyFormats:            append([]string{}, DefaultForceProxyFormats...),
-			ForceProxySeekFormats:        append([]string{}, DefaultForceProxySeekFormats...),
 			// 分片并发代理默认启用（DisableRangeProxy 零值 false 即启用）
 			ProxyChunkSizeMB: 10,
 			ProxyConcurrency: 2,
