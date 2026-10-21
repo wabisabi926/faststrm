@@ -43,6 +43,8 @@ type StrmCleanupDeps struct {
 	ManagedStrm strm.ManagedRecorder
 	// CloudChecker 删除前云端复核（nil 时，托管文件不会执行删除）
 	CloudChecker CloudAbsenceChecker
+	// TaskHistory 执行记录仓库（供每日维护裁剪超限记录；nil 时跳过裁剪）
+	TaskHistory *db.TaskHistoryRepo
 }
 
 // CloudAbsenceChecker 删除前确认云端仍不存在该 pickcode。

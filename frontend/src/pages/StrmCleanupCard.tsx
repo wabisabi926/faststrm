@@ -32,6 +32,7 @@ import { CleanupLogPanel } from "./strm-cleanup/CleanupLogPanel";
 import { MappingDetailList } from "./strm-cleanup/MappingDetailList";
 import { PendingBatchesSection } from "./strm-cleanup/PendingBatchesSection";
 import { TrashSection } from "./strm-cleanup/TrashSection";
+import { UnmanagedStrmDialog } from "./strm-cleanup/UnmanagedStrmDialog";
 
 export interface StrmCleanupCardProps {
   /** 父级刷新计数：变化时重新拉取待确认批次与回收站（页头「刷新」触发） */
@@ -55,6 +56,7 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
     logs,
     allStale,
     allMissing,
+    allUnmanaged,
     toggleAllStale,
     toggleStale,
     handleScan,
@@ -228,6 +230,7 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
                   这些文件在云端已不存在，但没有出现在托管登记表里（可能是手写、第三方工具生成，或纳管前遗留）。
                   为了避免误删，它们不会进入删除候选，也不会被「全部删除」处理。确认不再需要时请手动清理；
                   若刚升级，历史纳管可能仍在后台进行，稍后重新扫描即可。
+                  <UnmanagedStrmDialog allUnmanaged={allUnmanaged} />
                 </AlertDescription>
               </Alert>
             )}

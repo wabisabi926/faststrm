@@ -240,7 +240,10 @@ func RegisterRoutes(
 		SQLiteDB:     execDeps.SQLiteDB,
 		ManagedStrm:  execDeps.ManagedStrm,
 		CloudChecker: execDeps.CloudChecker,
+		TaskHistory:  taskHistoryRepo,
 	}
+	// 每日维护：清理过期回收站 + 裁剪执行记录（此前只在跑清理/建记录时机会式触发）
+	handler.StartMaintenance(strmCleanupDeps)
 	// P0 注入 cleanupInteraction 到 TG CommandHandler（处理 inline 按钮回调）
 	if cleanupInteraction != nil && notifyDeps.CommandHandler != nil {
 		notifyDeps.CommandHandler.SetCleanupCallbackHandler(cleanupInteraction)

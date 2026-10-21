@@ -49,6 +49,7 @@ export interface UseStrmCleanupResult {
   logs: LogEntry[];
   allStale: StaleStrm[];
   allMissing: MissingStrm[];
+  allUnmanaged: StaleStrm[];
   // 选中态相关
   toggleAllStale: (checked: boolean) => void;
   toggleStale: (key: string, checked: boolean) => void;
@@ -85,6 +86,13 @@ export function useStrmCleanup(
   const allMissing = React.useMemo(() => {
     if (!scanResult) return [] as MissingStrm[];
     return scanResult.mappings.flatMap((m) => m.missingStrms);
+  }, [scanResult]);
+
+  // 未托管 STRM：云端已不存在但不在托管登记表里（手写/第三方/纳管前遗留）。
+  // 只读展示，不进入删除候选——用户需要知道具体是哪些文件才能决定手动处理。
+  const allUnmanaged = React.useMemo(() => {
+    if (!scanResult) return [] as StaleStrm[];
+    return scanResult.mappings.flatMap((m) => m.unmanagedStrms ?? []);
   }, [scanResult]);
 
   const appendLog = (action: string, detail: string, success: boolean) => {
@@ -499,6 +507,7 @@ export function useStrmCleanup(
     logs,
     allStale,
     allMissing,
+    allUnmanaged,
     toggleAllStale,
     toggleStale,
     handleScan,
