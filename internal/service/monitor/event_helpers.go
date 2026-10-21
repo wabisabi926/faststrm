@@ -276,8 +276,16 @@ func (m *Monitor) deleteOldStrmAtLocalPath(
 	oldLocalPath string,
 	config model.LifeMonitorSettings,
 ) {
-	// 检查路径是否存在
+	// 检查路径是否存在；DB 反推的 oldLocalPath 通常是源文件（.mkv），
+	// 实际 STRM 是同目录下的 .strm，需要在原始路径不存在时回退检查它。
 	info, err := os.Stat(oldLocalPath)
+	if err != nil {
+		candidate := filepath.Join(filepath.Dir(oldLocalPath), getStrmFileName(filepath.Base(oldLocalPath)))
+		if _, serr := os.Stat(candidate); serr == nil {
+			oldLocalPath = candidate
+			info, err = os.Stat(oldLocalPath)
+		}
+	}
 	if err != nil {
 		logger.S().Infof("[Monitor] deleteOldStrmAtLocalPath: 路径不存在 %s: %v", oldLocalPath, err)
 		return
@@ -293,12 +301,14 @@ func (m *Monitor) deleteOldStrmAtLocalPath(
 			removeEmptyParents(oldLocalPath, config.PathMappings)
 		}
 	} else {
-		// 单文件：只处理已托管且指纹未变的 STRM
-		delResult, delErr := m.trashManagedStrmFile(ctx, account, oldLocalPath, "")
+		// 单文件：oldLocalPath 是从云端路径反推的本地文件路径，真正的 STRM 是
+		// 同目录下的 {stem}.strm（.iso 保留双扩展名），不能直接对 oldLocalPath 操作。
+		oldStrmPath := filepath.Join(filepath.Dir(oldLocalPath), getStrmFileName(filepath.Base(oldLocalPath)))
+		delResult, delErr := m.trashManagedStrmFile(ctx, account, oldStrmPath, "")
 		if delErr != nil {
-			logger.S().Warnf("[Monitor] deleteOldStrmAtLocalPath: 移入回收站失败 %s: %v", oldLocalPath, delErr)
+			logger.S().Warnf("[Monitor] deleteOldStrmAtLocalPath: 移入回收站失败 %s: %v", oldStrmPath, delErr)
 		} else if !delResult.Moved {
-			logger.S().Infof("[Monitor] deleteOldStrmAtLocalPath: 保留 %s: %s", oldLocalPath, delResult.SkipReason)
+			logger.S().Infof("[Monitor] deleteOldStrmAtLocalPath: 保留 %s: %s", oldStrmPath, delResult.SkipReason)
 		}
 	}
 

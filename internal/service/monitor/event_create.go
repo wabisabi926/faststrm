@@ -72,6 +72,14 @@ func (m *Monitor) createStrmForSingleFile(
 	}
 	strmPath := filepath.Join(localParentDir, strmFileName)
 
+	// 4.4 先读旧路径，再 upsert 新路径。
+	// upsert 是按 (account,file_id) 覆盖 path 的；若先写新路径，后面的“旧路径”查询
+	// 永远只能查到新路径，旧 STRM 清理分支就不会触发。
+	var oldEntry *db.FilePathEntry
+	if m.sqliteDB != nil && in.FileID != "" && in.FileID != "0" {
+		oldEntry, _ = db.GetFileOrFolderEntry(m.sqliteDB, account, in.FileID)
+	}
+
 	// 4.5 先写 DB 记录（对齐参考项目 _create 先 upsert 再生成 STRM）
 	// —— DB 写入必须在 overwrite=never 检查之前，确保已存在的老 STRM 也补录 DB，
 	//       否则 move/rename 反查不到旧路径，旧 STRM 删不掉
@@ -130,14 +138,11 @@ func (m *Monitor) createStrmForSingleFile(
 	m.recordManagedStrm(ctx, strmPath, content, account, in.CloudPath, in.PickCode, in.FileID, "life")
 
 	// 7. 清理同 file_id 的旧 STRM（仅在确定生成新 STRM 时执行，对齐参考项目 create() L1590-1626）
-	// 参考项目行为：检查 DB 中是否已有同 file_id 的旧记录，若旧路径 ≠ 新路径则删除旧 STRM
-	if m.sqliteDB != nil {
-		oldEntry, _ := db.GetFileOrFolderEntry(m.sqliteDB, account, in.FileID)
-		if oldEntry != nil && oldEntry.Path != in.CloudPath {
-			logger.S().Infof("[Monitor] createStrm: 检测到旧STRM fileID=%s oldPath=%s newPath=%s → 清理旧STRM",
-				in.FileID, oldEntry.Path, in.CloudPath)
-			m.cleanupOldStrmByFileID(ctx, account, in.FileID, oldEntry.Path, oldEntry.FileName, in.FileName, config)
-		}
+	// oldEntry 必须是 upsert 之前读取的旧记录；此时 DB 已经被新路径覆盖。
+	if oldEntry != nil && oldEntry.Path != in.CloudPath {
+		logger.S().Infof("[Monitor] createStrm: 检测到旧STRM fileID=%s oldPath=%s newPath=%s → 清理旧STRM",
+			in.FileID, oldEntry.Path, in.CloudPath)
+		m.cleanupOldStrmByFileID(ctx, account, in.FileID, oldEntry.Path, oldEntry.FileName, in.FileName, config)
 	}
 
 	// 9. Emby 刷库（内容未变化时跳过，与任务侧 writeStrmFile 的 unchanged 语义对齐）
