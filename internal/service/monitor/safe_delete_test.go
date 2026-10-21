@@ -11,7 +11,22 @@ import (
 )
 
 type fakeManaged struct {
-	managedPath string
+	managedPath  string
+	managedPaths []string
+	// cloudPath 托管记录里的云端路径；空则用默认值（兼容既有测试）
+	cloudPath string
+}
+
+func (f fakeManaged) isManaged(localPath string) bool {
+	if f.managedPath != "" && localPath == f.managedPath {
+		return true
+	}
+	for _, p := range f.managedPaths {
+		if p == localPath {
+			return true
+		}
+	}
+	return false
 }
 
 func (f fakeManaged) Record(context.Context, strm.ManagedInput) error { return nil }
@@ -23,8 +38,12 @@ func (f fakeManaged) Bootstrap(context.Context, []string, []string) (int, int, e
 	return 0, 0, nil
 }
 func (f fakeManaged) CloudRef(_ context.Context, localPath string) (*strm.ManagedCloudRef, error) {
-	if localPath == f.managedPath {
-		return &strm.ManagedCloudRef{Account: "alice", CloudPath: "/电影/movie.mkv", Pickcode: "d18nbyd6w552vx2zs"}, nil
+	if f.isManaged(localPath) {
+		cp := f.cloudPath
+		if cp == "" {
+			cp = "/电影/movie.mkv"
+		}
+		return &strm.ManagedCloudRef{Account: "alice", CloudPath: cp, Pickcode: "d18nbyd6w552vx2zs"}, nil
 	}
 	return nil, nil
 }

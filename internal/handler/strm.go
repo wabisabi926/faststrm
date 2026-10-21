@@ -180,7 +180,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		}
 
 		// 原盘/seek 格式标记：既用于并发超限时「不降级 302」，也用于诊断日志
-		isSeek := strm.IsSeekFormatName(finalName, routeCfg.ForceProxyFormats)
+		isSeek := strm.IsSeekFormatName(finalName, routeCfg.ForceProxySeekFormats)
 
 		// Proxy 并发数限制 + Bottleneck 拿槽位（集中在子函数里处理，降低 HandleStrm 圈复杂度）
 		if finalDecision == strm.DecisionProxy {

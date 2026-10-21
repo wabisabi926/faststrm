@@ -1083,11 +1083,36 @@ type cloudWalkItem struct {
 // walkCloudTree 递归列出云端目录子树（从 cid 根出发），返回带目录相对路径的扁平条目。
 // 目录下钻用目录自身的 CID；相对路径统一用 / 分隔，后续比对时再转回本地 OS 分隔符。
 func walkCloudTree(ctx context.Context, client *client115.Client, cookie string, cid int64, relBase string, out *[]cloudWalkItem) error {
+	return walkCloudTreeAt(ctx, client, cookie, cid, relBase, out, make(map[int64]struct{}), 0)
+}
+
+const maxCloudWalkDepth = 64
+
+func walkCloudTreeAt(
+	ctx context.Context,
+	client *client115.Client,
+	cookie string,
+	cid int64,
+	relBase string,
+	out *[]cloudWalkItem,
+	visited map[int64]struct{},
+	depth int,
+) error {
+	if depth > maxCloudWalkDepth {
+		return fmt.Errorf("云端目录层级超过 %d 层，已中止（cid=%d）", maxCloudWalkDepth, cid)
+	}
+	if _, ok := visited[cid]; ok {
+		return fmt.Errorf("云端目录检测到循环引用（cid=%d）", cid)
+	}
+	visited[cid] = struct{}{}
 	offset := 0
 	for {
 		resp, err := client.FsFiles(ctx, strconv.FormatInt(cid, 10), 1000, offset, cookie)
 		if err != nil {
 			return fmt.Errorf("walk cloud dir cid=%d: %w", cid, err)
+		}
+		if resp == nil || !resp.State {
+			return fmt.Errorf("walk cloud dir cid=%d: 接口未返回成功状态", cid)
 		}
 		for i := range resp.Data {
 			f := resp.Data[i]
@@ -1107,7 +1132,7 @@ func walkCloudTree(ctx context.Context, client *client115.Client, cookie string,
 				if !ok || subCID <= 0 {
 					continue
 				}
-				if err := walkCloudTree(ctx, client, cookie, subCID, rel, out); err != nil {
+				if err := walkCloudTreeAt(ctx, client, cookie, subCID, rel, out, visited, depth+1); err != nil {
 					return err
 				}
 			}

@@ -75,19 +75,14 @@ func (m *Monitor) syncMetadataFile(
 	if acct == nil || acct.Cookie == "" {
 		return "", fmt.Errorf("账号 %s 缺少 Cookie", account)
 	}
-
 	name := strmutil.SanitizeFileName(event.FileName)
 	if name == "" {
 		return "", fmt.Errorf("文件名无效: %q", event.FileName)
 	}
 	localPath := filepath.Join(localDir, name)
-
-	// 已存在且大小一致 → 跳过
-	if fi, err := os.Stat(localPath); err == nil {
-		if event.FileSize <= 0 || fi.Size() == event.FileSize {
-			logger.S().Debugf("[Monitor] 辅助文件已存在，跳过: %s", localPath)
-			return localPath, nil
-		}
+	if metadataFileUpToDate(localPath, event.FileSize) {
+		logger.S().Debugf("[Monitor] 辅助文件已存在，跳过: %s", localPath)
+		return localPath, nil
 	}
 
 	pickcode := m.resolveEventPickCodeWithRetry(ctx, account, lifeClient, event)
@@ -105,53 +100,70 @@ func (m *Monitor) syncMetadataFile(
 		return "", fmt.Errorf("文件过大（%d 字节），超过辅助文件上限", meta.FileSize)
 	}
 
-	if err := os.MkdirAll(localDir, 0o755); err != nil {
-		return "", fmt.Errorf("mkdir: %w", err)
-	}
-
-	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, meta.URL, nil)
+	written, err := downloadMetadataFile(ctx, meta.URL, acct.Cookie, localDir, localPath)
 	if err != nil {
 		return "", err
 	}
+	logger.S().Infof("[Monitor] 辅助文件已同步: %s (%d 字节)", localPath, written)
+	return localPath, nil
+}
+
+// metadataFileUpToDate 判断本地文件是否已是最新（大小一致或云端未给大小）。
+func metadataFileUpToDate(localPath string, wantSize int64) bool {
+	fi, err := os.Stat(localPath)
+	if err != nil {
+		return false
+	}
+	return wantSize <= 0 || fi.Size() == wantSize
+}
+
+// downloadMetadataFile 下载到 localDir，先写 .part 再原子改名。
+func downloadMetadataFile(ctx context.Context, url, cookie, localDir, localPath string) (int64, error) {
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		return 0, fmt.Errorf("mkdir: %w", err)
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
 	req.Header.Set("User-Agent", client115.DefaultUA)
 	req.Header.Set("Referer", "https://115.com/")
-	req.Header.Set("Cookie", acct.Cookie)
+	req.Header.Set("Cookie", cookie)
 
 	client := &http.Client{Timeout: 3 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("下载失败: %w", err)
+		return 0, fmt.Errorf("下载失败: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return "", fmt.Errorf("下载失败: HTTP %d", resp.StatusCode)
+		return 0, fmt.Errorf("下载失败: HTTP %d", resp.StatusCode)
 	}
 
 	tmp := localPath + ".part"
 	f, err := os.Create(tmp)
 	if err != nil {
-		return "", fmt.Errorf("创建临时文件失败: %w", err)
+		return 0, fmt.Errorf("创建临时文件失败: %w", err)
 	}
 	written, copyErr := io.Copy(f, io.LimitReader(resp.Body, metadataMaxBytes+1))
 	closeErr := f.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmp)
-		return "", fmt.Errorf("写入失败: %w", copyErr)
+		return 0, fmt.Errorf("写入失败: %w", copyErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmp)
-		return "", fmt.Errorf("关闭文件失败: %w", closeErr)
+		return 0, fmt.Errorf("关闭文件失败: %w", closeErr)
 	}
 	if written > metadataMaxBytes {
 		_ = os.Remove(tmp)
-		return "", fmt.Errorf("文件超过辅助文件上限")
+		return 0, fmt.Errorf("文件超过辅助文件上限")
 	}
 	if err := os.Rename(tmp, localPath); err != nil {
 		_ = os.Remove(tmp)
-		return "", fmt.Errorf("重命名失败: %w", err)
+		return 0, fmt.Errorf("重命名失败: %w", err)
 	}
-	logger.S().Infof("[Monitor] 辅助文件已同步: %s (%d 字节)", localPath, written)
-	return localPath, nil
+	return written, nil
 }

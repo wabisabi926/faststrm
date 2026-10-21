@@ -127,6 +127,10 @@ func (c *CloudChecker) loadDir(ctx context.Context, account, parent string) *dir
 		if lerr != nil {
 			return &dirCheckResult{err: fmt.Errorf("复核云端目录 %s 列表失败: %w", parent, lerr)}
 		}
+		// 接口未明确成功时不能把空列表当成“目录为空”；否则会误判文件不存在。
+		if resp == nil || !resp.State {
+			return &dirCheckResult{err: fmt.Errorf("复核云端目录 %s 未返回成功状态", parent)}
+		}
 		for _, item := range resp.Data {
 			if item.PickCode != "" {
 				set[strings.ToLower(item.PickCode)] = struct{}{}

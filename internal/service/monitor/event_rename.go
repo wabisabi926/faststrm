@@ -11,7 +11,6 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== handleRenameEvent：重命名 STRM ====================
@@ -51,18 +50,17 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 					oldStrmPath = m.findLocalStrmByFileName(account, oldFileName, event.FileCategory, config.PathMappings)
 				}
 			}
-			// 备用：用事件新文件名查找（可能找到新 STRM，但如果它不存在则说明还没创建，可以安全删除同名旧 STRM）
-			if oldStrmPath == "" {
-				oldStrmPath = m.findLocalStrmByFileName(account, event.FileName, event.FileCategory, config.PathMappings)
-			}
+			// 不能用新文件名兜底：新 STRM 可能已创建，或命中另一个同名文件。
 			if oldStrmPath != "" {
-				if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
-					logger.S().Warnf("[Monitor] recreate DB无旧路径 清理旧STRM失败 %s: %v", oldStrmPath, err)
-				} else {
-					deletedRelated := deleteRelatedFiles(oldStrmPath)
-					logger.S().Infof("[Monitor] recreate DB无旧路径 旧STRM已清理 %s (关联 %d)", oldStrmPath, deletedRelated)
+				delResult, delErr := m.trashManagedStrmFile(ctx, account, oldStrmPath, oldCloudPath)
+				if delErr != nil {
+					logger.S().Warnf("[Monitor] recreate DB无旧路径 移入回收站失败 %s: %v", oldStrmPath, delErr)
+				} else if delResult.Moved {
+					logger.S().Infof("[Monitor] recreate DB无旧路径 旧STRM已移入回收站 %s (关联 %d)", oldStrmPath, delResult.RelatedMoved)
 					m.appendLog(ctx, account, "rename", true, oldCloudPath, oldStrmPath,
-						fmt.Sprintf("recreate DB无旧路径：旧STRM已清理 %s (关联 %d)", oldStrmPath, deletedRelated))
+						fmt.Sprintf("recreate DB无旧路径：旧STRM已移入回收站 %s (关联 %d)", oldStrmPath, delResult.RelatedMoved))
+				} else {
+					logger.S().Infof("[Monitor] recreate DB无旧路径 保留旧STRM %s: %s", oldStrmPath, delResult.SkipReason)
 				}
 				if config.RemoveEmptyDirs {
 					removeEmptyParents(filepath.Dir(oldStrmPath), config.PathMappings)
@@ -287,11 +285,16 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 				}
 			}
 		}
-		// 2. 删旧 STRM（对齐 L1305: old_strm_path.unlink）
-		if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
+		// 2. 旧 STRM 移入回收站（只处理已托管且指纹未变的文件）
+		delResult, delErr := m.trashManagedStrmFile(ctx, account, oldStrmPath, oldCloudPath)
+		if delErr != nil {
 			m.appendLog(ctx, account, "rename", false, cloudPath, oldStrmPath,
-				fmt.Sprintf("合并场景删除旧 STRM 失败: %v", err))
-			return err
+				fmt.Sprintf("合并场景移入回收站失败: %v", delErr))
+			return delErr
+		}
+		if !delResult.Moved {
+			m.appendLog(ctx, account, "rename", true, oldStrmPath, oldStrmPath,
+				"合并场景保留旧 STRM: "+delResult.SkipReason)
 		}
 		// 3. 关联文件 rename
 		if config.RenameAutoRelatedFiles {

@@ -12,7 +12,6 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/pkg/logger"
-	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== handleDeleteEvent：删除 STRM ====================
@@ -96,15 +95,20 @@ func (m *Monitor) handleDeleteEvent(
 		return nil
 	}
 
-	// 删除 STRM 文件
-	if err := strmutil.DeleteStrmFile(strmPath); err != nil {
+	// 删除 STRM 文件：只处理已托管且指纹未变的文件，移入回收站而不是硬删除
+	delResult, delErr := m.trashManagedStrmFile(ctx, account, strmPath, cloudPath)
+	if delErr != nil {
 		m.appendLog(ctx, account, "delete", false, cloudPath, strmPath,
-			fmt.Sprintf("删除 STRM 失败: %v", err))
-		return fmt.Errorf("删除 STRM 失败: %w", err)
+			fmt.Sprintf("移入回收站失败: %v", delErr))
+		return fmt.Errorf("移入回收站失败: %w", delErr)
 	}
-
-	// 删除相关文件（.nfo/.jpg/.srt 等同名文件）
-	deletedRelated := deleteRelatedFiles(strmPath)
+	if !delResult.Moved {
+		m.appendLog(ctx, account, "delete", true, cloudPath, strmPath,
+			"保留未托管/已变化的 STRM: "+delResult.SkipReason)
+		pollCountsAddSkipped(ctx, "delete_strm_unmanaged_or_changed")
+		return nil
+	}
+	deletedRelated := delResult.RelatedMoved
 
 	// 清理空父目录
 	if config.RemoveEmptyDirs {

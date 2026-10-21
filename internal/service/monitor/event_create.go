@@ -136,7 +136,7 @@ func (m *Monitor) createStrmForSingleFile(
 		if oldEntry != nil && oldEntry.Path != in.CloudPath {
 			logger.S().Infof("[Monitor] createStrm: 检测到旧STRM fileID=%s oldPath=%s newPath=%s → 清理旧STRM",
 				in.FileID, oldEntry.Path, in.CloudPath)
-			m.cleanupOldStrmByFileID(account, in.FileID, oldEntry.Path, oldEntry.FileName, in.FileName, config)
+			m.cleanupOldStrmByFileID(ctx, account, in.FileID, oldEntry.Path, oldEntry.FileName, in.FileName, config)
 		}
 	}
 
@@ -296,21 +296,13 @@ func (m *Monitor) handleCreateEvent(
 		return createErr
 	}
 
-	// 单文件事件
-	in := singleFileCreateInput{
-		CloudPath: cloudPath,
-		FileName:  event.FileName,
-		PickCode:  m.resolveEventPickCodeWithRetry(ctx, account, lifeClient, event),
-		FileSize:  event.FileSize,
-		FileID:    event.FileID,
-		ParentID:  event.ParentID,
-	}
 	// 关键：单文件事件下 mapping.localPath 末段是文件名（前缀匹配拼入），
 	// 需回收一级到父目录（对齐参考项目取 file_path.parent），否则会多拼一层同名目录。
 	// 精确匹配(映射根)时 singleFileParentDir 返回原值。
 	localParentDir := singleFileParentDir(mapping)
 
-	// 字幕/nfo/海报等辅助文件：不生成 STRM，直接下载到本地（网盘后续补字幕自动同步）
+	// 字幕/nfo/海报等辅助文件：不生成 STRM，直接下载到本地（网盘后续补字幕自动同步）。
+	// 必须在构造单文件输入前判断，避免为辅助文件白解析一次 pickcode。
 	if m.isDownloadExtFile(event.FileName) {
 		path, derr := m.syncMetadataFile(ctx, account, event, localParentDir, lifeClient)
 		if derr != nil {
@@ -322,6 +314,15 @@ func (m *Monitor) handleCreateEvent(
 		return nil
 	}
 
+	// 单文件事件
+	in := singleFileCreateInput{
+		CloudPath: cloudPath,
+		FileName:  event.FileName,
+		PickCode:  m.resolveEventPickCodeWithRetry(ctx, account, lifeClient, event),
+		FileSize:  event.FileSize,
+		FileID:    event.FileID,
+		ParentID:  event.ParentID,
+	}
 	strmPath, err := m.createStrmForSingleFile(ctx, account, in, localParentDir, "文件")
 	if err != nil {
 		m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath, err.Error())

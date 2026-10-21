@@ -440,10 +440,10 @@ func (c *Client) FsFiles(
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parse fs_files response: %w (body=%s)", err, truncate(body, 512))
 	}
-	// state=false 且带错误码/文案：按类型化错误返回，避免调用方把失败当成「空目录」而漏扫。
-	// 用 ErrNo/ErrMsg/Error 守卫：兼容部分测试/旧响应缺失 state 字段（缺省 false）的情况。
-	if !resp.State && (resp.ErrNo != 0 || resp.ErrMsg != "" || resp.Error != "") {
-		return nil, newAPIError(resp.ErrNo, firstNonEmpty(resp.ErrMsg, resp.Error))
+	// state=false 一律视为失败：不能把接口拒绝/风控/网关异常当成空目录，
+	// 否则清理预览与删前复核会把整个目录判为空并误删本地 STRM。
+	if !resp.State {
+		return nil, newAPIError(resp.ErrNo, firstNonEmpty(resp.ErrMsg, resp.Error, "state=false"))
 	}
 	// 标记目录
 	// 115 web API:
@@ -598,8 +598,8 @@ func (c *Client) FsFilesAll(
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parse fs_files_all response: %w (body=%s)", err, truncate(body, 512))
 	}
-	if !resp.State && (int64(resp.ErrNo) != 0 || resp.ErrMsg != "" || resp.Error != "") {
-		return nil, newAPIError(int(resp.ErrNo), firstNonEmpty(resp.ErrMsg, resp.Error))
+	if !resp.State {
+		return nil, newAPIError(int(resp.ErrNo), firstNonEmpty(resp.ErrMsg, resp.Error, "state=false"))
 	}
 	return &resp, nil
 }

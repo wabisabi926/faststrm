@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeCDN 模拟 115 CDN：支持 Range，返回 206 + Content-Range。
@@ -303,5 +305,152 @@ func TestRangeProxyOptions_Normalize(t *testing.T) {
 	}
 	if !strings.HasPrefix(f.headers["User-Agent"], "test") {
 		t.Fatal("headers should be preserved")
+	}
+}
+
+func TestRangeChunkFetcher_RejectsUnexpectedContentRange(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", "bytes 0-9/100")
+		w.Header().Set("Content-Length", "10")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(make([]byte, 10))
+	}))
+	defer srv.Close()
+
+	f := newRangeChunkFetcher(srv.URL, nil, http.DefaultClient, 1<<20, 2, nil)
+	if _, err := f.fetch(context.Background(), 10, 19); err == nil {
+		t.Fatal("mismatched Content-Range must be rejected")
+	}
+}
+
+func TestRangeChunkFetcher_RejectsShortContentLength(t *testing.T) {
+	body := io.NopCloser(bytes.NewReader(make([]byte, 10)))
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusPartialContent,
+			Header:        http.Header{"Content-Range": []string{"bytes 0-9/100"}},
+			Body:          body,
+			ContentLength: 5,
+			Request:       req,
+		}, nil
+	})
+	f := newRangeChunkFetcher("http://cdn", nil, &http.Client{Transport: rt}, 1<<20, 2, nil)
+	if _, err := f.fetch(context.Background(), 0, 9); err == nil {
+		t.Fatal("short Content-Length must be rejected")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestRangeChunkFetcher_RefreshIsSingleflight(t *testing.T) {
+	var mu sync.Mutex
+	failures := 4
+	var refreshCalls int
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		fail := failures > 0
+		if fail {
+			failures--
+		}
+		mu.Unlock()
+		if fail {
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("busy")),
+				Request:    req,
+			}, nil
+		}
+		var start, end int64
+		if _, err := fmt.Sscanf(req.Header.Get("Range"), "bytes=%d-%d", &start, &end); err != nil {
+			return nil, err
+		}
+		data := make([]byte, end-start+1)
+		return &http.Response{
+			StatusCode: http.StatusPartialContent,
+			Header: http.Header{
+				"Content-Range": []string{fmt.Sprintf("bytes %d-%d/1000", start, end)},
+			},
+			Body:          io.NopCloser(bytes.NewReader(data)),
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	refresh := func(context.Context) (string, error) {
+		mu.Lock()
+		refreshCalls++
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		return "http://cdn", nil
+	}
+	f := newRangeChunkFetcher("http://cdn", nil, &http.Client{Transport: rt}, 10, 4, refresh)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resp, err := f.fetch(context.Background(), int64(i*10), int64(i*10+9))
+			if err == nil {
+				resp.Body.Close()
+			}
+		}(i)
+	}
+	wg.Wait()
+	mu.Lock()
+	got := refreshCalls
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("concurrent refresh should be singleflight, got %d calls", got)
+	}
+}
+
+type trackedBody struct {
+	reader io.Reader
+	closed *atomic.Int32
+	once   sync.Once
+}
+
+func (b *trackedBody) Read(p []byte) (int, error) { return b.reader.Read(p) }
+func (b *trackedBody) Close() error {
+	b.once.Do(func() { b.closed.Add(1) })
+	return nil
+}
+
+func TestStreamRemaining_ClosesBodiesWhenChunkFails(t *testing.T) {
+	var opened, closed atomic.Int32
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var start, end int64
+		if _, err := fmt.Sscanf(req.Header.Get("Range"), "bytes=%d-%d", &start, &end); err != nil {
+			return nil, err
+		}
+		opened.Add(1)
+		if start == 20 {
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     make(http.Header),
+				Body:       &trackedBody{reader: strings.NewReader("fail"), closed: &closed},
+				Request:    req,
+			}, nil
+		}
+		data := make([]byte, end-start+1)
+		return &http.Response{
+			StatusCode: http.StatusPartialContent,
+			Header: http.Header{
+				"Content-Range": []string{fmt.Sprintf("bytes %d-%d/40", start, end)},
+			},
+			Body:          &trackedBody{reader: bytes.NewReader(data), closed: &closed},
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	f := newRangeChunkFetcher("http://cdn", nil, &http.Client{Transport: rt}, 10, 4, nil)
+	if _, err := f.streamRemaining(context.Background(), io.Discard, 0, 39); err == nil {
+		t.Fatal("chunk failure should abort stream")
+	}
+	if got, want := closed.Load(), opened.Load(); got != want {
+		t.Fatalf("all fetched bodies must be closed: opened=%d closed=%d", want, got)
 	}
 }

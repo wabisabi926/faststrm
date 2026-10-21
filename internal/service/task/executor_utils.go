@@ -466,9 +466,15 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 					break
 				}
 			}
-			// 每目录对账：累计返回条目数与 API 的 count 不一致时告警，便于现场定位漏扫
+			// 每目录对账：累计返回条目数与 API 的 count 不一致时，不能只告警后继续清理。
+			// 根目录不完整直接失败；子目录记入 FailedDirs，清理对账会跳过整个子树。
 			if expectedCount > 0 && offset < expectedCount {
-				logger.S().Warnf("[listAllFilesRecursive] cid=%d relPath=%q 分页未取全: returned=%d count=%d（疑似漏扫）", top.cid, top.relPath, offset, expectedCount)
+				msg := fmt.Sprintf("cid=%d relPath=%q 分页未取全: returned=%d count=%d", top.cid, top.relPath, offset, expectedCount)
+				if top.relPath == "" {
+					return nil, fmt.Errorf("根目录分页不完整，已中止本次扫描: %s", msg)
+				}
+				logger.S().Warnf("[listAllFilesRecursive] %s（其下 STRM 本次不参与清理对账）", msg)
+				failedDirs = append(failedDirs, top.relPath)
 			}
 			logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q pageMatched=%d returned=%d count=%d", top.cid, top.relPath, pageMatched, offset, expectedCount)
 		}

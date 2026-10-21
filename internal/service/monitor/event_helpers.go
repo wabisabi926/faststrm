@@ -122,11 +122,11 @@ func (m *Monitor) cleanupOldStrmForOtherToMedia(
 
 	if foundPath != "" {
 		logger.S().Infof("[Monitor] OTHER_TO_MEDIA 清理旧STRM: 找到路径=%s (searchName=%s)", foundPath, searchName)
-		if err := strmutil.DeleteStrmFile(foundPath); err != nil {
-			logger.S().Warnf("[Monitor] OTHER_TO_MEDIA 清理旧STRM失败 %s: %v", foundPath, err)
-		} else {
-			deletedRelated := deleteRelatedFiles(foundPath)
-			logger.S().Infof("[Monitor] OTHER_TO_MEDIA 旧STRM已清理 %s (关联 %d)", foundPath, deletedRelated)
+		delResult, delErr := m.trashManagedStrmFile(ctx, account, foundPath, oldCloudPath)
+		if delErr != nil {
+			logger.S().Warnf("[Monitor] OTHER_TO_MEDIA 移入回收站失败 %s: %v", foundPath, delErr)
+		} else if delResult.Moved {
+			logger.S().Infof("[Monitor] OTHER_TO_MEDIA 旧STRM已移入回收站 %s (关联 %d)", foundPath, delResult.RelatedMoved)
 			if config.RemoveEmptyDirs {
 				removeEmptyParents(filepath.Dir(foundPath), config.PathMappings)
 			}
@@ -135,6 +135,8 @@ func (m *Monitor) cleanupOldStrmForOtherToMedia(
 					logger.S().Warnf("[Monitor] OTHER_TO_MEDIA 清理DB失败 %s: %v", event.FileID, derr)
 				}
 			}
+		} else {
+			logger.S().Infof("[Monitor] OTHER_TO_MEDIA 保留旧STRM %s: %s", foundPath, delResult.SkipReason)
 		}
 	}
 }
@@ -149,32 +151,27 @@ func (m *Monitor) deleteOldStrmAssetsAtPath(
 	config model.LifeMonitorSettings,
 ) {
 	if event.FileCategory == 0 {
-		// 文件夹：删除目录下所有 .strm 文件及关联资源
+		// 文件夹：只处理目录内已托管的 STRM（递归），全部移入回收站
 		oldDir := oldLocalPath
 		if _, err := os.Stat(oldDir); os.IsNotExist(err) {
 			return
 		}
-		strmFiles, err := filepath.Glob(filepath.Join(oldDir, "*.strm"))
-		if err != nil {
-			return
-		}
-		for _, sp := range strmFiles {
-			if err := strmutil.DeleteStrmFile(sp); err == nil {
-				deleteRelatedFiles(sp)
-			}
+		if _, err := m.deleteManagedStrmTree(ctx, account, oldDir); err != nil {
+			logger.S().Warnf("[Monitor] OTHER_TO_MEDIA 安全清理目录失败 %s: %v", oldDir, err)
 		}
 		if config.RemoveEmptyDirs {
 			removeEmptyParents(oldDir, config.PathMappings)
 		}
 	} else {
-		// 单文件：删除 .strm 及关联资源
+		// 单文件：只处理已托管且指纹未变的 STRM，移入回收站
 		oldDir := filepath.Dir(oldLocalPath)
 		oldFileName := filepath.Base(oldLocalPath)
 		oldStrmPath := filepath.Join(oldDir, getStrmFileName(oldFileName))
-		if _, err := os.Stat(oldStrmPath); err == nil {
-			if err := strmutil.DeleteStrmFile(oldStrmPath); err == nil {
-				deleteRelatedFiles(oldStrmPath)
-			}
+		delResult, delErr := m.trashManagedStrmFile(ctx, account, oldStrmPath, oldCloudPath)
+		if delErr != nil {
+			logger.S().Warnf("[Monitor] OTHER_TO_MEDIA 移入回收站失败 %s: %v", oldStrmPath, delErr)
+		} else if !delResult.Moved {
+			logger.S().Infof("[Monitor] OTHER_TO_MEDIA 保留旧STRM %s: %s", oldStrmPath, delResult.SkipReason)
 		}
 		if config.RemoveEmptyDirs {
 			removeEmptyParents(oldDir, config.PathMappings)
@@ -208,6 +205,7 @@ func localNameMatches(localName, cloudName string) bool {
 //  2. 如果找不到，在 MediaMountPath 扩展目录中按文件名搜索
 //  3. 如果还找不到，在当前映射目录中按文件名搜索
 func (m *Monitor) cleanupOldStrmByFileID(
+	ctx context.Context,
 	account string,
 	fileID string,
 	oldCloudPath string,
@@ -222,7 +220,7 @@ func (m *Monitor) cleanupOldStrmByFileID(
 	oldLocalPath, _ := resolveOldLocalPath(oldCloudPath, config.PathMappings, account)
 	if oldLocalPath != "" {
 		logger.S().Infof("[Monitor] cleanupOldStrm: 方式1命中 oldLocalPath=%s", oldLocalPath)
-		m.deleteOldStrmAtLocalPath(account, fileID, oldLocalPath, config)
+		m.deleteOldStrmAtLocalPath(ctx, account, fileID, oldLocalPath, config)
 		return
 	}
 
@@ -250,7 +248,7 @@ func (m *Monitor) cleanupOldStrmByFileID(
 					strmFiles, _ := filepath.Glob(filepath.Join(candidate, "*.strm"))
 					if len(strmFiles) > 0 {
 						logger.S().Infof("[Monitor] cleanupOldStrm: 方式2命中 MediaMountPath=%s candidate=%s", mountDir, candidate)
-						m.deleteOldStrmAtLocalPath(account, fileID, candidate, config)
+						m.deleteOldStrmAtLocalPath(ctx, account, fileID, candidate, config)
 						return
 					}
 				}
@@ -260,13 +258,10 @@ func (m *Monitor) cleanupOldStrmByFileID(
 
 	// 方式3：在当前映射目录 + 扩展目录中按文件名搜索
 	foundPath := m.findLocalStrmByFileName(account, oldFileName, 1, config.PathMappings, config.MediaMountPath...)
-	if foundPath == "" && oldFileName != newFileName {
-		foundPath = m.findLocalStrmByFileName(account, newFileName, 1, config.PathMappings, config.MediaMountPath...)
-	}
 	if foundPath != "" {
 		logger.S().Infof("[Monitor] cleanupOldStrm: 方式3命中 foundPath=%s", foundPath)
 		// foundPath 是 .strm 文件路径，取其父目录
-		m.deleteOldStrmAtLocalPath(account, fileID, filepath.Dir(foundPath), config)
+		m.deleteOldStrmAtLocalPath(ctx, account, fileID, filepath.Dir(foundPath), config)
 		return
 	}
 
@@ -275,6 +270,7 @@ func (m *Monitor) cleanupOldStrmByFileID(
 
 // deleteOldStrmAtLocalPath 在指定本地路径删除旧 STRM 及其关联资源
 func (m *Monitor) deleteOldStrmAtLocalPath(
+	ctx context.Context,
 	account string,
 	fileID string,
 	oldLocalPath string,
@@ -288,27 +284,21 @@ func (m *Monitor) deleteOldStrmAtLocalPath(
 	}
 
 	if info.IsDir() {
-		// 文件夹：删除目录下所有 .strm 文件
-		strmFiles, err := filepath.Glob(filepath.Join(oldLocalPath, "*.strm"))
-		if err != nil {
-			return
-		}
-		for _, sp := range strmFiles {
-			if delErr := strmutil.DeleteStrmFile(sp); delErr == nil {
-				deletedRelated := deleteRelatedFiles(sp)
-				logger.S().Infof("[Monitor] deleteOldStrmAtLocalPath: 已删除 %s (关联 %d)", sp, deletedRelated)
-			} else {
-				logger.S().Warnf("[Monitor] deleteOldStrmAtLocalPath: 删除失败 %s: %v", sp, delErr)
-			}
+		// 文件夹：只处理目录内已托管的 STRM（递归），全部移入回收站
+		if _, delErr := m.deleteManagedStrmTree(ctx, account, oldLocalPath); delErr != nil {
+			logger.S().Warnf("[Monitor] deleteOldStrmAtLocalPath: 安全清理目录失败 %s: %v", oldLocalPath, delErr)
 		}
 		// 清理空目录
 		if config.RemoveEmptyDirs {
 			removeEmptyParents(oldLocalPath, config.PathMappings)
 		}
 	} else {
-		// 单文件：直接删除
-		if delErr := strmutil.DeleteStrmFile(oldLocalPath); delErr == nil {
-			deleteRelatedFiles(oldLocalPath)
+		// 单文件：只处理已托管且指纹未变的 STRM
+		delResult, delErr := m.trashManagedStrmFile(ctx, account, oldLocalPath, "")
+		if delErr != nil {
+			logger.S().Warnf("[Monitor] deleteOldStrmAtLocalPath: 移入回收站失败 %s: %v", oldLocalPath, delErr)
+		} else if !delResult.Moved {
+			logger.S().Infof("[Monitor] deleteOldStrmAtLocalPath: 保留 %s: %s", oldLocalPath, delResult.SkipReason)
 		}
 	}
 
@@ -567,13 +557,6 @@ func (m *Monitor) downloadRelatedFile(
 		return fmt.Errorf("落盘失败 %s: %w", savePath, err)
 	}
 	return nil
-}
-
-// deleteRelatedFiles 删除 STRM 同名的关联文件（nfo/海报/字幕）。
-// 实现在 pkg/strmutil，带扩展名白名单：只删元数据与字幕，绝不碰 .mkv/.mp4 等视频文件
-// （用户可能把真实文件与 STRM 放在同一目录）。
-func deleteRelatedFiles(strmPath string) int {
-	return strmutil.DeleteRelatedFiles(strmPath, strmutil.DefaultRelatedExts)
 }
 
 // appendLog 追加事件处理日志

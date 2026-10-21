@@ -108,6 +108,10 @@ func fetchFullListPages(
 		offset += len(resp.Data)
 	}
 
+	if expected == 0 && seen > 0 {
+		// count 缺失时无法证明清单完整；清理对账宁可用较慢的 DFS，也不能用可能残缺的集合。
+		return seen, expected, fmt.Errorf("全量清单缺少 count，无法确认完整性（实得 %d 个）", seen)
+	}
 	if expected > 0 && seen < expected {
 		return seen, expected, fmt.Errorf("全量清单不完整：服务端声明 %d 个文件，实际只取到 %d 个", expected, seen)
 	}

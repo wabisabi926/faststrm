@@ -91,15 +91,23 @@ func (m *Monitor) handleMoveOutEvent(
 		return nil
 	}
 
-	// 文件移出：删除旧 STRM + 关联资源（P1-5 Delete 安全兜底）
+	// 文件移出：只处理已托管且指纹未变的旧 STRM，移入回收站
 	strmFileName := getStrmFileName(filepath.Base(oldLocalPath))
 	strmPath := filepath.Join(filepath.Dir(oldLocalPath), strmFileName)
-	if err := strmutil.DeleteStrmFile(strmPath); err != nil {
+	delResult, delErr := m.trashManagedStrmFile(ctx, account, strmPath, oldCloudPath)
+	if delErr != nil {
 		m.appendLog(ctx, account, "move-out", false, oldCloudPath, strmPath,
-			fmt.Sprintf("移出映射删除 STRM 失败: %v", err))
-		return fmt.Errorf("移出映射删除 STRM 失败: %w", err)
+			fmt.Sprintf("移出映射移入回收站失败: %v", delErr))
+		return fmt.Errorf("移出映射移入回收站失败: %w", delErr)
 	}
-	deletedRelated := deleteRelatedFiles(strmPath)
+	if !delResult.Moved {
+		m.appendLog(ctx, account, "move-out", true, oldCloudPath, strmPath,
+			"保留旧 STRM: "+delResult.SkipReason)
+	} else {
+		m.appendLog(ctx, account, "move-out", true, oldCloudPath, strmPath,
+			fmt.Sprintf("移出映射：旧 STRM 已移入回收站 %s", delResult.TrashPath))
+	}
+	deletedRelated := delResult.RelatedMoved
 	if config.RemoveEmptyDirs {
 		removeEmptyParents(filepath.Dir(strmPath), config.PathMappings)
 	}
@@ -156,12 +164,13 @@ func (m *Monitor) cleanupOldStrmAssets(
 			fmt.Sprintf("recreate 模式：旧目录已清理 %s", oldLocalPath))
 		return
 	}
-	// 文件：删除旧 STRM + 关联资源 + DB 按 fileID 清理（P1-5 Delete 安全兜底）
+	// 文件：只处理已托管且指纹未变的旧 STRM，移入回收站
 	oldStrmPath := filepath.Join(filepath.Dir(oldLocalPath), getStrmFileName(filepath.Base(oldLocalPath)))
-	if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
-		logger.S().Warnf("[Monitor] recreate 清理旧 STRM 失败 %s: %v", oldStrmPath, err)
+	delResult, delErr := m.trashManagedStrmFile(ctx, account, oldStrmPath, oldCloudPath)
+	if delErr != nil {
+		logger.S().Warnf("[Monitor] recreate 移入回收站失败 %s: %v", oldStrmPath, delErr)
 	}
-	deletedRelated := deleteRelatedFiles(oldStrmPath)
+	deletedRelated := delResult.RelatedMoved
 	if config.RemoveEmptyDirs {
 		removeEmptyParents(filepath.Dir(oldStrmPath), config.PathMappings)
 	}
@@ -403,16 +412,15 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 					oldStrmPath = m.findLocalStrmByFileName(account, oldFileName, event.FileCategory, config.PathMappings)
 				}
 			}
-			// 备用：用事件新文件名查找（可能找到新 STRM，但如果它不存在则说明还没创建，可以安全删除同名旧 STRM）
-			if oldStrmPath == "" {
-				oldStrmPath = m.findLocalStrmByFileName(account, event.FileName, event.FileCategory, config.PathMappings)
-			}
+			// 不能用新文件名兜底：新 STRM 可能已创建，或命中另一个同名文件。
 			if oldStrmPath != "" {
-				if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
-					logger.S().Warnf("[Monitor] recreate DB无旧路径 清理旧STRM失败 %s: %v", oldStrmPath, err)
+				delResult, delErr := m.trashManagedStrmFile(ctx, account, oldStrmPath, oldCloudPath)
+				if delErr != nil {
+					logger.S().Warnf("[Monitor] recreate DB无旧路径 移入回收站失败 %s: %v", oldStrmPath, delErr)
+				} else if delResult.Moved {
+					logger.S().Infof("[Monitor] recreate DB无旧路径 旧STRM已移入回收站 %s (关联 %d)", oldStrmPath, delResult.RelatedMoved)
 				} else {
-					deletedRelated := deleteRelatedFiles(oldStrmPath)
-					logger.S().Infof("[Monitor] recreate DB无旧路径 旧STRM已清理 %s (关联 %d)", oldStrmPath, deletedRelated)
+					logger.S().Infof("[Monitor] recreate DB无旧路径 保留旧STRM %s: %s", oldStrmPath, delResult.SkipReason)
 				}
 				if config.RemoveEmptyDirs {
 					removeEmptyParents(filepath.Dir(oldStrmPath), config.PathMappings)
@@ -704,10 +712,15 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 				}
 			}
 		}
-		if err := strmutil.DeleteStrmFile(oldStrmPath); err != nil {
+		delResult, delErr := m.trashManagedStrmFile(ctx, account, oldStrmPath, oldCloudPath)
+		if delErr != nil {
 			m.appendLog(ctx, account, "move", false, cloudPath, oldStrmPath,
-				fmt.Sprintf("合并场景删除旧 STRM 失败: %v", err))
-			return err
+				fmt.Sprintf("合并场景移入回收站失败: %v", delErr))
+			return delErr
+		}
+		if !delResult.Moved {
+			m.appendLog(ctx, account, "move", true, cloudPath, oldStrmPath,
+				"合并场景保留旧 STRM: "+delResult.SkipReason)
 		}
 		// 关联文件迁移
 		if config.MoveLocalMoveRelatedFiles {

@@ -92,6 +92,19 @@ func TestFetchFullListPages_TerminatesOnEmptyPage(t *testing.T) {
 	}
 }
 
+func TestFetchFullListPages_MissingCountFails(t *testing.T) {
+	fetch := func(ctx context.Context, offset, limit int) (*client115.FsFilesAllResp, error) {
+		if offset == 0 {
+			return &client115.FsFilesAllResp{State: true, Data: mkEntries(0, 1)}, nil
+		}
+		return &client115.FsFilesAllResp{State: true}, nil
+	}
+	_, _, err := fetchFullListPages(context.Background(), fetch, 2, nil)
+	if err == nil || !strings.Contains(err.Error(), "缺少 count") {
+		t.Fatalf("缺少 count 应拒绝清单，实际 err=%v", err)
+	}
+}
+
 func TestFetchFullListPages_IncompleteListFails(t *testing.T) {
 	fetch := func(ctx context.Context, offset, limit int) (*client115.FsFilesAllResp, error) {
 		if offset == 0 {

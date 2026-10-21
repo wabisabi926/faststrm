@@ -28,16 +28,20 @@ func (m *Monitor) trashManagedStrmFile(
 	if m.managed == nil {
 		return managedFileDeleteResult{SkipReason: "未启用托管索引"}, nil
 	}
-	pc, err := strmutil.ExtractPickcode(strmPath)
-	if err != nil || pc == "" {
-		return managedFileDeleteResult{SkipReason: "未托管或 pickcode 无法解析"}, nil
-	}
 	ref, err := m.managed.CloudRef(ctx, strmPath)
 	if err != nil {
 		return managedFileDeleteResult{SkipReason: "托管记录读取失败: " + err.Error()}, nil
 	}
 	if ref == nil {
 		return managedFileDeleteResult{SkipReason: "未托管 STRM"}, nil
+	}
+	pc, _ := strmutil.ExtractPickcode(strmPath)
+	if pc == "" {
+		// 托管记录已证明归属；内容无 pickcode 时用记录里的 pickcode 做指纹复核。
+		pc = ref.Pickcode
+	}
+	if pc == "" {
+		return managedFileDeleteResult{SkipReason: "pickcode 无法解析"}, nil
 	}
 	if expectedCloudPath != "" && ref.CloudPath != "" &&
 		normalizeCloudPath(ref.CloudPath) != normalizeCloudPath(expectedCloudPath) {
@@ -51,6 +55,9 @@ func (m *Monitor) trashManagedStrmFile(
 		return managedFileDeleteResult{SkipReason: "文件内容或归属已变化"}, nil
 	}
 
+	if m.settingsFn == nil {
+		return managedFileDeleteResult{SkipReason: "监控配置未初始化"}, nil
+	}
 	config := m.settingsFn()
 	root := mappingRootForLocalPath(filepath.Dir(strmPath), config.PathMappings, account)
 	if root == "" {

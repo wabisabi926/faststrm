@@ -55,8 +55,11 @@ func (m *Monitor) deleteManagedStrmTree(ctx context.Context, account, dir string
 			logger.S().Infof("[Monitor] 安全删除跳过未托管 STRM: %s", strmPath)
 			continue
 		}
-		pc, pcErr := strmutil.ExtractPickcode(strmPath)
-		if pcErr != nil || pc == "" {
+		pc, _ := strmutil.ExtractPickcode(strmPath)
+		if pc == "" {
+			pc = ref.Pickcode
+		}
+		if pc == "" {
 			logger.S().Infof("[Monitor] 安全删除跳过无法解析 pickcode 的 STRM: %s", strmPath)
 			continue
 		}

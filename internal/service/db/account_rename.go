@@ -22,6 +22,8 @@ func RenameAccountData(dbConn *sql.DB, oldName, newName string) (map[string]int6
 		{"files", `UPDATE OR REPLACE files SET account = ? WHERE account = ?`},
 		{"folders", `UPDATE OR REPLACE folders SET account = ? WHERE account = ?`},
 		{"life_event_cursor", `UPDATE OR REPLACE life_event_cursor SET account = ? WHERE account = ?`},
+		// 托管记录是实时所有权状态，不是历史事实；不改会继续用旧账号做云端复核。
+		{"managed_strms", `UPDATE OR REPLACE managed_strms SET account = ? WHERE account = ?`},
 	}
 	var firstErr error
 	for _, t := range tables {

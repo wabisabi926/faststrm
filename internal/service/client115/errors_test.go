@@ -48,6 +48,22 @@ func TestFsFiles_StateFalseAuthError(t *testing.T) {
 	}
 }
 
+// state=false 但没有 errno/文案时也必须是错误，不能当成空目录。
+func TestFsFiles_StateFalseWithoutMessageFails(t *testing.T) {
+	trips := []*mockTrip{{
+		Path:       "/files",
+		BodyString: `{"state":false,"data":[]}`,
+	}}
+	c := newMockClient(t, trips)
+
+	if _, err := c.FsFiles(context.Background(), "0", 10, 0, "UID=x;CID=y"); err == nil {
+		t.Fatal("state=false 无错误文案也必须返回错误")
+	}
+	if _, err := c.FsFilesAll(context.Background(), "0", 10, 0, "UID=x;CID=y"); err == nil {
+		t.Fatal("FsFilesAll state=false 无错误文案也必须返回错误")
+	}
+}
+
 func TestClassifyAPIError(t *testing.T) {
 	cases := []struct {
 		name  string

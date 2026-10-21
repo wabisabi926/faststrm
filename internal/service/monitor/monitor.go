@@ -558,21 +558,21 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 			break
 		}
 
-		// P1-5: 游标成对推进（对齐参考项目 once_pull 的 return_from_id/return_from_time）
-		// 逆序后按时间正序处理，最后处理的事件即本批次最新事件
-		// 游标始终取自同一事件的 (id, update_time)，避免独立取 max(id)/max(time) 拼出虚拟游标
-		eid, _ := strconv.ParseInt(event.ID, 10, 64)
-		etime := event.UpdateTime
-		if eid > 0 {
-			cursorID = eid
-			cursorTime = etime
-		}
-
 		counts.AddEntered()
 		if err := m.processEvent(ctx2, account, event, lifeClient); err != nil {
 			counts.AddError(err)
 			logger.S().Warnf("[Monitor] 处理事件失败 account=%s type=%d file=%s: %v",
 				account, event.Type, event.FileName, err)
+			// 游标不能越过失败事件：下一轮从同一位置重新拉取，避免事件永久丢失。
+			break
+		}
+
+		// P1-5: 游标成对推进（对齐参考项目 once_pull 的 return_from_id/return_from_time）
+		// 逆序后按时间正序处理，最后成功处理的事件即本批次最新事件。
+		// 游标始终取自同一事件的 (id, update_time)，避免独立取 max(id)/max(time) 拼出虚拟游标。
+		if eid, _ := strconv.ParseInt(event.ID, 10, 64); eid > 0 {
+			cursorID = eid
+			cursorTime = event.UpdateTime
 		}
 	}
 
@@ -586,7 +586,7 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 		if cursorID > 0 {
 			accMon.fromID = cursorID
 			accMon.fromTime = cursorTime
-		} else if accMon.fromTime == 0 && accMon.fromID == 0 {
+		} else if len(events) == 0 && accMon.fromTime == 0 && accMon.fromID == 0 {
 			// 首次无事件：用 pullEventsWithRetry 使用的 fromTime 回写游标
 			// pullEventsWithRetry 内部在 fromTime=0 时设为 now()-300，这里同步
 			accMon.fromTime = time.Now().Unix() - 300

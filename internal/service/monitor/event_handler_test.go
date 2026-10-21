@@ -450,9 +450,19 @@ func TestHandleDeleteEvent_DeletesExistingStrm(t *testing.T) {
 		t.Fatalf("write strm: %v", err)
 	}
 
-	m := &Monitor{settingsFn: func() model.LifeMonitorSettings {
-		return model.LifeMonitorSettings{RemoveEmptyDirs: false}
-	}}
+	m := &Monitor{
+		settingsFn: func() model.LifeMonitorSettings {
+			// 安全删除需要映射根来校验回收站范围
+			return model.LifeMonitorSettings{
+				RemoveEmptyDirs: false,
+				PathMappings: []model.MonitorPathMapping{
+					{Account: "acc1", CloudPath: "电影", LocalPath: dir},
+				},
+			}
+		},
+		// 安全删除只处理本工具托管过的 STRM（未托管的保留）
+		managed: fakeManaged{managedPath: strmPath, cloudPath: "电影/Movie.2024.mkv"},
+	}
 	event := client115.LifeEventItem{FileID: "1", FileName: "Movie.2024.mkv", FileCategory: 1}
 
 	if err := m.handleDeleteEvent(context.Background(), "acc1", event, mapping, "电影/Movie.2024.mkv", nil); err != nil {
@@ -540,6 +550,8 @@ func TestHandleDeleteEvent_FallbackByFileName(t *testing.T) {
 		settingsFn:       func() model.LifeMonitorSettings { return cfg },
 		sqliteDB:         sqldb,
 		lifeEventLogRepo: logRepo,
+		// 兜底命中的 STRM 属于本工具托管
+		managed: fakeManaged{managedPath: strmPath, cloudPath: "电影/Movie.2024.mkv"},
 	}
 	// 事件携带的 mapping.localPath 已失效 → 主路径 <stale>/Movie.2024.strm 不存在 → 触发兜底
 	staleRoot := filepath.Join(dir, "stale")
