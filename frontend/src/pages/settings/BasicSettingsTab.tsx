@@ -132,10 +132,10 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               onChange={(e) =>
                 setData({ ...data, ["user-agent"]: e.target.value })
               }
-              placeholder="Mozilla/5.0 ..."
+              placeholder="留空使用内置默认 UA"
             />
             <p className="text-xs text-muted-foreground">
-              访问 115 API 时使用的 UA
+              访问 115 API 时使用的 UA。<span className="font-medium">留空恢复默认</span>（115 iOS 客户端 UA）。
             </p>
           </div>
           <div className="space-y-3">
@@ -143,10 +143,12 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             <Input
               value={strmExtensionsInput}
               onChange={(e) => setStrmExtensionsInput(e.target.value)}
-              placeholder=".mkv, .mp4, .mp3"
+              placeholder="mkv, mp4, iso, ts"
             />
             <p className="text-xs text-muted-foreground">
-              用逗号分隔，自动添加点号前缀；BDMV/STREAM 目录内的视频流不生成 STRM
+              用逗号分隔，自动添加点号前缀；BDMV/STREAM 目录内的视频流不生成 STRM。
+              <span className="font-medium">留空恢复默认 17 项</span>
+              （mp4/mkv/avi/mov/rmvb/webm/flv/m3u8/mp3/flac/wav/aac/ogg/m4a/ts/m2ts/iso）。
             </p>
           </div>
           <div className="space-y-3 md:col-span-2">
@@ -154,10 +156,11 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             <Input
               value={downloadExtensionsInput}
               onChange={(e) => setDownloadExtensionsInput(e.target.value)}
-              placeholder=".srt, .ass, .sub, .nfo"
+              placeholder="srt, ass, sub, nfo, jpg, png"
             />
             <p className="text-xs text-muted-foreground">
-              用逗号分隔，自动添加点号前缀
+              用逗号分隔，自动添加点号前缀。<span className="font-medium">留空恢复默认 6 项</span>
+              （srt/ass/sub/nfo/jpg/png）。不想下载元数据请关掉下方的「自动下载媒体元数据」开关。
             </p>
           </div>
           <div className="space-y-2 md:col-span-2">
@@ -308,7 +311,9 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   placeholder="Infuse, VidHub"
                 />
                 <p className="text-xs text-muted-foreground">
-                  逗号分隔。命中即强制走服务端代理（适合 302 播不了的客户端）；留空则全部 302 直链。
+                  逗号分隔。命中即强制走服务端代理（适合 302 播不了的客户端）。
+                  <span className="font-medium">留空表示「全部 302 直连」</span>
+                  ——与其他字段的「留空恢复默认」不同，这里是关闭该功能。
                   下方格式列表内的原盘不受此项影响，始终按格式代理。
                 </p>
               </div>

@@ -124,6 +124,9 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 	}
 
 	if !strings.HasPrefix(text, "/") {
+		// 顺带回传发送者 User ID：这是「授权用户」白名单里要填的值。
+		// 界面上曾写「向 Bot 发消息后从日志查看」，但 :118 用的是 Debugf 而日志级别是 Info，
+		// 那行永远不会落盘——直接在聊天里给出才是唯一可靠的方式。
 		reply := fmt.Sprintf("👋 你好 %s！\n\nFastStrm Bot 支持以下操作：\n\n"+
 			"• /start — 打开主菜单\n"+
 			"• /status — 查看系统状态\n"+
@@ -131,7 +134,7 @@ func (h *CommandHandler) HandleMessage(ctx context.Context, msg Message) error {
 			"• /cleanup — 直接清理孤儿 STRM\n"+
 			"• /accounts — 查看账号列表\n"+
 			"• /help — 显示所有命令\n\n"+
-			"输入 /start 打开操作菜单。", username)
+			"输入 /start 打开操作菜单。\n\n你的 User ID: <code>%d</code>", username, userID)
 		return h.tg().SendMessage(ctx, chatID, reply, "HTML")
 	}
 

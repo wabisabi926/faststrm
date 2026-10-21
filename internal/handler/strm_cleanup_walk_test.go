@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 )
 
@@ -77,8 +78,31 @@ func TestCloudStrmRelKey_MatchesGenerationRule(t *testing.T) {
 		"国语次时代_台/片.mkv": filepath.Join("国语次时代_台", "片.strm"),
 	}
 	for in, want := range cases {
-		if got := cloudStrmRelKey(in); got != want {
+		if got := cloudStrmRelKey(in, "", ""); got != want {
 			t.Errorf("cloudStrmRelKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestCloudStrmRelKey_WithFilenameTemplate 配了 STRM 文件名模板时，清理侧的对账键
+// 必须与生成侧（model.RenderStrmRelPath）逐字节一致，否则本地「[小号] 沙丘.strm」
+// 会被按「沙丘.strm」对账，全库判成「云端已删除」，清理功能对这类用户完全失效。
+func TestCloudStrmRelKey_WithFilenameTemplate(t *testing.T) {
+	const tpl = "[{account}] {stem}.strm"
+	cases := []struct{ cloudRel, want string }{
+		{"电影/沙丘.mkv", filepath.Join("电影", "[小号] 沙丘.strm")},
+		{"电影/沙丘.iso", filepath.Join("电影", "[小号] 沙丘.iso.strm")},
+		{"剧集/第一季/01.mp4", filepath.Join("剧集", "第一季", "[小号] 01.strm")},
+		{"电影:1/正片.mkv", filepath.Join("电影：1", "[小号] 正片.strm")},
+	}
+	for _, c := range cases {
+		got := cloudStrmRelKey(c.cloudRel, tpl, "小号")
+		if got != c.want {
+			t.Errorf("cloudStrmRelKey(%q, template) = %q, want %q", c.cloudRel, got, c.want)
+		}
+		// 与生成侧共用实现，必须完全相同
+		if want := model.RenderStrmRelPath(tpl, "小号", c.cloudRel); got != want {
+			t.Errorf("清理侧与生成侧不一致: cleanup=%q generation=%q", got, want)
 		}
 	}
 }

@@ -140,6 +140,22 @@ func (s *cleanupScanStore) MarkUsed(id, user string) bool {
 	return true
 }
 
+// ReleaseUsed 归还一次 MarkUsed 的占用（仅用于「实际什么都没做」的场景，
+// 例如转入待确认批次或被阈值拦截）。不归还会导致用户的扫描票白白作废，
+// 必须重新扫描才能再操作。
+func (s *cleanupScanStore) ReleaseUsed(id, user string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.entries[id]
+	if !ok {
+		return
+	}
+	if snapshot.User != "" && user != "" && snapshot.User != user {
+		return
+	}
+	snapshot.Used = false
+}
+
 func (s *cleanupScanStore) gcLocked(now time.Time) {
 	for id, snapshot := range s.entries {
 		if !now.Before(snapshot.ExpiresAt) {

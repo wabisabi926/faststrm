@@ -344,14 +344,42 @@ export default function SettingsPage({
     try {
       const saveData = buildSaveData();
 
-      await axiosInstance.post("/api/settings", saveData);
-      setData(saveData);
+      const res = await axiosInstance.post("/api/settings", saveData);
+      // 后端把「留空」解释为「恢复内置默认值」，并用响应里的 saved 回传生效值。
+      // 这里把默认值回填到输入框，避免出现「输入框空着、实际已生效」的错觉，
+      // 同时用 toast 明确告知恢复了几项，比只弹「保存成功」更有信息量。
+      const saved = res.data?.saved as Record<string, unknown> | undefined;
+      const restored: string[] = [];
+      if (saved) {
+        const savedStrmExts = Array.isArray(saved.strmExtensions) ? (saved.strmExtensions as string[]) : [];
+        const savedDlExts = Array.isArray(saved.downloadExtensions)
+          ? (saved.downloadExtensions as string[])
+          : [];
+        if (!strmExtensionsInput.trim()) {
+          setStrmExtensionsInput(savedStrmExts.join(", "));
+          restored.push(`STRM 扩展名 ${savedStrmExts.length} 项`);
+        }
+        if (!downloadExtensionsInput.trim()) {
+          setDownloadExtensionsInput(savedDlExts.join(", "));
+          restored.push(`元数据扩展名 ${savedDlExts.length} 项`);
+        }
+        if (!(saveData["user-agent"] || "").trim() && saved["user-agent"]) {
+          restored.push("User-Agent");
+        }
+        setData({
+          ...saveData,
+          ["user-agent"]: (saved["user-agent"] as string) ?? saveData["user-agent"],
+        });
+      } else {
+        setData(saveData);
+      }
       // 保存后刷新试运行视图；mediaMountPath 不会随设置保存自动落盘，需在上方手动同步。
       const dry = await fetchMountDryRun();
+      const restoredSuffix = restored.length > 0 ? `；已恢复默认：${restored.join("、")}` : "";
       toast.success(
         dry?.diff.changed
-          ? "保存成功；挂载路径有变化，请点“立即同步并持久化”"
-          : "保存成功"
+          ? `保存成功${restoredSuffix}；挂载路径有变化，请点“立即同步并持久化”`
+          : `保存成功${restoredSuffix}`
       );
       return true;
     } catch (error: unknown) {

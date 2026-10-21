@@ -260,3 +260,20 @@ Telegram Bot API 的参数就叫 **`chat_id`**，官方文档对它的定义是�
 | 授权用户自动写入 chatId | 群组场景会把 Bot 全锁死 |
 | 把「聊天 ID」改名为「用户 ID」 | 群组场景下语义错误 |
 | 合并 chatId 与 allowedUsers 为一个字段 | 一个管"发到哪"，一个管"谁能用"，合并后群组场景无法表达 |
+
+---
+
+## 八、实施记录（2026-10-21 已完成）
+
+| 项 | 结果 |
+|---|---|
+| 后端「留空 = 默认」 | `emby.go:603-636`：User-Agent / STRM 扩展名 / 元数据扩展名三处改为「空值 → 默认值」；判断从 `len>0` 改为 `!= nil`（`[]` 才有明确语义）。在 handler 里显式赋值而非依赖读取兜底，使 POST 响应的 `saved` 就是生效值。 |
+| 强制代理 UA 不变 | 保持「留空 = 全部直连」，前端说明改为「**留空表示「全部 302 直连」**——与其他字段的「留空恢复默认」不同，这里是关闭该功能」。 |
+| 前端文案 | User-Agent / STRM 扩展名 / 元数据扩展名三处说明写明「留空恢复默认 N 项」并列出默认值；placeholder 去掉「看起来像默认值但只有 3 项」的误导。 |
+| 保存反馈 | `settings.tsx` 用响应里的 `saved` 回填输入框（避免「输入框空着、实际已生效」），toast 追加「已恢复默认：STRM 扩展名 17 项、元数据扩展名 6 项」。 |
+| 聊天 ID 命名 | 标签改为「聊天 ID（chat_id）」，placeholder 与说明写清「个人填你自己的 User ID；群填 -100 开头的群 ID」「个人聊天时与你的用户 ID 相同」。 |
+| 欢迎消息回 ID | `commands.go:126` 欢迎消息末尾追加「你的 User ID: <code>%d</code>」，两种 ACL 状态都能拿到 ID（此前指引「从日志查看」不成立：`:118` 是 Debugf，日志级别是 Info）。 |
+| 授权用户一键添加 | `tg-notify.tsx` 新增条件提示条：`allowedUsers` 为空 && chatId 是纯正数时，显示「检测到通知会话 ID xxx，可直接作为授权用户」+「添加」按钮，复用 `POST /api/notify/users`。群场景（负数）不触发。 |
+| 测试 | 新增 `TestSettingsContract_EmptyMeansRestoreDefaults`（三字段留空=默认、强制代理 UA 留空保持为空、`saved` 是生效值）。 |
+
+未做：`GET /api/settings/defaults`、「恢复默认」按钮、「从最近消息获取 User ID」按钮（理由见正文第二、四节）。

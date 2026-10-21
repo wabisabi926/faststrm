@@ -364,3 +364,66 @@ func TestSettingsContract_RateLimitPatch(t *testing.T) {
 		t.Fatalf("rateLimit = %+v, want %+v", stored.RateLimit, want)
 	}
 }
+
+// TestSettingsContract_EmptyMeansRestoreDefaults 校验「留空 = 恢复内置默认值」的语义：
+//   - User-Agent / STRM 扩展名 / 元数据扩展名：留空 → 默认值（这三者的空值都是非法配置）
+//   - 强制代理 UA 标识：留空 → 保持为空（= 全部直连），不能被默认值回填
+//
+// 同时校验 POST 响应里的 saved 是「生效后的值」，前端据此提示"已恢复默认 N 项"。
+func TestSettingsContract_EmptyMeansRestoreDefaults(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
+	pre := model.DefaultSettings()
+	pre.UserAgent = "custom-agent"
+	pre.StrmExtensions = []string{"mkv"}
+	pre.DownloadExtensions = []string{"srt"}
+	pre.Strm.ForceProxyUaTokens = []string{"Infuse"}
+	if err := settingsStore.SaveSettings(pre); err != nil {
+		t.Fatal(err)
+	}
+	deps := EmbyDeps{SettingsStore: settingsStore}
+
+	body := []byte(`{"user-agent":"","strmExtensions":[],"downloadExtensions":[],"strm":{"forceProxyUaTokens":[]}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(deps)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err := settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.UserAgent != model.DefaultUserAgent {
+		t.Fatalf("空 UA 应恢复默认，got %q", stored.UserAgent)
+	}
+	if !reflect.DeepEqual(stored.StrmExtensions, model.DefaultStrmExtensions) {
+		t.Fatalf("空 STRM 扩展名应恢复默认，got %v", stored.StrmExtensions)
+	}
+	if !reflect.DeepEqual(stored.DownloadExtensions, model.DefaultDownloadExtensions) {
+		t.Fatalf("空元数据扩展名应恢复默认，got %v", stored.DownloadExtensions)
+	}
+	// 强制代理 UA 的空值有语义（全部直连），必须保持为空
+	if len(stored.Strm.ForceProxyUaTokens) != 0 {
+		t.Fatalf("空强制代理 UA 应保持为空，got %v", stored.Strm.ForceProxyUaTokens)
+	}
+
+	// 响应里的 saved 必须是生效值（不是空数组），否则前端无法提示"恢复了几项"
+	var resp struct {
+		Saved struct {
+			StrmExtensions     []string `json:"strmExtensions"`
+			DownloadExtensions []string `json:"downloadExtensions"`
+		} `json:"saved"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Saved.StrmExtensions) != len(model.DefaultStrmExtensions) {
+		t.Fatalf("saved.strmExtensions 应是生效值，got %v", resp.Saved.StrmExtensions)
+	}
+	if len(resp.Saved.DownloadExtensions) != len(model.DefaultDownloadExtensions) {
+		t.Fatalf("saved.downloadExtensions 应是生效值，got %v", resp.Saved.DownloadExtensions)
+	}
+}

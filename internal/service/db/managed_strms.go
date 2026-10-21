@@ -74,7 +74,9 @@ func UpsertManagedStrm(db *sql.DB, m ManagedStrm) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(local_path) DO UPDATE SET
 			account=excluded.account,
-			cloud_path=excluded.cloud_path,
+			-- cloud_path 用 COALESCE 保护：调用方漏传（如回收站恢复后的重新登记）时
+			-- 不能把已知的云端路径清空，否则该文件会因「缺少云端路径」被永久跳过清理。
+			cloud_path=COALESCE(NULLIF(excluded.cloud_path, ''), managed_strms.cloud_path),
 			pickcode=excluded.pickcode,
 			file_id=excluded.file_id,
 			content_sha256=excluded.content_sha256,

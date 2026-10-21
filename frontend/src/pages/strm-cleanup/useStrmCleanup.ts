@@ -239,6 +239,28 @@ export function useStrmCleanup(
     const skipped =
       (r.skippedUnmanaged ?? 0) + (r.skippedCloudRestored ?? 0) + (r.skippedCloudUnverified ?? 0);
     const skippedText = skipped > 0 ? `，${skipped} 个因云端复核/归属变化保留` : "";
+    const removedRelated = r.removedRelatedFiles?.length ?? 0;
+
+    // 后端只在「删除 STRM 本身」开启时累加 deletedCount。为 0 表示 STRM 一个都没删，
+    // 此时既不能弹成功提示（用户会以为删掉了），也不能把条目从列表移除（刷新后又回来）。
+    if ((r.deletedCount ?? 0) === 0) {
+      const msg =
+        removedRelated > 0
+          ? `已清理 ${removedRelated} 个关联文件；STRM 本身未删除（设置里「删除 STRM 本身」已关闭）`
+          : r.failedCount > 0
+            ? `未删除任何 STRM，${r.failedCount} 个失败${skippedText}`
+            : `未删除任何 STRM（设置里「删除 STRM 本身」已关闭），列表保持不变`;
+      appendLog("删除", msg, r.failedCount === 0 && removedRelated > 0);
+      if (r.failedCount > 0) {
+        toast.error(msg);
+      } else {
+        toast.warning(msg);
+      }
+      setSelectedStale(new Set());
+      callbacks.setStaleDialogOpen(false);
+      return;
+    }
+
     appendLog("删除", `删除 ${r.deletedCount} 个失效 STRM，失败 ${r.failedCount} 个${skippedText}`, r.failedCount === 0);
     toast.success(
       `已删除 ${r.deletedCount} 个失效 STRM，清理了 ${r.removedEmptyDirs.length} 个空目录` +

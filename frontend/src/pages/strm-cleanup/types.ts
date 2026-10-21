@@ -115,6 +115,8 @@ export type ExecuteResult = {
   totalStaleCount?: number;
   errors: Array<{ path: string; error: string }>;
   removedEmptyDirs: string[];
+  // 删除 STRM 时一并移入回收站的关联文件（.nfo/.jpg/.srt 等）
+  removedRelatedFiles?: string[];
   dryRun: boolean;
   durationMs: number;
   regeneratedCount?: number;

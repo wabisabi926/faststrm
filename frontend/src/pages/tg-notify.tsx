@@ -291,6 +291,34 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
     }
   };
 
+  // 通知会话 ID 能否直接当授权用户：只有个人聊天（纯正数）才行。
+  // 群/频道的 chat_id 是负数（-100…），它不是任何人的 User ID，
+  // 塞进授权列表会让「列表非空 + 全员不匹配」→ Bot 直接全锁死。
+  const chatIdAsUserID = (() => {
+    const raw = (config.chatId || "").trim();
+    if (!/^\d+$/.test(raw)) return null;
+    const n = Number(raw);
+    return Number.isSafeInteger(n) && n > 0 ? raw : null;
+  })();
+  const canAdoptChatID = chatIdAsUserID !== null && allowedUsers.length === 0;
+
+  const adoptChatIDAsUser = async () => {
+    if (!chatIdAsUserID) return;
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+      await axiosInstance.post("/api/notify/users", { userId: chatIdAsUserID });
+      setSuccess(`已将 ${chatIdAsUserID} 添加为授权用户`);
+      await loadUsers();
+    } catch (error) {
+      const axiosError = error as { response?: { data?: { error?: string } } };
+      setError(axiosError.response?.data?.error || "添加授权用户失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className={`${embedded ? "" : "mx-auto max-w-5xl"} space-y-5 min-w-0`}>
       {!embedded && (
@@ -338,14 +366,17 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
             <p className="text-xs text-muted-foreground">从 @BotFather 获取</p>
           </div>
           <div className="space-y-1.5 min-w-0">
-            <Label htmlFor="chatId">聊天 ID</Label>
+            <Label htmlFor="chatId">聊天 ID（chat_id）</Label>
             <Input
               id="chatId"
-              placeholder="你的 Chat ID（个人/群）"
+              placeholder="个人填你自己的 User ID；群填 -100 开头的群 ID"
               value={config.chatId || ""}
               onChange={(e) => setConfig({ ...config, chatId: e.target.value })}
             />
-            <p className="text-xs text-muted-foreground">向 Bot 发消息后查看日志获取</p>
+            <p className="text-xs text-muted-foreground">
+              通知发到这个会话。个人聊天时与你的用户 ID 相同；群/频道是 -100 开头的负数。
+              向 Bot 发一条消息即可看到自己的用户 ID。
+            </p>
           </div>
         </div>
 
@@ -487,9 +518,27 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          限制哪些 Telegram 用户可以使用 Bot。列表为空时允许所有用户；建议添加自己的 User ID 后立即生效。
-          用户 ID 可向 Bot 发送任意消息后从日志查看。
+          限制哪些 Telegram 用户可以使用 Bot。<b>列表为空时允许所有用户</b>，任何搜到 Bot 的人都能执行命令；
+          建议添加自己的 User ID 后立即生效。用户 ID 获取方式：向 Bot 发送任意消息，Bot 会回复你的 User ID。
         </p>
+        {canAdoptChatID && (
+          <div className="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-amber-700 dark:text-amber-500">
+              检测到通知会话 ID <span className="font-mono">{chatIdAsUserID}</span>
+              （个人聊天），可直接作为授权用户——避免 Bot 对所有人开放。
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => void adoptChatIDAsUser()}
+              disabled={loading}
+            >
+              <UserPlus className="mr-1 h-3.5 w-3.5" />
+              添加 {chatIdAsUserID}
+            </Button>
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row gap-2">
           <Input
             placeholder="Telegram User ID（如 123456789）"

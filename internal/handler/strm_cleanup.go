@@ -115,7 +115,11 @@ type MappingScanResult struct {
 	UnmanagedStrms []StaleStrm   `json:"unmanagedStrms,omitempty"`
 	UnmanagedCount int           `json:"unmanagedCount,omitempty"`
 	MissingStrms   []MissingStrm `json:"missingStrms"`
-	Error          string        `json:"error,omitempty"`
+	// SkippedMissing 云端存在但按生成规则不该建 STRM 而被跳过的条目数
+	// （扩展名不在列表 / 命中黑名单 / 小于最小体积 / BDMV 视频流）。
+	// 只统计、不展示明细，避免列表被 .txt/.zip 等噪声淹没。
+	SkippedMissing int    `json:"skippedMissing,omitempty"`
+	Error          string `json:"error,omitempty"`
 	// ErrorCode 结构化错误码：account_not_found（账号不存在/无 Cookie，云端比对已跳过）/
 	// cloud_dir_failed（云端目录获取失败）/ cloud_walk_failed（云端遍历失败）等。
 	// 前端可据此做差异化提示；Error 字段保持人类可读文案兼容旧渲染。
@@ -296,13 +300,16 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 			accountMap[acc.Name] = acc.Cookie
 		}
 
+		// 媒体筛选规则（扩展名/黑名单/最小体积/BDMV）+ 文件名模板，均与生成侧同源
+		rules := newStrmScanRules(settings)
+
 		results := make([]MappingScanResult, 0, len(mappings))
 		for _, m := range mappings {
 			if m.UseCache && deps.StrmCache != nil && deps.TasksStore != nil {
-				result := scanMappingWithCacheFallback(r.Context(), m, deps, accountMap)
+				result := scanMappingWithCacheFallback(r.Context(), m, deps, accountMap, rules)
 				results = append(results, result)
 			} else {
-				result := scanMapping(r.Context(), m, deps, accountMap)
+				result := scanMapping(r.Context(), m, deps, accountMap, rules)
 				results = append(results, result)
 			}
 		}
@@ -402,12 +409,16 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 			return
 		}
 		// DryRun 不消费快照；真实执行只允许一次，防止同一扫描结果被重复删除。
-		if !body.DryRun && !cleanupScanCache.MarkUsed(body.ScanId, r.Header.Get("X-User")) {
-			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
-				"code":  "SCAN_TOKEN_USED",
-				"error": "该扫描结果已执行，请重新扫描后再操作",
-			})
-			return
+		claimed := false
+		if !body.DryRun {
+			if !cleanupScanCache.MarkUsed(body.ScanId, r.Header.Get("X-User")) {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+					"code":  "SCAN_TOKEN_USED",
+					"error": "该扫描结果已执行，请重新扫描后再操作",
+				})
+				return
+			}
+			claimed = true
 		}
 
 		accounts := deps.AccountStore.List()
@@ -419,6 +430,12 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 
 		resp := executeCleanup(r.Context(), body, settings, deps, accountMap)
 		resp.DurationMs = time.Since(start).Milliseconds()
+
+		// 转入待确认批次或被阈值拦截时，实际一个文件都没删——把扫描票还回去，
+		// 否则用户必须重新扫描才能再操作（此前 MarkUsed 早于阈值判定）。
+		if claimed && (resp.Pending || resp.ThresholdError != "") {
+			cleanupScanCache.ReleaseUsed(body.ScanId, r.Header.Get("X-User"))
+		}
 
 		httpx.WriteJson(w, http.StatusOK, resp)
 	}
@@ -638,10 +655,11 @@ func ScanCleanupMapping(ctx context.Context, deps StrmCleanupDeps, req MappingSc
 	if _, ok := accountMap[req.Account]; !ok {
 		return MappingScanResult{}, fmt.Errorf("账号不存在: %s", req.Account)
 	}
-	return scanMapping(ctx, req, deps, accountMap), nil
+	settings, _ := deps.SettingsStore.ReadSettings()
+	return scanMapping(ctx, req, deps, accountMap, newStrmScanRules(settings)), nil
 }
 
-func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps, accountMap map[string]string) MappingScanResult {
+func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps, accountMap map[string]string, rules strmScanRules) MappingScanResult {
 	result := MappingScanResult{
 		Account:   m.Account,
 		CloudPath: m.CloudPath,
@@ -715,7 +733,7 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 		if strmutil.IsRelatedAssetPath(it.RelPath) {
 			continue
 		}
-		cloudStrmSet[cloudStrmRelKey(it.RelPath)] = struct{}{}
+		cloudStrmSet[cloudStrmRelKey(it.RelPath, rules.filenameTemplate, m.Account)] = struct{}{}
 	}
 
 	localSet := make(map[string]os.FileInfo)
@@ -744,15 +762,25 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 		if strmutil.IsRelatedAssetPath(it.RelPath) {
 			continue
 		}
-		strmRel := cloudStrmRelKey(it.RelPath)
-		if _, exists := localSet[strmRel]; !exists {
-			result.MissingStrms = append(result.MissingStrms, MissingStrm{
-				RelPath:      strmRel,
-				CloudRelPath: it.RelPath,
-				PickCode:     it.PickCode,
-				Size:         it.Size,
-			})
+		strmRel := cloudStrmRelKey(it.RelPath, rules.filenameTemplate, m.Account)
+		if _, exists := localSet[strmRel]; exists {
+			continue
 		}
+		// 缺失 STRM 只在「生成侧也会为它生成」时才成立：云端任何 .txt/.zip/.torrent、
+		// trailer/sample、BDMV/STREAM 下的 m2ts 都不该补建，否则点一次「补生成」
+		// 就会在 Emby 里塞进一堆无法识别的条目。
+		// 只过滤「缺失」方向，cloudStrmSet 不受影响——避免把已有 STRM 变成残留。
+		if reason, ok := rules.gen.allow(it.RelPath, it.Size); !ok {
+			result.SkippedMissing++
+			logger.S().Debugf("[strmCleanup] 跳过补建 %s: %s", it.RelPath, reason)
+			continue
+		}
+		result.MissingStrms = append(result.MissingStrms, MissingStrm{
+			RelPath:      strmRel,
+			CloudRelPath: it.RelPath,
+			PickCode:     it.PickCode,
+			Size:         it.Size,
+		})
 	}
 
 	// 账号改名/删除后残留的 STRM：内容引用的账户已不存在。
@@ -847,13 +875,13 @@ func scanMappingFromCache(m MappingScanRequest, entry *store.StrmCacheEntry, acc
 	return result
 }
 
-func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps, accountMap map[string]string) MappingScanResult {
+func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps, accountMap map[string]string, rules strmScanRules) MappingScanResult {
 	if deps.StrmCache == nil || deps.TasksStore == nil {
-		return scanMapping(ctx, m, deps, accountMap)
+		return scanMapping(ctx, m, deps, accountMap, rules)
 	}
 	tasks, err := deps.TasksStore.ReadTasks()
 	if err != nil {
-		return scanMapping(ctx, m, deps, accountMap)
+		return scanMapping(ctx, m, deps, accountMap, rules)
 	}
 	var matchedTaskID string
 	for _, t := range tasks {
@@ -865,7 +893,7 @@ func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, dep
 	if matchedTaskID == "" {
 		r := MappingScanResult{Account: m.Account, CloudPath: m.CloudPath, LocalPath: m.LocalPath}
 		r.Error = "no matching task for mapping, fallback to network scan"
-		return scanMapping(ctx, m, deps, accountMap)
+		return scanMapping(ctx, m, deps, accountMap, rules)
 	}
 	var entry *store.StrmCacheEntry
 	if m.CacheUUID != "" {
@@ -876,7 +904,7 @@ func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, dep
 	if entry == nil {
 		r := MappingScanResult{Account: m.Account, CloudPath: m.CloudPath, LocalPath: m.LocalPath}
 		r.Error = "no cache, fallback to network scan"
-		return scanMapping(ctx, m, deps, accountMap)
+		return scanMapping(ctx, m, deps, accountMap, rules)
 	}
 	// Check cache expiry: if caller specified CacheTTLMs use it, otherwise keep legacy 1 hour
 	ttl := time.Hour
@@ -886,7 +914,7 @@ func scanMappingWithCacheFallback(ctx context.Context, m MappingScanRequest, dep
 	if time.Since(time.UnixMilli(entry.CreatedAt)) > ttl {
 		r := MappingScanResult{Account: m.Account, CloudPath: m.CloudPath, LocalPath: m.LocalPath}
 		r.Error = fmt.Sprintf("cache expired, fallback to network scan (ttl=%s)", ttl.Round(time.Second))
-		return scanMapping(ctx, m, deps, accountMap)
+		return scanMapping(ctx, m, deps, accountMap, rules)
 	}
 	result := scanMappingFromCache(m, entry, accountMap)
 	splitManagedStale(&result, deps)
@@ -1209,7 +1237,13 @@ func cleanupStrmFileName(fileName string) string {
 // 与生成侧 replaceRelPathExtToStrm 同规则：换扩展名 → SanitizeRelPath 逐段落盘清理
 // （':' → '：'、'/' '\' → '_' 等）→ 当前平台 OS 分隔符。
 // 两边必须逐字节一致：只换扩展名而不做落盘清理，含 ':' 的片名会被误判为「本地多余」而删除。
-func cloudStrmRelKey(cloudRel string) string {
+// template / account 用于支持「STRM 文件名模板」：清理侧必须与生成侧算出完全一致的
+// 本地相对路径，否则配了模板的用户本地叫「[小号] 沙丘.strm」、这里按「沙丘.strm」对账，
+// 全库都会被判成「云端已删除」。实现统一走 model.RenderStrmRelPath。
+func cloudStrmRelKey(cloudRel, template, account string) string {
+	if template != "" {
+		return model.RenderStrmRelPath(template, account, cloudRel)
+	}
 	return strmutil.SanitizeRelPath(cleanupStrmFileName(cloudRel))
 }
 
@@ -1701,8 +1735,22 @@ func regenerateMissingStrms(ctx context.Context, body ExecuteRequest, settings *
 	}
 	regen, failed := 0, 0
 	regenPaths := make([]string, 0, 8)
+	// 与扫描同源的媒体筛选：即使前端回传的是过期扫描快照（或手工构造的条目），
+	// 也不给 .txt/.zip/trailer/BDMV 视频流生成 STRM。
+	genFilter := newStrmGenFilter(settings)
+	skippedByRule := 0
 	for _, m := range body.ScanSummary.Mappings {
 		for _, miss := range m.MissingStrms {
+			srcPath := miss.CloudRelPath
+			if srcPath == "" {
+				// 老快照可能没有 cloudRelPath，用 .strm 路径反推（去掉 .strm 后缀即可拿到原名）
+				srcPath = strings.TrimSuffix(miss.RelPath, ".strm")
+			}
+			if reason, ok := genFilter.allow(srcPath, miss.Size); !ok {
+				skippedByRule++
+				logger.S().Debugf("[strmCleanup] regenerate 跳过 %s: %s", srcPath, reason)
+				continue
+			}
 			if miss.PickCode == "" {
 				failed++
 				resp.Errors = append(resp.Errors, map[string]string{
@@ -1769,6 +1817,9 @@ func regenerateMissingStrms(ctx context.Context, body ExecuteRequest, settings *
 		}
 	}
 	resp.RegeneratedPaths = append(resp.RegeneratedPaths, regenPaths...)
+	if skippedByRule > 0 {
+		logger.S().Infof("[strmCleanup] regenerate 跳过 %d 个不符合生成规则的条目（扩展名/黑名单/BDMV）", skippedByRule)
+	}
 	return regen, failed
 }
 
@@ -1776,12 +1827,16 @@ func regenerateMissingStrms(ctx context.Context, body ExecuteRequest, settings *
 // 文件名策略：去掉原扩展名，追加 .strm（对齐 strmutil.StrmFileName）。
 // URL 内容由 strm.BuildContent 统一生成，与全量任务 / 生活事件逐字节一致。
 func buildStrmForMissing(m MappingScanResult, miss MissingStrm, settings *model.Settings) (string, string, error) {
-	// 1. STRM 完整路径：localPath + relPath 目录部分 + stem + ".strm"
+	// 1. STRM 完整路径：RelPath 已经是「按生成规则算好的 .strm 相对路径」
+	//    （含文件名模板与非法字符清理），直接使用，不要再用 stem+.strm 重新推导——
+	//    否则模板生成的「[小号] 沙丘.strm」会被二次加工成别的名字。
 	relDir := filepath.Dir(miss.RelPath)
 	base := filepath.Base(miss.RelPath)
-	stem := strings.TrimSuffix(base, filepath.Ext(base))
-	strmName := stem + ".strm"
-	strmPath := filepath.Join(m.LocalPath, relDir, strmName)
+	if !strings.EqualFold(filepath.Ext(base), ".strm") {
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		base = stem + ".strm"
+	}
+	strmPath := filepath.Join(m.LocalPath, relDir, base)
 
 	// 2. 前缀：清理链路只有全局配置可用，交给统一解析器处理
 	//    （空 / 回环 / 0.0.0.0 → 本机内网 IP；仍不可用则报错，不再写 127.0.0.1 死链）
@@ -1997,6 +2052,16 @@ func HandleStrmCleanupPendingExecutePOST(deps StrmCleanupDeps) http.HandlerFunc 
 		}
 		if batch == nil {
 			httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "batch not found or already executed"})
+			return
+		}
+		// 与 TG 回调保持一致的过期校验：过期批次不允许执行。
+		// 此前只有 TG 链路校验，Web UI 可以执行几天前的批次，与「24 小时有效」的文案矛盾。
+		if age := time.Since(time.UnixMilli(batch.CreatedAt)); age > BatchMaxAge {
+			logger.S().Warnf("[strmCleanup] pending batch %s 已过期（%s），拒绝执行", body.RequestID, age.Round(time.Hour))
+			httpx.WriteJson(w, http.StatusGone, map[string]string{
+				"error": fmt.Sprintf("待确认批次已过期（创建于 %s 前，有效期 %s），请重新扫描后再操作",
+					age.Round(time.Hour), BatchMaxAge),
+			})
 			return
 		}
 		resp := executePendingBatch(r.Context(), *batch, deps.ManagedStrm, deps.CloudChecker)

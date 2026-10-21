@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -647,6 +648,32 @@ func RenderStrmFilenameTemplate(template, fileName, ext, stem, account string) s
 		name = name + ".strm"
 	}
 	return name
+}
+
+// RenderStrmRelPath 把「云端相对路径」按 STRM 文件名模板换算成本地 STRM 相对路径。
+//
+// 这是生成侧与清理侧的**唯一**实现：此前 task 包与 handler 包各写一份，
+// 清理侧只认 {stem}.strm，导致配置了文件名模板的用户本地叫「[小号] 沙丘.strm」、
+// 清理侧却按「沙丘.strm」对账 —— 全库被判为「云端已删除」，清理功能对这类用户完全失效。
+//
+// template 为空时退化为「只换扩展名」，与历史行为一致（.iso 保留双扩展名）。
+func RenderStrmRelPath(template, account, cloudRel string) string {
+	rel := strings.ReplaceAll(cloudRel, `\`, "/")
+	relDir, name := path.Split(rel)
+	if template == "" {
+		return strmutil.SanitizeRelPath(path.Join(relDir, strmutil.StrmFileName(name)))
+	}
+	ext := strings.ToLower(path.Ext(name))
+	stem := strings.TrimSuffix(name, path.Ext(name))
+	if strings.EqualFold(ext, ".iso") {
+		stem = stem + ".iso"
+	}
+	newName := RenderStrmFilenameTemplate(template, name, ext, stem, account)
+	if newName == "" {
+		newName = strmutil.StrmFileName(name)
+	}
+	// 目录段来自云端路径，同样需要清理（模板只负责文件名）
+	return strmutil.SanitizeRelPath(path.Join(relDir, newName))
 }
 
 // ==================== BDMV 原盘过滤 ====================

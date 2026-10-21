@@ -99,30 +99,16 @@ func getStrmFileName(fileName string) string { return strmutil.StrmFileName(file
 // 入参是「云端相对路径」，返回是「本地相对路径」：目录段与文件名都会做非法字符清理，
 // 保证写入、增量判定、路径级清理三处拿到完全一致的本地路径。
 func replaceRelPathExtToStrm(relPath string) string {
-	local := strmutil.SanitizeRelPath(relPath)
-	dir, name := filepath.Split(local)
-	return filepath.Join(dir, getStrmFileName(name))
+	return model.RenderStrmRelPath("", "", relPath)
 }
 
 // resolveStrmRelPath 计算 STRM 文件的相对路径（P1-4 文件名模板优先，否则默认替换扩展名）。
 // 抽成公共函数，保证「增量跳过判定」与「实际写入」使用完全一致的路径，
 // 否则判定路径与实际路径不一致会导致漏补生成。
 func resolveStrmRelPath(template, account string, f *fileItem) string {
-	if template == "" {
-		return replaceRelPathExtToStrm(f.RelPath)
-	}
-	relDir, relName := filepath.Split(f.RelPath)
-	ext := strings.ToLower(filepath.Ext(f.Name))
-	stem := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
-	if strings.EqualFold(ext, ".iso") {
-		stem = stem + ".iso"
-	}
-	newName := model.RenderStrmFilenameTemplate(template, f.Name, ext, stem, account)
-	if newName == "" {
-		newName = getStrmFileName(relName)
-	}
-	// 目录段来自云端路径，同样需要清理（模板只负责文件名）
-	return strmutil.SanitizeRelPath(filepath.Join(relDir, newName))
+	// 实现统一在 model 包：清理侧（handler/strm_cleanup）也要用同一份，
+	// 否则配了文件名模板的用户两边对账键不一致，清理会把全库判成残留。
+	return model.RenderStrmRelPath(template, account, f.RelPath)
 }
 
 // anyToInt64 把 115 返回的 any 型 id（可能是 string / float64 / int）安全转成 int64。

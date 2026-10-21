@@ -171,3 +171,19 @@
 | 6-7 | `npx tsc -b` + `npm run build` 通过；页面无重复标题，刷新按钮行为一致 |
 | 8-9 | 回收站可清空；待确认执行后统计自动更新 |
 
+
+---
+
+## 七、实施记录（2026-10-21，批次 1-4 已完成）
+
+| 批次 | 结果 |
+|---|---|
+| P0-1 对账键套模板 | 新增 `model.RenderStrmRelPath(template, account, cloudRel)` 作为**唯一实现**：生成侧 `task.resolveStrmRelPath` 与 `replaceRelPathExtToStrm` 改为委托，清理侧 `cloudStrmRelKey(cloudRel, template, account)` 在 template 非空时走同一函数。扫描时通过 `strmScanRules.filenameTemplate` 传入，account 取 `m.Account`。测试 `TestCloudStrmRelKey_WithFilenameTemplate` 锁定「清理侧 == 生成侧」且 `[小号] 沙丘.iso.strm` 双扩展名正确。 |
+| P0-2 恢复补 CloudPath | `UpsertManagedStrm` 的冲突分支改为 `cloud_path=COALESCE(NULLIF(excluded.cloud_path,''), managed_strms.cloud_path)`：任何调用方漏传都不会清空已有云端路径。回收站恢复（`registerRestoredManagedSTRM` 不传 CloudPath）因此自动保留旧值，墓碑记录本就不删行。测试 `TestUpsertManagedStrm_KeepsCloudPathWhenOmitted`。 |
+| P0-3 扫描/补生成套媒体规则 | 新增 `handler/strm_gen_filter.go`：`strmGenFilter` 复刻生成侧规则（BDMV/STREAM → 扩展名列表 → 黑名单/最小体积），扫描的「缺失 STRM」方向与 `regenerateMissingStrms` 都套用。**只过滤「缺失」方向**，`cloudStrmSet` 不变——避免把已有 STRM 变成残留。新增 `MappingScanResult.SkippedMissing` 统计被跳过的条目数。测试 `TestStrmGenFilter_*`（11 个路径用例 + 最小体积 + 自定义扩展名 + nil settings）。 |
+| P1-1 假成功 | `useStrmCleanup.handleDeleteResult`：`deletedCount === 0` 时不再弹成功、不再从列表移除条目，改为提示「未删除任何 STRM（设置里「删除 STRM 本身」已关闭）」，有连带删除时提示「已清理 N 个关联文件；STRM 本身未删除」。`types.ts` 补 `removedRelatedFiles`。 |
+| P1-2 批次过期校验 | `HandleStrmCleanupPendingExecutePOST` 增加 `BatchMaxAge` 校验（与 TG 回调一致），过期返回 410 + 明确文案。 |
+| P1-3 MarkUsed 时机 | 新增 `cleanupScanStore.ReleaseUsed`：执行结果为 `Pending` 或被阈值拦截时归还扫描票，用户不必重新扫描即可调整后重试。 |
+| 附带修正 | `buildStrmForMissing` 不再用 `stem + .strm` 二次推导文件名——`RelPath` 已是按模板算好的 .strm 路径，二次加工会破坏模板结果（`[小号] 沙丘.strm`）。 |
+
+**未做（按第六节建议顺序）**：P1-4 删除逻辑合并、P1-5 抽 `readStrmBytes`、P2 前端精简、P3 原因分组、P2-7 回收站清空。
