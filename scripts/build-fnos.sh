@@ -28,7 +28,8 @@ cd "${ROOT_DIR}"
 # 版本号优先取 git tag (vX.Y.Z -> X.Y.Z), 否则从 FNOS 下的 manifest 读
 MANIFEST_VERSION="$(grep '^version' FNOS/faststrm-amd64/manifest 2>/dev/null | sed 's/.*=[[:space:]]*//' | tr -d '\r\n' || true)"
 TAG_VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
-VERSION="${TAG_VERSION:-${MANIFEST_VERSION:-dev}}"
+# 显式版本优先：未打 tag 或用 main 预发布时可用 FASTSTRM_VERSION=1.5.2 打包。
+VERSION="${FASTSTRM_VERSION:-${TAG_VERSION:-${MANIFEST_VERSION:-dev}}}"
 BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 DIST_DIR="${ROOT_DIR}/dist"
