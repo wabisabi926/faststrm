@@ -82,7 +82,7 @@ export default function AccountAlertsPage({
     <div className={`${embedded ? "" : "mx-auto max-w-5xl"} space-y-6`}>
       {!embedded && (
         <div className="min-w-0 break-words">
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-xl sm:text-2xl font-semibold flex items-center gap-2">
             <ShieldAlert className="h-6 w-6 shrink-0" />
             <span>账号告警</span>
           </h1>

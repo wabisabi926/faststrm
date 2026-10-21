@@ -1,15 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import {
-  Activity,
-  ArrowRight,
-  BellRing,
-  HeartPulse,
-  ShieldCheck,
-  Stethoscope,
-  Trash2,
-} from "lucide-react";
+import { Stethoscope } from "lucide-react";
 import axiosInstance from "@/lib/axios";
 import type { AxiosError } from "axios";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
@@ -26,45 +18,6 @@ import type {
 import { DEFAULT_MONITOR_CONFIG } from "./settings/types";
 import { BasicSettingsTab } from "./settings/BasicSettingsTab";
 import { MonitorSettingsTab } from "./settings/MonitorSettingsTab";
-
-const CONFIG_ENTRIES = [
-  {
-    title: "清理策略",
-    description: "任务同步后的孤儿清理、保护阈值与确认方式",
-    to: "/cleanup",
-    icon: Trash2,
-  },
-  {
-    title: "生活事件监控",
-    description: "监控账号、轮询间隔、路径映射与事件类型",
-    to: "/life-events?tab=config",
-    icon: Activity,
-  },
-  {
-    title: "通知渠道",
-    description: "Telegram、Emby 与账号告警通知",
-    to: "/notify",
-    icon: BellRing,
-  },
-  {
-    title: "账号健康",
-    description: "Cookie 巡检间隔与账号状态",
-    to: "/account",
-    icon: HeartPulse,
-  },
-  {
-    title: "播放诊断",
-    description: "排查 STRM 的 redirect / proxy 路由",
-    to: "/diagnose",
-    icon: Stethoscope,
-  },
-  {
-    title: "账号安全",
-    description: "管理员用户名与密码",
-    to: "/account-security",
-    icon: ShieldCheck,
-  },
-];
 
 export default function SettingsPage({
   embedded = false,
@@ -644,46 +597,21 @@ export default function SettingsPage({
       }
     >
       {!embedded && (
-        <div className="px-1">
-          <h1 className="text-xl sm:text-2xl font-semibold">设置中心</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            基础设置与所有配置入口；对象相关配置仍在对应页面编辑。
-          </p>
-        </div>
-      )}
-
-      {activeTab === "basic" && (
-        <section className="border rounded-md p-3 sm:p-5 space-y-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between px-1">
           <div>
-            <h2 className="text-base font-medium">配置索引</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              清理、监控、通知与安全的编辑入口集中在这里，不用再猜设置藏在哪。
+            <h1 className="text-xl sm:text-2xl font-semibold">设置中心</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              基础设置；其他配置入口在左侧导航。
             </p>
           </div>
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-            {CONFIG_ENTRIES.map((entry) => {
-              const Icon = entry.icon;
-              return (
-                <Link
-                  key={entry.title}
-                  to={entry.to}
-                  className="group flex items-start gap-2.5 rounded-md border p-3 transition-colors hover:bg-muted/50"
-                >
-                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1 text-sm font-medium">
-                      {entry.title}
-                      <ArrowRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
-                    </div>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {entry.description}
-                    </p>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        </section>
+          <Link
+            to="/diagnose"
+            className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <Stethoscope className="h-3.5 w-3.5" />
+            播放诊断
+          </Link>
+        </div>
       )}
 
       {/* 基础设置（单页；Tab 仅用于真正的平级视图） */}

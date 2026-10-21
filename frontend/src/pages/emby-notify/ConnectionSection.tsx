@@ -148,7 +148,7 @@ export function ConnectionSection({
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   与 Emby 本体端口（如 8096）不同，填一个空闲端口即可（默认 8097）。
                   启用后，将 Emby for Kodi Next Gen 的服务器地址改为：
-                  <code className="block bg-muted px-1.5 py-0.5 rounded mt-1 break-all font-mono text-[11px]">
+                  <code className="block bg-muted px-1.5 py-0.5 rounded mt-1 break-all font-mono text-xs">
                     http://{settings.url
                       ?.replace(/^https?:\/\//, "")
                       ?.replace(/:\d+$/, "")}:{settings.proxyPort || 8097}

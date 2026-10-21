@@ -295,7 +295,7 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
     <div className={`${embedded ? "" : "mx-auto max-w-5xl"} space-y-5 min-w-0`}>
       {!embedded && (
         <div className="break-words">
-          <h1 className="text-2xl font-semibold">Telegram 通知</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold break-words">Telegram 通知</h1>
           <p className="text-sm text-muted-foreground mt-0.5 break-words">
             配置 Bot、启动轮询，即可在 Telegram 接收通知
           </p>

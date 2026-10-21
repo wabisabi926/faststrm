@@ -75,7 +75,7 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
   const form = useForm<AccountFormValues>({
     resolver: zodResolver(accountFormSchema),
     defaultValues: account ?? {
-      accountType: "",
+      accountType: "115",
       name: "",
       cookie: "",
       account: "",
@@ -231,8 +231,9 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
 
-  // 模拟可选账号类型
-  const accountTypes = ["115", "openlist"];
+  // OpenList 为历史账号类型：仅编辑旧数据时保留，新增只提供 115
+  const isLegacyOpenlist = account?.accountType === "openlist";
+  const accountTypes = isLegacyOpenlist ? ["115", "openlist"] : ["115"];
 
   return (
     <Dialog open={open} onOpenChange={(v) => {
@@ -266,14 +267,14 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
                 <FormItem>
                   <FormLabel>账号类型</FormLabel>
                   <FormControl>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value} disabled={!isLegacyOpenlist}>
                       <SelectTrigger>
                         <SelectValue placeholder="选择账号类型" />
                       </SelectTrigger>
                       <SelectContent>
                         {accountTypes.map((type) => (
                           <SelectItem key={type} value={type}>
-                            {type}
+                            {type === "openlist" ? "openlist（历史账号）" : type}
                           </SelectItem>
                         ))}
                       </SelectContent>

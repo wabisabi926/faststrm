@@ -623,7 +623,7 @@ export default function AccountPage() {
       {data.length === 0 ? (
         <div className="text-center py-12 bg-muted/30 rounded-lg border border-border">
           <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground" />
-          <h3 className="mt-4 text-lg font-medium">暂无账号</h3>
+          <h3 className="mt-4 text-base font-medium">暂无账号</h3>
           <p className="mt-2 text-muted-foreground">点击上方按钮添加你的第一个账号</p>
         </div>
       ) : isMobile ? (

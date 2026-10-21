@@ -87,7 +87,7 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
       {/* 页面标题 */}
       {!embedded && (
         <div className="min-w-0 break-words">
-          <h1 className="text-2xl font-semibold break-words">Emby 通知</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold break-words">Emby 通知</h1>
           <p className="text-sm text-muted-foreground mt-1 break-words">配置 Emby 媒体服务器的通知与删除同步</p>
         </div>
       )}

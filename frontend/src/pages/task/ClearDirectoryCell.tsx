@@ -26,7 +26,7 @@ export function ClearDirectoryCell({
 }: ClearDirectoryCellProps) {
   return (
     <div className="group flex items-center gap-2 max-w-xs">
-      <span className="text-sm text-muted-foreground truncate flex-1">
+      <span className="text-xs text-muted-foreground truncate flex-1">
         {task.targetPath}
       </span>
       <Dialog>

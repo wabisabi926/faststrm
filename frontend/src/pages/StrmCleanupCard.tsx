@@ -53,14 +53,12 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
     scanResult,
     selectedStale,
     executing,
-    reconcileLoading,
     logs,
     allStale,
     allMissing,
     toggleAllStale,
     toggleStale,
     handleScan,
-    handleReconcile,
     handleExecuteDelete,
     handleDeleteAll,
     handleDeleteAndRegenerate,
@@ -100,18 +98,6 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
                   扫描路径映射
                 </>
               )}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleReconcile}
-              disabled={reconcileLoading}
-            >
-              {reconcileLoading ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <DatabaseZap className="mr-2 size-4" />
-              )}
-              {reconcileLoading ? "对账中..." : "全量对账"}
             </Button>
           </div>
         </div>

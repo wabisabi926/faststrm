@@ -349,7 +349,7 @@ export default function DiagnosePage() {
                   )}
                 </div>
 
-                <div className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+                <div className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                   <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span>诊断只读取 2 字节并立即关闭连接；不会返回 CDN URL 或 Cookie。</span>
                 </div>

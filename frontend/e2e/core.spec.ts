@@ -60,12 +60,16 @@ test.describe('核心页面可达性', () => {
     await clickSidebarLink(page, 'STRM 清理', true);
     await expect(page).toHaveURL(/\/cleanup/, { timeout: 5000 });
     await expect(page.getByRole('heading', { name: 'STRM 清理' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /扫描路径映射/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /全量对账/ })).toHaveCount(0);
   });
 
   test('侧栏导航到 /settings → 设置中心', async ({ page }) => {
     await clickSidebarLink(page, '设置中心', true);
     await expect(page).toHaveURL(/\/settings/, { timeout: 5000 });
     await expectSidebarGroupVisible(page, '设置');
+    await expect(page.getByText('配置索引')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /播放诊断/ })).toBeVisible();
   });
 
   test('侧栏导航到 /history → 执行历史', async ({ page }) => {
@@ -83,6 +87,152 @@ test.describe('核心页面可达性', () => {
   test('侧栏导航到 /notify → 通知中心', async ({ page }) => {
     await clickSidebarLink(page, '通知中心', true);
     await expect(page).toHaveURL(/\/notify/, { timeout: 5000 });
-    await expectSidebarGroupVisible(page, '通知');
+    await expectSidebarGroupVisible(page, '设置');
+  });
+
+  test('任务列表正文使用紧凑字号', async ({ page }) => {
+    await page.route(/\/api\/tasks$/, (route) =>
+      route.fulfill({
+        json: {
+          tasks: [
+            {
+              id: 'e2e-task',
+              account: 'e2e-account',
+              accountType: '115',
+              originPath: '/remote/demo',
+              targetPath: '/local/demo',
+              strmType: 'local',
+              runtime: { status: 'completed' },
+            },
+          ],
+        },
+      })
+    );
+    await page.route(/\/api\/account$/, (route) =>
+      route.fulfill({ json: [{ name: 'e2e-account', accountType: '115' }] })
+    );
+
+    await page.goto('/task');
+    const path = page.getByText('/remote/demo');
+    await expect(path).toBeVisible();
+    const fontSize = await path.evaluate((el) => getComputedStyle(el).fontSize);
+    expect(fontSize).toBe('12px');
+  });
+
+  test('日志详情历史模式渲染文件列表', async ({ page }) => {
+    await page.route(/\/api\/taskHistory$/, (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: 1,
+              taskId: 'e2e-task',
+              status: 'completed',
+              startedAt: Date.now() - 5000,
+            },
+          ],
+        },
+      })
+    );
+    await page.route(/\/api\/taskHistory\/1\/logs$/, (route) =>
+      route.fulfill({
+        json: {
+          logs: [
+            JSON.stringify({ filePath: 'movie.mkv', percent: 100, done: true }),
+            JSON.stringify({ filePath: 'show.srt', percent: 50, error: 'download failed' }),
+          ],
+        },
+      })
+    );
+
+    await page.goto('/log/e2e-task?executionId=1');
+    const filePath = page.getByText('movie.mkv');
+    await expect(filePath).toBeVisible();
+    await expect(page.getByText('show.srt')).toBeVisible();
+    await expect(page.getByText('download failed')).toBeVisible();
+    const fontSize = await filePath.evaluate((el) => getComputedStyle(el).fontSize);
+    expect(fontSize).toBe('12px');
+  });
+
+  test('执行历史两个 tab 使用同一统计卡和表格骨架', async ({ page }) => {
+    await page.route(/\/api\/taskHistory$/, (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: 1,
+              taskId: 'demo-task',
+              account: 'demo-account',
+              originPath: '/remote/demo',
+              targetPath: '/local/demo',
+              status: 'completed',
+              startedAt: Date.now() - 5000,
+              endedAt: Date.now(),
+              durationMs: 5000,
+              summary: { totalFiles: 2, downloadedFiles: 2, deletedFiles: 0 },
+            },
+          ],
+        },
+      })
+    );
+    await page.route(/\/api\/history\/strm\?limit=200$/, (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: 1,
+              taskId: 'demo-task',
+              kind: 'full',
+              account: 'demo-account',
+              success: true,
+              totalFiles: 2,
+              successFiles: 2,
+              failedFiles: 0,
+              elapsedMs: 1200,
+              apiRequests: 3,
+              createdAt: Date.now(),
+            },
+          ],
+        },
+      })
+    );
+    await page.route(/\/api\/history\/strm\/stats$/, (route) =>
+      route.fulfill({
+        json: {
+          totalCount: 1,
+          successCount: 1,
+          failedCount: 0,
+          totalFiles: 2,
+          successFiles: 2,
+          failedFiles: 0,
+          totalApiRequests: 3,
+          totalElapsedMs: 1200,
+        },
+      })
+    );
+
+    await page.goto('/history');
+    await expect(page.getByText('总记录')).toBeVisible();
+    await expect(page.getByText('demo-task')).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '任务 / 路径' })).toBeVisible();
+
+    await page.getByRole('tab', { name: 'STRM 记录' }).click();
+    await expect(page.getByText('总记录')).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'API' })).toBeVisible();
+  });
+
+  test('日志详情页可达且深色模式正常', async ({ page }) => {
+    await page.goto('/log/e2e-no-task');
+    await expect(page.getByRole('heading', { name: '任务日志' })).toBeVisible();
+    await expect(page.getByText('暂无任务日志')).toBeVisible();
+
+    await page.evaluate(() => localStorage.setItem('theme', 'dark'));
+    await page.reload();
+    await expect(page.locator('html')).toHaveClass(/dark/);
+
+    const card = page.locator('.bg-card').first();
+    await expect(card).toBeVisible();
+    const background = await card.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(background).not.toBe('rgb(255, 255, 255)');
   });
 });

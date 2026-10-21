@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageTabs, type PageTabItem } from "@/components/page-tabs";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -21,12 +21,7 @@ import {
   AlertCircle,
   Trash2,
   Eye,
-  Calendar,
-  User,
-  Folder,
   FileText,
-  Download,
-  Trash,
   Activity,
 } from "lucide-react";
 import { logger } from "@/lib/logger";
@@ -116,25 +111,20 @@ const formatTime = (timestamp: number) => {
 };
 
 // 计算执行时长
-const getDuration = (startTime: number, endTime?: number) => {
-  const end = endTime || Date.now();
-  const duration = end - startTime;
-  const seconds = Math.floor(duration / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-
-  if (hours > 0) {
-    return `${hours}小时${minutes % 60}分钟`;
-  } else if (minutes > 0) {
-    return `${minutes}分钟${seconds % 60}秒`;
-  } else {
-    return `${seconds}秒`;
-  }
-};
-
 function formatElapsed(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return "-";
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function HistoryStatCard({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <Card>
+      <CardContent className="p-3">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-2xl font-semibold">{value}</p>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function TaskHistoryPage() {
@@ -155,6 +145,36 @@ export default function TaskHistoryPage() {
   const [strmStats, setStrmStats] = useState<StrmHistoryStats | null>(null);
   const [strmLoading, setStrmLoading] = useState(false);
   const [strmError, setStrmError] = useState<string | null>(null);
+
+  const taskStats = useMemo(() => {
+    let success = 0;
+    let failed = 0;
+    let filesOk = 0;
+    let filesTotal = 0;
+    let totalMs = 0;
+    let durationCount = 0;
+
+    for (const item of history) {
+      if (item.status === "completed") success++;
+      if (item.status === "failed") failed++;
+      filesOk += item.summary?.downloadedFiles ?? 0;
+      filesTotal += item.summary?.totalFiles ?? 0;
+      const ms = item.durationMs ?? (item.endedAt ? item.endedAt - item.startedAt : 0);
+      if (ms > 0) {
+        totalMs += ms;
+        durationCount++;
+      }
+    }
+
+    return {
+      total: history.length,
+      success,
+      failed,
+      filesOk,
+      filesTotal,
+      avgDurationMs: durationCount > 0 ? totalMs / durationCount : 0,
+    };
+  }, [history]);
 
   useEffect(() => {
     void fetchHistory();
@@ -234,7 +254,7 @@ export default function TaskHistoryPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
-          <h1 className="text-2xl font-semibold break-words">执行历史</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold break-words">执行历史</h1>
           <p className="text-sm text-muted-foreground mt-1 break-words">
             查看任务级执行记录与 STRM 生成/删除明细
           </p>
@@ -267,121 +287,126 @@ export default function TaskHistoryPage() {
       {activeTab === "tasks" ? (
         loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-foreground mx-auto"></div>
-              <p className="mt-2 text-muted-foreground">加载中...</p>
-            </div>
+            <p className="text-sm text-muted-foreground">加载中...</p>
           </div>
         ) : history.length === 0 ? (
           <Card>
             <CardContent className="flex items-center justify-center h-32">
               <div className="text-center">
                 <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                <p className="text-muted-foreground">暂无任务执行历史</p>
+                <p className="text-sm text-muted-foreground">暂无任务执行历史</p>
               </div>
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4">
-            {history.map((execution) => {
-              const statusConfig = getStatusConfig(execution.status);
-              const StatusIcon = statusConfig.icon;
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <HistoryStatCard label="总记录" value={taskStats.total} />
+              <HistoryStatCard
+                label="成功 / 失败"
+                value={
+                  <>
+                    <span className="text-green-600 dark:text-green-400">{taskStats.success}</span>
+                    <span className="text-muted-foreground"> / </span>
+                    <span className="text-red-600 dark:text-red-400">{taskStats.failed}</span>
+                  </>
+                }
+              />
+              <HistoryStatCard label="文件成功 / 总数" value={`${taskStats.filesOk} / ${taskStats.filesTotal}`} />
+              <HistoryStatCard label="平均耗时" value={formatElapsed(taskStats.avgDurationMs)} />
+            </div>
 
-              return (
-                <Card key={execution.id} className="hover:shadow-md transition-shadow">
-                  <CardHeader className="pb-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <div className="flex items-center space-x-3 min-w-0">
-                        <StatusIcon className="h-5 w-5 shrink-0" />
-                        <div className="min-w-0">
-                          <CardTitle className="text-base font-medium break-words">
-                            任务 {execution.taskId}
-                          </CardTitle>
-                          <CardDescription className="flex flex-col sm:flex-row sm:items-center gap-2 sm:space-x-4 mt-1">
-                            <span className="flex items-center space-x-1">
-                              <User className="h-4 w-4" />
-                              <span>{execution.account || '-'}</span>
+            <div className="rounded-md border overflow-x-auto [&_table]:text-xs">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">时间</TableHead>
+                    <TableHead>任务 / 路径</TableHead>
+                    <TableHead className="whitespace-nowrap">账号</TableHead>
+                    <TableHead className="whitespace-nowrap">状态</TableHead>
+                    <TableHead className="whitespace-nowrap">文件</TableHead>
+                    <TableHead className="whitespace-nowrap">耗时</TableHead>
+                    <TableHead className="whitespace-nowrap">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {history.map((execution) => {
+                    const statusConfig = getStatusConfig(execution.status);
+                    const StatusIcon = statusConfig.icon;
+                    const elapsedMs =
+                      execution.durationMs ??
+                      (execution.endedAt ? execution.endedAt - execution.startedAt : 0);
+
+                    return (
+                      <TableRow key={execution.id}>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          {formatTime(execution.startedAt)}
+                        </TableCell>
+                        <TableCell className="min-w-[220px] max-w-[360px]">
+                          <div className="truncate font-mono text-xs" title={execution.taskId}>
+                            {execution.taskId}
+                          </div>
+                          <div
+                            className="truncate text-xs text-muted-foreground"
+                            title={`${execution.originPath || "-"} → ${execution.targetPath || "-"}`}
+                          >
+                            {execution.originPath || "-"} → {execution.targetPath || "-"}
+                          </div>
+                          {execution.error && (
+                            <div className="truncate text-xs text-destructive" title={execution.error}>
+                              {execution.error}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          {execution.account || "-"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={`text-[10px] ${statusConfig.color}`}>
+                            <StatusIcon className="mr-1 h-3 w-3" />
+                            {statusConfig.label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          {execution.summary?.downloadedFiles ?? 0} / {execution.summary?.totalFiles ?? 0}
+                          {(execution.summary?.deletedFiles ?? 0) > 0 && (
+                            <span className="ml-1 text-muted-foreground">
+                              （删 {execution.summary.deletedFiles}）
                             </span>
-                            <span className="flex items-center space-x-1 min-w-0">
-                              <Folder className="h-4 w-4 shrink-0" />
-                              <span className="truncate">{execution.originPath || '-'}</span>
-                            </span>
-                          </CardDescription>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        <Badge className={statusConfig.color}>
-                          {statusConfig.label}
-                        </Badge>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => viewLogs(execution)}
-                        >
-                          <Eye className="h-4 w-4 mr-1" />
-                          查看日志
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => deleteHistory(execution.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="pt-0">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="space-y-2">
-                        <div className="flex items-center space-x-2 text-sm">
-                          <Calendar className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">开始时间:</span>
-                          <span>{formatTime(execution.startedAt)}</span>
-                        </div>
-                        {execution.endedAt && (
-                          <div className="flex items-center space-x-2 text-sm">
-                            <Clock className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-medium">执行时长:</span>
-                            <span>{getDuration(execution.startedAt, execution.endedAt)}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          {formatElapsed(elapsedMs)}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => viewLogs(execution)}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              日志
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => deleteHistory(execution.id)}
+                              aria-label="删除记录"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           </div>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center space-x-2 text-sm">
-                          <Download className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">下载文件:</span>
-                          <span>{execution.summary.downloadedFiles ?? 0}/{execution.summary.totalFiles ?? 0}</span>
-                        </div>
-                        {(execution.summary.deletedFiles ?? 0) > 0 && (
-                          <div className="flex items-center space-x-2 text-sm">
-                            <Trash className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-medium">删除文件:</span>
-                            <span>{execution.summary.deletedFiles}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="text-sm">
-                          <span className="font-medium">目标路径:</span>
-                          <span className="ml-2 text-muted-foreground">{execution.targetPath || '-'}</span>
-                        </div>
-                        {execution.error && (
-                          <div className="text-sm text-red-500 break-words">
-                            <span className="font-medium">错误信息:</span>
-                            <span className="ml-2">{execution.error}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )
       ) : strmLoading ? (
         <div className="flex items-center justify-center h-64">
@@ -395,34 +420,22 @@ export default function TaskHistoryPage() {
         <>
           {strmStats && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Card>
-                <CardContent className="p-3">
-                  <p className="text-xs text-muted-foreground">总记录</p>
-                  <p className="text-xl font-semibold">{strmStats.totalCount}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3">
-                  <p className="text-xs text-muted-foreground">成功 / 失败</p>
-                  <p className="text-xl font-semibold">
-                    <span className="text-green-600">{strmStats.successCount}</span>
+              <HistoryStatCard label="总记录" value={strmStats.totalCount} />
+              <HistoryStatCard
+                label="成功 / 失败"
+                value={
+                  <>
+                    <span className="text-green-600 dark:text-green-400">{strmStats.successCount}</span>
                     <span className="text-muted-foreground"> / </span>
-                    <span className="text-red-600">{strmStats.failedCount}</span>
-                  </p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3">
-                  <p className="text-xs text-muted-foreground">文件成功 / 总数</p>
-                  <p className="text-xl font-semibold">{strmStats.successFiles} / {strmStats.totalFiles}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3">
-                  <p className="text-xs text-muted-foreground">API 请求</p>
-                  <p className="text-xl font-semibold">{strmStats.totalApiRequests}</p>
-                </CardContent>
-              </Card>
+                    <span className="text-red-600 dark:text-red-400">{strmStats.failedCount}</span>
+                  </>
+                }
+              />
+              <HistoryStatCard
+                label="文件成功 / 总数"
+                value={`${strmStats.successFiles} / ${strmStats.totalFiles}`}
+              />
+              <HistoryStatCard label="API 请求" value={strmStats.totalApiRequests} />
             </div>
           )}
 
@@ -433,7 +446,7 @@ export default function TaskHistoryPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="rounded-md border overflow-x-auto">
+            <div className="rounded-md border overflow-x-auto [&_table]:text-xs">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -461,8 +474,8 @@ export default function TaskHistoryPage() {
                         <Badge
                           className={
                             entry.success
-                              ? "bg-green-500/20 text-green-700 dark:text-green-400"
-                              : "bg-red-500/20 text-red-700 dark:text-red-400"
+                              ? "text-[10px] bg-green-500/20 text-green-700 dark:text-green-400"
+                              : "text-[10px] bg-red-500/20 text-red-700 dark:text-red-400"
                           }
                         >
                           {entry.success ? "成功" : "失败"}

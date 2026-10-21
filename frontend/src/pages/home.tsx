@@ -416,7 +416,7 @@ export default function OverviewPage() {
                             {isRunning && (
                               <div className="space-y-1">
                                 <ProgressBar value={percent} />
-                                <div className="flex justify-between text-[10px] text-muted-foreground">
+                                <div className="flex justify-between text-xs text-muted-foreground">
                                   <span>{downloaded}/{total || "?"} 文件</span>
                                   <span>{percent}%</span>
                                 </div>
@@ -466,7 +466,7 @@ export default function OverviewPage() {
                           />
                           <div className="min-w-0 flex-1">
                             <div className="text-xs font-medium">{alert.title}</div>
-                            <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">{alert.detail}</div>
+                            <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{alert.detail}</div>
                           </div>
                           <ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
                         </Link>

@@ -100,7 +100,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
             >
               {task.accountType}
             </Badge>
-            <span className={`font-medium ${
+            <span className={`text-xs font-medium ${
               isBusy ? "text-orange-700" : ""
             }`}>
               {task.account}
@@ -119,7 +119,7 @@ export function buildTaskColumns(callbacks: TaskColumnsCallbacks): ColumnDef<Tas
       cell: ({ row }) => {
         const task = row.original;
         return (
-          <span className="text-sm text-muted-foreground max-w-xs truncate block">
+          <span className="text-xs text-muted-foreground max-w-xs truncate block">
             {task.originPath}
           </span>
         );

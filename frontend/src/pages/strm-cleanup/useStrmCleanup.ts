@@ -46,7 +46,6 @@ export interface UseStrmCleanupResult {
   scanResult: ScanSummary | null;
   selectedStale: Set<string>;
   executing: boolean;
-  reconcileLoading: boolean;
   logs: LogEntry[];
   allStale: StaleStrm[];
   allMissing: MissingStrm[];
@@ -55,7 +54,6 @@ export interface UseStrmCleanupResult {
   toggleStale: (key: string, checked: boolean) => void;
   // 操作
   handleScan: () => Promise<void>;
-  handleReconcile: () => Promise<void>;
   handleExecuteDelete: () => Promise<void>;
   handleDeleteAll: () => Promise<void>;
   handleDeleteAndRegenerate: () => Promise<void>;
@@ -77,7 +75,6 @@ export function useStrmCleanup(
   const [scanResult, setScanResult] = React.useState<ScanSummary | null>(null);
   const [selectedStale, setSelectedStale] = React.useState<Set<string>>(new Set());
   const [executing, setExecuting] = React.useState(false);
-  const [reconcileLoading, setReconcileLoading] = React.useState(false);
   const [logs, setLogs] = React.useState<LogEntry[]>([]);
 
   const allStale = React.useMemo(() => {
@@ -134,8 +131,6 @@ export function useStrmCleanup(
     setSelectedStale((prev) => toggleStaleInSet(prev, key, checked));
   };
 
-  // v1.2.5：扫描/对账复用同一 normalize；后端已统一为 ScanResponse
-  type ScanMode = "scan" | "reconcile";
   // P2：用后端 refreshedMappingStats 覆盖 mappings[i] 的 localStrmCount / associatedFileCount，再重新计算聚合计数
   // 避免"基于 deletedCount / regeneratedCount 的增量估算"造成累计漂移（删除相关文件、补生成同目录重叠文件等特殊场景会产生误差）
   const applyRefreshedStats = (r: ExecuteResult, prev: ScanSummary): ScanSummary => {
@@ -163,19 +158,14 @@ export function useStrmCleanup(
       totalAssociatedFiles: recomputeAssoc ? (baseAssoc > 0 ? baseAssoc : undefined) : prev.totalAssociatedFiles,
     };
   };
-  // P3：上次成功扫描的时间戳（scan 和 reconcile 共享），1 分钟内再扫 → 自动 useCache=true, cacheTTLMs=60000
-  const lastScanAtRef = React.useRef<{ ts: number; mode: ScanMode } | null>(null);
-  const postScanInternal = async (
-    mode: ScanMode,
-    opts?: { skipCache?: boolean }
-  ) => {
+  // 上次成功扫描的时间戳：1 分钟内再扫时优先复用任务缓存
+  const lastScanAtRef = React.useRef<{ ts: number } | null>(null);
+  const postScanInternal = async (opts?: { skipCache?: boolean }) => {
     const body: {
       useSettingsDefaults: boolean;
-      action?: string;
       useCache?: boolean;
       cacheTTLMs?: number;
     } = { useSettingsDefaults: true };
-    if (mode === "reconcile") body.action = "reconcile";
     const now = Date.now();
     const last = lastScanAtRef.current;
     const P3_CACHE_WINDOW = 60 * 1000; // 1 分钟
@@ -187,9 +177,8 @@ export function useStrmCleanup(
       body.cacheTTLMs = P3_CACHE_WINDOW;
     }
     const res = await axiosInstance.post("/api/strmCleanup/scan", body);
-    lastScanAtRef.current = { ts: now, mode };
-    const normalized = normalizeScanResponse(res.data, mode === "reconcile" ? "reconcile" : "mapping");
-    return normalized;
+    lastScanAtRef.current = { ts: now };
+    return normalizeScanResponse(res.data, "mapping");
   };
 
   // P3：preview 指定 .strm 文件（供 StaleStrmDialog "查看完整"按钮）
@@ -207,7 +196,7 @@ export function useStrmCleanup(
   // 重扫失败不阻断：已经完成的删除/生成保持生效，仅用错误提示告知。
   const refreshAfterBulk = async () => {
     try {
-      const fresh = await postScanInternal("scan", { skipCache: true });
+      const fresh = await postScanInternal({ skipCache: true });
       setScanResult(fresh);
       setSelectedStale(new Set());
       appendLog(
@@ -231,7 +220,7 @@ export function useStrmCleanup(
     setScanResult(null);
     setSelectedStale(new Set());
     try {
-      const data = await postScanInternal("scan");
+      const data = await postScanInternal();
       setScanResult(data);
       appendLog("扫描", `完成：${data.totalStale} 失效 / ${data.totalMissing} 漏生成`, true);
       toast.success(`扫描完成：发现 ${data.totalStale} 个失效 STRM，${data.totalMissing} 个漏生成`);
@@ -243,47 +232,6 @@ export function useStrmCleanup(
       console.error(err);
     } finally {
       setScanning(false);
-    }
-  };
-
-  const handleReconcile = async () => {
-    setReconcileLoading(true);
-    setScanResult(null);
-    setSelectedStale(new Set());
-    try {
-      const data = await postScanInternal("reconcile");
-      setScanResult(data);
-      const totalDb = data.totalDbRecords ?? "-";
-      const dbDiffs: string[] = [];
-      for (const m of data.mappings) {
-        const db = m.dbRecordCount;
-        if (db === undefined) continue;
-        const diff = m.remoteFileCount - db;
-        if (Math.abs(diff) >= 5) {
-          dbDiffs.push(`${m.cloudPath}: 云${m.remoteFileCount} vs DB${db} (差${diff})`);
-        }
-      }
-      appendLog(
-        "全量对账",
-        `云端:${data.totalRemoteFiles} 本地:${data.totalLocalStrms} DB:${totalDb} 失效:${data.totalStale} 缺失:${data.totalMissing}`,
-        true
-      );
-      const diffTip =
-        dbDiffs.length > 0 ? `\n⚠️ 差异较大的映射：\n${dbDiffs.slice(0, 3).join("\n")}` : "";
-      toast.success(`全量对账完成`, {
-        description:
-          `云端: ${data.totalRemoteFiles} | 本地STRM: ${data.totalLocalStrms} | DB记录: ${totalDb} | 失效: ${data.totalStale} | 缺失: ${data.totalMissing}` +
-          diffTip,
-        duration: 10000,
-      });
-    } catch (err) {
-      const axiosErr = err as AxiosError;
-      const msg = friendlyHttpError(axiosErr, "对账失败");
-      appendLog("全量对账", msg, false);
-      toast.error("对账失败", { description: msg });
-      console.error(err);
-    } finally {
-      setReconcileLoading(false);
     }
   };
 
@@ -514,14 +462,12 @@ export function useStrmCleanup(
     scanResult,
     selectedStale,
     executing,
-    reconcileLoading,
     logs,
     allStale,
     allMissing,
     toggleAllStale,
     toggleStale,
     handleScan,
-    handleReconcile,
     handleExecuteDelete,
     handleDeleteAll,
     handleDeleteAndRegenerate,

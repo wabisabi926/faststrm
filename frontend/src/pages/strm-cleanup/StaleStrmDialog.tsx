@@ -298,7 +298,7 @@ export function StaleStrmDialog({
                 </span>
               )}
             </DialogTitle>
-            <DialogDescription className="font-mono text-[11px] break-all">
+            <DialogDescription className="font-mono text-xs break-all">
               {previewState.kind === "data" && `${previewState.s.localPath}/${previewState.s.relPath}`}
             </DialogDescription>
           </DialogHeader>

@@ -47,10 +47,6 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
     ],
   },
   {
-    label: "通知",
-    items: [{ title: "通知中心", url: "/notify", icon: BellRing }],
-  },
-  {
     label: "日志",
     items: [
       { title: "生活事件", url: "/life-events", icon: Activity },
@@ -60,6 +56,7 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
   {
     label: "设置",
     items: [
+      { title: "通知中心", url: "/notify", icon: BellRing },
       { title: "设置中心", url: "/settings", icon: Settings },
       { title: "账号安全", url: "/account-security", icon: ShieldCheck },
     ],

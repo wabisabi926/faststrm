@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
+import { CheckCircle2, Inbox, Loader2, XCircle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import axiosInstance from "@/lib/axios";
 import { useTaskEventStream } from "@/lib/sse";
 
@@ -24,12 +27,12 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "已取消",
 };
 
-const STATUS_COLOR: Record<string, string> = {
-  "开始": "#3b82f6",
-  "已完成": "#059669",
-  "失败": "#dc2626",
-  "已取消": "#6b7280",
-  "不存在": "#6b7280",
+const STATUS_BADGE_CLASS: Record<string, string> = {
+  "开始": "bg-blue-500/15 text-blue-600 hover:bg-blue-500/20 dark:text-blue-400",
+  "已完成": "bg-green-500/15 text-green-600 hover:bg-green-500/20 dark:text-green-400",
+  "失败": "bg-red-500/15 text-red-600 hover:bg-red-500/20 dark:text-red-400",
+  "已取消": "bg-muted text-muted-foreground",
+  "不存在": "bg-muted text-muted-foreground",
 };
 
 export default function DownloadProgressPage() {
@@ -228,218 +231,114 @@ export default function DownloadProgressPage() {
     }
   };
 
+  const connectionTone = /错误|失败/.test(connectionStatus)
+    ? "text-destructive"
+    : connectionStatus === "实时同步中"
+      ? "text-green-600 dark:text-green-400"
+      : "text-muted-foreground";
+  const badgeClass = STATUS_BADGE_CLASS[taskStatus] ?? "bg-muted text-muted-foreground";
+
   return (
-    <div style={{
-      padding: 12,
-      maxWidth: 1200,
-      margin: '0 auto',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
-    }}>
-      <div style={{
-        marginBottom: 16,
-        padding: 16,
-        backgroundColor: "#ffffff",
-        borderRadius: 12,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-        border: "1px solid #e5e7eb"
-      }}>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <div>
-            <p style={{ margin: 0, fontSize: 14, color: "#6b7280" }}>任务ID</p>
-            <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#111827" }}>{taskId}</p>
+    <div className="mx-auto max-w-5xl space-y-4">
+      <div className="px-1">
+        <h1 className="text-xl sm:text-2xl font-semibold break-words">任务日志</h1>
+        <p className="text-sm text-muted-foreground mt-1 break-words">实时进度与历史执行日志</p>
+      </div>
+
+      <div className="rounded-xl border bg-card p-4 shadow-sm">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="space-y-1 min-w-0">
+            <p className="text-xs text-muted-foreground">任务 ID</p>
+            <p className="break-all font-mono text-sm font-medium">{taskId}</p>
           </div>
-          <div>
-            <p style={{ margin: 0, fontSize: 14, color: "#6b7280" }}>连接状态</p>
-            <p style={{
-              margin: 0,
-              fontSize: 16,
-              fontWeight: 600,
-              color: connectionStatus === "已连接" ? "#059669" :
-                     connectionStatus.includes("错误") ? "#dc2626" : "#6b7280"
-            }}>
-              {connectionStatus}
-            </p>
+          <div className="space-y-1 min-w-0">
+            <p className="text-xs text-muted-foreground">连接状态</p>
+            <p className={`text-sm font-medium ${connectionTone}`}>{connectionStatus}</p>
           </div>
-          <div>
-            <p style={{ margin: 0, fontSize: 14, color: "#6b7280" }}>文件数量</p>
-            <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#111827" }}>{logs.length}</p>
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">文件数量</p>
+            <p className="text-sm font-medium">{logs.length}</p>
           </div>
-          <div>
-            <p style={{ margin: 0, fontSize: 14, color: "#6b7280" }}>任务状态</p>
-            <p style={{
-              margin: 0,
-              fontSize: 16,
-              fontWeight: 600,
-              color: STATUS_COLOR[taskStatus] ?? "#6b7280"
-            }}>
-              {taskStatus}
-            </p>
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">任务状态</p>
+            <Badge variant="secondary" className={badgeClass}>{taskStatus}</Badge>
           </div>
         </div>
 
         {taskStatus === "开始" && (
-          <div style={{ marginTop: 16, textAlign: 'center' }}>
-            <button
-              onClick={cancelTask}
-              disabled={isCancelling}
-              style={{
-                padding: "8px 16px",
-                backgroundColor: isCancelling ? "#9ca3af" : "#dc2626",
-                color: "white",
-                border: "none",
-                borderRadius: 6,
-                fontSize: 14,
-                fontWeight: 500,
-                cursor: isCancelling ? "not-allowed" : "pointer",
-                transition: "background-color 0.2s",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginLeft: "auto"
-              }}
-            >
+          <div className="mt-4 flex justify-end">
+            <Button variant="destructive" size="sm" onClick={cancelTask} disabled={isCancelling}>
               {isCancelling ? (
                 <>
-                  <div style={{
-                    width: 12,
-                    height: 12,
-                    border: "2px solid transparent",
-                    borderTop: "2px solid white",
-                    borderRadius: "50%",
-                    animation: "spin 1s linear infinite"
-                  }} />
+                  <Loader2 className="animate-spin" />
                   取消中...
                 </>
               ) : (
-                <>
-                  ⏹️ 取消任务
-                </>
+                "取消任务"
               )}
-            </button>
+            </Button>
           </div>
         )}
       </div>
 
       {logs.length === 0 && rawLines.length === 0 ? (
-        <div style={{
-          textAlign: 'center',
-          padding: 48,
-          backgroundColor: "#ffffff",
-          borderRadius: 12,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-          border: "1px solid #e5e7eb"
-        }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
-          <p style={{ color: "#6b7280", fontSize: 16, margin: 0 }}>暂无任务日志</p>
+        <div className="flex flex-col items-center justify-center rounded-xl border bg-card py-16 text-center">
+          <Inbox className="h-10 w-10 text-muted-foreground" />
+          <p className="mt-3 text-sm text-muted-foreground">暂无任务日志</p>
         </div>
       ) : (
         <>
-          <div style={{
-            marginBottom: 24,
-            padding: 24,
-            backgroundColor: "#ffffff",
-            borderRadius: 12,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            border: "1px solid #e5e7eb"
-          }}>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "#111827", marginBottom: 12 }}>任务进度</h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                padding: '6px 16px',
-                borderRadius: 999,
-                fontSize: 15,
-                fontWeight: 600,
-                color: "#fff",
-                backgroundColor: STATUS_COLOR[taskStatus] ?? "#6b7280"
-              }}>
-                {taskStatus}
-              </span>
-              <span style={{ fontSize: 14, color: "#6b7280" }}>
-                已完成 {logs.filter((l) => l.done).length} / {logs.length} 个文件
-              </span>
+          <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-base font-medium">任务进度</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className={badgeClass}>{taskStatus}</Badge>
+                <span className="text-sm text-muted-foreground">
+                  已完成 {logs.filter((l) => l.done).length} / {logs.length} 个文件
+                </span>
+              </div>
             </div>
           </div>
 
-          <div style={{
-            backgroundColor: "#ffffff",
-            borderRadius: 12,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            border: "1px solid #e5e7eb",
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              padding: 16,
-              borderBottom: "1px solid #e5e7eb",
-              backgroundColor: "#f9fafb"
-            }}>
-              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#111827" }}>下载文件列表</h3>
+          <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+            <div className="border-b bg-muted/30 px-4 py-3">
+              <h2 className="text-base font-medium">下载文件列表</h2>
             </div>
 
-            <div style={{ maxHeight: 600, overflowY: 'auto' }}>
+            <div className="max-h-[600px] overflow-y-auto">
               {logs.slice().reverse().map((log, index) => (
-                <div key={index} style={{
-                  padding: 12,
-                  borderBottom: index < logs.length - 1 ? "1px solid #f3f4f6" : "none",
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  transition: "background-color 0.2s"
-                }}>
-                  <div style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 6,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 16,
-                    backgroundColor: log.done ? "#dcfce7" : log.error ? "#fee2e2" : "#dbeafe"
-                  }}>
-                    {log.done ? "✅" : log.error ? "❌" : "⏳"}
+                <div key={index} className="flex items-center gap-3 border-b px-4 py-3 last:border-b-0">
+                  <div
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
+                      log.done
+                        ? "bg-green-500/15 text-green-600 dark:text-green-400"
+                        : log.error
+                          ? "bg-destructive/10 text-destructive"
+                          : "bg-blue-500/15 text-blue-600 dark:text-blue-400"
+                    }`}
+                  >
+                    {log.done ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : log.error ? (
+                      <XCircle className="h-4 w-4" />
+                    ) : (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    )}
                   </div>
 
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: 14,
-                      fontWeight: 500,
-                      color: "#111827",
-                      marginBottom: 4,
-                      wordBreak: 'break-all'
-                    }}>
-                      {log.filePath}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{
-                        fontSize: 12,
-                        color: "#6b7280",
-                        backgroundColor: "#f3f4f6",
-                        padding: "2px 8px",
-                        borderRadius: 4
-                      }}>
+                  <div className="min-w-0 flex-1">
+                    <div className="break-all text-xs font-medium">{log.filePath}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
                         {parseFloat(log.percent?.toString() ?? log.overallPercent?.toString() ?? "0").toFixed(2)}%
                       </span>
                       {log.strm && (
-                        <span style={{
-                          fontSize: 12,
-                          color: "#059669",
-                          backgroundColor: "#dcfce7",
-                          padding: "2px 8px",
-                          borderRadius: 4,
-                          fontWeight: 500
-                        }}>
+                        <span className="rounded bg-green-500/15 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
                           STRM
                         </span>
                       )}
                       {log.error && (
-                        <span style={{
-                          fontSize: 12,
-                          color: "#dc2626",
-                          backgroundColor: "#fee2e2",
-                          padding: "2px 8px",
-                          borderRadius: 4
-                        }}>
+                        <span className="break-all rounded bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
                           {log.error}
                         </span>
                       )}
@@ -447,20 +346,11 @@ export default function DownloadProgressPage() {
                   </div>
 
                   {!log.done && !log.error && (
-                    <div style={{
-                      width: 100,
-                      height: 6,
-                      backgroundColor: "#f3f4f6",
-                      borderRadius: 3,
-                      overflow: 'hidden'
-                    }}>
-                      <div style={{
-                        width: `${log.percent ?? 0}%`,
-                        height: "100%",
-                        background: "linear-gradient(90deg, #3b82f6, #1d4ed8)",
-                        borderRadius: 3,
-                        transition: "width 0.3s ease"
-                      }} />
+                    <div className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-muted sm:w-24">
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-300"
+                        style={{ width: `${log.percent ?? 0}%` }}
+                      />
                     </div>
                   )}
                 </div>
@@ -471,48 +361,15 @@ export default function DownloadProgressPage() {
       )}
 
       {rawLines.length > 0 && (
-        <div style={{
-          marginTop: 24,
-          backgroundColor: "#ffffff",
-          borderRadius: 12,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-          border: "1px solid #e5e7eb",
-          overflow: 'hidden'
-        }}>
-          <div style={{
-            padding: 16,
-            borderBottom: "1px solid #e5e7eb",
-            backgroundColor: "#f9fafb"
-          }}>
-            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#111827" }}>日志输出</h3>
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+          <div className="border-b bg-muted/30 px-4 py-3">
+            <h2 className="text-base font-medium">日志输出</h2>
           </div>
-          <pre style={{
-            margin: 0,
-            padding: 16,
-            maxHeight: 480,
-            overflowY: 'auto',
-            fontSize: 12,
-            lineHeight: 1.6,
-            color: "#374151",
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
-          }}>
+          <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap break-all p-4 font-mono text-xs leading-relaxed text-foreground">
             {rawLines.join("\n")}
           </pre>
         </div>
       )}
-
-      <style>{`
-        @keyframes shimmer {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
-        }
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 }

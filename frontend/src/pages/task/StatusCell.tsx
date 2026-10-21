@@ -66,7 +66,7 @@ export function StatusCell({
         )}
 
         {elapsedStr && (
-          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground font-mono bg-muted/50 rounded px-1.5 py-0.5">
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground font-mono bg-muted/50 rounded px-1.5 py-0.5">
             <Clock className="w-3 h-3" />
             {elapsedStr}
           </span>
@@ -75,7 +75,7 @@ export function StatusCell({
 
       {/* 中部：阶段详情 */}
       {task.runtime?.stageDetail && (
-        <div className="text-[12px] text-muted-foreground leading-tight pl-0.5">
+        <div className="text-xs text-muted-foreground leading-tight pl-0.5">
           {task.runtime.stageDetail}
         </div>
       )}
@@ -118,7 +118,7 @@ export function StatusCell({
                   }}
                 />
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5 pl-0.5 font-mono">
+              <div className="text-xs text-muted-foreground mt-0.5 pl-0.5 font-mono">
                 {downloadedFiles} / {totalFiles} 个文件
                 <span className="ml-2 text-muted-foreground">
                   ({Math.round((downloadedFiles / totalFiles) * 100)}%)

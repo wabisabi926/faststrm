@@ -105,7 +105,7 @@ export function TrashSection() {
             >
               <div className="min-w-0 flex-1">
                 <div className="break-all font-mono text-xs">{entry.originalPath}</div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
+                <div className="mt-1 text-xs text-muted-foreground">
                   批次 {entry.batch} · {formatSize(entry.size)} · {new Date(entry.modTime).toLocaleString()}
                 </div>
               </div>

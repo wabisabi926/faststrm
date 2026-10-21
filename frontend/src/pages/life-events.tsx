@@ -192,7 +192,7 @@ export default function LifeEventsPage({
       >
         {!embedded && (
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold break-words">生活事件</h1>
+            <h1 className="text-xl sm:text-2xl font-semibold break-words">生活事件</h1>
             <p className="text-sm text-muted-foreground mt-1 break-words">
               115 生活事件处理记录（显示最近 500 条）
             </p>

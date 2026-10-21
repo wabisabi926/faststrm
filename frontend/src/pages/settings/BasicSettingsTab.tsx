@@ -628,7 +628,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                           </Tooltip>
                           <span
                             className={
-                              "px-1.5 py-0.5 rounded text-[11px] border " +
+                              "px-1.5 py-0.5 rounded text-[10px] border " +
                               (row.source === "global" || row.source === "global_302"
                                 ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30"
                                 : row.source === "task"
@@ -649,7 +649,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                             </span>
                           )}
                           {added && (
-                            <span className="text-[11px] px-1.5 py-0.5 rounded border bg-green-500/20 text-green-400 border-green-500/30">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-green-500/20 text-green-400 border-green-500/30">
                               待新增
                             </span>
                           )}

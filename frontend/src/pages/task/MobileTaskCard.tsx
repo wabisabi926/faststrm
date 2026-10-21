@@ -115,7 +115,7 @@ export function MobileTaskCard(props: MobileTaskCardProps) {
           <Badge variant="outline" className={`text-xs shrink-0 ${isBusy ? ACCOUNT_STYLES.busy : ""}`}>
             {task.accountType}
           </Badge>
-          <span className={`text-sm truncate ${isBusy ? "text-orange-700 font-medium" : ""}`}>
+          <span className={`text-xs truncate ${isBusy ? "text-orange-700 font-medium" : ""}`}>
             {task.account}
           </span>
           {isBusy && <span className="text-orange-600 text-xs">●</span>}
@@ -146,14 +146,14 @@ export function MobileTaskCard(props: MobileTaskCardProps) {
                 </Badge>
               )}
               {elapsedStr && (
-                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground font-mono bg-muted/50 rounded px-1.5 py-0.5">
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground font-mono bg-muted/50 rounded px-1.5 py-0.5">
                   <Clock className="w-3 h-3" />
                   {elapsedStr}
                 </span>
               )}
             </div>
             {task.runtime?.stageDetail && (
-              <div className="text-[11px] text-muted-foreground leading-tight">
+              <div className="text-xs text-muted-foreground leading-tight">
                 {task.runtime.stageDetail}
               </div>
             )}
@@ -185,7 +185,7 @@ export function MobileTaskCard(props: MobileTaskCardProps) {
                     style={{ width: `${Math.min(100, Math.round((downloadedFiles / totalFiles) * 100))}%` }}
                   />
                 </div>
-                <div className="text-[11px] text-muted-foreground font-mono">
+                <div className="text-xs text-muted-foreground font-mono">
                   {downloadedFiles} / {totalFiles} 个文件 ({Math.round((downloadedFiles / totalFiles) * 100)}%)
                 </div>
               </>

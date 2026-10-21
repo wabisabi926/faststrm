@@ -290,7 +290,7 @@ export default function Home() {
       {data.length === 0 ? (
         <div className="text-center py-12 bg-muted/30 rounded-lg border border-border">
           <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground" />
-          <h3 className="mt-4 text-lg font-medium">暂无任务</h3>
+          <h3 className="mt-4 text-base font-medium">暂无任务</h3>
           <p className="mt-2 text-muted-foreground">点击上方按钮创建你的第一个任务</p>
         </div>
       ) : filteredTasks.length === 0 ? (
@@ -333,7 +333,9 @@ export default function Home() {
           ))}
         </div>
       ) : (
-        <DataTable columns={columns} data={filteredTasks} align="center" />
+        <div className="[&_table]:text-xs">
+          <DataTable columns={columns} data={filteredTasks} align="center" />
+        </div>
       )}
 
       {/* 删除任务对话框（移动端 + 桌面端共用） */}

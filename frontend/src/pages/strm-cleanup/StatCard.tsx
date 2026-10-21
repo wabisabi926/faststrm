@@ -36,7 +36,7 @@ export function StatCard({
         {label}
       </div>
       <div className={`text-2xl font-semibold ${toneClass}`}>{value}</div>
-      {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
+      {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
       {children || null}
     </div>
   );

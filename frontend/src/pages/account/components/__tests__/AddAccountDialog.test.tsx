@@ -113,9 +113,6 @@ describe("AddAccountDialog", () => {
       await user.click(screen.getByRole("button", { name: "Add Account" }));
       await waitFor(() => screen.getByRole("dialog"));
 
-      await user.click(screen.getAllByRole("combobox")[0]);
-      await user.click(await screen.findByRole("option", { name: "115" }));
-
       await user.type(screen.getByPlaceholderText(/输入账号名称/), "我的115");
       await user.click(screen.getByRole("button", { name: /手动粘贴/ }));
       await user.type(screen.getByPlaceholderText(/输入 115 网盘的 Cookie/), "UID=abc");
@@ -164,9 +161,6 @@ describe("AddAccountDialog", () => {
       await user.click(screen.getByRole("button", { name: "Add Account" }));
       await waitFor(() => screen.getByRole("dialog"));
 
-      await user.click(screen.getAllByRole("combobox")[0]);
-      await user.click(await screen.findByRole("option", { name: "115" }));
-
       await user.type(screen.getByPlaceholderText(/输入账号名称/), "x");
       await user.click(screen.getByRole("button", { name: /手动粘贴/ }));
       await user.click(screen.getByRole("button", { name: /保存(?!中)/ }));
@@ -183,8 +177,6 @@ describe("AddAccountDialog", () => {
       await user.click(screen.getByRole("button", { name: "Add Account" }));
       await waitFor(() => screen.getByRole("dialog"));
 
-      await user.click(screen.getAllByRole("combobox")[0]);
-      await user.click(await screen.findByRole("option", { name: "115" }));
       await user.type(screen.getByPlaceholderText(/输入账号名称/), "dup");
       await user.click(screen.getByRole("button", { name: /手动粘贴/ }));
       await user.type(screen.getByPlaceholderText(/输入 115 网盘的 Cookie/), "UID=dup");
@@ -194,27 +186,34 @@ describe("AddAccountDialog", () => {
     });
   });
 
-  describe("openlist 提交", () => {
-    it("全部字段齐全 → POST", async () => {
+  describe("历史 openlist 账号", () => {
+    it("编辑旧 openlist 账号仍可保存", async () => {
       const user = userEvent.setup();
-      render(<AddAccountDialog />);
-      await user.click(screen.getByRole("button", { name: "Add Account" }));
+      render(
+        <AddAccountDialog
+          account={{
+            accountType: "openlist",
+            name: "my-ol",
+            account: "admin",
+            password: "secret",
+            url: "http://ol:5244",
+          }}
+        />
+      );
+      await user.click(screen.getByRole("button", { name: "Edit Account" }));
       await waitFor(() => screen.getByRole("dialog"));
 
-      await user.click(screen.getAllByRole("combobox")[0]);
-      await user.click(await screen.findByRole("option", { name: "openlist" }));
-
-      await user.type(screen.getByPlaceholderText(/输入账号名称/), "my-ol");
-      await user.type(screen.getByPlaceholderText(/输入用户名/), "admin");
-      await user.type(screen.getByPlaceholderText(/输入密码/), "secret");
-      await user.type(screen.getByPlaceholderText(/输入服务器地址/), "http://ol:5244");
-
+      expect(screen.getByDisplayValue("my-ol")).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: /保存(?!中)/ }));
-      await waitFor(() => expect(axiosPostMock).toHaveBeenCalled());
 
+      await waitFor(() => expect(axiosPutMock).toHaveBeenCalled());
       const call = hoisted.calls[0];
       expect(call.data).toMatchObject({
-        accountType: "openlist", account: "admin", password: "secret", url: "http://ol:5244",
+        originalName: "my-ol",
+        accountType: "openlist",
+        account: "admin",
+        password: "secret",
+        url: "http://ol:5244",
       });
     });
   });
