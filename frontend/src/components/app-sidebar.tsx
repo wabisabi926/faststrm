@@ -8,6 +8,7 @@ import {
   History,
   Settings,
   ShieldCheck,
+  Stethoscope,
   Github,
 } from "lucide-react";
 
@@ -51,6 +52,7 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
     items: [
       { title: "生活事件", url: "/life-events", icon: Activity },
       { title: "执行历史", url: "/history", icon: History },
+      { title: "播放诊断", url: "/diagnose", icon: Stethoscope },
     ],
   },
   {
