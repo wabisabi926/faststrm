@@ -146,8 +146,7 @@ export function ConnectionSection({
                   }
                 />
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  与 Emby 本体端口（如 8096）不同，填一个空闲端口即可（默认 8097）。
-                  启用后，将 Emby for Kodi Next Gen 的服务器地址改为：
+                  填一个与 Emby 本体不同的空闲端口（默认 8097）。客户端连接地址：
                   <code className="block bg-muted px-1.5 py-0.5 rounded mt-1 break-all font-mono text-xs">
                     http://{settings.url
                       ?.replace(/^https?:\/\//, "")
@@ -155,15 +154,12 @@ export function ConnectionSection({
                   </code>
                 </p>
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed">
-                  <span className="font-medium">⚠️ 播放器/客户端必须连这个反代端口</span>
+                  <span className="font-medium">
+                    ⚠️ 客户端必须连反代端口 <code>{settings.proxyPort || 8097}</code>
+                  </span>
                   <br />
-                  连 Emby 本体端口（如 8096）时，播放信息不会被改写，原盘（ISO/BDMV）会被判为需要转码而播放失败。
-                  <br />
-                  两种部署任选：
-                  <br />
-                  ① 保持 Emby 8096，所有客户端改连 <code>{settings.proxyPort || 8097}</code>（推荐）；
-                  <br />
-                  ② 端口互换：把 Emby 本体改为 <code>{settings.proxyPort || 8097}</code>，反代监听 8096，客户端配置无需改动。
+                  连 Emby 本体端口（如 8096）时，ISO/BDMV 原盘会被判转码而失败。
+                  也可以把 Emby 本体与反代端口互换，客户端地址保持不变。
                 </div>
               </div>
               <label htmlFor="externalPlayerToggle" className="flex items-start gap-3 min-h-[36px] cursor-pointer select-none">
@@ -212,10 +208,9 @@ export function ConnectionSection({
               </div>
               {!proxyStatus?.running && (
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed">
-                  <span className="font-medium">反代未运行，播放会退回 Emby 直连</span>
+                  <span className="font-medium">反代未运行：普通格式仍可播放，ISO/BDMV 原盘会失败。</span>
                   <br />
-                  mkv/mp4 等普通格式仍可播放；<span className="font-medium">ISO / BDMV 原盘会失败</span>
-                  （Emby 会判定需要转码）。恢复方式：检查「反代监听端口」是否被占用，或先临时把客户端指向 Emby 本体端口看普通视频。
+                  请检查反代端口是否被占用后重启。
                 </div>
               )}
             </div>
