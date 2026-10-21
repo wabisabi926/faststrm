@@ -578,6 +578,42 @@ type settingsPostBody struct {
 	RateLimit          *model.RateLimitSettings `json:"rateLimit"`
 }
 
+// applyAgentAndExtensions 应用「留空 = 恢复内置默认值」的三个字段：
+// User-Agent / STRM 文件扩展名 / 附带下载的元数据扩展名。
+//
+// 为什么这三个可以「空即默认」：它们的空值都是无意义的非法配置——空 UA 会被 115 拒绝、
+// 空扩展名什么都不会生成、想不下载元数据有 autoDownloadMetadata 开关。
+//
+// 为什么必须在这里显式赋值（而不是只靠 SettingsStore 读取时的兜底）：Update 返回的是
+// 内存对象，若留空让读取层补默认，POST 响应里的 saved 仍是空数组，前端拿不到
+// 「恢复成了什么」，也就无法给出「已恢复默认 N 项」的提示。
+//
+// 注意：forceProxyUaTokens 不在此列——它的空值有语义（= 全部直连、关闭强制代理），
+// 回填默认值会让这个选择永久失效，见 store/settings.go 的同名注释。
+func applyAgentAndExtensions(settings *model.Settings, body settingsPostBody) {
+	if body.UserAgent != nil {
+		ua := strings.TrimSpace(*body.UserAgent)
+		if ua == "" {
+			ua = model.DefaultUserAgent
+		}
+		settings.UserAgent = ua
+	}
+	if body.StrmExtensions != nil {
+		settings.StrmExtensions = emptyMeansDefault(body.StrmExtensions, model.DefaultStrmExtensions)
+	}
+	if body.DownloadExtensions != nil {
+		settings.DownloadExtensions = emptyMeansDefault(body.DownloadExtensions, model.DefaultDownloadExtensions)
+	}
+}
+
+// emptyMeansDefault 空切片返回默认值的副本（拷贝一份，避免调用方后续修改污染全局默认值）。
+func emptyMeansDefault(v, def []string) []string {
+	if len(v) == 0 {
+		return append([]string{}, def...)
+	}
+	return v
+}
+
 // containsAsterisk 判定是否是脱敏值（含 *）
 func containsAsterisk(s string) bool { return strings.Contains(s, "*") }
 
@@ -585,7 +621,7 @@ func containsAsterisk(s string) bool { return strings.Contains(s, "*") }
 // 前端通过 saveData 发送完整设置（含 strm/lifeMonitor/download/emby/telegram 嵌套对象）
 // 后端解码后与现有设置合并：字符串非空才覆盖、数组直接覆盖、敏感字段脱敏值跳过
 // mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
-func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // complexity: 51
+func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // complexity: 69
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body settingsPostBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -600,37 +636,9 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 		savedSettings, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
 			// ====== 通用字段（指针区分“未提供”和显式清空） ======
-			// User-Agent / STRM 扩展名 / 元数据扩展名：留空 = 恢复内置默认值。
-			// 这三个字段的空值都是无意义的非法配置（空 UA 会被 115 拒绝、空扩展名什么都不会生成、
-			// 想不下载元数据有 autoDownloadMetadata 开关），所以「清空」统一解释为「恢复默认」。
-			// 必须在 handler 里显式赋值：Update 返回的是内存对象，若只依赖 ReadSettings 的读取兜底，
-			// POST 响应里的 saved 仍是空值，前端拿不到「恢复成了什么」。
-			//
-			// 注意：forceProxyUaTokens 不在此列——它的空值有语义（= 全部直连、关闭强制代理），
-			// 回填默认值会让这个选择永久失效，见 store/settings.go 的同名注释。
-			if body.UserAgent != nil {
-				ua := strings.TrimSpace(*body.UserAgent)
-				if ua == "" {
-					ua = model.DefaultUserAgent
-				}
-				settings.UserAgent = ua
-			}
+			applyAgentAndExtensions(settings, body)
 			if body.StrmPrefix != nil {
 				settings.StrmPrefix = strings.TrimSpace(*body.StrmPrefix)
-			}
-			if body.StrmExtensions != nil {
-				if len(body.StrmExtensions) == 0 {
-					settings.StrmExtensions = append([]string{}, model.DefaultStrmExtensions...)
-				} else {
-					settings.StrmExtensions = body.StrmExtensions
-				}
-			}
-			if body.DownloadExtensions != nil {
-				if len(body.DownloadExtensions) == 0 {
-					settings.DownloadExtensions = append([]string{}, model.DefaultDownloadExtensions...)
-				} else {
-					settings.DownloadExtensions = body.DownloadExtensions
-				}
 			}
 			// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
 

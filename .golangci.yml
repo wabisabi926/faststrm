@@ -41,7 +41,7 @@ linters-settings:
 #   handleMoveEvent          event_move.go       96  115 移动事件处理
 #   handleRenameEvent        event_rename.go     90  115 重命名事件处理
 #   processEvent             event_handler.go    58  事件分发
-#   HandleSettingsPOST        emby.go              51  Emby 设置 POST handler（聚合视图）
+#   HandleSettingsPOST        emby.go              69  Emby 设置 POST handler（聚合视图）
 #   HandleEmbySettingsPOST   emby.go              36  Emby 设置 POST handler（局部 patch + 反代热重启）
 # 其余 11 个函数：见各文件 //nolint:cyclop 注释处
 

@@ -1409,7 +1409,7 @@ func cleanupCandidatePaths(body ExecuteRequest, action string) []string {
 	return paths
 }
 
-func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Settings, deps StrmCleanupDeps, accountMap map[string]string) ExecuteResponse { //nolint:cyclop // complexity: 34
+func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Settings, deps StrmCleanupDeps, accountMap map[string]string) ExecuteResponse { //nolint:cyclop // complexity: 30
 	resp := ExecuteResponse{
 		DryRun:              body.DryRun,
 		Errors:              []map[string]string{},
