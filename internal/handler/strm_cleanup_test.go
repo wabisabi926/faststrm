@@ -383,6 +383,8 @@ func TestCleanupStrmFileName(t *testing.T) {
 		{"big.NFO", "big.strm"},       // 大写扩展名归一化
 		{"noext", "noext.strm"},       // 无扩展名
 		{"sub/dir/movie.mkv", "sub/dir/movie.strm"},
+		// 扩展名后带尾点：必须与生成侧 SanitizeFileName 后再换扩展名的结果一致
+		{"sub/dir/movie.mkv.", "sub/dir/movie.strm"},
 	}
 	for _, c := range cases {
 		if got := cleanupStrmFileName(c.fileName); got != c.want {

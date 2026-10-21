@@ -1186,15 +1186,22 @@ func isRelatedMediaFile(name string) bool {
 // 与生成侧 task.getStrmFileName 保持同一规则（.iso 保留双扩展名），
 // 保证网络扫描时"本地 .strm 是否存在对应云端文件"能正确匹配，避免误判全部失效
 func cleanupStrmFileName(fileName string) string {
-	ext := strings.ToLower(filepath.Ext(fileName))
-	if ext == "" {
-		return fileName + ".strm"
+	// 先按云端路径拆出目录，只清理文件名的落盘形态，再换扩展名。
+	// 这样与生成侧「先 SanitizeFileName 再加 .strm」严格一致，
+	// 扩展名后带尾点/空格的极端名字不会出现两套对账键。
+	dir, base := path.Split(fileName)
+	base = strmutil.SanitizeFileName(base)
+	ext := strings.ToLower(path.Ext(base))
+	stem := strings.TrimSuffix(base, path.Ext(base))
+	switch ext {
+	case "":
+		base = base + ".strm"
+	case ".iso":
+		base = stem + ".iso.strm"
+	default:
+		base = stem + ".strm"
 	}
-	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-	if ext == ".iso" {
-		return stem + ".iso.strm"
-	}
-	return stem + ".strm"
+	return path.Join(dir, base)
 }
 
 // cloudStrmRelKey 把云端相对路径换算成本地 STRM 相对路径（比对键）。
