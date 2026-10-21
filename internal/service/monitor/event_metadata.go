@@ -216,6 +216,21 @@ func downloadMetadataFile(ctx context.Context, url, cookie, localDir, localPath 
 		_ = os.Remove(tmp)
 		return 0, fmt.Errorf("响应长度不一致: 期望 %d，实际 %d", resp.ContentLength, written)
 	}
+	// 覆盖已有文件前保留一份 .bak，避免用户手改的字幕/元数据被静默覆盖。
+	if _, statErr := os.Stat(localPath); statErr == nil {
+		bak := localPath + ".bak"
+		_ = os.Remove(bak)
+		if err := os.Rename(localPath, bak); err != nil {
+			_ = os.Remove(tmp)
+			return 0, fmt.Errorf("备份原文件失败: %w", err)
+		}
+		if err := os.Rename(tmp, localPath); err != nil {
+			_ = os.Rename(bak, localPath)
+			_ = os.Remove(tmp)
+			return 0, fmt.Errorf("重命名失败: %w", err)
+		}
+		return written, nil
+	}
 	if err := os.Rename(tmp, localPath); err != nil {
 		_ = os.Remove(tmp)
 		return 0, fmt.Errorf("重命名失败: %w", err)

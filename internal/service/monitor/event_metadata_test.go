@@ -78,6 +78,9 @@ func TestDownloadMetadataFile_ValidatesLength(t *testing.T) {
 		t.Fatalf("failed download must not leave file, err=%v", err)
 	}
 
+	if err := os.WriteFile(localPath, []byte("user-edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	written, err := downloadMetadataFile(context.Background(), srv.URL, "", dir, localPath, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -88,5 +91,9 @@ func TestDownloadMetadataFile_ValidatesLength(t *testing.T) {
 	data, err := os.ReadFile(localPath)
 	if err != nil || string(data) != "abc" {
 		t.Fatalf("downloaded content=%q err=%v", data, err)
+	}
+	backup, err := os.ReadFile(localPath + ".bak")
+	if err != nil || string(backup) != "user-edit" {
+		t.Fatalf("original file should be backed up, got %q err=%v", backup, err)
 	}
 }
