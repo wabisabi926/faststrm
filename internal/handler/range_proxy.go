@@ -134,6 +134,8 @@ func (f *rangeChunkFetcher) fetchOnce(
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	// 分片请求必须使用自己的 Range；客户端的 If-Range 只对首片有意义。
+	req.Header.Del("If-Range")
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 
 	resp, err := f.client.Do(req)
@@ -146,9 +148,9 @@ func (f *rangeChunkFetcher) fetchOnce(
 		return nil, status, fmt.Errorf("分片请求失败: status=%d", status)
 	}
 	if verr := validateChunkResponse(resp, start, end); verr != nil {
-		status := resp.StatusCode
+		// 206 但区间/长度不对属于协议错误，按可重试错误处理（换链后可能恢复）。
 		drainAndCloseResponse(resp)
-		return nil, status, verr
+		return nil, 0, verr
 	}
 	return resp, resp.StatusCode, nil
 }
@@ -157,16 +159,19 @@ func (f *rangeChunkFetcher) fetchOnce(
 // 否则客户端会收到错位字节（表现为花屏、seek 后黑屏）。
 func validateChunkResponse(resp *http.Response, start, end int64) error {
 	expected := end - start + 1
-	if cr := resp.Header.Get("Content-Range"); cr != "" {
-		var unit string
-		var rs, re, total int64
-		if _, err := fmt.Sscanf(cr, "%s %d-%d/%d", &unit, &rs, &re, &total); err == nil {
-			if unit != "bytes" || rs != start || re != end {
-				return fmt.Errorf("Content-Range 不匹配: got %q, want bytes %d-%d", cr, start, end)
-			}
-		}
+	cr := resp.Header.Get("Content-Range")
+	if cr == "" {
+		return errors.New("206 响应缺少 Content-Range")
 	}
-	if resp.ContentLength > 0 && resp.ContentLength != expected {
+	var unit string
+	var rs, re, total int64
+	if _, err := fmt.Sscanf(cr, "%s %d-%d/%d", &unit, &rs, &re, &total); err != nil {
+		return fmt.Errorf("Content-Range 无法解析: %q", cr)
+	}
+	if unit != "bytes" || rs != start || re != end {
+		return fmt.Errorf("Content-Range 不匹配: got %q, want bytes %d-%d", cr, start, end)
+	}
+	if resp.ContentLength >= 0 && resp.ContentLength != expected {
 		return fmt.Errorf("Content-Length 不匹配: got %d, want %d", resp.ContentLength, expected)
 	}
 	return nil
@@ -211,18 +216,40 @@ func (f *rangeChunkFetcher) streamRemaining(ctx context.Context, w io.Writer, ne
 	n := int((total + chunk - 1) / chunk)
 
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	results := make(chan chunkResult, f.parallel)
 	sem := make(chan struct{}, f.parallel)
+	pending := make(map[int]chunkResult, f.parallel)
+	var wg sync.WaitGroup
+
+	// 任何退出路径都先等待 worker 结束，再关闭 pending 与 results 中尚未消费的响应体。
+	defer func() {
+		cancel()
+		wg.Wait()
+		for _, r := range pending {
+			drainAndCloseResponse(r.resp)
+		}
+		for {
+			select {
+			case r := <-results:
+				drainAndCloseResponse(r.resp)
+			default:
+				return
+			}
+		}
+	}()
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for i := 0; i < n; i++ {
 			select {
 			case sem <- struct{}{}:
 			case <-ctx.Done():
 				return
 			}
+			wg.Add(1)
 			go func(i int) {
+				defer wg.Done()
 				defer func() { <-sem }()
 				s := nextStart + int64(i)*chunk
 				e := s + chunk - 1
@@ -239,12 +266,6 @@ func (f *rangeChunkFetcher) streamRemaining(ctx context.Context, w io.Writer, ne
 		}
 	}()
 
-	pending := make(map[int]chunkResult, f.parallel)
-	closePending := func() {
-		for _, r := range pending {
-			drainAndCloseResponse(r.resp)
-		}
-	}
 	var written int64
 	for i := 0; i < n; i++ {
 		var cur chunkResult
@@ -262,24 +283,21 @@ func (f *rangeChunkFetcher) streamRemaining(ctx context.Context, w io.Writer, ne
 				}
 				cur = r
 			case <-ctx.Done():
-				closePending()
 				return written, ctx.Err()
 			}
 			break
 		}
 		if cur.err != nil {
-			closePending()
+			drainAndCloseResponse(cur.resp)
 			return written, cur.err
 		}
 		copied, err := io.Copy(w, cur.resp.Body)
 		_ = cur.resp.Body.Close()
 		written += copied
 		if err != nil {
-			closePending()
 			return written, err
 		}
 	}
-	closePending()
 	return written, nil
 }
 
@@ -318,31 +336,39 @@ func streamRangeProxy(
 	if !opts.Enabled || r.Method != http.MethodGet || upstream.StatusCode != http.StatusPartialContent {
 		return false
 	}
-	start, end, total, ok := parseContentRange(upstream.Header.Get("Content-Range"))
+	start, end, _, ok := parseContentRange(upstream.Header.Get("Content-Range"))
 	if !ok {
 		return false
 	}
-	_ = total
+	chunk := opts.Chunk
+	if chunk <= 0 {
+		chunk = 10 << 20
+	}
+	parallel := opts.Parallel
+	if parallel > 4 {
+		parallel = 4
+	}
 	remaining := end - start + 1
-	if remaining <= opts.Chunk || opts.Parallel <= 1 {
+	if remaining <= chunk || parallel <= 1 {
 		// 小文件/单并发：不值得分片，走原逻辑
 		return false
 	}
 
-	firstLen := opts.Chunk
+	firstLen := chunk
 	if firstLen > remaining {
 		firstLen = remaining
 	}
 	n, err := io.CopyN(w, upstream.Body, firstLen)
-	if err != nil && !errors.Is(err, io.EOF) {
-		log.Printf("[STRM][range-proxy] 首片写出失败（客户端可能已断开）: copied=%d err=%v", n, err)
+	if err != nil || n != firstLen {
+		// 首片不完整时继续拼后续分片会产生字节缺口，必须中止。
+		log.Printf("[STRM][range-proxy] 首片不完整，已中止: want=%d copied=%d err=%v", firstLen, n, err)
 		return true
 	}
 	if start+firstLen-1 >= end {
 		return true
 	}
 
-	fetcher := newRangeChunkFetcher(cdnURL, reqHeaders, client, opts.Chunk, opts.Parallel, refresh)
+	fetcher := newRangeChunkFetcher(cdnURL, reqHeaders, client, chunk, parallel, refresh)
 	written, err := fetcher.streamRemaining(r.Context(), w, start+firstLen, end)
 	if err != nil {
 		log.Printf("[STRM][range-proxy] 分片中断: first=%d rest=%d err=%v", firstLen, written, err)

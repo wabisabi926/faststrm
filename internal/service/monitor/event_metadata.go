@@ -100,7 +100,7 @@ func (m *Monitor) syncMetadataFile(
 		return "", fmt.Errorf("文件过大（%d 字节），超过辅助文件上限", meta.FileSize)
 	}
 
-	written, err := downloadMetadataFile(ctx, meta.URL, acct.Cookie, localDir, localPath)
+	written, err := downloadMetadataFile(ctx, meta.URL, acct.Cookie, localDir, localPath, meta.FileSize)
 	if err != nil {
 		return "", err
 	}
@@ -118,7 +118,7 @@ func metadataFileUpToDate(localPath string, wantSize int64) bool {
 }
 
 // downloadMetadataFile 下载到 localDir，先写 .part 再原子改名。
-func downloadMetadataFile(ctx context.Context, url, cookie, localDir, localPath string) (int64, error) {
+func downloadMetadataFile(ctx context.Context, url, cookie, localDir, localPath string, expectedSize int64) (int64, error) {
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		return 0, fmt.Errorf("mkdir: %w", err)
 	}
@@ -138,7 +138,7 @@ func downloadMetadataFile(ctx context.Context, url, cookie, localDir, localPath 
 		return 0, fmt.Errorf("下载失败: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("下载失败: HTTP %d", resp.StatusCode)
 	}
 
@@ -160,6 +160,14 @@ func downloadMetadataFile(ctx context.Context, url, cookie, localDir, localPath 
 	if written > metadataMaxBytes {
 		_ = os.Remove(tmp)
 		return 0, fmt.Errorf("文件超过辅助文件上限")
+	}
+	if expectedSize > 0 && written != expectedSize {
+		_ = os.Remove(tmp)
+		return 0, fmt.Errorf("文件长度不一致: 期望 %d，实际 %d", expectedSize, written)
+	}
+	if resp.ContentLength >= 0 && written != resp.ContentLength {
+		_ = os.Remove(tmp)
+		return 0, fmt.Errorf("响应长度不一致: 期望 %d，实际 %d", resp.ContentLength, written)
 	}
 	if err := os.Rename(tmp, localPath); err != nil {
 		_ = os.Remove(tmp)
