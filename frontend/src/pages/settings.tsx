@@ -61,8 +61,6 @@ export default function SettingsPage({
   // 全局文件过滤
   const [globalMinFileSizeMb, setGlobalMinFileSizeMb] = useState("");
   const [globalBlacklistInput, setGlobalBlacklistInput] = useState("");
-  // STRM 覆盖模式："always"(总是覆盖，默认) / "never"(跳过已存在)
-  const [globalOverwriteMode, setGlobalOverwriteMode] = useState<"always" | "never">("always");
 
   // 媒体挂载路径：SSOT 管理，不再手动编辑
   const [mountDryRun, setMountDryRun] = useState<MountDryRunData>(null);
@@ -152,7 +150,6 @@ export default function SettingsPage({
         const loadedGlobalMin = typeof settings.download?.minFileSize === "number" ? settings.download.minFileSize : 0;
         setGlobalMinFileSizeMb(loadedGlobalMin > 0 ? (loadedGlobalMin / (1024 * 1024)).toString() : "");
         setGlobalBlacklistInput((settings.download?.strmGenerateBlacklist || []).join(", "));
-        setGlobalOverwriteMode(settings.download?.overwriteMode === "never" ? "never" : "always");
 
         // Load life monitor config
         const monitor = settings.lifeMonitor || DEFAULT_MONITOR_CONFIG;
@@ -318,7 +315,6 @@ export default function SettingsPage({
         autoDownloadMetadata: data.download?.autoDownloadMetadata ?? true,
         minFileSize: parseMb(globalMinFileSizeMb),
         strmGenerateBlacklist: globalBlacklist,
-        overwriteMode: globalOverwriteMode,
       },
       strm: {
         ...data.strm,
@@ -649,8 +645,6 @@ export default function SettingsPage({
           setGlobalMinFileSizeMb={setGlobalMinFileSizeMb}
           globalBlacklistInput={globalBlacklistInput}
           setGlobalBlacklistInput={setGlobalBlacklistInput}
-          globalOverwriteMode={globalOverwriteMode}
-          setGlobalOverwriteMode={setGlobalOverwriteMode}
           mountDryRun={mountDryRun}
           mountDryRunLoading={mountDryRunLoading}
           mountSyncing={mountSyncing}

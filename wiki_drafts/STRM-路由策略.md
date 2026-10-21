@@ -52,7 +52,7 @@
   ↓
 规则2: UA 匹配 force-proxy 列表？→ 强制 proxy
   ↓
-规则3: 原盘格式（iso/bdmv/m2ts…）？→ 强制 proxy（v1.5.1+）
+规则3: 镜像/原盘格式（iso/bdmv/bluray…）？→ 强制 proxy（两层共用同一份列表）
   ↓
 规则4: 默认 → redirect（302 直连）
   ↓

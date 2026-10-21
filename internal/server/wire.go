@@ -137,10 +137,6 @@ func initPhase6Deps(
 		if len(life.StrmExtensions) == 0 {
 			life.StrmExtensions = s.StrmExtensions
 		}
-		// OverwriteMode：life 自身未设置（空字符串）时，继承全局 Download.OverwriteMode
-		if life.OverwriteMode == "" {
-			life.OverwriteMode = s.Download.OverwriteMode
-		}
 		return life
 	}
 	mon := monitor.NewMonitor(

@@ -32,7 +32,6 @@ func newContractSettings() *model.Settings {
 	s.Download.AutoDownloadMetadata = false
 	s.Download.MinFileSize = 12345
 	s.Download.StrmGenerateBlacklist = []string{"trailer"}
-	s.Download.OverwriteMode = "never"
 	s.Download.FullSyncCleanupOrphans = "mark_only"
 
 	s.Strm.StrmUrlTemplate = "http://nas:8090/api/strm?account={account}&pickcode={pickcode}&file_name={file_name}"

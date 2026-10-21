@@ -89,7 +89,6 @@ export type Settings = {
     // 孤儿 STRM 清理策略："off" / "mark_only" / "auto_clean"（默认）
     fullSyncCleanupOrphans?: string;
     // STRM 覆盖模式："always"(总是覆盖，默认) / "never"(跳过已存在)
-    overwriteMode?: "always" | "never";
   };
   lifeMonitor?: LifeMonitorConfig;
 } & Record<string, unknown>;

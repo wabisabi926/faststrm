@@ -675,9 +675,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 					settings.Download.StrmGenerateBlacklist = body.Download.StrmGenerateBlacklist
 				}
 				// STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空值表示未提供，保留旧配置
-				if body.Download.OverwriteMode != "" {
-					settings.Download.OverwriteMode = body.Download.OverwriteMode
-				}
 				// 孤儿 STRM 清理策略：off / mark_only / auto_clean；空值表示未提供
 				if body.Download.FullSyncCleanupOrphans != "" {
 					settings.Download.FullSyncCleanupOrphans = body.Download.FullSyncCleanupOrphans

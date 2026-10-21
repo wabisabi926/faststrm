@@ -464,8 +464,6 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			strmWorkers = defaultStrmWorkers
 		}
 	}
-	// 对齐 MoviePilot overwrite_mode："never" 时已存在 STRM 则跳过；"always"(默认) 始终覆盖
-	overwriteNever := strings.EqualFold(settings.Download.OverwriteMode, "never")
 	// P1-4 高级模板
 	strmUrlTemplate := settings.Strm.StrmUrlTemplate
 	strmFilenameTemplate := settings.Strm.StrmFilenameTemplate
@@ -485,11 +483,10 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			Stage:          StageGenerating,
 			StageDetail:    fmt.Sprintf("正在生成 %d 个 STRM 文件...", len(strmFiles)),
 		})
-		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("writing %d strm files (concurrency=%d, overwrite=%s)",
-			len(strmFiles), strmWorkers, settings.Download.OverwriteMode))
+		sseServer.EmitLog(task.ID, "info", fmt.Sprintf("writing %d strm files (concurrency=%d)",
+			len(strmFiles), strmWorkers))
 		// P2-1：统一用 WorkerPool，不再每处手写 sem+wg 模板
 		pool := concurrency.NewPool(strmWorkers)
-		skipped := new(int64)
 		writeFailed := new(int64)
 		writeUnchanged := new(int64)
 		for _, f := range strmFiles {
@@ -498,13 +495,6 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				// P1-4 文件名模板优先，否则回退默认（.iso 保留双扩展名）
 				strmRelPath := resolveStrmRelPath(strmFilenameTemplate, task.Account, f)
 				savePath := filepath.Join(task.TargetPath, strmRelPath)
-				// 对齐 MoviePilot：overwrite_mode=="never" 且文件已存在 → 跳过
-				if overwriteNever {
-					if _, statErr := os.Stat(savePath); statErr == nil {
-						atomic.AddInt64(skipped, 1)
-						return nil
-					}
-				}
 				content, cerr := buildStrmContent(task, f, resolved, strmUrlTemplate)
 				if cerr != nil {
 					atomic.AddInt64(writeFailed, 1)
@@ -558,9 +548,6 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 			})
 		}
 		pool.Wait()
-		if overwriteNever && skipped != nil && *skipped > 0 {
-			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("overwrite=never：已跳过 %d 个已存在 STRM 文件", *skipped))
-		}
 		if writeUnchanged != nil && *writeUnchanged > 0 {
 			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("内容未变化跳过写盘 %d 个（不触发 Emby 刷库）", *writeUnchanged))
 		}

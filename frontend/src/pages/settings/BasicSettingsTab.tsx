@@ -77,8 +77,6 @@ export interface BasicSettingsTabProps {
   setGlobalMinFileSizeMb: Dispatch<SetStateAction<string>>;
   globalBlacklistInput: string;
   setGlobalBlacklistInput: Dispatch<SetStateAction<string>>;
-  globalOverwriteMode: "always" | "never";
-  setGlobalOverwriteMode: Dispatch<SetStateAction<"always" | "never">>;
   mountDryRun: MountDryRunData;
   mountDryRunLoading: boolean;
   mountSyncing: boolean;
@@ -105,8 +103,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
     setGlobalMinFileSizeMb,
     globalBlacklistInput,
     setGlobalBlacklistInput,
-    globalOverwriteMode,
-    setGlobalOverwriteMode,
     mountDryRun,
     mountDryRunLoading,
     mountSyncing,
@@ -219,6 +215,9 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           <p className="text-xs text-muted-foreground">
             STRM 文件内容的前缀，如 Emby/Jellyfin 的 HTTP 访问地址。系统会自动追加 <code>/api/strm</code>，无需手动添加。
           </p>
+          <p className="text-xs text-amber-600 dark:text-amber-500">
+            修改前缀后，已有 STRM 文件里的地址不会自动更新——需要重新跑一次任务（或生活事件触发重生成）才会生效。
+          </p>
         </div>
 
         <details className="group space-y-3 pt-2 border-t">
@@ -283,26 +282,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </div>
         </div>
 
-        {/* STRM 覆盖模式 */}
-        <div className="space-y-3 pt-4 border-t">
-          <Label>STRM 覆盖模式</Label>
-          <Select
-            value={globalOverwriteMode}
-            onValueChange={(value) => setGlobalOverwriteMode(value as "always" | "never")}
-          >
-            <SelectTrigger className="w-full md:w-64">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="always">总是覆盖（默认）</SelectItem>
-              <SelectItem value="never">跳过已存在</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            决定重新生成时如何处理已存在的 STRM 文件。「总是覆盖」每次重新生成，保证与网盘一致；「跳过已存在」可加速重复生成，但源文件改名或换链时可能残留旧链接。
-          </p>
-        </div>
-
         {/* STRM 路由策略配置（始终生效，后端智能路由自动决定 proxy/redirect） */}
         <details className="group space-y-3 pt-4 border-t">
           <summary className="flex cursor-pointer list-none items-center gap-2">
@@ -313,11 +292,14 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             </span>
             <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
           </summary>
-          <div className="space-y-4 pt-2">
+          <div className="space-y-5 pt-2">
             <p className="text-xs text-muted-foreground">
-              默认 302 直连 115 CDN；仅当下方「强制代理 UA 标识」匹配时走代理。
+              默认 302 直连 115 CDN；命中下方「UA 标识」或「格式列表」时才走服务端代理。
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+
+            {/* ---- 代理触发条件 ---- */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-medium border-t pt-4">代理触发条件</h3>
               <div className="space-y-3">
                 <Label>强制代理 UA 标识</Label>
                 <Input
@@ -327,117 +309,127 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 />
                 <p className="text-xs text-muted-foreground">
                   逗号分隔。命中即强制走服务端代理（适合 302 播不了的客户端）；留空则全部 302 直链。
-                  原盘格式不受此项影响，始终走代理。
+                  下方格式列表内的原盘不受此项影响，始终按格式代理。
                 </p>
               </div>
-              <div className="space-y-3">
-                <Label>单账号代理并发上限</Label>
-                <Input
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={data.strm?.accountProxyConcurrencyLimit ?? 8}
-                  onChange={(e) =>
-                    setData({ ...data, strm: { ...data.strm, accountProxyConcurrencyLimit: parseInt(e.target.value) || 8 } })
-                  }
-                />
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="disableSeekFormatProxy"
+                    checked={!(data.strm?.disableSeekFormatProxy ?? false)}
+                    onCheckedChange={(checked) =>
+                      setData({ ...data, strm: { ...data.strm, disableSeekFormatProxy: checked !== true } })
+                    }
+                  />
+                  <Label htmlFor="disableSeekFormatProxy" className="cursor-pointer">
+                    按格式强制代理（推荐开启）
+                  </Label>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  超过后自动切换为 302 重定向
+                  开启后，下方列表内的格式在 <b>Emby 反代</b> 和 <b>STRM 端点</b> 两层都走服务端代理——
+                  ISO 等镜像直接 302 到 CDN 时，部分客户端无法随机读取。
+                  关闭后两层都不再按格式代理，镜像也走 302（可能播放失败）。
                 </p>
-              </div>
-              <div className="space-y-3">
-                <Label>重定向检测超时（毫秒）</Label>
-                <Input
-                  type="number"
-                  min="500"
-                  max="10000"
-                  step="500"
-                  value={data.strm?.redirectCheckTimeoutMs ?? 5000}
-                  onChange={(e) =>
-                    setData({ ...data, strm: { ...data.strm, redirectCheckTimeoutMs: parseInt(e.target.value) || 5000 } })
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  检测失败时回退到代理
-                </p>
+                <div className="space-y-2 pt-1">
+                  <Label>强制代理的容器/扩展名</Label>
+                  <Input
+                    value={forceProxyFormatsInput}
+                    onChange={(e) => setForceProxyFormatsInput(e.target.value)}
+                    placeholder="iso, bdmv, bluray"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    逗号分隔，大小写不敏感、点号可省略。两层共用这一份列表；留空恢复默认值
+                    （iso / bdmv / bdav / dvd / bluray）。
+                    m2ts、ts、vob 属于普通视频流，默认 302 直连；某些客户端播不了时再加回列表。
+                  </p>
+                </div>
               </div>
             </div>
-            <div className="space-y-3 rounded-md border p-3">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="disableSeekFormatProxy"
-                  checked={!(data.strm?.disableSeekFormatProxy ?? false)}
-                  onCheckedChange={(checked) =>
-                    setData({ ...data, strm: { ...data.strm, disableSeekFormatProxy: checked !== true } })
-                  }
-                />
-                <Label htmlFor="disableSeekFormatProxy" className="cursor-pointer">
-                  按格式强制代理（推荐开启）
-                </Label>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                开启后，下方列表内的格式在 <b>Emby 反代</b> 和 <b>STRM 端点</b> 两层都走服务端代理——
-                ISO / BDMV / M2TS 等原盘直接 302 到 CDN 常因 UA/签名绑定失败（卡住或无法播放）。
-                关闭后两层都不再按格式代理，原盘也走 302（可能播放失败）。
-              </p>
-              <div className="space-y-2 pt-1">
-                <Label>强制代理的容器/扩展名</Label>
-                <Input
-                  value={forceProxyFormatsInput}
-                  onChange={(e) => setForceProxyFormatsInput(e.target.value)}
-                  placeholder="iso, bdmv, m2ts, vob"
-                />
-                <p className="text-xs text-muted-foreground">
-                  逗号分隔，大小写不敏感、点号可省略。两层共用这一份列表；留空恢复默认值
-                  （iso/bdmv/bdav/dvd/bluray/m2ts/vob/ifo/bup，不含 ts）。
-                </p>
-              </div>
-            </div>
-            <div className="space-y-3 rounded-md border p-3">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="disableRangeProxy"
-                  checked={!(data.strm?.disableRangeProxy ?? false)}
-                  onCheckedChange={(checked) =>
-                    setData({ ...data, strm: { ...data.strm, disableRangeProxy: checked !== true } })
-                  }
-                />
-                <Label htmlFor="disableRangeProxy" className="cursor-pointer">
-                  代理流分片并发（推荐开启）
-                </Label>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                按 Range 分片并行拉取再按序输出，解决大原盘（50GB+）单连接带宽不足导致的卡顿、超时、播不出来。
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>分片大小（MB）</Label>
+
+            {/* ---- 代理行为 ---- */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-medium border-t pt-4">代理行为</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="space-y-3">
+                  <Label>单账号代理并发上限</Label>
                   <Input
                     type="number"
                     min="1"
-                    max="64"
-                    value={data.strm?.proxyChunkSizeMB ?? 10}
+                    max="20"
+                    value={data.strm?.accountProxyConcurrencyLimit ?? 8}
                     onChange={(e) =>
-                      setData({ ...data, strm: { ...data.strm, proxyChunkSizeMB: parseInt(e.target.value) || 10 } })
+                      setData({ ...data, strm: { ...data.strm, accountProxyConcurrencyLimit: parseInt(e.target.value) || 8 } })
                     }
                   />
+                  <p className="text-xs text-muted-foreground">
+                    默认 8。同时走代理的播放数超过该值后，非原盘自动切换为 302 重定向
+                  </p>
                 </div>
-                <div className="space-y-1.5">
-                  <Label>分片并发数</Label>
+                <div className="space-y-3">
+                  <Label>重定向检测超时（毫秒）</Label>
                   <Input
                     type="number"
-                    min="1"
-                    max="4"
-                    value={data.strm?.proxyConcurrency ?? 2}
+                    min="500"
+                    max="10000"
+                    step="500"
+                    value={data.strm?.redirectCheckTimeoutMs ?? 5000}
                     onChange={(e) =>
-                      setData({ ...data, strm: { ...data.strm, proxyConcurrency: parseInt(e.target.value) || 2 } })
+                      setData({ ...data, strm: { ...data.strm, redirectCheckTimeoutMs: parseInt(e.target.value) || 5000 } })
                     }
                   />
+                  <p className="text-xs text-muted-foreground">
+                    默认 5000。302 前会探测 CDN 是否可达，超时或失败时回退到代理
+                  </p>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                单账号代理上限按播放请求计数；分片并发会额外占用 CDN 连接。115 有风控，建议 2；带宽充足且稳定可试 3。
-              </p>
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="disableRangeProxy"
+                    checked={!(data.strm?.disableRangeProxy ?? false)}
+                    onCheckedChange={(checked) =>
+                      setData({ ...data, strm: { ...data.strm, disableRangeProxy: checked !== true } })
+                    }
+                  />
+                  <Label htmlFor="disableRangeProxy" className="cursor-pointer">
+                    代理流分片并发（推荐开启）
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  按 Range 分片并行拉取再按序输出，解决大原盘（50GB+）单连接带宽不足导致的卡顿、超时、播不出来。
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>分片大小（MB）</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="64"
+                      value={data.strm?.proxyChunkSizeMB ?? 10}
+                      onChange={(e) =>
+                        setData({ ...data, strm: { ...data.strm, proxyChunkSizeMB: parseInt(e.target.value) || 10 } })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">默认 10</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>分片并发数</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="4"
+                      value={data.strm?.proxyConcurrency ?? 2}
+                      onChange={(e) =>
+                        setData({ ...data, strm: { ...data.strm, proxyConcurrency: parseInt(e.target.value) || 2 } })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">默认 2</p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  单账号代理上限按播放请求计数；分片并发会额外占用 CDN 连接。115 有风控，建议 2；带宽充足且稳定可试 3。
+                </p>
+              </div>
             </div>
           </div>
         </details>

@@ -118,7 +118,6 @@ type DownloadSettings struct {
 	AutoDownloadMetadata  bool     `json:"autoDownloadMetadata"`        // 是否自动下载媒体元数据（nfo/jpg/png 等）
 	MinFileSize           int64    `json:"minFileSize"`                 // 全量同步/任务执行 最小文件大小阈值（字节），默认0不限制
 	StrmGenerateBlacklist []string `json:"strmGenerateBlacklist"`       // STRM 生成文件名黑名单关键词列表（如 "*trailer*", "sample.*"），大小写不敏感
-	OverwriteMode         string   `json:"overwriteMode"`               // STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)
 	// P2-3 增量同步：以 files 表为 snapshot，对 pickcode+name+size 完全一致的条目跳过写 STRM/下载，仅处理变化的部分
 	// P0-1 增量对账清理：增量同步结束后，扫描 TargetPath 下所有 .strm 文件，
 	// 提取内容中的 pickcode 与云端快照比对，孤儿 STRM 按以下模式处理：
@@ -211,9 +210,18 @@ func (s *StrmSettings) DisableSeekFormatProxyProvided() bool {
 // DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）。
 //
 // 两层（EmbyProxy / STRM 端点）共用这一份列表。
-// 不含 ts：ts 是常见录播格式而非原盘，302 通常可用，没必要占 NAS 带宽。
+//
+// 只保留真正需要服务端代理的「原盘/镜像」：
+//   - iso：客户端（Emby 网页/官方 APP）不支持直读 ISO，必须由服务端按 Range 转发
+//   - bdmv/bluray/dvd/bdav：Emby 的 Container 值（原盘结构），防御性保留
+//
+// 不含 m2ts / ts / vob：它们是普通 MPEG-TS/PS 视频流，与 mkv 同性质，
+// 客户端可直接按 HTTP Range 读取，302 直连 CDN 更省 NAS 带宽。
+// 不含 ifo / bup：DVD 导航/备份文件，永远不会作为媒体流播放。
+//
+// 若某些客户端确实播不了某格式，在设置页把它加回列表即可（两层同时生效）。
 var DefaultForceProxyFormats = []string{
-	"iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "vob", "ifo", "bup",
+	"iso", "bdmv", "bdav", "dvd", "bluray",
 }
 
 // EmbySettings emby 子项
@@ -297,7 +305,6 @@ type LifeMonitorSettings struct {
 	StrmExtensions        []string `json:"strmExtensions"`
 	MinFileSize           int64    `json:"minFileSize"`           // 生活监控 最小文件大小阈值（字节），默认0不限制
 	StrmGenerateBlacklist []string `json:"strmGenerateBlacklist"` // 生活监控 独立黑名单关键词列表；空则继承全局 Download.StrmGenerateBlacklist
-	OverwriteMode         string   `json:"overwriteMode"`         // 生活监控 STRM 覆盖模式："always"(默认覆盖) / "never"(已存在则跳过)；空则继承全局
 	FirstPullMode         string   `json:"firstPullMode"`
 	MoveMediaMode         string   `json:"moveMediaMode"`
 	AutoDownloadMetadata  bool     `json:"autoDownloadMetadata"` // 生活监控 STRM 创建后是否自动占位同名 nfo/jpg/png/srt 等关联资源（空则继承全局 Download.AutoDownloadMetadata）
@@ -393,7 +400,6 @@ func DefaultSettings() *Settings {
 			AutoDownloadMetadata:  true,       // 默认开启，保持向后兼容
 			MinFileSize:           0,          // 默认不限制最小文件大小
 			StrmGenerateBlacklist: []string{}, // 默认空黑名单
-			OverwriteMode:         "always",   // 默认始终覆盖（与 MoviePilot 默认行为一致）
 			// 孤儿 STRM 清理：只按 STRM 内容里的 pickcode 对账，不会碰用户自己的文件。
 			FullSyncCleanupOrphans: "auto_clean",
 		},

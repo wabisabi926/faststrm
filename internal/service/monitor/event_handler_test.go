@@ -741,7 +741,7 @@ func TestHandleCreateEvent_MislabeledFolder_FallsBackToSingleFile(t *testing.T) 
 	lifeClient := newLifeClientWithFsBody(`{"state":true,"data":[]}`)
 
 	m := &Monitor{settingsFn: func() model.LifeMonitorSettings {
-		return model.LifeMonitorSettings{OverwriteMode: "always"}
+		return model.LifeMonitorSettings{}
 	}}
 	mapping := &pathMapping{cloudPath: "电影", localPath: localRoot, relativePath: ""}
 
@@ -837,7 +837,7 @@ func TestHandleCreateEvent_BdmvStreamFile_Skipped(t *testing.T) {
 
 	m := &Monitor{
 		settingsFn: func() model.LifeMonitorSettings {
-			return model.LifeMonitorSettings{OverwriteMode: "always"}
+			return model.LifeMonitorSettings{}
 		},
 		sqliteDB:         sqldb,
 		lifeEventLogRepo: logRepo,
@@ -903,7 +903,7 @@ func TestHandleCreateEvent_BdmvFolder_SkipsStreamSubtree(t *testing.T) {
 	lifeClient.FsClient().HTTP = &http.Client{Transport: rt}
 
 	m := &Monitor{settingsFn: func() model.LifeMonitorSettings {
-		return model.LifeMonitorSettings{OverwriteMode: "always"}
+		return model.LifeMonitorSettings{}
 	}}
 	mapping := &pathMapping{cloudPath: "电影/沙丘", localPath: localRoot, relativePath: ""}
 	event := client115.LifeEventItem{

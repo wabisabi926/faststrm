@@ -106,15 +106,6 @@ func (m *Monitor) createStrmForSingleFile(
 		}
 	}
 
-	// 4.6 对齐 MoviePilot overwrite_mode："never" 时已存在 STRM 则跳过
-	// —— DB 已在 4.5 写入，此处跳过 STRM 生成不影响后续 move/rename 反查
-	if strings.EqualFold(config.OverwriteMode, "never") {
-		if _, statErr := os.Stat(strmPath); statErr == nil {
-			logger.S().Debugf("[Monitor] createStrmForSingleFile overwrite=never，跳过已存在: %s", strmPath)
-			return strmPath, nil
-		}
-	}
-
 	// 5. 生成 STRM URL 内容（P1-4 高级模板优先）
 	content := generateStrmContent(
 		in.CloudPath, config.StrmPrefix,

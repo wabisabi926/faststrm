@@ -33,29 +33,31 @@ func TestSetSeekFormatProxyEnabled_DisablesAll(t *testing.T) {
 	}
 }
 
-// TestIsSeekRequiredFormat_Default 默认列表行为：纯原盘格式命中，ts 不再命中。
-// 两层（EmbyProxy / STRM 端点）共用同一份默认列表，均不含 ts。
+// TestIsSeekRequiredFormat_Default 默认列表：只有原盘/镜像格式命中。
+// m2ts / ts / vob 是普通视频流，ifo / bup 非视频——默认都走 302。
 func TestIsSeekRequiredFormat_Default(t *testing.T) {
 	resetForceProxyFormats(t)
 
-	// 容器名匹配
-	for _, c := range []string{"iso", "ISO", "bdmv", "m2ts", "vob"} {
+	// 容器名匹配（原盘/镜像）
+	for _, c := range []string{"iso", "ISO", "bdmv", "bluray", "dvd", "bdav"} {
 		if !isSeekRequiredFormat(c, "") {
 			t.Fatalf("container %q should require proxy by default", c)
 		}
 	}
 	// 扩展名匹配
-	for _, n := range []string{"movie.iso", "00000.m2ts", "VTS_01_1.VOB"} {
+	for _, n := range []string{"movie.iso", "movie.ISO"} {
 		if !isSeekRequiredFormat("", n) {
 			t.Fatalf("name %q should require proxy by default", n)
 		}
 	}
-	// ts 是录播格式而非原盘，默认走 302（不占 NAS 带宽）
-	if isSeekRequiredFormat("ts", "") {
-		t.Fatal("container ts should NOT require proxy by default (ts is not a disc format)")
+	// 普通视频流 / 非视频文件：默认不代理
+	for _, n := range []string{"00000.m2ts", "record.ts", "VTS_01_1.VOB", "VIDEO_TS.IFO", "VIDEO_TS.BUP"} {
+		if isSeekRequiredFormat("", n) {
+			t.Fatalf("name %q should NOT require proxy by default", n)
+		}
 	}
-	if isSeekRequiredFormat("", "record.ts") {
-		t.Fatal("name record.ts should NOT require proxy by default")
+	if isSeekRequiredFormat("m2ts", "") {
+		t.Fatal("container m2ts should NOT require proxy by default")
 	}
 	// 普通格式不应命中
 	for _, n := range []string{"movie.mkv", "movie.mp4", "movie.avi"} {
