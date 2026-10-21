@@ -210,6 +210,14 @@ export function ConnectionSection({
                   刷新状态
                 </Button>
               </div>
+              {!proxyStatus?.running && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed">
+                  <span className="font-medium">反代未运行，播放会退回 Emby 直连</span>
+                  <br />
+                  mkv/mp4 等普通格式仍可播放；<span className="font-medium">ISO / BDMV 原盘会失败</span>
+                  （Emby 会判定需要转码）。恢复方式：检查「反代监听端口」是否被占用，或先临时把客户端指向 Emby 本体端口看普通视频。
+                </div>
+              )}
             </div>
           )}
         </div>

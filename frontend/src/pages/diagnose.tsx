@@ -37,6 +37,12 @@ interface DiagnoseResult {
     ok?: boolean;
     status?: number;
   };
+  // 新增：格式与限流上下文
+  seekFormat?: boolean;
+  rangeProxy?: string;
+  proxyInUse?: number;
+  proxyLimit?: number;
+  forceProxy?: string[];
   cdn?: {
     status?: number;
     contentType?: string;
@@ -300,6 +306,28 @@ export default function DiagnosePage() {
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">路由原因</span>
                     <span className="text-right break-all">{result.reason || "-"}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">原盘/seek 格式</span>
+                    <span className="font-mono">
+                      {result.seekFormat ? "是（强制代理，不降级 302）" : "否"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">分片并发</span>
+                    <span className="font-mono">{result.rangeProxy || "off"}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">代理占用 / 上限</span>
+                    <span className="font-mono">
+                      {result.proxyInUse ?? "-"} / {result.proxyLimit ?? "-"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">强制代理 UA</span>
+                    <span className="text-right break-all font-mono">
+                      {(result.forceProxy || []).length > 0 ? result.forceProxy?.join(", ") : "未配置"}
+                    </span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">Redirect 预检</span>

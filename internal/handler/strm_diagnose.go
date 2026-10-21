@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -87,6 +88,13 @@ func HandleStrmDiagnose(opts StrmOptions) http.HandlerFunc {
 		cdn := probeCdnHeaders(r.Context(), meta.URL, account.Cookie, ua)
 		finalName := pickOneFileName(fileName, meta.FileName, meta.URL)
 
+		// 原盘/seek 格式与分片参数：排查「为什么走了 302 / 为什么没走分片」的关键
+		seekFormat := isSeekFormatName(finalName, routeCfg.ForceProxyFormats)
+		rangeProxy := "off"
+		if !opts.Cfg.Settings.Strm.DisableRangeProxy {
+			rangeProxy = fmt.Sprintf("%dMBx%d", opts.Cfg.Settings.Strm.ProxyChunkSizeMB, opts.Cfg.Settings.Strm.ProxyConcurrency)
+		}
+
 		httpx.OkJson(w, map[string]any{
 			"account":        accountName,
 			"pickcode":       strings.ToLower(pickcode),
@@ -100,6 +108,12 @@ func HandleStrmDiagnose(opts StrmOptions) http.HandlerFunc {
 			"reason":         finalReason,
 			"redirectCheck":  redirectCheck,
 			"cdn":            cdn,
+			// 新增：格式与限流上下文
+			"seekFormat": seekFormat,
+			"rangeProxy": rangeProxy,
+			"proxyInUse": proxyCountNow(accountName),
+			"proxyLimit": routeCfg.AccountProxyConcurrencyLimit,
+			"forceProxy": routeCfg.ForceProxyUaTokens,
 		})
 	}
 }
