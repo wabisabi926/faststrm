@@ -223,6 +223,56 @@ func TestSettingsContract_PartialPostPreservesOmittedFields(t *testing.T) {
 	}
 }
 
+func TestSettingsContract_StrmBoolPatchPreservesOmittedFields(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
+	original := newContractSettings()
+	original.Strm.DisableRangeProxy = true
+	original.Strm.DisableSeekFormatProxy = true
+	if err := settingsStore.SaveSettings(original); err != nil {
+		t.Fatal(err)
+	}
+	deps := EmbyDeps{SettingsStore: settingsStore}
+
+	// 只提交分片大小，两个 bool 开关未提供，应保留 true
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader([]byte(`{"strm":{"proxyChunkSizeMB":16}}`)))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(deps)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("partial POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Strm.DisableRangeProxy || !stored.Strm.DisableSeekFormatProxy {
+		t.Fatalf("omitted bool fields should be preserved: range=%v seek=%v",
+			stored.Strm.DisableRangeProxy, stored.Strm.DisableSeekFormatProxy)
+	}
+	if stored.Strm.ProxyChunkSizeMB != 16 {
+		t.Fatalf("proxyChunkSizeMB=%d, want 16", stored.Strm.ProxyChunkSizeMB)
+	}
+
+	// 显式 false 必须覆盖
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings",
+		bytes.NewReader([]byte(`{"strm":{"disableRangeProxy":false,"disableSeekFormatProxy":false}}`)))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(deps)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("explicit POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err = settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Strm.DisableRangeProxy || stored.Strm.DisableSeekFormatProxy {
+		t.Fatalf("explicit false should be applied: range=%v seek=%v",
+			stored.Strm.DisableRangeProxy, stored.Strm.DisableSeekFormatProxy)
+	}
+}
+
 func TestSettingsContract_CanClearOptionalStringsAndMinFileSize(t *testing.T) {
 	dir := t.TempDir()
 	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)

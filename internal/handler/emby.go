@@ -709,7 +709,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				if body.Strm.ForceProxySeekFormats != nil {
 					settings.Strm.ForceProxySeekFormats = body.Strm.ForceProxySeekFormats
 				}
-				settings.Strm.DisableSeekFormatProxy = body.Strm.DisableSeekFormatProxy
 				if body.Strm.AccountProxyConcurrencyLimit > 0 {
 					settings.Strm.AccountProxyConcurrencyLimit = body.Strm.AccountProxyConcurrencyLimit
 				}
@@ -717,8 +716,13 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				if time.Duration(body.Strm.RedirectCheckTimeoutMs)*time.Millisecond >= 500*time.Millisecond {
 					settings.Strm.RedirectCheckTimeoutMs = body.Strm.RedirectCheckTimeoutMs
 				}
-				// 分片并发代理：Disable 语义（false=启用，默认），直接赋值即可
-				settings.Strm.DisableRangeProxy = body.Strm.DisableRangeProxy
+				// 分片并发代理：只有显式提供时才覆盖，旧前端/部分提交保留旧值
+				if body.Strm.DisableRangeProxyProvided() {
+					settings.Strm.DisableRangeProxy = body.Strm.DisableRangeProxy
+				}
+				if body.Strm.DisableSeekFormatProxyProvided() {
+					settings.Strm.DisableSeekFormatProxy = body.Strm.DisableSeekFormatProxy
+				}
 				if v := body.Strm.ProxyChunkSizeMB; v >= 1 && v <= 64 {
 					settings.Strm.ProxyChunkSizeMB = v
 				}

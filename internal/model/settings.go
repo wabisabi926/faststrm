@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"time"
@@ -176,6 +177,35 @@ type StrmSettings struct {
 	// DisableSeekFormatProxy 关闭「原盘在 STRM 端点层强制代理」。
 	// 关闭后原盘与普通格式一样按 UA 白名单/默认 302 处理（ISO 可能因 CDN 拒绝而播放失败）。
 	DisableSeekFormatProxy bool `json:"disableSeekFormatProxy"`
+
+	disableRangeProxySet      bool
+	disableSeekFormatProxySet bool
+}
+
+// UnmarshalJSON 记录两个 bool 开关是否出现在 JSON 中，供 POST 合并时区分
+// 「未提供」与「显式 false」；未提供时保留旧配置，避免旧前端把用户已关闭的开关重置。
+func (s *StrmSettings) UnmarshalJSON(data []byte) error {
+	type plain StrmSettings
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*s = StrmSettings(decoded)
+	_, s.disableRangeProxySet = raw["disableRangeProxy"]
+	_, s.disableSeekFormatProxySet = raw["disableSeekFormatProxy"]
+	return nil
+}
+
+// DisableRangeProxyProvided 表示请求是否显式提供了 disableRangeProxy。
+func (s *StrmSettings) DisableRangeProxyProvided() bool { return s != nil && s.disableRangeProxySet }
+
+// DisableSeekFormatProxyProvided 表示请求是否显式提供了 disableSeekFormatProxy。
+func (s *StrmSettings) DisableSeekFormatProxyProvided() bool {
+	return s != nil && s.disableSeekFormatProxySet
 }
 
 // DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）
