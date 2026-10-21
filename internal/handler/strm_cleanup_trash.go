@@ -213,6 +213,12 @@ func restoreTrashEntry(absTrash, root string, overwrite bool) (string, error) {
 	if err != nil {
 		return "", newTrashRestoreError(http.StatusBadRequest, err.Error())
 	}
+	if err := strmutil.EnsureNoSymlinkComponents(root, absTrash); err != nil {
+		return "", newTrashRestoreError(http.StatusBadRequest, err.Error())
+	}
+	if err := strmutil.EnsureNoSymlinkComponents(root, original); err != nil {
+		return "", newTrashRestoreError(http.StatusBadRequest, err.Error())
+	}
 	if _, statErr := os.Lstat(original); statErr == nil {
 		if !overwrite {
 			return "", newTrashRestoreError(http.StatusConflict, "原路径已存在文件，拒绝覆盖")

@@ -357,6 +357,10 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 
 		body, err := c.doRequest(ctx, http.MethodGet, endpoint, "")
 		if err != nil {
+			// 限流/认证错误换域名没有意义，直接交给监控冷却，避免重试风暴。
+			if IsAuthError(ClassifyError(err)) || IsRateLimitError(ClassifyError(err)) {
+				return nil, err
+			}
 			// 本页请求失败：切换到另一个域名重试一次（保留原有容错，避免单页失败丢弃整批）
 			c.switchApiHost()
 			apiHost = c.getApiHost()
@@ -364,6 +368,9 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 			endpoint = fmt.Sprintf("%s%s?limit=%d&offset=%d", apiHost, path, limit, offset)
 			body, err = c.doRequest(ctx, http.MethodGet, endpoint, "")
 			if err != nil {
+				if IsAuthError(ClassifyError(err)) || IsRateLimitError(ClassifyError(err)) {
+					return nil, err
+				}
 				if len(allFiltered) > 0 {
 					break // 已有数据，返回已拉取的
 				}
@@ -390,6 +397,10 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 		if resp.Code != 0 {
 			if resp.Code == 99 || resp.Code == 990001 {
 				return nil, fmt.Errorf("cookie 已过期 (code=%d): %s", resp.Code, resp.Error)
+			}
+			codeErr := newAPIError(resp.Code, resp.Error)
+			if IsRateLimitError(codeErr) || IsAuthError(codeErr) {
+				return nil, codeErr
 			}
 			if len(allFiltered) > 0 {
 				break

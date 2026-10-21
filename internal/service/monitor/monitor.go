@@ -685,6 +685,11 @@ func (m *Monitor) pullEventsWithRetry(
 		}
 
 		lastErr = err
+		// 认证/限流错误不应在轮询内继续重试；交给 handlePollError 进入更长冷却。
+		if client115.IsAuthError(client115.ClassifyError(err)) ||
+			client115.IsRateLimitError(client115.ClassifyError(err)) {
+			return nil, err
+		}
 		if attempt == 0 {
 			break
 		}

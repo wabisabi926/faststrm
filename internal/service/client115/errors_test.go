@@ -77,6 +77,11 @@ func TestClassifyAPIError(t *testing.T) {
 		{"errno405限流", 405, "", ErrRateLimited},
 		{"文案请重新登录", 0, "请重新登录", ErrCookieExpired},
 		{"文案访问频繁", 0, "访问频繁，请稍后", ErrRateLimited},
+		{"文案430限流", 0, "HTTP 430", ErrRateLimited},
+		{"文案key invalid", 0, "key invalid", ErrCookieExpired},
+		// 泛化的 invalid / 403 不能误判为认证失败
+		{"文案invalid request", 0, "invalid request", ErrTransient},
+		{"文案HTTP403", 0, "HTTP 403: forbidden", ErrTransient},
 		{"未知错误", 0, "something weird", ErrTransient},
 	}
 	for _, tc := range cases {

@@ -402,7 +402,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                并发数计入上方「单账号代理并发上限」。115 有风控，建议 2；带宽充足且稳定可试 3。
+                单账号代理上限按播放请求计数；分片并发会额外占用 CDN 连接。115 有风控，建议 2；带宽充足且稳定可试 3。
               </p>
             </div>
           </div>

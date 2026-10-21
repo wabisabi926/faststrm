@@ -279,27 +279,23 @@ func applyProxyConcurrencyLimit(
 	concurrencyLimit int,
 	isSeekFormat bool,
 ) (applyProxyConcurrency bool, leaveBn func(), outReason string, outDecision strm.RouteDecision) {
+	if isSeekFormat {
+		// 原盘/seek 格式降级 302 后 CDN 常因 UA/签名拒绝 Range，必然播放失败。
+		// 统一用 Bottleneck 排队（含少量软超限），不再存在“检查后直接放行”的无界分支。
+		limit := concurrencyLimit + seekFormatSoftOverLimit
+		if limit <= 0 {
+			limit = 1
+		}
+		bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, limit)
+		if enterErr := bn.Enter(rCtx); enterErr != nil {
+			logger.S().Warnf("[STRM] account=%s seek proxy queue canceled: %v", accountName, enterErr)
+			return false, nil, "seek_proxy_queue_canceled", strm.DecisionProxy
+		}
+		return true, bn.Leave, "", ""
+	}
+
 	current := proxyCountNow(accountName)
 	if current >= concurrencyLimit {
-		// 原盘/seek 格式：降级 302 后 CDN 常因 UA 绑定/签名拒绝 Range，必然播放失败。
-		// 软上限内直接放行；超过软上限则排队等槽位，超时也继续代理（宁可慢也不 302）。
-		if isSeekFormat {
-			if current < concurrencyLimit+seekFormatSoftOverLimit {
-				logger.S().Warnf("[STRM] account=%s proxy concurrency %d/%d, seek format soft overflow allowed",
-					accountName, current, concurrencyLimit)
-				return true, nil, "", ""
-			}
-			bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, concurrencyLimit+seekFormatSoftOverLimit)
-			enterCtx, cancel := context.WithTimeout(rCtx, bottleneckEnterTimeout)
-			enterErr := bn.Enter(enterCtx)
-			cancel()
-			if enterErr != nil {
-				logger.S().Warnf("[STRM] account=%s proxy concurrency %d/%d, seek format queue timeout, keep proxy",
-					accountName, current, concurrencyLimit)
-				return true, nil, "", ""
-			}
-			return true, bn.Leave, "", ""
-		}
 		reason = fmt.Sprintf("%s -> proxy_concurrency_limit(%d/%d) fallback_redirect",
 			reason, current, concurrencyLimit)
 		logger.S().Warnf("[STRM] account=%s proxy concurrency hit limit (%d/%d), fallback to redirect",

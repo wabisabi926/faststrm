@@ -79,9 +79,10 @@ func isIdempotentMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
 }
 
-// isRetryableStatus 5xx 服务端错误与 429 限流/风控可安全重试
+// isRetryableStatus 仅 5xx 服务端错误自动重试。
+// 429/430 是限流信号，立即重试会放大风控；交给上层冷却退避。
 func isRetryableStatus(code int) bool {
-	return code >= 500 || code == http.StatusTooManyRequests
+	return code >= 500
 }
 
 // retryBackoffDelay 计算第 attempt 次重试前的退避时长（attempt 从 0 计）
@@ -229,6 +230,11 @@ func (c *Client) request115(
 		if isRetryableStatus(status) {
 			lastErr = fmt.Errorf("HTTP %d", status)
 			continue
+		}
+		if status < 200 || status >= 300 {
+			// 429/430 等限流/网关错误必须作为错误返回；把原始 body 当成功会让上层
+			// 把目录解析成空，进而误判本地 STRM 为孤儿。
+			return nil, fmt.Errorf("HTTP %d: %s", status, truncate(data, 256))
 		}
 		return data, nil
 	}

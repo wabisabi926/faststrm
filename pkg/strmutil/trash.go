@@ -56,6 +56,9 @@ func MoveToTrash(path, root, trashDir string) (string, error) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("trash: path outside root: %s", path)
 	}
+	if err := EnsureNoSymlinkComponents(absRoot, absPath); err != nil {
+		return "", fmt.Errorf("trash: %w", err)
+	}
 	if trashDir == "" {
 		trashDir = TrashSessionDir(absRoot)
 	}

@@ -165,7 +165,8 @@ type StrmSettings struct {
 	DisableRangeProxy bool `json:"disableRangeProxy"`
 	// ProxyChunkSizeMB 分片大小（MB），默认 10。
 	ProxyChunkSizeMB int `json:"proxyChunkSizeMB"`
-	// ProxyConcurrency 单次播放的分片并发数，默认 2（计入 AccountProxyConcurrencyLimit 额度）。
+	// ProxyConcurrency 单次播放的分片并发数，默认 2。
+	// 每个播放请求占用 1 个代理槽位；分片会额外建立 CDN 连接，不等同于槽位数。
 	ProxyConcurrency int `json:"proxyConcurrency"`
 	// ForceProxySeekFormats 在 STRM 端点层就强制代理的原盘扩展名（不含 ts）。
 	// 背景：ISO/BDMV 等镜像走 302 后客户端直连 CDN，Range/UA 绑定极易被拒，

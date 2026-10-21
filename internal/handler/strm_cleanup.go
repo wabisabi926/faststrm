@@ -547,6 +547,9 @@ func validateCleanupRelPathAny(root, rel string) error {
 	if !pathWithinRoot(root, full) {
 		return fmt.Errorf("relPath 越出映射根目录: %q", rel)
 	}
+	if err := strmutil.EnsureNoSymlinkComponents(root, full); err != nil {
+		return fmt.Errorf("relPath 包含不安全的符号链接: %w", err)
+	}
 	return nil
 }
 
@@ -1707,6 +1710,14 @@ func regenerateMissingStrms(ctx context.Context, body ExecuteRequest, settings *
 			if body.DryRun {
 				regen++
 				regenPaths = append(regenPaths, miss.RelPath)
+				continue
+			}
+			if err := strmutil.EnsureNoSymlinkComponents(m.LocalPath, strmPath); err != nil {
+				failed++
+				resp.Errors = append(resp.Errors, map[string]string{
+					"path":  strmPath,
+					"error": err.Error(),
+				})
 				continue
 			}
 			if err := os.MkdirAll(filepath.Dir(strmPath), 0o755); err != nil {

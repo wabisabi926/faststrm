@@ -60,9 +60,14 @@ var authMsgPatterns = []string{
 	"cookie",
 	"expired",
 	"unauthorized",
-	"invalid",
-	"401",
-	"403",
+	// 只匹配明确的凭据错误；不要用泛化的 "invalid"/"401"/"403"，
+	// 否则 WAF/风控/参数错误会被误判为 Cookie 失效。
+	"key invalid",
+	"invalid key",
+	"cookie invalid",
+	"invalid cookie",
+	"token invalid",
+	"invalid token",
 }
 
 // rateLimitMsgPatterns 文案兜底：限流关键词。
@@ -79,6 +84,7 @@ var rateLimitMsgPatterns = []string{
 	"too many requests",
 	"rate limit",
 	"429",
+	"430",
 }
 
 // APIError 115 API 业务错误。

@@ -80,6 +80,11 @@ func (m *Monitor) syncMetadataFile(
 		return "", fmt.Errorf("文件名无效: %q", event.FileName)
 	}
 	localPath := filepath.Join(localDir, name)
+	for _, p := range []string{localPath, localPath + ".part"} {
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("拒绝写入符号链接: %s", p)
+		}
+	}
 	if metadataFileUpToDate(localPath, event.FileSize) {
 		logger.S().Debugf("[Monitor] 辅助文件已存在，跳过: %s", localPath)
 		return localPath, nil
