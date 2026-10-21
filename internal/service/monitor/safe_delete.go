@@ -55,6 +55,16 @@ func (m *Monitor) deleteManagedStrmTree(ctx context.Context, account, dir string
 			logger.S().Infof("[Monitor] 安全删除跳过未托管 STRM: %s", strmPath)
 			continue
 		}
+		pc, pcErr := strmutil.ExtractPickcode(strmPath)
+		if pcErr != nil || pc == "" {
+			logger.S().Infof("[Monitor] 安全删除跳过无法解析 pickcode 的 STRM: %s", strmPath)
+			continue
+		}
+		ok, verifyErr := m.managed.VerifyFile(ctx, strmPath, pc)
+		if verifyErr != nil || !ok {
+			logger.S().Infof("[Monitor] 安全删除跳过指纹已变化的 STRM: %s", strmPath)
+			continue
+		}
 		dest, moveErr := strmutil.MoveToTrash(strmPath, root, trashDir)
 		if moveErr != nil {
 			logger.S().Warnf("[Monitor] 移入回收站失败: %s err=%v", strmPath, moveErr)
