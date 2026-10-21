@@ -225,10 +225,7 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		out.CleanupDefaultsV3 = true
 		changed = true
 	}
-	// v1.5.0 强制代理格式改为可配置：旧配置没有该字段，补默认值写回，
-	// 让用户能在 settings.json 里看到并调整（例如把 .ts 移除）。
-	if len(out.Strm.ForceProxyFormats) == 0 {
-		out.Strm.ForceProxyFormats = def.Strm.ForceProxyFormats
+	if backfillStrmRouteDefaults(out, def) {
 		changed = true
 	}
 	if out.UserAgent == "" {
@@ -249,8 +246,6 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		out.DownloadExtensions = norm
 		changed = true
 	}
-	// 注意：ForceProxyUaTokens 不做零值回填——用户主动清空表示「全部直连」，
-	// 回填默认值会让这个选择失效（默认值仅对全新安装生效）。
 	if out.Strm.AccountProxyConcurrencyLimit == 0 {
 		out.Strm.AccountProxyConcurrencyLimit = def.Strm.AccountProxyConcurrencyLimit
 		changed = true
@@ -266,6 +261,30 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 	}
 	if out.Strm.ProxyConcurrency == 0 {
 		out.Strm.ProxyConcurrency = def.Strm.ProxyConcurrency
+		changed = true
+	}
+	return changed
+}
+
+// backfillStrmRouteDefaults 回填 STRM 路由策略里「可安全补默认」的两个列表。
+//
+// ForceProxyFormats：v1.5.0 起改为可配置，旧配置没有该字段，补默认值写回，
+// 让用户能在 settings.json 里看到并调整（例如把 .ts 移除）。空数组同样补默认——
+// 想关掉按格式代理有独立的 disableSeekFormatProxy 开关，不需要靠清空列表表达。
+//
+// ForceProxyUaTokens：只区分「从未配置」与「明确清空」——
+//   - nil（settings.json 里没有这个键，典型是 v1.5.x 之前的老配置）→ 补默认值并写回，
+//     否则前端显示为空、用户随手一保存就把「没配过」固化成「明确关闭」，再也回不到默认。
+//   - []（显式空数组）→ 保持为空，表示用户主动选择「全部直连」，绝不回填。
+func backfillStrmRouteDefaults(out, def *model.Settings) bool {
+	changed := false
+	if len(out.Strm.ForceProxyFormats) == 0 {
+		out.Strm.ForceProxyFormats = def.Strm.ForceProxyFormats
+		changed = true
+	}
+	if out.Strm.ForceProxyUaTokens == nil {
+		out.Strm.ForceProxyUaTokens = append([]string{}, def.Strm.ForceProxyUaTokens...)
+		logger.S().Infof("[SettingsStore] 迁移: 补齐强制代理 UA 默认值 %v", out.Strm.ForceProxyUaTokens)
 		changed = true
 	}
 	return changed

@@ -62,6 +62,10 @@ function CollapsibleSection({
   );
 }
 
+// 与 internal/model/settings.go 的 DefaultSettings().Strm.ForceProxyUaTokens 保持一致。
+// 只用于「填入默认值」按钮与 placeholder，不参与保存逻辑（保存以输入框内容为准）。
+const DEFAULT_FORCE_PROXY_UA_TOKENS = ["Infuse", "VidHub", "SenPlayer", "SenPlayerHD"];
+
 export interface BasicSettingsTabProps {
   data: SettingsType;
   setData: Dispatch<SetStateAction<SettingsType>>;
@@ -304,11 +308,22 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             <div className="space-y-3">
               <h3 className="text-sm font-medium border-t pt-4">代理触发条件</h3>
               <div className="space-y-3">
-                <Label>强制代理 UA 标识</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>强制代理 UA 标识</Label>
+                  {/* 这个字段的空值有语义（= 关闭），所以不能靠「清空」表达「恢复默认」，
+                      单独给一个填入按钮，避免用户只能手敲默认值。 */}
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    onClick={() => setForceProxyUaInput(DEFAULT_FORCE_PROXY_UA_TOKENS.join(", "))}
+                  >
+                    填入默认值
+                  </button>
+                </div>
                 <Input
                   value={forceProxyUaInput}
                   onChange={(e) => setForceProxyUaInput(e.target.value)}
-                  placeholder="Infuse, VidHub"
+                  placeholder={DEFAULT_FORCE_PROXY_UA_TOKENS.join(", ")}
                 />
                 <p className="text-xs text-muted-foreground">
                   逗号分隔。命中即强制走服务端代理（适合 302 播不了的客户端）。

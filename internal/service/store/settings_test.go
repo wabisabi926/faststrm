@@ -197,3 +197,50 @@ func TestSettingsStore_UpdateErrorDoesNotPersist(t *testing.T) {
 		t.Fatalf("failed update persisted: %q", got.UserAgent)
 	}
 }
+
+// TestReadSettings_ForceProxyUaTokensNilVsEmpty 区分「从未配置」与「明确清空」：
+//   - settings.json 没有 forceProxyUaTokens 键（老配置）→ 补默认值并写回
+//   - 显式 [] → 保持为空（用户主动选择「全部直连」，绝不回填）
+//
+// 背景：老配置读出来是 nil，前端显示为空，用户随手一保存就写成 []，
+// 从此「没配过」被永久固化成「明确关闭」，再也回不到默认。
+func TestReadSettings_ForceProxyUaTokensNilVsEmpty(t *testing.T) {
+	// 场景 1：键缺失 → 补默认
+	dir1 := t.TempDir()
+	writeSettings(t, dir1, `{"strm":{"forceProxyFormats":["iso"]}}`)
+	s1, err := NewSettingsStore("test_salt", dir1).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	want := model.DefaultSettings().Strm.ForceProxyUaTokens
+	if len(s1.Strm.ForceProxyUaTokens) != len(want) {
+		t.Fatalf("缺键时应补默认 %v，got %v", want, s1.Strm.ForceProxyUaTokens)
+	}
+	for i := range want {
+		if s1.Strm.ForceProxyUaTokens[i] != want[i] {
+			t.Fatalf("默认值不一致: want %v, got %v", want, s1.Strm.ForceProxyUaTokens)
+		}
+	}
+
+	// 场景 2：显式 [] → 保持为空
+	dir2 := t.TempDir()
+	writeSettings(t, dir2, `{"strm":{"forceProxyUaTokens":[]}}`)
+	s2, err := NewSettingsStore("test_salt", dir2).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if len(s2.Strm.ForceProxyUaTokens) != 0 {
+		t.Fatalf("显式空数组必须保持为空（= 全部直连），got %v", s2.Strm.ForceProxyUaTokens)
+	}
+
+	// 场景 3：有值 → 原样保留
+	dir3 := t.TempDir()
+	writeSettings(t, dir3, `{"strm":{"forceProxyUaTokens":["Kodi"]}}`)
+	s3, err := NewSettingsStore("test_salt", dir3).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if len(s3.Strm.ForceProxyUaTokens) != 1 || s3.Strm.ForceProxyUaTokens[0] != "Kodi" {
+		t.Fatalf("已有值应原样保留，got %v", s3.Strm.ForceProxyUaTokens)
+	}
+}
