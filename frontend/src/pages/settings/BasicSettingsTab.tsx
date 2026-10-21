@@ -294,11 +294,8 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   placeholder="Infuse, VidHub"
                 />
                 <p className="text-xs text-muted-foreground">
-                  逗号分隔。命中的客户端**强制走服务端代理**（不直连 CDN），适合对 302/签名处理不佳的播放器。
-                </p>
-                <p className="text-xs text-amber-600 dark:text-amber-500">
-                  留空 = 所有客户端都走 302 直链（省 NAS 带宽）；但个别客户端可能因 CDN 拒绝而播不了，
-                  这时把它的 UA 加回来即可。原盘格式（iso/bdmv 等）不受此项影响，始终走代理。
+                  逗号分隔。命中即强制走服务端代理（适合 302 播不了的客户端）；留空则全部 302 直链。
+                  原盘格式不受此项影响，始终走代理。
                 </p>
               </div>
               <div className="space-y-3">
