@@ -52,10 +52,12 @@
   ↓
 规则2: UA 匹配 force-proxy 列表？→ 强制 proxy
   ↓
-规则3: 默认 → redirect（302 直连）
+规则3: 原盘格式（iso/bdmv/m2ts…）？→ 强制 proxy（v1.5.1+）
+  ↓
+规则4: 默认 → redirect（302 直连）
   ↓
 兜底1: redirect 但 HEAD 预检失败（CDN 不可达）→ 降级 proxy
-兜底2: proxy 但单账号并发 ≥ 上限 → 切 redirect
+兜底2: proxy 但单账号并发 ≥ 上限 → 非原盘切 redirect；原盘允许超限 2 路，超过排队
 ```
 
 ### 规则详解
@@ -65,9 +67,12 @@
 | 0 | `pickcode` 非 17 位字母数字 | **400 拒绝** | 非法 pickcode 直接报错，不往下走 |
 | ① | `?mode=proxy` 或 `?mode=redirect`（仅私网） | 按参数执行 | 调试用，优先级最高 |
 | ② | UA 命中 `forceProxyUaTokens` 列表 | **强制代理** | 这些客户端 302 + Range 配合会导致拖动进度条失败 |
-| ③ | 其他所有情况 | **默认 redirect** | 开箱即用，零中转 |
+| ③ | 扩展名命中 `forceProxySeekFormats`（原盘） | **强制代理** | ISO/BDMV 等镜像 302 后客户端直连 CDN 常因 UA/签名绑定被拒，代理是唯一可靠路径 |
+| ④ | 其他所有情况 | **默认 redirect** | 开箱即用，零中转 |
 
-> **配置化**：规则 ② 的 UA 列表可在 `settings.json → strm.forceProxyUaTokens` 自定义，默认空列表（不按 UA 强制代理）。
+> **配置化**：
+> - 规则 ② 的 UA 列表：`settings.json → strm.forceProxyUaTokens`，**默认预置** `Infuse, VidHub, SenPlayer, SenPlayerHD`（清空即全部 302 直链）。
+> - 规则 ③ 的格式列表：`strm.forceProxySeekFormats`，默认 `iso, bdmv, bdav, dvd, bluray, m2ts, vob, ifo, bup`（**不含 ts**，避免录播误占带宽）；可用 `strm.disableSeekFormatProxy=true` 整体关闭。
 
 ---
 
@@ -135,7 +140,10 @@
 | 公网用 `?mode=proxy` | redirect | 公网忽略 mode 参数 |
 | 内网用 `?mode=proxy` | proxy | 私网允许强制指定 |
 | 115 CDN 不可达 | proxy | redirectCheck 静默降级 |
-| 8 路并发代理 | redirect | 超限自动切换 |
+| **ISO / BDMV 原盘** | **proxy** | 302 后 CDN 常拒绝 Range/UA，代理保证能播 |
+| **录播 .ts** | redirect | ts 不在原盘强制列表，302 省带宽 |
+| 8 路并发代理（非原盘） | redirect | 超限自动切换 |
+| 8 路并发代理（原盘） | proxy | 允许超限 2 路，超过排队，绝不降级 302 |
 
 ---
 
@@ -155,9 +163,11 @@ http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&fi
 - `pickcode`：115 文件唯一标识（17 位字母数字）
 - `file_name`：文件名（用于 Content-Disposition 和格式判断）
 
-> **注意（v1.4.2 起）**：STRM 路由层**不再对 ISO/原盘特判**，默认与其他格式一样走 302。
-> 原盘的代理流处理已经下移到 Emby 反代层（`isSeekRequiredFormat` 命中 iso/bdmv/m2ts/ts 时走服务端代理流）。
-> 这样直连 STRM 的客户端（Infuse/Kodi）可以直接 302 到 CDN，省掉一次服务器中转。
+> **注意（v1.5.1 起）**：STRM 路由层**重新对原盘特判**——`iso/bdmv/bdav/dvd/bluray/m2ts/vob/ifo/bup`
+> 一律强制服务端代理。原因：302 后由客户端直连 CDN，ISO 这类镜像的 Range/UA 绑定极易被拒，
+> 表现为「有时能播、有时卡住」，且服务端无法感知客户端侧的失败。
+> 普通视频（mkv/mp4 等）仍走 302 直链，不占 NAS 带宽。
+> 设置页可关闭「原盘强制走代理」回退旧行为；`ts` 不在默认列表内（录播 302 通常可用）。
 
 ### pickcode 获取方式
 
