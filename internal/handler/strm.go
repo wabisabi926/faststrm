@@ -9,6 +9,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -179,11 +180,14 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			}
 		}
 
+		// 原盘/seek 格式标记：既用于并发超限时「不降级 302」，也用于诊断日志
+		isSeek := isSeekFormatName(finalName, routeCfg.ForceProxyFormats)
+
 		// Proxy 并发数限制 + Bottleneck 拿槽位（集中在子函数里处理，降低 HandleStrm 圈复杂度）
 		if finalDecision == strm.DecisionProxy {
 			applyProxyConcurrency, leaveBn, reason, decision := applyProxyConcurrencyLimit(
 				r.Context(), accountName, finalDecision, finalReason,
-				routeCfg.AccountProxyConcurrencyLimit)
+				routeCfg.AccountProxyConcurrencyLimit, isSeek)
 			if !applyProxyConcurrency {
 				finalDecision = decision
 				finalReason = reason
@@ -206,8 +210,13 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			rcs = strconv.Itoa(*redirectCheckStatus)
 		}
 		elapsed := time.Since(t0).Milliseconds()
-		logger.S().Infof("[STRM] account=%s pickcode=%s decision=%s reason=%s redirect_check=%s%s method=%s elapsed=%dms",
-			accountName, shortPc, finalDecision, finalReason, rcs, sizeLog, r.Method, elapsed)
+		// 诊断：seek 格式与分片参数一次打全，排查「为何 302 / 为何不走分片」时直接看这一行
+		rpLog := "off"
+		if !opts.Cfg.Settings.Strm.DisableRangeProxy {
+			rpLog = fmt.Sprintf("%dMBx%d", opts.Cfg.Settings.Strm.ProxyChunkSizeMB, opts.Cfg.Settings.Strm.ProxyConcurrency)
+		}
+		logger.S().Infof("[STRM] account=%s pickcode=%s decision=%s reason=%s seek=%v range_proxy=%s redirect_check=%s%s method=%s ua=%q elapsed=%dms",
+			accountName, shortPc, finalDecision, finalReason, isSeek, rpLog, rcs, sizeLog, r.Method, userAgent, elapsed)
 
 		// ===== HEAD 短路径：默认用 meta.FileSize 直接吐 Accept-Ranges + Content-Length 头，不打 CDN =====
 		// 115 signed URL HEAD 经常 403 / Content-Length 缺失，download API 的 meta.FileSize 100% 正确。
@@ -231,6 +240,12 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		case strm.DecisionProxy:
 			proxyCountInc(accountName)
 			defer proxyCountDec(accountName)
+			// 分片并发参数：关闭时 streamRangeProxy 直接返回 false，走单连接
+			rp := rangeProxyOptions{
+				Enabled:  !opts.Cfg.Settings.Strm.DisableRangeProxy,
+				Chunk:    int64(opts.Cfg.Settings.Strm.ProxyChunkSizeMB) * 1024 * 1024,
+				Parallel: opts.Cfg.Settings.Strm.ProxyConcurrency,
+			}
 			handleProxy(w, r, cdnURL, account.Cookie, userAgent, finalName, func(ctx context.Context) (string, error) {
 				// 先失效缓存，否则会拿回同一个已失效的 URL
 				strm.InvalidateDownloadURL(accountName, pickcode, userAgent)
@@ -239,7 +254,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 					return "", rerr
 				}
 				return meta.URL, nil
-			})
+			}, rp)
 		default:
 			doRedirect(w, finalName, cdnURL)
 		}
@@ -257,9 +272,17 @@ func applyProxyConcurrencyLimit(
 	decision strm.RouteDecision,
 	reason string,
 	concurrencyLimit int,
+	isSeekFormat bool,
 ) (applyProxyConcurrency bool, leaveBn func(), outReason string, outDecision strm.RouteDecision) {
 	current := proxyCountNow(accountName)
 	if current >= concurrencyLimit {
+		// 原盘/seek 格式：降级 302 后 CDN 常因 UA 绑定/签名拒绝 Range，必然播放失败。
+		// 宁可短暂超限（分片并发受控，单流最多 2 路），也不要降级成不可用的 302。
+		if isSeekFormat {
+			logger.S().Warnf("[STRM] account=%s proxy concurrency hit limit (%d/%d), seek format keeps proxy (bypass limit)",
+				accountName, current, concurrencyLimit)
+			return true, nil, "", ""
+		}
 		reason = fmt.Sprintf("%s -> proxy_concurrency_limit(%d/%d) fallback_redirect",
 			reason, current, concurrencyLimit)
 		logger.S().Warnf("[STRM] account=%s proxy concurrency hit limit (%d/%d), fallback to redirect",
@@ -391,6 +414,7 @@ func handleProxy(
 	userAgent string,
 	fileName string,
 	refresh func(context.Context) (string, error),
+	rp rangeProxyOptions,
 ) {
 	// 构造转发头
 	reqHeaders := map[string]string{
@@ -474,6 +498,11 @@ func handleProxy(
 
 	// 流式复制：零拷贝
 	if r.Method != http.MethodHead {
+		// 分片并发（P0-1）：GET + 206 + 未禁用时按 Range 分片并行拉取，
+		// 首片直写；不适用/关闭时回退单连接 io.Copy。
+		if streamRangeProxy(w, r, upstream, cdnURL, reqHeaders, getProxyHTTPClient(), refresh, rp) {
+			return
+		}
 		written, copyErr := io.Copy(w, upstream.Body)
 		if copyErr != nil {
 			// 客户端断连是正常现象，降级 debug
@@ -646,4 +675,23 @@ func itoa(n int64) string {
 // writeJSON 辅助：统一写 JSON（导出给其他 handler 用）
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	httpx.WriteJson(w, status, v)
+}
+
+// isSeekFormatName 判断文件名扩展名是否属于「需要服务端代理」的原盘格式
+// （与设置项 strm.forceProxyFormats 同源）。用于代理并发超限时的降级决策。
+func isSeekFormatName(fileName string, formats []string) bool {
+	if fileName == "" {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if ext == "" {
+		return false
+	}
+	ext = strings.TrimPrefix(ext, ".")
+	for _, f := range formats {
+		if strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(f), "."), ext) {
+			return true
+		}
+	}
+	return false
 }

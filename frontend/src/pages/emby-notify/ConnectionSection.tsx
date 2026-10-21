@@ -154,6 +154,17 @@ export function ConnectionSection({
                       ?.replace(/:\d+$/, "")}:{settings.proxyPort || 8097}
                   </code>
                 </p>
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed">
+                  <span className="font-medium">⚠️ 播放器/客户端必须连这个反代端口</span>
+                  <br />
+                  连 Emby 本体端口（如 8096）时，播放信息不会被改写，原盘（ISO/BDMV）会被判为需要转码而播放失败。
+                  <br />
+                  两种部署任选：
+                  <br />
+                  ① 保持 Emby 8096，所有客户端改连 <code>{settings.proxyPort || 8097}</code>（推荐）；
+                  <br />
+                  ② 端口互换：把 Emby 本体改为 <code>{settings.proxyPort || 8097}</code>，反代监听 8096，客户端配置无需改动。
+                </div>
               </div>
               <label htmlFor="externalPlayerToggle" className="flex items-start gap-3 min-h-[36px] cursor-pointer select-none">
                 <span className="flex items-center justify-center shrink-0 pt-1">

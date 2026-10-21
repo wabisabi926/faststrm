@@ -671,6 +671,7 @@ func StrmRouteConfig(cfg *config.AppConfig) struct {
 	ForceProxyUaTokens           []string
 	AccountProxyConcurrencyLimit int
 	RedirectCheckTimeout         time.Duration
+	ForceProxyFormats            []string
 } {
 	st := cfg.Settings.Strm
 	tokens := st.ForceProxyUaTokens
@@ -683,13 +684,19 @@ func StrmRouteConfig(cfg *config.AppConfig) struct {
 	if checkTimeout <= 0 {
 		checkTimeout = model.DefaultSettings().Strm.RedirectCheckTimeout()
 	}
+	formats := st.ForceProxyFormats
+	if len(formats) == 0 {
+		formats = model.DefaultForceProxyFormats
+	}
 	return struct {
 		ForceProxyUaTokens           []string
 		AccountProxyConcurrencyLimit int
 		RedirectCheckTimeout         time.Duration
+		ForceProxyFormats            []string
 	}{
 		ForceProxyUaTokens:           tokens,
 		AccountProxyConcurrencyLimit: proxyLimit,
 		RedirectCheckTimeout:         checkTimeout,
+		ForceProxyFormats:            formats,
 	}
 }
