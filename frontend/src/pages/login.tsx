@@ -83,9 +83,7 @@ export default function LoginPage() {
               登录
             </Button>
             <p className="text-xs text-muted-foreground text-center leading-relaxed">
-              首次启动的随机密码保存在服务端配置目录的
-              <code className="mx-1 bg-muted px-1 rounded">initial-admin-password.txt</code>
-              ；
+              首次启动会先进入初始化页面创建管理员账号；
               <br />
               已有安装继续使用原密码。
             </p>

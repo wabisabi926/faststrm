@@ -108,7 +108,7 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
             <AlertCircle className="size-4" />
             <AlertTitle>未执行扫描</AlertTitle>
             <AlertDescription>
-              使用「生活事件 → 监控设置」中的路径映射；无需开启监控。
+              使用「设置中心 → 生活事件监控」中的路径映射；无需开启监控。
             </AlertDescription>
           </Alert>
         )}

@@ -74,6 +74,14 @@ func Login(issuer *auth.TokenIssuer) http.HandlerFunc {
 			}
 		}
 
+		if config.NeedsSetup() {
+			httpx.WriteJson(w, http.StatusConflict, map[string]string{
+				"code":  "SETUP_REQUIRED",
+				"error": "首次启动尚未创建管理员账号，请先完成初始化",
+			})
+			return
+		}
+
 		cfg := config.Get()
 		salt := cfg.Salt
 

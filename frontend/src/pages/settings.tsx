@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Stethoscope } from "lucide-react";
+import { Activity, Settings2, Stethoscope } from "lucide-react";
 import axiosInstance from "@/lib/axios";
+import { PageTabs, type PageTabItem } from "@/components/page-tabs";
 import type { AxiosError } from "axios";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
 import { LocalDirectoryTreeDialog } from "@/pages/task/components/LocalDirectoryTreeDialog";
@@ -19,6 +20,13 @@ import { DEFAULT_MONITOR_CONFIG } from "./settings/types";
 import { BasicSettingsTab } from "./settings/BasicSettingsTab";
 import { MonitorSettingsTab } from "./settings/MonitorSettingsTab";
 
+type SettingsTab = "basic" | "monitor";
+
+const SETTINGS_TABS: readonly PageTabItem<SettingsTab>[] = [
+  { id: "basic", label: "基础设置", icon: Settings2 },
+  { id: "monitor", label: "生活事件监控", icon: Activity },
+];
+
 export default function SettingsPage({
   embedded = false,
   forceTab,
@@ -28,17 +36,19 @@ export default function SettingsPage({
 } = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const activeTab: "basic" | "monitor" = forceTab === "monitor" ? "monitor" : "basic";
+  const activeTab: SettingsTab =
+    forceTab === "monitor" || searchParams.get("tab") === "monitor" ? "monitor" : "basic";
 
-  // 兼容旧书签：清理已独立成页，生活事件监控已并入「生活事件」
+  // 兼容旧书签：清理已独立成页
   useEffect(() => {
-    const tab = searchParams.get("tab");
-    if (tab === "cleanup") {
+    if (searchParams.get("tab") === "cleanup") {
       navigate("/cleanup", { replace: true });
-    } else if (tab === "monitor") {
-      navigate("/life-events?tab=config", { replace: true });
     }
   }, [searchParams, navigate]);
+
+  const setTab = (tab: SettingsTab) => {
+    navigate(tab === "monitor" ? "/settings?tab=monitor" : "/settings", { replace: true });
+  };
 
   const [data, setData] = useState<SettingsType>({});
   const [loading, setLoading] = useState(true);
@@ -601,7 +611,7 @@ export default function SettingsPage({
           <div>
             <h1 className="text-xl sm:text-2xl font-semibold">设置中心</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              基础设置；其他配置入口在左侧导航。
+              基础设置与生活事件监控；通知渠道在「通知中心」配置。
             </p>
           </div>
           <Link
@@ -614,7 +624,15 @@ export default function SettingsPage({
         </div>
       )}
 
-      {/* 基础设置（单页；Tab 仅用于真正的平级视图） */}
+      {!embedded && (
+        <PageTabs
+          tabs={SETTINGS_TABS}
+          value={activeTab}
+          onChange={setTab}
+          ariaLabel="设置分区"
+        />
+      )}
+
       {activeTab === "basic" && (
         <BasicSettingsTab
           data={data}
@@ -644,7 +662,7 @@ export default function SettingsPage({
         />
       )}
 
-      {/* 生活事件配置（仅由 /life-events?tab=config 内嵌渲染） */}
+      {/* 生活事件监控配置 */}
       {activeTab === "monitor" && (
         <MonitorSettingsTab
           monitorEnabled={monitorEnabled}

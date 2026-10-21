@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -326,21 +325,17 @@ func GenerateInternalToken() (string, error) {
 	return token, nil
 }
 
-// generateInitialAdminPassword 生成首次启动的随机管理员密码（24 位十六进制）。
-func generateInitialAdminPassword() string {
-	buf := make([]byte, 12)
-	if _, err := rand.Read(buf); err != nil {
-		// crypto/rand 不可用时不退回已知默认口令，直接使用时间+进程信息生成；
-		// 仍保证不是 admin/admin，并且写入了 0600 的初始密码文件。
-		return fmt.Sprintf("init-%d-%d", time.Now().UnixNano(), os.Getpid())
-	}
-	return hex.EncodeToString(buf)
-}
-
 // HashPassword 用 salt + sha256 哈希密码。格式: $sha256$<hex>
 func HashPassword(salt, password string) string {
 	h := sha256.Sum256([]byte(salt + password))
 	return "$sha256$" + hex.EncodeToString(h[:])
+}
+
+// NeedsSetup 首次启动且尚未创建管理员密码时为 true。
+// 空密码表示等待 /setup 初始化，不再自动生成随机密码文件。
+func NeedsSetup() bool {
+	cfg := Get()
+	return cfg.Admin == nil || cfg.Admin.Password == ""
 }
 
 // IsDefaultAdminPassword 判断当前管理员密码是否仍为出厂默认（空 / admin / admin 的哈希）。
@@ -489,37 +484,32 @@ func InitApp(defaultRoot string) (*AppConfig, error) {
 		return nil, fmt.Errorf("ensure salt: %w", err)
 	}
 
-	// 4. admin 密码哈希（首次启动或密码为空）：生成随机初始密码，避免 admin/admin 被远程接管。
-	//    初始密码写入 config 目录下的 initial-admin-password.txt（0600），首次改密后该文件即失效。
-	cfgPath := filepath.Join(paths.ConfigDir, "config.json")
-	if data, err := os.ReadFile(cfgPath); err == nil {
-		data = stripBOM(data)
-		var ac model.AppConfig
-		if jerr := json.Unmarshal(data, &ac); jerr == nil && ac.Password == "" {
-			if ac.Username == "" {
-				ac.Username = "admin"
-			}
-			initialPassword := generateInitialAdminPassword()
-			ac.Password = HashPassword(salt, initialPassword)
-			if out, oerr := json.MarshalIndent(ac, "", "  "); oerr == nil {
-				if werr := os.WriteFile(cfgPath, out, 0600); werr != nil {
-					return nil, fmt.Errorf("write initial admin config: %w", werr)
-				}
-				pwPath := filepath.Join(paths.ConfigDir, "initial-admin-password.txt")
-				if werr := os.WriteFile(pwPath, []byte(initialPassword+"\n"), 0600); werr != nil {
-					return nil, fmt.Errorf("write initial admin password: %w", werr)
-				}
-				logger.S().Infof("已生成随机初始管理员密码，请查看 %s 并登录后立即修改", pwPath)
-			}
-		}
-	}
+	// 4. 管理员初始化：不再生成随机密码文件。
+	//    config.json 密码为空表示首次启动，等待 /setup 由用户创建管理员账号。
+	//    已有安装的密码哈希保持不变。
 
 	// 5. 加载完整配置
 	if _, err = Load(paths); err != nil {
 		return nil, err
 	}
-	if IsDefaultAdminPassword() {
-		logger.S().Warn("检测到管理员仍在使用默认/空口令，请立即登录修改；公网/局域网暴露实例存在被接管风险")
+	// 5a. 无界面部署可通过环境变量完成初始化，不走 Setup Wizard。
+	if NeedsSetup() {
+		if pw := getEnv("FASTSTRM_ADMIN_PASSWORD", ""); pw != "" {
+			username := getEnv("FASTSTRM_ADMIN_USERNAME", "admin")
+			hashed := HashPassword(salt, pw)
+			if merr := MutateAdmin(func(admin *model.AppConfig) {
+				admin.Username = username
+				admin.Password = hashed
+			}, true); merr != nil {
+				return nil, fmt.Errorf("初始化管理员失败: %w", merr)
+			}
+			logger.S().Infof("已通过 FASTSTRM_ADMIN_* 环境变量初始化管理员账号 %s", username)
+		} else {
+			logger.S().Warn("首次启动：尚未创建管理员账号，请打开 Web 页面 /setup 完成初始化")
+		}
+	}
+	if !NeedsSetup() && IsDefaultAdminPassword() {
+		logger.S().Warn("检测到管理员仍在使用默认口令，请立即登录修改；公网/局域网暴露实例存在被接管风险")
 	}
 	// Load 已经把 cfg 放到全局了，但 Load 内部没有填 Salt。
 	// 用写锁 clone 一份替换，保证与并发 Get 之间无 data race。
