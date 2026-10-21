@@ -69,7 +69,7 @@ export function ActionsCell({
           isStarting ? `${STATUS_LABELS.starting}...` :
           task.status === "processing" ? "任务运行中" :
           isAccountBusy(task.account) ? `账号 ${task.account} 有任务正在运行` :
-          "开始任务"
+          "开始任务（完整扫描，未变化的 STRM 不会重写）"
         }
       >
         {isStarting ? (

@@ -101,7 +101,9 @@ type Monitor struct {
 	embyRefresh      *emby.MediaServerRefresh // Emby 媒体库刷库服务
 	notifyMerger     *NotifyMerger            // P2-8 通知合并器
 	managed          strm.ManagedRecorder     // STRM 托管登记（可为 nil）
-	mu               sync.RWMutex
+	// appSettingsFn 全局设置读取器（读取 DownloadExtensions 等），可为 nil
+	appSettingsFn func() *model.Settings
+	mu            sync.RWMutex
 
 	// prefixCIDCache 映射云端前缀 → cid 缓存（P0-2 前缀反查用，避免每个事件都打 /files/getid）
 	prefixCIDMu    sync.Mutex
@@ -981,4 +983,10 @@ func (m *Monitor) GetDedupStats() int {
 		return 0
 	}
 	return m.dedup.Stats()
+}
+
+// SetAppSettingsFn 注入全局设置读取器（用于读取 DownloadExtensions 等）。
+// 未注入时「字幕/元数据自动同步」功能自动关闭（不影响其他逻辑）。
+func (m *Monitor) SetAppSettingsFn(fn func() *model.Settings) {
+	m.appSettingsFn = fn
 }

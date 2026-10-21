@@ -309,6 +309,19 @@ func (m *Monitor) handleCreateEvent(
 	// 需回收一级到父目录（对齐参考项目取 file_path.parent），否则会多拼一层同名目录。
 	// 精确匹配(映射根)时 singleFileParentDir 返回原值。
 	localParentDir := singleFileParentDir(mapping)
+
+	// 字幕/nfo/海报等辅助文件：不生成 STRM，直接下载到本地（网盘后续补字幕自动同步）
+	if m.isDownloadExtFile(event.FileName) {
+		path, derr := m.syncMetadataFile(ctx, account, event, localParentDir, lifeClient)
+		if derr != nil {
+			m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath,
+				fmt.Sprintf("辅助文件同步失败: %v", derr))
+			return derr
+		}
+		m.appendLog(ctx, account, "create", true, cloudPath, path, "辅助文件已同步")
+		return nil
+	}
+
 	strmPath, err := m.createStrmForSingleFile(ctx, account, in, localParentDir, "文件")
 	if err != nil {
 		m.appendLog(ctx, account, "create", false, cloudPath, mapping.localPath, err.Error())

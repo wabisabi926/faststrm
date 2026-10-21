@@ -154,6 +154,14 @@ func initPhase6Deps(
 		execDeps.SQLiteDB,
 	)
 	mon.SetManagedRecorder(execDeps.ManagedStrm)
+	// 辅助文件自动同步（字幕/nfo/海报）需要全局 DownloadExtensions
+	mon.SetAppSettingsFn(func() *model.Settings {
+		s, err := settingsStore.ReadSettings()
+		if err != nil {
+			return nil
+		}
+		return s
+	})
 
 	// ---------- MenuActions 适配器 ----------
 	if cmdHandler != nil {
