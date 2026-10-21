@@ -29,6 +29,8 @@ type cleanupScanSnapshot struct {
 	Result    ScanResponse
 	// Stale 规范化绝对路径 → 映射根。用于校验客户端选择的条目确实来自本次扫描。
 	Stale map[string]string
+	// Used 非 DryRun 执行已消费该快照，防止同一份扫描结果被重复执行。
+	Used bool
 }
 
 type cleanupScanStore struct {
@@ -117,6 +119,25 @@ func (s *cleanupScanStore) Get(id, user string) (*cleanupScanSnapshot, bool) {
 	out := *snapshot
 	out.Result = cloneScanResponse(snapshot.Result)
 	return &out, true
+}
+
+// MarkUsed 原子地把快照标记为已执行；返回 false 表示已过期/用户不符/已被使用。
+func (s *cleanupScanStore) MarkUsed(id, user string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gcLocked(s.now())
+	snapshot, ok := s.entries[id]
+	if !ok {
+		return false
+	}
+	if snapshot.User != "" && user != "" && snapshot.User != user {
+		return false
+	}
+	if snapshot.Used {
+		return false
+	}
+	snapshot.Used = true
+	return true
 }
 
 func (s *cleanupScanStore) gcLocked(now time.Time) {

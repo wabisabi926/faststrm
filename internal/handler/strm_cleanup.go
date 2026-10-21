@@ -401,6 +401,14 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		// DryRun 不消费快照；真实执行只允许一次，防止同一扫描结果被重复删除。
+		if !body.DryRun && !cleanupScanCache.MarkUsed(body.ScanId, r.Header.Get("X-User")) {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+				"code":  "SCAN_TOKEN_USED",
+				"error": "该扫描结果已执行，请重新扫描后再操作",
+			})
+			return
+		}
 
 		accounts := deps.AccountStore.List()
 

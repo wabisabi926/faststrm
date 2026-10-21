@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,20 @@ func TestCleanupScanStore_TTLUserAndCopy(t *testing.T) {
 	now = now.Add(2 * time.Minute)
 	if _, ok := s.Get(id, "alice"); ok {
 		t.Fatal("expired snapshot should be removed")
+	}
+}
+
+func TestCleanupScanStore_MarkUsedOnce(t *testing.T) {
+	s := newCleanupScanStore(2, time.Minute)
+	id, _ := s.Put("alice", ScanResponse{})
+	if !s.MarkUsed(id, "alice") {
+		t.Fatal("first MarkUsed should succeed")
+	}
+	if s.MarkUsed(id, "alice") {
+		t.Fatal("second MarkUsed must fail")
+	}
+	if s.MarkUsed(id, "bob") {
+		t.Fatal("other user must not consume snapshot")
 	}
 }
 
@@ -214,5 +229,12 @@ func TestStrmCleanupExecute_DeleteAllUsesServerSnapshot(t *testing.T) {
 	}
 	if _, err := os.Stat(otherPath); err != nil {
 		t.Fatal("forged client path must be preserved")
+	}
+
+	// 同一 scanId 第二次真实执行必须被拒绝
+	rec = doTrashJSON(t, HandleStrmCleanupExecutePOST(deps), http.MethodPost,
+		"/api/strmCleanup/execute", ExecuteRequest{Action: "delete_all", ScanId: id})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "SCAN_TOKEN_USED") {
+		t.Fatalf("reused scanId should be rejected, status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
