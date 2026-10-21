@@ -120,7 +120,7 @@ export const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
 };
 
 // 媒体挂载路径相关类型（在主组件和 BasicSettingsTab 间共享）
-export type MountSourceTag = "global_302" | "task" | "life_monitor";
+export type MountSourceTag = "global" | "global_302" | "task" | "life_monitor";
 export type MountEntryRow = {
   prefix: string;
   source: MountSourceTag;

@@ -78,6 +78,9 @@ export function AddTaskDialog({
     return selectedAccount?.accountType || "";
   };
 
+  // 任务执行只支持 115 账号，避免用户选中 openlist 后启动失败
+  const selectableAccounts = accounts.filter((acc) => acc.accountType === "115");
+
   // 检查当前选中的账户是否是 115 类型
   const is115Account = getAccountType(formValues.account) === "115";
 
@@ -215,14 +218,14 @@ export function AddTaskDialog({
                           <SelectItem value="loading" disabled>
                             加载中...
                           </SelectItem>
-                        ) : accounts.length === 0 ? (
+                        ) : selectableAccounts.length === 0 ? (
                           <SelectItem value="no-accounts" disabled>
-                            暂无账号
+                            暂无 115 账号
                           </SelectItem>
                         ) : (
-                          accounts.map((acc) => (
+                          selectableAccounts.map((acc) => (
                             <SelectItem key={acc.name} value={acc.name}>
-                              {acc.name} ({acc.accountType})
+                              {acc.name}
                             </SelectItem>
                           ))
                         )}
@@ -240,7 +243,7 @@ export function AddTaskDialog({
               name="originPath"
               render={({ field }) => (
                 <FormItem>
-                  <HelpLabel help="在这里输入网盘路径或 OpenList 的路径，如：tv 或 115/TV">
+                  <HelpLabel help="填写 115 网盘路径，如：tv 或 115/TV">
                     远程路径
                   </HelpLabel>
                   <FormControl>

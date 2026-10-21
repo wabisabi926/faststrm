@@ -371,14 +371,8 @@ export function AddAccountDialog({ account, trigger, onSuccess }: AddAccountDial
 
                 <Alert>
                   <Info className="h-4 w-4" />
-                  <AlertDescription className="space-y-1">
-                    <p>
-                      如果希望使用 302 重定向功能，推荐将账号名称与 openlist、cd2 的 115 账号用户名保持一致，这样可以保证正确回源。
-                    </p>
-                    <p className="text-muted-foreground">
-                      账号名会写入已生成的 STRM 播放地址：改名会自动同步任务、生活监控与索引库，
-                      但旧 STRM 内容不会被重写，需到「STRM 清理」页扫描并重建。
-                    </p>
+                  <AlertDescription>
+                    账号名会写入 STRM 播放地址；改名后旧 STRM 会失效，需到「STRM 清理」页重建。
                   </AlertDescription>
                 </Alert>
               </>

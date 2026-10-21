@@ -37,7 +37,9 @@ describe("CleanupToolbar P1 组合按钮文案/提示", () => {
     const user = userEvent.setup();
     render(<CleanupToolbar {...baseProps} selectedStaleCount={3} />);
     await user.click(screen.getByRole("button", { name: /清理失效 \+ 补生成漏项/ }));
-    expect(screen.getByText(/3 个失效 STRM/)).toBeInTheDocument();
+    expect(
+      screen.getByText((_, el) => el?.tagName === "P" && /3 个失效 STRM/.test(el.textContent || ""))
+    ).toBeInTheDocument();
     expect(screen.queryByText(/当前未勾选任何失效 STRM/)).toBeNull();
   });
 
@@ -50,17 +52,17 @@ describe("CleanupToolbar P1 组合按钮文案/提示", () => {
     expect(screen.getByText(/不会删除文件/)).toBeInTheDocument();
   });
 
-  it("F-E2E-2：底部 tips 区别 清理全部失效=全删 / 组合=仅勾选 5 项", () => {
+  it("F-E2E-2：底部 tips 说明组合操作只删已勾选项", () => {
     render(<CleanupToolbar {...baseProps} selectedStaleCount={5} />);
-    const tip = screen.getByText(/提示：「清理全部失效」会删除扫描发现的全部 113 个失效 STRM/);
+    const tip = screen.getByText(/组合操作只删除已勾选项/);
     expect(tip).toBeInTheDocument();
-    expect(tip.textContent).toMatch(/组合操作仅删除您.*已勾选.*的失效（当前 5 项）/);
+    expect(tip.textContent).toMatch(/清理全部失效/);
   });
 
-  it("F-E2E-2b：selectedStaleCount=0 时 tips 仍然可读，当前 0 项", () => {
+  it("F-E2E-2b：selectedStaleCount=0 时底部提示仍然可读", () => {
     render(<CleanupToolbar {...baseProps} selectedStaleCount={0} />);
-    const tip = screen.getByText(/提示：「清理全部失效」会删除扫描发现的全部 113 个失效 STRM/);
-    expect(tip.textContent).toMatch(/当前 0 项/);
+    const tip = screen.getByText(/组合操作只删除已勾选项/);
+    expect(tip.textContent).toMatch(/清理全部失效/);
   });
 });
 
@@ -325,7 +327,7 @@ describe("P2 StatCard 关联媒体文件卡渲染", () => {
 });
 
 describe("P2 MappingDetailList 关联列条件渲染", () => {
-  it("F-P2-5a：有 associatedFileCount → 出现蓝色 关联：N 文本 + 顶部 P2 Badge", () => {
+  it("F-P2-5a：有 associatedFileCount → 出现蓝色 关联：N 文本", () => {
     const ms: MappingResult[] = [
       {
         mappingId: "a", account: "a", cloudPath: "/电影", localPath: "/A",
@@ -335,7 +337,6 @@ describe("P2 MappingDetailList 关联列条件渲染", () => {
     ];
     render(<MappingDetailList mappings={ms} />);
     expect(screen.getByText(/关联：6/)).toBeInTheDocument();
-    expect(screen.getByText(/P2：已含关联文件列/)).toBeInTheDocument();
   });
   it("F-P2-5b：都无 associatedFileCount → 无 关联： 文本", () => {
     const ms: MappingResult[] = [

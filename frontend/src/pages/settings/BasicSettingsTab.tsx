@@ -283,8 +283,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </summary>
           <div className="space-y-4 pt-2">
             <p className="text-xs text-muted-foreground">
-              仅作用于 STRM 端点层（直接打开 .strm 文件的场景）。默认 302 redirect 直连 CDN（不走本机带宽），
-              仅当下方「强制代理 UA 标识」匹配时才强制走 proxy，其余（含 ISO 原盘）均直连。
+              默认 302 直连 115 CDN；仅当下方「强制代理 UA 标识」匹配时走代理。
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <div className="space-y-3">
@@ -562,7 +561,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 <p className="text-sm text-muted-foreground">正在计算期望集合...</p>
               ) : mountDryRun && mountDryRun.computed.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  暂无项。请先在上方配置 STRM 前缀和 302 选项，或创建带自定义前缀的任务。
+                  暂无项。请先配置全局 STRM 前缀，或创建带自定义前缀的任务。
                 </p>
               ) : mountDryRun ? (
                 <>
@@ -630,7 +629,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                           <span
                             className={
                               "px-1.5 py-0.5 rounded text-[11px] border " +
-                              (row.source === "global_302"
+                              (row.source === "global" || row.source === "global_302"
                                 ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30"
                                 : row.source === "task"
                                   ? "bg-sky-500/20 text-sky-400 border-sky-500/30"

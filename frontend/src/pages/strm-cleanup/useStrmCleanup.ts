@@ -65,9 +65,6 @@ export interface UseStrmCleanupResult {
   clearLogs: () => void;
   // P3：STRM 内容预览（StaleStrmDialog "查看完整"）
   previewStrm: (p: { localPath: string; relPath: string; maxBytes?: number }) => Promise<StrmPreviewResponse>;
-  // P3：扫描缓存 1 分钟窗口 — 当前是否命中（Toolbar 展示 Badge）
-  cacheActive: boolean;
-  cacheWindowSec: number;
 }
 
 export function useStrmCleanup(
@@ -192,8 +189,6 @@ export function useStrmCleanup(
     const res = await axiosInstance.post("/api/strmCleanup/scan", body);
     lastScanAtRef.current = { ts: now, mode };
     const normalized = normalizeScanResponse(res.data, mode === "reconcile" ? "reconcile" : "mapping");
-    // 是否命中缓存：后端 mapping[*].error 有 fallback 到 network scan 文案的情况未命中；这里传 header 判断
-    (normalized as unknown as { __fromCacheHint?: boolean }).__fromCacheHint = Boolean(body.useCache);
     return normalized;
   };
 
@@ -534,10 +529,6 @@ export function useStrmCleanup(
     appendLog,
     clearLogs,
     previewStrm,
-    cacheWindowSec: 60,
-    cacheActive: Boolean(
-      lastScanAtRef.current && Date.now() - lastScanAtRef.current.ts < 60000
-    ),
   };
 }
 

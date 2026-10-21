@@ -594,20 +594,6 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
           </div>
         </section>
       )}
-
-      <Alert className="py-2.5 bg-muted/40">
-        <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-        <AlertDescription className="text-xs leading-relaxed space-y-1">
-          <p className="font-medium text-foreground/90">两种接消息模式：</p>
-          <p>
-            · <span className="font-medium">轮询（家用推荐）</span>：WebhookURL 留空即可，每 5 秒拉取一次，无需公网 IP/域名。
-          </p>
-          <p>
-            · <span className="font-medium">Webhook（服务器推荐）</span>：填入公网 HTTPS 地址，毫秒级延迟，需公网域名。
-          </p>
-          <p className="text-muted-foreground">两种模式互斥，NAS/内网用户直接用轮询。</p>
-        </AlertDescription>
-      </Alert>
     </div>
   );
 }

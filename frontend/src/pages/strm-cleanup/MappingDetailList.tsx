@@ -15,11 +15,6 @@ export function MappingDetailList({ mappings }: MappingDetailListProps) {
     <div className="space-y-2">
       <div className="text-sm font-medium flex items-center gap-2">
         路径映射扫描明细
-        {hasAnyAssoc && (
-          <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-300">
-            P2：已含关联文件列
-          </Badge>
-        )}
       </div>
       <div className="space-y-2">
         {mappings.map((m) => (

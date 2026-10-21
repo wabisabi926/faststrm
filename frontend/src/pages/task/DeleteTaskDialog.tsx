@@ -64,13 +64,13 @@ export function DeleteTaskDialog({
               onCheckedChange={(checked) => onCleanStrmChange(checked === true)}
             />
             <label htmlFor={`clean-strm-${task.id}`} className="text-sm cursor-pointer">
-              同时清理 STRM 目录（{task.targetPath}）
+              同时清理 STRM 文件（{task.targetPath}）
             </label>
           </div>
         )}
         {cleanStrm && (
           <p className="text-xs text-red-600 font-medium">
-            ⚠️ 将删除该目录下所有 STRM 文件和子目录！
+            ⚠️ 将删除该目录下所有 .strm 文件，并清理空目录！
           </p>
         )}
         <DialogFooter className="gap-2">

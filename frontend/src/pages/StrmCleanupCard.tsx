@@ -67,8 +67,6 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
     handleRegenerate,
     clearLogs,
     previewStrm,
-    cacheActive,
-    cacheWindowSec,
   } = useStrmCleanup({ setStaleDialogOpen });
 
   return (
@@ -81,8 +79,7 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
               <span className="break-words">失效 STRM 清理</span>
             </CardTitle>
             <CardDescription className="mt-2 break-words">
-              扫描本地与 115 网盘文件树的一致性，找出网盘已删除但本地仍残留的
-              STRM 文件（失效）以及网盘有但本地缺失的 STRM 文件（漏生成），使用生活事件监控设置中的路径映射作为扫描范围
+              对比 115 网盘与本地 STRM，清理失效项并补生成漏项。
             </CardDescription>
             {policySummary && (
               <p className="mt-2 text-xs text-muted-foreground break-words">
@@ -125,7 +122,7 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
             <AlertCircle className="size-4" />
             <AlertTitle>未执行扫描</AlertTitle>
             <AlertDescription>
-              扫描范围使用「115 生活事件监控」中已配置的路径映射和账号。请先确保路径映射已保存。
+              使用「生活事件 → 监控设置」中的路径映射；无需开启监控。
             </AlertDescription>
           </Alert>
         )}
@@ -190,7 +187,7 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
                 tone="default"
                 hint={
                   scanResult.totalAssociatedFiles !== undefined
-                    ? "仅统计 .strm（已与关联文件分离，P2 语义纯净）"
+                    ? "仅统计 .strm"
                     : undefined
                 }
               />
@@ -267,8 +264,6 @@ export function StrmCleanupCard({ policySummary }: StrmCleanupCardProps) {
               onRegenerate={handleRegenerate}
               onDeleteAndRegenerate={handleDeleteAndRegenerate}
               selectedStaleCount={selectedStale.size}
-              cacheActive={cacheActive}
-              cacheWindowSec={cacheWindowSec}
             />
 
             {/* 操作日志 */}

@@ -117,7 +117,7 @@ export function MissingStrmDialog({
                   确认补生成 {allMissing.length} 个 STRM？
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  将为所有漏生成的文件创建 STRM。此操作使用云端原始路径，不包含 pickcode。
+                  将为所有漏生成的文件创建 STRM，使用扫描得到的云端路径与 pickcode。
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

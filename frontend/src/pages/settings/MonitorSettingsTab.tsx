@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Select,
   SelectContent,
@@ -154,15 +154,8 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
 
         <Alert>
           <Info className="h-4 w-4" />
-          <AlertTitle>首次使用或升级后建议先跑一次全量同步</AlertTitle>
           <AlertDescription>
-            <p>
-              首次使用或升级后，建议执行一次全量同步。全量同步仅扫描任务指定的 115 网盘文件夹，把文件、目录写入数据库。
-              数据库记录是移动、重命名、删除事件正常生效的基础；缺少记录会导致旧 STRM 无法正确清理。
-            </p>
-            <p className="mt-1">
-              操作：左侧菜单「任务」→新建任务→保存，点击任务▶运行。
-            </p>
+            首次使用建议先跑一次全量同步建立索引，否则移动、重命名或删除事件可能无法清理旧 STRM。
           </AlertDescription>
         </Alert>
 
@@ -346,9 +339,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              首次启动监控时的拉取范围。<strong>latest</strong>：只处理新事件，最轻量；
-              <strong>all</strong>：拉取所有历史事件（适合首次部署补历史，耗时较长）；
-              <strong>last</strong>：从上次保存的游标继续，无断点时退化为 latest。
+              首次启动的拉取范围，一般选「从当前时间开始」。
             </p>
           </div>
 

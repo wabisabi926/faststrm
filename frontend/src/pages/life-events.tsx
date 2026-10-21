@@ -145,6 +145,19 @@ export default function LifeEventsPage({
     }
   };
 
+  // 清理 30 天前的历史日志
+  const handleCleanupOld = async () => {
+    if (!confirm("确定要清理 30 天前的日志吗？")) return;
+    try {
+      const res = await axiosInstance.delete("/api/lifeEvents?action=cleanup");
+      const removed = res.data?.removed ?? 0;
+      toast.success(`已清理 ${removed} 条历史日志`);
+      fetchData();
+    } catch {
+      toast.error("清理失败");
+    }
+  };
+
   // 清理历史轮询日志（早期配置残留的失败记录）
   const handleCleanupPoll = async () => {
     if (!confirm("确定要删除所有「轮询」类型的历史日志吗？此操作不可恢复。")) return;
@@ -181,7 +194,7 @@ export default function LifeEventsPage({
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold break-words">生活事件</h1>
             <p className="text-sm text-muted-foreground mt-1 break-words">
-              115 生活事件监控处理记录，保留最近 7 天
+              115 生活事件处理记录（显示最近 500 条）
             </p>
           </div>
         )}
@@ -199,6 +212,18 @@ export default function LifeEventsPage({
               <ChevronDown className="h-4 w-4" />
             </summary>
             <div className="absolute right-0 z-20 mt-1 min-w-[170px] rounded-md border bg-popover p-1 shadow-md">
+              <button
+                type="button"
+                onClick={(e) => {
+                  void handleCleanupOld();
+                  const details = e.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+              >
+                <Trash2 className="h-4 w-4" />
+                清理 30 天前
+              </button>
               <button
                 type="button"
                 onClick={(e) => {

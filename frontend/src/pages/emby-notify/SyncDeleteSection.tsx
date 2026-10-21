@@ -442,12 +442,9 @@ export function SyncDeleteSection({
           </Button>
         </div>
 
-        <div className="p-3 bg-muted/50 rounded-lg text-sm">
-          <p className="font-semibold mb-1">工作流程</p>
-          <p className="text-xs text-muted-foreground">
-            Emby 删除媒体 → 匹配路径映射 → 去重检查（60s） → 防误删（STRM 存在 + 标题匹配 + 目录文件数 ≤100） → 删 STRM + 字幕 + nfo → 清空目录 → 更新 DB → TG 通知
-          </p>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          删除前会做路径匹配与防误删检查；试运行模式只记录，不实际删除。
+        </p>
       </div>
     </section>
   );

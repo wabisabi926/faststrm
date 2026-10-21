@@ -129,9 +129,6 @@ export function StaleStrmDialog({
               <Badge variant="destructive" className="ml-2">
                 {allStale.length}
               </Badge>
-              <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-300 ml-2">
-                P3：预览 STRM 内容
-              </Badge>
             </DialogTitle>
             <DialogDescription>
               这些 STRM 指向的媒体文件在 115 网盘树中不存在，或引用的账户已失效（账户改名/删除后的残留），可能已被删除或移动。点击任意内容单元格可预览 STRM 文件。

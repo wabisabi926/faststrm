@@ -17,10 +17,9 @@ import type { Settings as SettingsType } from "@/pages/settings/types";
 type CleanupSettings = NonNullable<SettingsType["cleanup"]>;
 
 const AUTO_MODE_HINTS: Record<string, string> = {
-  off: "不检查、不处理。网盘已删除的影片会继续保留本地 STRM，媒体库可能出现点开就报错的条目。",
-  mark_only: "只在任务日志里列出孤儿 STRM，不动任何文件。适合先观察一段时间，确认判定准确后再切到自动清理。",
-  auto_clean:
-    "按下方阈值清理孤儿 STRM。命中保护阈值时会停手，或按确认模式转入待确认队列；超过 24 小时未确认的批次会自动作废。",
+  off: "不检查、不处理。",
+  mark_only: "只写日志，不删除文件。",
+  auto_clean: "按下方阈值清理；命中保护阈值时停止或转入待确认队列。",
 };
 
 export interface CleanupPolicyCardProps {
@@ -85,9 +84,6 @@ export function CleanupPolicyCard({ data, setData, saving, onSave }: CleanupPoli
               <SelectItem value="auto_clean">自动清理（按下方阈值）</SelectItem>
             </SelectContent>
           </Select>
-          <span className="text-xs text-muted-foreground">
-            开启后仍受下方保护阈值与确认模式约束
-          </span>
         </div>
         <p className="text-xs text-muted-foreground">
           {AUTO_MODE_HINTS[cleanupMode] ?? AUTO_MODE_HINTS.auto_clean}
@@ -177,7 +173,7 @@ export function CleanupPolicyCard({ data, setData, saving, onSave }: CleanupPoli
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              选择 Web UI 或 Telegram 后，超过稳定阈值的清理会先进入待确认队列；保护阈值（比例/绝对/目录数）仍会强制拦截。
+              超过稳定阈值时进入待确认队列；保护阈值始终强制拦截。
             </p>
           </div>
         </div>

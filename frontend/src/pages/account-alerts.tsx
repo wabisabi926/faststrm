@@ -210,15 +210,14 @@ export default function AccountAlertsPage({
         <h2 className="text-sm font-medium mb-2">前置条件</h2>
         <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
           <li>
-            在
+            先在
             <Link to="/notify?tab=telegram" className="mx-1 text-primary hover:underline">
               通知中心 › Telegram
             </Link>
-            配置 Bot Token 和 Chat ID
+            配置 Bot 并启动轮询或 Webhook
           </li>
-          <li>在「通知中心 › Telegram」启动轮询或配置 Webhook</li>
           <li>
-            账号状态由生活事件监控自动检测，也可在
+            账号状态由生活事件监控更新，也可在
             <Link to="/account" className="mx-1 text-primary hover:underline">
               账号管理
             </Link>
