@@ -145,21 +145,16 @@ export function ConnectionSection({
                     updateSetting("proxyPort", parseInt(e.target.value) || 0)
                   }
                 />
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  填一个与 Emby 本体不同的空闲端口（默认 8097）。客户端连接地址：
-                  <code className="block bg-muted px-1.5 py-0.5 rounded mt-1 break-all font-mono text-xs">
-                    http://{settings.url
-                      ?.replace(/^https?:\/\//, "")
-                      ?.replace(/:\d+$/, "")}:{settings.proxyPort || 8097}
-                  </code>
-                </p>
-                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed">
-                  <span className="font-medium">
-                    ⚠️ 客户端必须连反代端口 <code>{settings.proxyPort || 8097}</code>
-                  </span>
-                  <br />
-                  连 Emby 本体端口（如 8096）时，ISO/BDMV 原盘会被判转码而失败。
-                  也可以把 Emby 本体与反代端口互换，客户端地址保持不变。
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed space-y-1">
+                  <div>
+                    <span className="font-medium">客户端必须连 </span>
+                    <code className="bg-amber-500/15 px-1.5 py-0.5 rounded break-all font-mono text-xs">
+                      {`http://${settings.url?.replace(/^https?:\/\//, "")?.replace(/:\d+$/, "") || "你的Emby地址"}:${settings.proxyPort || 8097}`}
+                    </code>
+                  </div>
+                  <div className="text-muted-foreground">
+                    端口需与 Emby 本体不同（默认 8097）；连 Emby 本体端口时，ISO/BDMV 原盘会被判转码而失败。
+                  </div>
                 </div>
               </div>
               <label htmlFor="externalPlayerToggle" className="flex items-start gap-3 min-h-[36px] cursor-pointer select-none">
@@ -208,9 +203,8 @@ export function ConnectionSection({
               </div>
               {!proxyStatus?.running && (
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed">
-                  <span className="font-medium">反代未运行：普通格式仍可播放，ISO/BDMV 原盘会失败。</span>
-                  <br />
-                  请检查反代端口是否被占用后重启。
+                  <span className="font-medium">反代未运行：ISO/BDMV 原盘会失败，普通格式不受影响。</span>
+                  请检查端口是否被占用，处理后重启 FastStrm。
                 </div>
               )}
             </div>
