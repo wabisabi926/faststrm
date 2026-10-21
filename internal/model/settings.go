@@ -167,11 +167,25 @@ type StrmSettings struct {
 	ProxyChunkSizeMB int `json:"proxyChunkSizeMB"`
 	// ProxyConcurrency 单次播放的分片并发数，默认 2（计入 AccountProxyConcurrencyLimit 额度）。
 	ProxyConcurrency int `json:"proxyConcurrency"`
+	// ForceProxySeekFormats 在 STRM 端点层就强制代理的原盘扩展名（不含 ts）。
+	// 背景：ISO/BDMV 等镜像走 302 后客户端直连 CDN，Range/UA 绑定极易被拒，
+	// 表现为「有时能播、有时卡住」。这里下沉到 /api/strm 决策层，保证原盘始终走代理。
+	// 与 forceProxyFormats 的区别：后者作用于 Emby 反代层且默认包含 ts（录播）。
+	ForceProxySeekFormats []string `json:"forceProxySeekFormats"`
+	// DisableSeekFormatProxy 关闭「原盘在 STRM 端点层强制代理」。
+	// 关闭后原盘与普通格式一样按 UA 白名单/默认 302 处理（ISO 可能因 CDN 拒绝而播放失败）。
+	DisableSeekFormatProxy bool `json:"disableSeekFormatProxy"`
 }
 
 // DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）
 var DefaultForceProxyFormats = []string{
 	"iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "ts", "vob", "ifo", "bup",
+}
+
+// DefaultForceProxySeekFormats STRM 端点层强制代理的纯原盘格式（不含 ts）。
+// ts 是常见录播格式，302 通常可用，没必要占 NAS 带宽。
+var DefaultForceProxySeekFormats = []string{
+	"iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "vob", "ifo", "bup",
 }
 
 // EmbySettings emby 子项
@@ -364,6 +378,7 @@ func DefaultSettings() *Settings {
 			AccountProxyConcurrencyLimit: 8,
 			RedirectCheckTimeoutMs:       5000,
 			ForceProxyFormats:            append([]string{}, DefaultForceProxyFormats...),
+			ForceProxySeekFormats:        append([]string{}, DefaultForceProxySeekFormats...),
 			// 分片并发代理默认启用（DisableRangeProxy 零值 false 即启用）
 			ProxyChunkSizeMB: 10,
 			ProxyConcurrency: 2,

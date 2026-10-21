@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -465,10 +466,13 @@ func hexDigit(b byte) (int, bool) {
 
 // DecideRoute 根据请求上下文决策 proxy vs redirect
 // explicitMode: 仅私网生效。forceProxyUaTokens: UA 包含这些 token 时强制代理
+// fileName: 请求的文件名（用于识别原盘格式）；forceProxySeekFormats: 强制代理的原盘扩展名
 func DecideRoute(
 	r *http.Request,
 	explicitMode string,
 	forceProxyUaTokens []string,
+	fileName string,
+	forceProxySeekFormats []string,
 ) DecisionResult {
 	// 1) 手动指定优先级最高
 	switch explicitMode {
@@ -487,9 +491,34 @@ func DecideRoute(
 		}
 	}
 
-	// 3) 默认 redirect（含 ISO/BDMV/M2TS/TS 等原盘格式：服务端登录态现取 → 客户端直连 115 CDN）
-	//    P3-ISO：对齐 p115strmhelper，原盘同样走 302/原生 Range，不经过自研 proxy，避免 UA/签名绑定导致 seek 失败
+	// 3) 原盘 / seek 格式 → 强制代理。
+	// 302 让客户端直连 CDN，ISO 等镜像的 Range/UA 绑定极易被拒（表现为卡在加载或无法播放），
+	// 服务端代理是唯一可靠的交付方式；与反代层的 isSeekRequiredFormat 保持一致。
+	if IsSeekFormatName(fileName, forceProxySeekFormats) {
+		return DecisionResult{Decision: DecisionProxy, Reason: "seek_format_force_proxy"}
+	}
+
+	// 4) 默认 redirect：普通视频由客户端直连 115 CDN，不占 NAS 带宽
 	return DecisionResult{Decision: DecisionRedirect, Reason: "default_redirect"}
+}
+
+// IsSeekFormatName 判断文件名扩展名是否属于「需要服务端代理」的原盘格式。
+// 与设置项 strm.forceProxySeekFormats / forceProxyFormats 同源，大小写不敏感、点号可省略。
+func IsSeekFormatName(fileName string, formats []string) bool {
+	if fileName == "" || len(formats) == 0 {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if ext == "" {
+		return false
+	}
+	ext = strings.TrimPrefix(ext, ".")
+	for _, f := range formats {
+		if strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(f), "."), ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // ==================== redirectCheck：HEAD 预检直链 ====================
@@ -672,6 +701,7 @@ func StrmRouteConfig(cfg *config.AppConfig) struct {
 	AccountProxyConcurrencyLimit int
 	RedirectCheckTimeout         time.Duration
 	ForceProxyFormats            []string
+	ForceProxySeekFormats        []string
 } {
 	st := cfg.Settings.Strm
 	tokens := st.ForceProxyUaTokens
@@ -688,15 +718,23 @@ func StrmRouteConfig(cfg *config.AppConfig) struct {
 	if len(formats) == 0 {
 		formats = model.DefaultForceProxyFormats
 	}
+	seekFormats := st.ForceProxySeekFormats
+	if st.DisableSeekFormatProxy {
+		seekFormats = nil // 显式关闭：原盘按普通格式处理
+	} else if len(seekFormats) == 0 {
+		seekFormats = model.DefaultForceProxySeekFormats
+	}
 	return struct {
 		ForceProxyUaTokens           []string
 		AccountProxyConcurrencyLimit int
 		RedirectCheckTimeout         time.Duration
 		ForceProxyFormats            []string
+		ForceProxySeekFormats        []string
 	}{
 		ForceProxyUaTokens:           tokens,
 		AccountProxyConcurrencyLimit: proxyLimit,
 		RedirectCheckTimeout:         checkTimeout,
 		ForceProxyFormats:            formats,
+		ForceProxySeekFormats:        seekFormats,
 	}
 }

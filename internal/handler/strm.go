@@ -9,7 +9,6 @@ import (
 	"net/http"
 	neturl "net/url"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -165,7 +164,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 
 		// 规则引擎：三档 finalName — URL file_name(前端最权威) > 115 API 返回的 fileName > CDN URL path
 		finalName := pickOneFileName(fileName, meta.FileName, cdnURL)
-		dr := strm.DecideRoute(r, explicitMode, routeCfg.ForceProxyUaTokens)
+		dr := strm.DecideRoute(r, explicitMode, routeCfg.ForceProxyUaTokens, finalName, routeCfg.ForceProxySeekFormats)
 		finalDecision := dr.Decision
 		finalReason := dr.Reason
 		var redirectCheckStatus *int
@@ -181,7 +180,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		}
 
 		// 原盘/seek 格式标记：既用于并发超限时「不降级 302」，也用于诊断日志
-		isSeek := isSeekFormatName(finalName, routeCfg.ForceProxyFormats)
+		isSeek := strm.IsSeekFormatName(finalName, routeCfg.ForceProxyFormats)
 
 		// Proxy 并发数限制 + Bottleneck 拿槽位（集中在子函数里处理，降低 HandleStrm 圈复杂度）
 		if finalDecision == strm.DecisionProxy {
@@ -693,23 +692,4 @@ func itoa(n int64) string {
 // writeJSON 辅助：统一写 JSON（导出给其他 handler 用）
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	httpx.WriteJson(w, status, v)
-}
-
-// isSeekFormatName 判断文件名扩展名是否属于「需要服务端代理」的原盘格式
-// （与设置项 strm.forceProxyFormats 同源）。用于代理并发超限时的降级决策。
-func isSeekFormatName(fileName string, formats []string) bool {
-	if fileName == "" {
-		return false
-	}
-	ext := strings.ToLower(filepath.Ext(fileName))
-	if ext == "" {
-		return false
-	}
-	ext = strings.TrimPrefix(ext, ".")
-	for _, f := range formats {
-		if strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(f), "."), ext) {
-			return true
-		}
-	}
-	return false
 }

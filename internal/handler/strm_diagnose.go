@@ -65,9 +65,10 @@ func HandleStrmDiagnose(opts StrmOptions) http.HandlerFunc {
 		if privateNetwork {
 			explicitMode = strings.ToLower(strings.TrimSpace(q.Get("mode")))
 		}
+		finalName := pickOneFileName(fileName, meta.FileName, meta.URL)
 		probeReq := r.Clone(r.Context())
 		probeReq.Header.Set("User-Agent", ua)
-		decision := strm.DecideRoute(probeReq, explicitMode, routeCfg.ForceProxyUaTokens)
+		decision := strm.DecideRoute(probeReq, explicitMode, routeCfg.ForceProxyUaTokens, finalName, routeCfg.ForceProxySeekFormats)
 
 		finalDecision := decision.Decision
 		finalReason := decision.Reason
@@ -86,10 +87,9 @@ func HandleStrmDiagnose(opts StrmOptions) http.HandlerFunc {
 		}
 
 		cdn := probeCdnHeaders(r.Context(), meta.URL, account.Cookie, ua)
-		finalName := pickOneFileName(fileName, meta.FileName, meta.URL)
 
 		// 原盘/seek 格式与分片参数：排查「为什么走了 302 / 为什么没走分片」的关键
-		seekFormat := isSeekFormatName(finalName, routeCfg.ForceProxyFormats)
+		seekFormat := strm.IsSeekFormatName(finalName, routeCfg.ForceProxySeekFormats)
 		rangeProxy := "off"
 		if !opts.Cfg.Settings.Strm.DisableRangeProxy {
 			rangeProxy = fmt.Sprintf("%dMBx%d", opts.Cfg.Settings.Strm.ProxyChunkSizeMB, opts.Cfg.Settings.Strm.ProxyConcurrency)

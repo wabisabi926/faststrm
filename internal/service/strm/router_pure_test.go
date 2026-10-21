@@ -1,6 +1,7 @@
 package strm
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -376,7 +377,7 @@ func TestDecideRouteP3ISO(t *testing.T) {
 	for _, name := range []string{"movie.iso", "BLURAY/BDMV/index.bdmv", "main.m2ts", "x.vob", "y.ts", "z.ifo"} {
 		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/", nil)
-			res := DecideRoute(req, "", nil)
+			res := DecideRoute(req, "", nil, "", nil)
 			if res.Decision != DecisionRedirect {
 				t.Fatalf("DecideRoute(%s) = %s(%s), want redirect", name, res.Decision, res.Reason)
 			}
@@ -387,7 +388,7 @@ func TestDecideRouteP3ISO(t *testing.T) {
 func TestDecideRouteExplicitMode(t *testing.T) {
 	t.Run("explicit proxy wins even for mkv", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		res := DecideRoute(req, "proxy", nil)
+		res := DecideRoute(req, "proxy", nil, "", nil)
 		if res.Decision != DecisionProxy {
 			t.Fatalf("want proxy, got %s(%s)", res.Decision, res.Reason)
 		}
@@ -395,7 +396,7 @@ func TestDecideRouteExplicitMode(t *testing.T) {
 
 	t.Run("explicit redirect wins even for seek UA", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		res := DecideRoute(req, "redirect", []string{"Infuse"})
+		res := DecideRoute(req, "redirect", []string{"Infuse"}, "", nil)
 		if res.Decision != DecisionRedirect {
 			t.Fatalf("want redirect, got %s(%s)", res.Decision, res.Reason)
 		}
@@ -405,7 +406,7 @@ func TestDecideRouteExplicitMode(t *testing.T) {
 func TestDecideRouteForceProxyUA(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("user-agent", "Infuse/7.0")
-	res := DecideRoute(req, "", []string{"Infuse", "VidHub"})
+	res := DecideRoute(req, "", []string{"Infuse", "VidHub"}, "", nil)
 	if res.Decision != DecisionProxy {
 		t.Fatalf("want proxy for Infuse UA, got %s(%s)", res.Decision, res.Reason)
 	}
@@ -414,7 +415,7 @@ func TestDecideRouteForceProxyUA(t *testing.T) {
 func TestDecideRouteDefaultRedirect(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("user-agent", "LibVLC")
-	res := DecideRoute(req, "", nil)
+	res := DecideRoute(req, "", nil, "", nil)
 	if res.Decision != DecisionRedirect {
 		t.Fatalf("want redirect, got %s(%s)", res.Decision, res.Reason)
 	}
@@ -429,4 +430,66 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestDecideRoute_SeekFormatForceProxy(t *testing.T) {
+	seekFormats := []string{"iso", "bdmv", "m2ts", "vob", "ifo", "bup"}
+	cases := []struct {
+		fileName string
+		want     RouteDecision
+		reason   string
+	}{
+		{"电影.iso", DecisionProxy, "seek_format_force_proxy"},
+		{"剧集.BDMV", DecisionProxy, "seek_format_force_proxy"},
+		{"视频.m2ts", DecisionProxy, "seek_format_force_proxy"},
+		{"电影.mkv", DecisionRedirect, "default_redirect"},
+		{"录播.ts", DecisionRedirect, "default_redirect"}, // ts 不在端点层强制列表
+		{"", DecisionRedirect, "default_redirect"},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/strm", nil)
+		res := DecideRoute(req, "", nil, c.fileName, seekFormats)
+		if res.Decision != c.want {
+			t.Fatalf("DecideRoute(file=%q) = %s, want %s", c.fileName, res.Decision, c.want)
+		}
+		if res.Reason != c.reason {
+			t.Fatalf("DecideRoute(file=%q) reason = %s, want %s", c.fileName, res.Reason, c.reason)
+		}
+	}
+}
+
+func TestDecideRoute_SeekFormatRespectsExplicitMode(t *testing.T) {
+	// 私网调试时显式 redirect 应压过原盘强制代理
+	req := httptest.NewRequest(http.MethodGet, "/api/strm", nil)
+	res := DecideRoute(req, "redirect", nil, "电影.iso", []string{"iso"})
+	if res.Decision != DecisionRedirect || res.Reason != "explicit_mode_redirect" {
+		t.Fatalf("explicit redirect should win, got %s(%s)", res.Decision, res.Reason)
+	}
+}
+
+func TestDecideRoute_SeekFormatEmptyListDisables(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/strm", nil)
+	res := DecideRoute(req, "", nil, "电影.iso", nil)
+	if res.Decision != DecisionRedirect {
+		t.Fatalf("empty seek formats should not force proxy, got %s", res.Decision)
+	}
+}
+
+func TestIsSeekFormatName(t *testing.T) {
+	formats := []string{"iso", ".BDMV", "m2ts"}
+	cases := map[string]bool{
+		"a.iso":  true,
+		"a.ISO":  true,
+		"a.bdmv": true,
+		"a.m2ts": true,
+		"a.mkv":  false,
+		"a.ts":   false,
+		"":       false,
+		"noext":  false,
+	}
+	for name, want := range cases {
+		if got := IsSeekFormatName(name, formats); got != want {
+			t.Fatalf("IsSeekFormatName(%q) = %v, want %v", name, got, want)
+		}
+	}
 }

@@ -706,6 +706,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				if body.Strm.ForceProxyFormats != nil {
 					settings.Strm.ForceProxyFormats = body.Strm.ForceProxyFormats
 				}
+				if body.Strm.ForceProxySeekFormats != nil {
+					settings.Strm.ForceProxySeekFormats = body.Strm.ForceProxySeekFormats
+				}
+				settings.Strm.DisableSeekFormatProxy = body.Strm.DisableSeekFormatProxy
 				if body.Strm.AccountProxyConcurrencyLimit > 0 {
 					settings.Strm.AccountProxyConcurrencyLimit = body.Strm.AccountProxyConcurrencyLimit
 				}

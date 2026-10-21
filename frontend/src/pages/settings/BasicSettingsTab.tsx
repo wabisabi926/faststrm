@@ -341,6 +341,24 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 逗号分隔，大小写不敏感、点号可省略。这些格式需要服务端代理流（避免 CDN 的 UA/签名导致 Range 被拒）；留空恢复默认值。
               </p>
             </div>
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="disableSeekFormatProxy"
+                  checked={!(data.strm?.disableSeekFormatProxy ?? false)}
+                  onCheckedChange={(checked) =>
+                    setData({ ...data, strm: { ...data.strm, disableSeekFormatProxy: checked !== true } })
+                  }
+                />
+                <Label htmlFor="disableSeekFormatProxy" className="cursor-pointer">
+                  原盘强制走代理（推荐开启）
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                ISO / BDMV / M2TS 等原盘直接 302 到 CDN 常因 UA/签名绑定失败（卡住或无法播放）。
+                开启后由服务端代理，不依赖客户端和反代端口；关闭则回退为 302。
+              </p>
+            </div>
             <div className="space-y-3 rounded-md border p-3">
               <div className="flex items-center gap-2">
                 <Checkbox

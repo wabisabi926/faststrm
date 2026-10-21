@@ -54,6 +54,7 @@ export type Settings = {
     // 需要服务端代理流的容器/扩展名
     forceProxyFormats?: string[];
     // 代理流分片并发（大原盘单连接带宽不足时显著改善）
+    disableSeekFormatProxy?: boolean;
     disableRangeProxy?: boolean;
     proxyChunkSizeMB?: number;
     proxyConcurrency?: number;
