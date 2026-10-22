@@ -51,10 +51,6 @@ interface AccountInfo {
   url?: string;
 }
 
-interface TaskInfo {
-  runtime?: { status?: string };
-}
-
 const LEVEL_STYLE: Record<string, string> = {
   info: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
   warn: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
@@ -88,7 +84,6 @@ export default function RuntimePage() {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [journal, setJournal] = useState<JournalEvent[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
-  const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -100,7 +95,6 @@ export default function RuntimePage() {
       axiosInstance.get("/api/runtime/status"),
       axiosInstance.get("/api/runtime/journal?limit=100"),
       axiosInstance.get("/api/account"),
-      axiosInstance.get("/api/tasks"),
     ]);
     if (results[0].status === "fulfilled") setStatus(results[0].value.data);
     if (results[1].status === "fulfilled") {
@@ -108,9 +102,6 @@ export default function RuntimePage() {
     }
     if (results[2].status === "fulfilled") {
       setAccounts(Array.isArray(results[2].value.data) ? results[2].value.data : []);
-    }
-    if (results[3].status === "fulfilled") {
-      setTasks(Array.isArray(results[3].value.data?.tasks) ? results[3].value.data.tasks : []);
     }
     setLastUpdated(new Date());
     if (isRefresh) setRefreshing(false);
@@ -142,20 +133,19 @@ export default function RuntimePage() {
     return { valid, invalid, unknown, total: accounts.length };
   }, [accounts]);
 
-  const runningTasks = tasks.filter((task) => task.runtime?.status === "running" || task.runtime?.status === "pending").length;
   const proxy = status?.proxy;
   const proxyFormats = proxy?.disableSeekFormatProxy
     ? "按格式代理已关闭"
-    : `${(proxy?.forceProxyFormats || []).join(" / ") || "无"}（其余 302）`;
+    : `${(proxy?.forceProxyFormats || []).join(", ") || "无"}（其余 302）`;
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold sm:text-2xl">运行状态</h1>
+          <h1 className="text-xl font-semibold sm:text-2xl break-words">系统状态</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            当前进程、Emby 反代与最近系统事件；任务执行明细请查看
-            <Link to="/history" className="mx-1 underline underline-offset-4">运行记录</Link>。
+            当前进程、Emby 反代、账号健康与最近系统事件；任务历史请查看
+            <Link to="/history" className="mx-1 underline underline-offset-4">任务运行</Link>。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -169,7 +159,7 @@ export default function RuntimePage() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
@@ -224,19 +214,6 @@ export default function RuntimePage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2">
-              <ScrollText className="h-4 w-4" /> 任务
-            </CardDescription>
-            <CardTitle className="text-2xl">{runningTasks}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1 text-xs text-muted-foreground">
-            <div>运行中/等待：{runningTasks}</div>
-            <div>任务总数：{tasks.length}</div>
-            <Link to="/task" className="inline-block pt-1 underline underline-offset-4">查看任务</Link>
-          </CardContent>
-        </Card>
       </div>
 
       <Card>

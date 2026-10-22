@@ -8,7 +8,7 @@
 |---|---|
 | `architecture/` | 当前架构、播放链路、STRM 生命周期、清理安全边界 |
 | `adr/` | 架构决策记录（ADR），编号一旦发布不再修改 |
-| `api/` | STRM、Emby 反代、运行状态等接口契约 |
+| `api/` | STRM、Emby 反代、系统状态等接口契约 |
 | `dev/` | 构建、测试、发布、迁移工具 |
 | `deploy/` | Docker / 飞牛 / Windows 的维护者说明 |
 | `assets/` | 截图等二进制资源；流程图优先用 Mermaid |

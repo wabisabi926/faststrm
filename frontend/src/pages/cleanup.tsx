@@ -60,7 +60,7 @@ export default function CleanupPage() {
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-semibold break-words">STRM 清理</h1>
           <p className="text-sm text-muted-foreground mt-1 break-words">
-            策略、扫描、待确认批次和回收站集中在这里。
+            扫描网盘与本地 STRM，清理失效项、补生成漏项。
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={refreshAll} disabled={loading || saving}>
@@ -82,13 +82,21 @@ export default function CleanupPage() {
         </div>
       ) : (
         <>
-          <CleanupPolicyCard data={data} setData={setData} saving={saving} onSave={save} />
-          {/* 标题层级收敛：页头 h1 + 卡片 CardTitle 已经够了，
-              中间的「扫描与执行」section 标题只是重复（P2-1）。 */}
           <StrmCleanupCard
             refreshToken={refreshToken}
             removeStrm={data.cleanup?.removeStrm !== false}
           />
+          <details className="rounded-md border bg-card">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+              高级清理策略
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                自动清理、保护阈值与删除动作
+              </span>
+            </summary>
+            <div className="border-t p-3 sm:p-4">
+              <CleanupPolicyCard compact data={data} setData={setData} saving={saving} onSave={save} />
+            </div>
+          </details>
         </>
       )}
     </div>

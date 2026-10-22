@@ -88,6 +88,10 @@ export function TrashSection({ refreshToken = 0 }: TrashSectionProps) {
     }
   };
 
+  if (!loading && entries.length === 0 && !error) {
+    return null; // 空回收站不占版面
+  }
+
   return (
     <section className="border rounded-md p-3 sm:p-4 space-y-3">
       <div className="flex items-center gap-2">

@@ -1,14 +1,10 @@
 // STRM 清理 P1 方案前端 E2E（Vitest）
 // 覆盖：
-//   F-E2E-1. CleanupToolbar 组合按钮：选中/未选中 -> 两条文案分支（已勾选/警告）
-//   F-E2E-2. CleanupToolbar 底部提示：明确 清理全部 vs 组合仅勾选 区别
 //   F-E2E-3. 类型契约：MappingResult.dbRecordCount + ScanSummary.totalDbRecords 可选
 //   F-E2E-4. MappingDetailList DB 列：存在 dbRecordCount 时渲染 DB 列/差值 Badge
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { CleanupToolbar } from "../CleanupToolbar";
 import { MappingDetailList } from "../MappingDetailList";
 import type { MappingLocalStats, MappingResult, ScanSummary, ExecuteResult } from "../types";
 
@@ -21,49 +17,6 @@ vi.mock("sonner", () => {
 
 beforeEach(() => {
   cleanup();
-});
-
-const baseProps = {
-  totalStale: 113,
-  totalMissing: 7,
-  executing: false,
-  onDeleteAll: vi.fn(),
-  onRegenerate: vi.fn(),
-  onDeleteAndRegenerate: vi.fn(),
-};
-
-describe("CleanupToolbar P1 组合按钮文案/提示", () => {
-  it("F-E2E-1a：selectedStaleCount>0 对话框显示已勾选数量，无警告", async () => {
-    const user = userEvent.setup();
-    render(<CleanupToolbar {...baseProps} selectedStaleCount={3} />);
-    await user.click(screen.getByRole("button", { name: /清理失效 \+ 补生成漏项/ }));
-    expect(
-      screen.getByText((_, el) => el?.tagName === "P" && /3 个失效 STRM/.test(el.textContent || ""))
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/当前未勾选任何失效 STRM/)).toBeNull();
-  });
-
-  it("F-E2E-1b：selectedStaleCount=0 对话框显示警告，指出只执行补生成", async () => {
-    const user = userEvent.setup();
-    render(<CleanupToolbar {...baseProps} selectedStaleCount={0} />);
-    await user.click(screen.getByRole("button", { name: /清理失效 \+ 补生成漏项/ }));
-    expect(screen.getByText(/当前未勾选任何失效 STRM/)).toBeInTheDocument();
-    expect(screen.getByText(/只执行补生成/)).toBeInTheDocument();
-    expect(screen.getByText(/不会删除文件/)).toBeInTheDocument();
-  });
-
-  it("F-E2E-2：底部 tips 说明组合操作只删已勾选项", () => {
-    render(<CleanupToolbar {...baseProps} selectedStaleCount={5} />);
-    const tip = screen.getByText(/组合操作只删除已勾选项/);
-    expect(tip).toBeInTheDocument();
-    expect(tip.textContent).toMatch(/清理全部失效/);
-  });
-
-  it("F-E2E-2b：selectedStaleCount=0 时底部提示仍然可读", () => {
-    render(<CleanupToolbar {...baseProps} selectedStaleCount={0} />);
-    const tip = screen.getByText(/组合操作只删除已勾选项/);
-    expect(tip.textContent).toMatch(/清理全部失效/);
-  });
 });
 
 describe("类型契约：统一响应 dbRecordCount / totalDbRecords", () => {

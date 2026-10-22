@@ -22,9 +22,11 @@ export interface CleanupPolicyCardProps {
   setData: Dispatch<SetStateAction<SettingsType>>;
   saving: boolean;
   onSave: () => Promise<boolean>;
+  /** 嵌入高级折叠区时不再重复外框和标题 */
+  compact?: boolean;
 }
 
-export function CleanupPolicyCard({ data, setData, saving, onSave }: CleanupPolicyCardProps) {
+export function CleanupPolicyCard({ data, setData, saving, onSave, compact = false }: CleanupPolicyCardProps) {
   const [dirty, setDirty] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const cleanup = data.cleanup || {};
@@ -50,16 +52,18 @@ export function CleanupPolicyCard({ data, setData, saving, onSave }: CleanupPoli
   };
 
   return (
-    <section className="border rounded-md p-3 sm:p-5 space-y-5">
-      <div className="flex items-start gap-2">
-        <ShieldAlert className="mt-0.5 h-5 w-5 text-amber-500 shrink-0" />
-        <div>
-          <h2 className="text-base font-medium">清理策略</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            集中管理任务同步时的自动清理，以及自动/手动清理共用的保护阈值与动作。
-          </p>
+    <section className={compact ? "space-y-5" : "border rounded-md p-3 sm:p-5 space-y-5"}>
+      {!compact && (
+        <div className="flex items-start gap-2">
+          <ShieldAlert className="mt-0.5 h-5 w-5 text-amber-500 shrink-0" />
+          <div>
+            <h2 className="text-base font-medium">清理策略</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              集中管理任务同步时的自动清理，以及自动/手动清理共用的保护阈值与动作。
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* A. 自动清理触发 */}
       <div className="rounded-md border p-3 sm:p-4 space-y-3 bg-muted/20">

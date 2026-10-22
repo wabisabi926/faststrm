@@ -15,11 +15,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertCircle,
   CheckCircle2,
-  DatabaseZap,
   FileWarning,
   ListTree,
   Loader2,
-  Paperclip,
   SearchX,
   ShieldAlert,
 } from "lucide-react";
@@ -62,7 +60,6 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
     handleScan,
     handleExecuteDelete,
     handleDeleteAll,
-    handleDeleteAndRegenerate,
     handleRegenerate,
     clearLogs,
     previewStrm,
@@ -74,11 +71,11 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2">
           <div className="flex-1 min-w-0 w-full sm:w-auto">
             <CardTitle className="flex items-center gap-2">
-              <DatabaseZap className="size-5 text-indigo-500 shrink-0" />
-              <span className="break-words">失效 STRM 清理</span>
+              <ListTree className="size-5 text-indigo-500 shrink-0" />
+              <span className="break-words">扫描与清理</span>
             </CardTitle>
             <CardDescription className="mt-2 break-words">
-              对比 115 网盘与本地 STRM，清理失效项并补生成漏项。
+              扫描会使用「设置 → 生活事件」中的路径映射，无需开启监控。
             </CardDescription>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
@@ -91,7 +88,7 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
               ) : (
                 <>
                   <ListTree className="mr-2 size-4" />
-                  扫描路径映射
+                  开始扫描
                 </>
               )}
             </Button>
@@ -99,16 +96,6 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!scanResult && !scanning && (
-          <Alert>
-            <AlertCircle className="size-4" />
-            <AlertTitle>未执行扫描</AlertTitle>
-            <AlertDescription>
-              使用「设置中心 → 生活事件监控」中的路径映射；无需开启监控。
-            </AlertDescription>
-          </Alert>
-        )}
-
         {scanResult?.mappings.some((m) => m.error) && (
           <Alert variant="destructive">
             <AlertCircle className="size-4" />
@@ -124,64 +111,14 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
 
         {scanResult && (
           <>
-            {/* 统计面板：
-              P2 新增 totalAssociatedFiles（关联媒体文件）+ 原有 totalDbRecords（DB 同步）
-              列数：4 列（都无）/ 5 列（有其一）/ 6 列（二者都有） */}
-            <div
-              className={(() => {
-                const hasDB = scanResult.totalDbRecords !== undefined;
-                const hasAssoc = scanResult.totalAssociatedFiles !== undefined;
-                if (hasDB && hasAssoc) return "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3";
-                if (hasDB || hasAssoc) return "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3";
-                return "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3";
-              })()}
-            >
-              <StatCard
-                label="网盘媒体文件"
-                value={scanResult.totalRemoteFiles}
-                icon={<ListTree className="size-4" />}
-                tone="default"
-                hint={`对比 ${(scanResult.durationMs / 1000).toFixed(1)} 秒`}
-              />
-              {scanResult.totalDbRecords !== undefined &&
-                (() => {
-                  const diff = (scanResult.totalDbRecords ?? 0) - scanResult.totalRemoteFiles;
-                  const tone: "default" | "success" | "warning" | "destructive" =
-                    Math.abs(diff) === 0
-                      ? "success"
-                      : Math.abs(diff) <= 5
-                      ? "default"
-                      : "warning";
-                  return (
-                    <StatCard
-                      label="DB 同步记录"
-                      value={scanResult.totalDbRecords}
-                      icon={<DatabaseZap className="size-4" />}
-                      tone={tone}
-                      hint={diff === 0 ? "与网盘一致 ✓" : `差值：${diff > 0 ? "+" : ""}${diff}`}
-                    />
-                  );
-                })()}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <StatCard
                 label="本地 STRM"
                 value={scanResult.totalLocalStrms}
                 icon={<CheckCircle2 className="size-4" />}
                 tone="default"
-                hint={
-                  scanResult.totalAssociatedFiles !== undefined
-                    ? "仅统计 .strm"
-                    : undefined
-                }
+                hint={`扫描 ${(scanResult.durationMs / 1000).toFixed(1)} 秒`}
               />
-              {scanResult.totalAssociatedFiles !== undefined && (
-                <StatCard
-                  label="关联媒体文件"
-                  value={scanResult.totalAssociatedFiles}
-                  icon={<Paperclip className="size-4" />}
-                  tone="default"
-                  hint=".nfo / .jpg / .png / .srt / .ass / .sub / .vtt"
-                />
-              )}
               <StatCard
                 label="失效 STRM"
                 value={scanResult.totalStale}
@@ -227,9 +164,7 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
                 <ShieldAlert className="size-4 text-amber-600" />
                 <AlertTitle>有 {scanResult.totalUnmanaged} 个未托管 STRM 已跳过</AlertTitle>
                 <AlertDescription>
-                  这些文件在云端已不存在，但没有出现在托管登记表里（可能是手写、第三方工具生成，或纳管前遗留）。
-                  为了避免误删，它们不会进入删除候选，也不会被「全部删除」处理。确认不再需要时请手动清理；
-                  若刚升级，历史纳管可能仍在后台进行，稍后重新扫描即可。
+                  非本工具生成或未纳管的文件默认不删除。
                   <UnmanagedStrmDialog allUnmanaged={allUnmanaged} />
                 </AlertDescription>
               </Alert>
@@ -242,16 +177,18 @@ export function StrmCleanupCard({ refreshToken = 0, removeStrm = true }: StrmCle
               executing={executing}
               onDeleteAll={handleDeleteAll}
               onRegenerate={handleRegenerate}
-              onDeleteAndRegenerate={handleDeleteAndRegenerate}
-              selectedStaleCount={selectedStale.size}
               removeStrm={removeStrm}
             />
 
-            {/* 操作日志 */}
-            <CleanupLogPanel logs={logs} onClear={clearLogs} />
-
-            {/* 路径映射扫描明细 */}
-            <MappingDetailList mappings={scanResult.mappings} />
+            <details className="rounded-md border">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                扫描详情与执行日志
+              </summary>
+              <div className="space-y-4 border-t p-3">
+                <CleanupLogPanel logs={logs} onClear={clearLogs} />
+                <MappingDetailList mappings={scanResult.mappings} />
+              </div>
+            </details>
           </>
         )}
 

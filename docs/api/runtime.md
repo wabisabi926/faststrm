@@ -1,4 +1,4 @@
-# 运行状态与系统事件
+# 系统状态与系统事件
 
 ## `GET /api/runtime/status`
 

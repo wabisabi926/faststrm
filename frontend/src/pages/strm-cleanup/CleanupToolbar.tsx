@@ -3,7 +3,7 @@
 // 不再需要三个独立 useState——此前正是共享/错配 open 状态导致弹窗叠加、确认失效。
 
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Trash2, Zap } from "lucide-react";
+import { Trash2, Zap } from "lucide-react";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 
 export interface CleanupToolbarProps {
@@ -12,9 +12,6 @@ export interface CleanupToolbarProps {
   executing: boolean;
   onDeleteAll: () => void;
   onRegenerate: () => void;
-  onDeleteAndRegenerate: () => void;
-  /** 已勾选的失效 STRM 数量（组合按钮仅删除选中项，非全部） */
-  selectedStaleCount: number;
   /** 设置项「删除 STRM 本身」；false 时确认弹窗必须说明只清关联文件 */
   removeStrm?: boolean;
 }
@@ -25,8 +22,6 @@ export function CleanupToolbar({
   executing,
   onDeleteAll,
   onRegenerate,
-  onDeleteAndRegenerate,
-  selectedStaleCount,
   removeStrm = true,
 }: CleanupToolbarProps) {
   return (
@@ -70,41 +65,8 @@ export function CleanupToolbar({
             }
           />
 
-          {(totalStale > 0 || totalMissing > 0) && (
-            <ConfirmActionDialog
-              title="确认执行清理+补生成组合操作？"
-              description={
-                <>
-                  {selectedStaleCount > 0 ? (
-                    <p>
-                      将删除您已勾选的 <strong className="text-destructive">{selectedStaleCount}</strong> 个失效
-                      STRM，并补生成 {totalMissing} 个漏项。
-                    </p>
-                  ) : (
-                    <p className="text-amber-600">
-                      ⚠️ 当前未勾选任何失效 STRM，此操作将只执行补生成 {totalMissing} 个漏项（不会删除文件）。
-                    </p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    注意：「清理全部失效」会删除全部 {totalStale} 个失效，而「组合操作」仅删除您勾选的条目。
-                  </p>
-                </>
-              }
-              confirmLabel="确认执行"
-              onConfirm={onDeleteAndRegenerate}
-              trigger={
-                <Button size="sm" disabled={executing} className="w-full sm:w-auto">
-                  <RefreshCw className="mr-2 size-4" />
-                  {executing ? "执行中..." : "清理失效 + 补生成漏项"}
-                </Button>
-              }
-            />
-          )}
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">
-        组合操作只删除已勾选项；「清理全部失效」会删除所有失效项。
-      </p>
     </div>
   );
 }

@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { PageTabs, type PageTabItem } from "@/components/page-tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -22,7 +20,6 @@ import {
   Trash2,
   Eye,
   FileText,
-  Activity,
 } from "lucide-react";
 import { logger } from "@/lib/logger";
 
@@ -44,49 +41,6 @@ interface TaskExecutionHistory {
   error?: string;
   logs?: string[];
 }
-
-interface StrmHistoryEntry {
-  id: number;
-  taskId: string;
-  kind: string;
-  account: string;
-  success: boolean;
-  totalFiles: number;
-  successFiles: number;
-  failedFiles: number;
-  elapsedMs: number;
-  apiRequests: number;
-  errorMsg?: string;
-  createdAt: number;
-}
-
-interface StrmHistoryStats {
-  totalCount: number;
-  successCount: number;
-  failedCount: number;
-  totalFiles: number;
-  successFiles: number;
-  failedFiles: number;
-  totalApiRequests: number;
-  totalElapsedMs: number;
-}
-
-type HistoryTab = "tasks" | "strm";
-
-const HISTORY_TABS: readonly PageTabItem<HistoryTab>[] = [
-  { id: "tasks", label: "任务运行", icon: FileText },
-  { id: "strm", label: "事件处理", icon: Activity },
-];
-
-// 任务运行 = 一次全量/定时任务运行；事件处理 = 生活事件逐条处理结果。
-// 「增量任务」标签已随增量同步下线（v1.4.3），这里不再保留。
-const STRM_KIND_LABELS: Record<string, string> = {
-  full: "全量任务（旧记录）",
-  monitor: "生活事件",
-  rename: "重命名",
-  move: "移动",
-  delete: "删除",
-};
 
 // 状态图标和颜色映射
 const getStatusConfig = (status: TaskExecutionHistory["status"]) => {
@@ -129,23 +83,8 @@ function HistoryStatCard({ label, value }: { label: string; value: ReactNode }) 
 }
 
 export default function TaskHistoryPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab: HistoryTab = searchParams.get("tab") === "strm" ? "strm" : "tasks";
-  const setActiveTab = (tab: HistoryTab) => {
-    const next = new URLSearchParams(searchParams);
-    if (tab === "tasks") {
-      next.delete("tab");
-    } else {
-      next.set("tab", tab);
-    }
-    setSearchParams(next, { replace: true });
-  };
   const [history, setHistory] = useState<TaskExecutionHistory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [strmHistory, setStrmHistory] = useState<StrmHistoryEntry[]>([]);
-  const [strmStats, setStrmStats] = useState<StrmHistoryStats | null>(null);
-  const [strmLoading, setStrmLoading] = useState(false);
-  const [strmError, setStrmError] = useState<string | null>(null);
 
   const taskStats = useMemo(() => {
     let success = 0;
@@ -183,14 +122,6 @@ export default function TaskHistoryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (activeTab === "strm") {
-      void fetchStrmHistory();
-    }
-    // 切到 STRM 标签时刷新一次，避免看到过期数据
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
-
   const fetchHistory = async () => {
     try {
       setLoading(true);
@@ -202,26 +133,6 @@ export default function TaskHistoryPage() {
       toast.error("获取任务历史失败");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchStrmHistory = async () => {
-    try {
-      setStrmLoading(true);
-      setStrmError(null);
-      const [listResp, statsResp] = await Promise.all([
-        axiosInstance.get("/api/history/strm?limit=200"),
-        axiosInstance.get("/api/history/strm/stats"),
-      ]);
-      const items = Array.isArray(listResp.data?.items) ? listResp.data.items : [];
-      setStrmHistory(items as StrmHistoryEntry[]);
-      setStrmStats((statsResp.data || null) as StrmHistoryStats | null);
-    } catch (error) {
-      logger.error("Failed to fetch STRM history:", error);
-      setStrmError("获取事件处理记录失败");
-      toast.error("获取事件处理记录失败");
-    } finally {
-      setStrmLoading(false);
     }
   };
 
@@ -255,38 +166,22 @@ export default function TaskHistoryPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
-          <h1 className="text-xl sm:text-2xl font-semibold break-words">运行记录</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold break-words">任务运行</h1>
           <p className="text-sm text-muted-foreground mt-1 break-words">
-            任务运行看每次全量/定时任务的结果；事件处理看网盘改名/移动/删除的逐条结果
+            每次全量/定时任务的运行结果、耗时与历史日志。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
-          {activeTab === "tasks" ? (
-            <>
-              <Button onClick={fetchHistory} variant="outline">
-                刷新
-              </Button>
-              <Button onClick={deleteAllHistory} variant="outline">
-                删除所有历史
-              </Button>
-            </>
-          ) : (
-            <Button onClick={fetchStrmHistory} variant="outline">
-              刷新
-            </Button>
-          )}
+          <Button onClick={fetchHistory} variant="outline">
+            刷新
+          </Button>
+          <Button onClick={deleteAllHistory} variant="outline">
+            删除所有历史
+          </Button>
         </div>
       </div>
 
-      <PageTabs
-        tabs={HISTORY_TABS}
-        value={activeTab}
-        onChange={setActiveTab}
-        ariaLabel="运行记录类型"
-      />
-
-      {activeTab === "tasks" ? (
-        loading ? (
+      {loading ? (
           <div className="flex items-center justify-center h-64">
             <p className="text-sm text-muted-foreground">加载中...</p>
           </div>
@@ -408,101 +303,6 @@ export default function TaskHistoryPage() {
               </Table>
             </div>
           </>
-        )
-      ) : strmLoading ? (
-        <div className="flex items-center justify-center h-64">
-          <p className="text-muted-foreground">加载事件处理记录...</p>
-        </div>
-      ) : strmError ? (
-        <Card>
-          <CardContent className="p-4 text-sm text-destructive">{strmError}</CardContent>
-        </Card>
-      ) : (
-        <>
-          {strmStats && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <HistoryStatCard label="总记录" value={strmStats.totalCount} />
-              <HistoryStatCard
-                label="成功 / 失败"
-                value={
-                  <>
-                    <span className="text-green-600 dark:text-green-400">{strmStats.successCount}</span>
-                    <span className="text-muted-foreground"> / </span>
-                    <span className="text-red-600 dark:text-red-400">{strmStats.failedCount}</span>
-                  </>
-                }
-              />
-              <HistoryStatCard
-                label="条目成功 / 总数"
-                value={`${strmStats.successFiles} / ${strmStats.totalFiles}`}
-              />
-              <HistoryStatCard
-                label="平均耗时"
-                value={formatElapsed(
-                  strmStats.totalCount > 0 ? strmStats.totalElapsedMs / strmStats.totalCount : 0
-                )}
-              />
-            </div>
-          )}
-
-          {strmHistory.length === 0 ? (
-            <Card>
-              <CardContent className="flex items-center justify-center h-32">
-                <p className="text-muted-foreground">暂无 STRM 执行记录</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="rounded-md border overflow-x-auto [&_table]:text-xs">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="whitespace-nowrap">时间</TableHead>
-                    <TableHead className="whitespace-nowrap">类型</TableHead>
-                    <TableHead className="whitespace-nowrap">任务</TableHead>
-                    <TableHead className="whitespace-nowrap">账号</TableHead>
-                    <TableHead className="whitespace-nowrap">结果</TableHead>
-                    <TableHead className="whitespace-nowrap">条目</TableHead>
-                    <TableHead className="whitespace-nowrap">耗时</TableHead>
-                    <TableHead className="whitespace-nowrap">API</TableHead>
-                    <TableHead className="whitespace-nowrap">错误</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {strmHistory.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell className="whitespace-nowrap text-xs">{formatTime(entry.createdAt)}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">
-                        {STRM_KIND_LABELS[entry.kind] || entry.kind || "-"}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs">{entry.taskId || "-"}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">{entry.account || "-"}</TableCell>
-                      <TableCell>
-                        <Badge
-                          className={
-                            entry.success
-                              ? "text-[10px] bg-green-500/20 text-green-700 dark:text-green-400"
-                              : "text-[10px] bg-red-500/20 text-red-700 dark:text-red-400"
-                          }
-                        >
-                          {entry.success ? "成功" : "失败"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">
-                        {entry.successFiles} / {entry.totalFiles}
-                        {entry.failedFiles > 0 && <span className="text-red-500">（失败 {entry.failedFiles}）</span>}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">{formatElapsed(entry.elapsedMs)}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">{entry.apiRequests}</TableCell>
-                      <TableCell className="max-w-[240px] truncate text-xs text-red-500" title={entry.errorMsg || ""}>
-                        {entry.errorMsg || "-"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </>
       )}
     </div>
   );

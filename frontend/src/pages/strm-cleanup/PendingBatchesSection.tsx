@@ -114,6 +114,9 @@ export function PendingBatchesSection({ refreshToken = 0, onExecuted }: PendingB
   if (!enabled && !loading) {
     return null; // 功能未启用（未开确认模式/SQLite 不可用），不占版面
   }
+  if (!loading && batches.length === 0) {
+    return null; // 空队列不占版面
+  }
 
   return (
     <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
