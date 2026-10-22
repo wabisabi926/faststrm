@@ -134,12 +134,16 @@ export default function AccountPage() {
       const params = accountNames
         ? `?deep=true&names=${accountNames.join(",")}`
         : `?deep=true`;
-      const res = await axiosInstance.get(`/api/account/status${params}`);
+      const res = await axiosInstance.get(`/api/account/status${params}`, {
+        // 深度探测已改为后端有界并发，账号多时仍可能超过默认 30s
+        timeout: 60000,
+      });
       const map: Record<string, AccountStatus> = {};
       for (const s of res.data.results) {
         map[s.name] = s;
       }
-      setStatusMap(map);
+      // 单号刷新时只返回该账号，不能清空其他账号已有状态
+      setStatusMap(prev => ({ ...prev, ...map }));
     } catch {
       toast.error("检测账号状态失败");
     } finally {
@@ -159,9 +163,10 @@ export default function AccountPage() {
 
   useEffect(() => {
     if (data.length > 0) {
-      checkStatus();
+      void checkStatus();
     }
-  }, [data.length]);
+    // 改名/改类型等操作不会改变 length，但会替换 data，需要重新检测
+  }, [data]);
 
   const handleDelete = async (name: string, force = false) => {
     try {

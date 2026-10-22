@@ -6,7 +6,6 @@ import (
 
 	"github.com/zeromicro/go-zero/rest"
 
-	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/handler"
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/server/middleware"
@@ -22,7 +21,7 @@ import (
 // RegisterRoutes 注册全部 HTTP 路由
 func RegisterRoutes(
 	server *rest.Server,
-	cfg *config.AppConfig,
+	settingsFn func() *model.Settings,
 	issuer *auth.TokenIssuer,
 	client *client115.Client,
 	accountStore *store.AccountStore,
@@ -62,10 +61,10 @@ func RegisterRoutes(
 	// ========== 阶段4: STRM 路由（播放器无 token，公开） ==========
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/strm", Handler: middleware.CORS(handler.HandleStrm(handler.StrmOptions{
-			Cfg: cfg, Client115: client, AccountStore: accountStore,
+			Settings: settingsFn, Client115: client, AccountStore: accountStore,
 		}))},
 		{Method: http.MethodHead, Path: "/api/strm", Handler: middleware.CORS(handler.HandleStrm(handler.StrmOptions{
-			Cfg: cfg, Client115: client, AccountStore: accountStore,
+			Settings: settingsFn, Client115: client, AccountStore: accountStore,
 		}))},
 	})
 
@@ -108,7 +107,7 @@ func RegisterRoutes(
 		{Method: http.MethodPost, Path: "/api/strm/cache/clear", Handler: corsJWT(handler.HandleStrmCacheClear())},
 		// 播放诊断（受 JWT 保护）：只做路由判断与 CDN 探测，不代理大文件
 		{Method: http.MethodGet, Path: "/api/strm/diagnose", Handler: corsJWT(handler.HandleStrmDiagnose(handler.StrmOptions{
-			Cfg: cfg, Client115: client, AccountStore: accountStore,
+			Settings: settingsFn, Client115: client, AccountStore: accountStore,
 		}))},
 	}
 	server.AddRoutes(protectedRoutes)
@@ -207,17 +206,6 @@ func RegisterRoutes(
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/settings", Handler: corsJWT(handler.HandleSettingsGET(embyDeps))},
 		{Method: http.MethodPost, Path: "/api/settings", Handler: corsJWT(handler.HandleSettingsPOST(embyDeps))},
-	})
-
-	// ==================== 媒体挂载路径同步 ====================
-	mediaMountDeps := handler.MediaMountDeps{
-		SettingsStore: settingsStore,
-		AccountStore:  accountStore,
-		TasksStore:    tasksStore,
-	}
-	server.AddRoutes([]rest.Route{
-		{Method: http.MethodGet, Path: "/api/mediaMountSync", Handler: corsJWT(handler.HandleMediaMountSyncGET(mediaMountDeps))},
-		{Method: http.MethodPost, Path: "/api/mediaMountSync", Handler: corsJWT(handler.HandleMediaMountSyncPOST(mediaMountDeps))},
 	})
 
 	// ==================== STRM 清理 & 扫描 ====================

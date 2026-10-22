@@ -78,8 +78,6 @@ export interface MonitorSettingsTabProps {
   handleStartAccount: (account: string) => Promise<void>;
   /** 从 settings.lifeMonitor.accounts 列表里移除一个账号名（删除不存在账号时用）*/
   handleRemoveFromMonitor: (account: string) => Promise<void>;
-  saving: boolean;
-  onSave: () => Promise<void>;
   handleStartMonitor: () => Promise<void>;
 }
 
@@ -127,8 +125,6 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
     handleStopMonitor,
     handleStartAccount,
     handleRemoveFromMonitor,
-    saving,
-    onSave,
     handleStartMonitor,
   } = props;
 
@@ -339,7 +335,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              首次启动的拉取范围，一般选「从当前时间开始」。
+              仅在首次启动且没有历史游标时生效；之后始终从上次游标续传。
             </p>
           </div>
 
@@ -425,7 +421,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                           updated[index] = { ...updated[index], cloudPath: e.target.value };
                           setPathMappings(updated);
                         }}
-                        placeholder="115 网盘路径，如 /电影"
+                        placeholder="115 网盘路径，如 电影（有无 / 均可）"
                         className="flex-1 min-w-0 w-full truncate break-all"
                       />
                       <TooltipProvider delayDuration={100}>
@@ -540,7 +536,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
                   <Input
                     value={newCloudPath}
                     onChange={(e) => setNewCloudPath(e.target.value)}
-                    placeholder="115 网盘路径，如 /电影"
+                    placeholder="115 网盘路径，如 电影（有无 / 均可）"
                     className="flex-1 min-w-0 w-full truncate break-all"
                   />
                   <TooltipProvider delayDuration={100}>
@@ -752,9 +748,6 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
       </section>
 
       <div className="pt-2 flex flex-wrap gap-2 items-center sticky bottom-0 bg-background/95 backdrop-blur-sm py-3 -mx-3 sm:-mx-4 md:-mx-6 px-3 sm:px-4 md:px-6 border-t">
-        <Button disabled={saving} onClick={onSave} className="flex-1 sm:flex-initial">
-          {saving ? "保存中..." : "保存设置"}
-        </Button>
         <Button
           onClick={handleStartMonitor}
           disabled={
@@ -764,7 +757,7 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
           }
           className="flex-1 sm:flex-initial"
         >
-          保存并启动监控
+          保存并应用监控
         </Button>
         {(!monitorEnabled || selectedAccounts.length === 0 || pathMappings.length === 0) && (
           <p className="text-xs text-muted-foreground">

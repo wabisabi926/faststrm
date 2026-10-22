@@ -28,6 +28,11 @@ func HandleTaskHistory(deps TaskHistoryDeps) http.HandlerFunc {
 		query.TaskID = q.Get("taskId")
 		query.Account = q.Get("account")
 		query.Status = q.Get("status")
+		if idStr := q.Get("executionId"); idStr != "" {
+			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil && id > 0 {
+				query.ExecutionID = id
+			}
+		}
 		if b := q.Get("before"); b != "" {
 			if n, err := strconv.ParseInt(b, 10, 64); err == nil {
 				query.BeforeMs = n

@@ -10,8 +10,6 @@ import type {
   PathMapping,
   Settings as SettingsType,
   MonitorState,
-  MountDryRunData,
-  MountSyncApplyData,
   VerifyResult,
   DisplayMonitorState,
 } from "./settings/types";
@@ -53,12 +51,6 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
   // 全局文件过滤
   const [globalMinFileSizeMb, setGlobalMinFileSizeMb] = useState("");
   const [globalBlacklistInput, setGlobalBlacklistInput] = useState("");
-
-  // 媒体挂载路径：SSOT 管理，不再手动编辑
-  const [mountDryRun, setMountDryRun] = useState<MountDryRunData>(null);
-  const [mountDryRunLoading, setMountDryRunLoading] = useState(false);
-  const [mountSyncing, setMountSyncing] = useState(false);
-  const [lastSyncApply, setLastSyncApply] = useState<MountSyncApplyData>(null);
 
   // Life monitor states
   const [accounts, setAccounts] = useState<string[]>([]);
@@ -158,15 +150,16 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
         setMoveMediaMode(monitor.moveMediaMode || "local_move");
         setMoveOutRemoveLocalStrm(monitor.moveOutRemoveLocalStrm ?? true);
 
-        // Load accounts
+        // Load accounts（生活监控仅支持 115）
         const accountsResp = await axiosInstance.get("/api/account");
-        setAccounts(accountsResp.data?.map?.((a: { name: string }) => a.name) || []);
+        setAccounts(
+          (accountsResp.data || [])
+            .filter((a: { accountType?: string }) => a.accountType === "115")
+            .map((a: { name: string }) => a.name)
+        );
 
         // Load monitor states
         await refreshMonitorStates();
-
-        // 加载媒体挂载路径试运行快照
-        await fetchMountDryRun();
       } catch (err) {
         console.error("加载设置失败:", err);
         toast.error("加载设置失败");
@@ -196,88 +189,22 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
     }
   };
 
-  const fetchMountDryRun = async (): Promise<MountDryRunData> => {
-    setMountDryRunLoading(true);
-    try {
-      const resp = await axiosInstance.get("/api/mediaMountSync");
-      const d = resp.data;
-      if (d) {
-        // 防御性处理：确保所有数组字段非 null
-        d.computed = d.computed || [];
-        d.persisted = d.persisted || [];
-        d.final = d.final || [];
-        if (d.diff) {
-          d.diff.added = d.diff.added || [];
-          d.diff.removed = d.diff.removed || [];
-          d.diff.kept = d.diff.kept || [];
-        }
-      }
-      setMountDryRun(d || null);
-      return d || null;
-    } catch (e) {
-      console.error("获取媒体挂载试运行数据失败:", e);
-      return null;
-    } finally {
-      setMountDryRunLoading(false);
-    }
+  const parseExts = (raw: string) =>
+    raw
+      .split(/[,，;；]/)
+      .map(ext => ext.trim())
+      .filter(ext => ext.length > 0)
+      .map(ext => (ext.startsWith(".") ? ext : `.${ext}`))
+      .map(ext => ext.toLowerCase());
+
+  // 解析 MB 输入为字节；空值或非法值视为 0（不过滤）
+  const parseMb = (raw: string) => {
+    const mb = parseFloat(raw);
+    return Number.isFinite(mb) && mb > 0 ? Math.floor(mb * 1024 * 1024) : 0;
   };
 
-  const applyMountSync = async () => {
-    setMountSyncing(true);
-    setLastSyncApply(null);
-    try {
-      const resp = await axiosInstance.post("/api/mediaMountSync", {});
-      const d = resp.data;
-      if (d) {
-        d.added = d.added || [];
-        d.removed = d.removed || [];
-        d.kept = d.kept || [];
-        d.final = d.final || [];
-      }
-      setLastSyncApply(d || null);
-      // 同步成功后刷新试运行视图 + 刷新 settings（因为 mediaMountPath 被写回了）
-      await Promise.all([
-        fetchMountDryRun(),
-        (async () => {
-          try {
-            const r = await axiosInstance.get("/api/settings");
-            setData(r.data || {});
-          } catch {
-            // ignore
-          }
-        })(),
-      ]);
-      const ok = resp.data && resp.data.nginx?.ok !== false;
-      toast.success(
-        ok
-          ? `媒体挂载路径已同步${resp.data?.changed ? "（有变更）" : "（无变化）"}`
-          : `同步完成但 nginx reload 失败：${String(resp.data?.nginx?.message || "未知错误")}`
-      );
-    } catch (e) {
-      toast.error("同步媒体挂载路径失败");
-      console.error("applyMountSync failed:", e);
-    } finally {
-      setMountSyncing(false);
-    }
-  };
-
-  // 组装 /api/settings 提交体：集中处理文本输入 → 结构化字段的转换，
-  // 避免 onSave 与 handleRemoveFromMonitor 两处重复实现导致字段遗漏或互相覆盖。
-  const buildSaveData = (lifeMonitorOverride: Partial<{ accounts: string[] }> = {}) => {
-    const parseExts = (raw: string) =>
-      raw
-        .split(/[,，;；]/)
-        .map(ext => ext.trim())
-        .filter(ext => ext.length > 0)
-        .map(ext => (ext.startsWith(".") ? ext : `.${ext}`))
-        .map(ext => ext.toLowerCase());
-
-    // 解析 MB 输入为字节；空值或非法值视为 0（不过滤）
-    const parseMb = (raw: string) => {
-      const mb = parseFloat(raw);
-      return Number.isFinite(mb) && mb > 0 ? Math.floor(mb * 1024 * 1024) : 0;
-    };
-
+  // 常规设置只提交自己负责的字段，避免把 Emby/Telegram/清理配置按旧快照覆盖。
+  const buildSaveData = () => {
     // 解析强制代理 UA tokens
     const forceProxyUaTokens = forceProxyUaInput
       .split(",")
@@ -296,79 +223,62 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
       .map(keyword => keyword.trim())
       .filter(keyword => keyword.length > 0);
 
-    // 注意：mediaMountPath 不在此处手工写入，由 SSOT 统一维护；
-    //       保存设置不会自动同步挂载路径，需在「媒体挂载路径」区块手动点「立即同步并持久化」。
     const downloadExtensions = parseExts(downloadExtensionsInput);
     return {
-      ...data,
+      "user-agent": data["user-agent"] ?? "",
       strmExtensions: parseExts(strmExtensionsInput),
       downloadExtensions,
+      strmPrefix: data.strmPrefix ?? "",
+      enablePathEncoding: data.enablePathEncoding !== false,
       download: {
-        ...data.download,
+        downloadMaxConcurrent: data.download?.downloadMaxConcurrent,
         // 扩展名列表是唯一开关；留空 = 不下载附带文件。
         autoDownloadMetadata: downloadExtensions.length > 0,
         minFileSize: parseMb(globalMinFileSizeMb),
         strmGenerateBlacklist: globalBlacklist,
       },
       strm: {
-        ...data.strm,
         forceProxyUaTokens,
         forceProxyFormats,
+        accountProxyConcurrencyLimit: data.strm?.accountProxyConcurrencyLimit,
+        redirectCheckTimeoutMs: data.strm?.redirectCheckTimeoutMs,
+        disableSeekFormatProxy: data.strm?.disableSeekFormatProxy,
+        disableRangeProxy: data.strm?.disableRangeProxy,
+        proxyChunkSizeMB: data.strm?.proxyChunkSizeMB,
+        proxyConcurrency: data.strm?.proxyConcurrency,
       },
-      lifeMonitor: {
-        enabled: monitorEnabled,
-        accounts: selectedAccounts,
-        pollInterval,
-        // 历史配置可能残留 transfer/unrecognized，统一归一到媒体库
-        pathMappings: pathMappings.map((mapping) => ({ ...mapping, mappingType: "media" })),
-        removeEmptyDirs,
-        notifyOnlyOnError,
-        eventTypes,
-        minFileSize: parseMb(minFileSizeMb),
-        firstPullMode,
-        moveMediaMode,
-        moveOutRemoveLocalStrm,
-        ...lifeMonitorOverride,
-      },
+      rateLimit: data.rateLimit,
     };
   };
+
+  // 生活监控统一走 /api/lifeMonitor：后端会校验账号并 Refresh，避免保存后仍跑旧配置。
+  const buildMonitorUpdates = (overrides: Partial<{
+    enabled: boolean;
+    accounts: string[];
+    pathMappings: PathMapping[];
+  }> = {}) => ({
+    enabled: monitorEnabled,
+    accounts: selectedAccounts,
+    pollInterval,
+    pathMappings: pathMappings.map((mapping) => ({ ...mapping, mappingType: "media" })),
+    removeEmptyDirs,
+    notifyOnlyOnError,
+    eventTypes,
+    minFileSize: parseMb(minFileSizeMb),
+    firstPullMode,
+    moveMediaMode,
+    moveOutRemoveLocalStrm,
+    ...overrides,
+  });
 
   const saveSettings = async (): Promise<boolean> => {
     setSaving(true);
     try {
       const saveData = buildSaveData();
-
-      const res = await axiosInstance.post("/api/settings", saveData);
-      // 后端把「留空」解释为「恢复内置默认值」，并用响应里的 saved 回传生效值。
-      // 这里把默认值回填到输入框，避免出现「输入框空着、实际已生效」的错觉，
-      // 同时用 toast 明确告知恢复了几项，比只弹「保存成功」更有信息量。
-      const saved = res.data?.saved as Record<string, unknown> | undefined;
-      const restored: string[] = [];
-      if (saved) {
-        const savedStrmExts = Array.isArray(saved.strmExtensions) ? (saved.strmExtensions as string[]) : [];
-        if (!strmExtensionsInput.trim()) {
-          setStrmExtensionsInput(savedStrmExts.join(", "));
-          restored.push(`STRM 扩展名 ${savedStrmExts.length} 项`);
-        }
-        // 元数据扩展名留空是有语义的（不下载），不回填默认值。
-        if (!(saveData["user-agent"] || "").trim() && saved["user-agent"]) {
-          restored.push("User-Agent");
-        }
-        setData({
-          ...saveData,
-          ["user-agent"]: (saved["user-agent"] as string) ?? saveData["user-agent"],
-        });
-      } else {
-        setData(saveData);
-      }
-      // 保存后刷新试运行视图；mediaMountPath 不会随设置保存自动落盘，需在上方手动同步。
-      const dry = await fetchMountDryRun();
-      const restoredSuffix = restored.length > 0 ? `；已恢复默认：${restored.join("、")}` : "";
-      toast.success(
-        dry?.diff.changed
-          ? `保存成功${restoredSuffix}；挂载路径有变化，请点“立即同步并持久化”`
-          : `保存成功${restoredSuffix}`
-      );
+      await axiosInstance.post("/api/settings", saveData);
+      // 留空保持空：不回填默认值，只把本地快照合并为刚提交的内容。
+      setData(prev => ({ ...prev, ...saveData }));
+      toast.success("保存成功");
       return true;
     } catch (error: unknown) {
       const apiError = error as { response?: { data?: { message?: string; error?: string } } };
@@ -509,28 +419,15 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
 
   const handleStartMonitor = async () => {
     try {
-      const parsedMb = parseFloat(minFileSizeMb);
-      const minBytes = Number.isFinite(parsedMb) && parsedMb > 0
-        ? Math.floor(parsedMb * 1024 * 1024)
-        : 0;
       const resp = await axiosInstance.post("/api/lifeMonitor", {
         action: "updateConfig",
-        updates: {
-          enabled: monitorEnabled,
-          accounts: selectedAccounts,
-          pollInterval,
-          pathMappings: pathMappings.map((mapping) => ({ ...mapping, mappingType: "media" })),
-          removeEmptyDirs,
-          eventTypes,
-          minFileSize: minBytes,
-          firstPullMode,
-          moveMediaMode,
-        },
+        updates: buildMonitorUpdates(),
       });
       toast.success(resp.data?.message || "监控已更新");
       await refreshMonitorStates();
-    } catch {
-      toast.error("启动监控失败");
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { error?: string; message?: string } } };
+      toast.error(apiError.response?.data?.error || apiError.response?.data?.message || "启动监控失败");
       await refreshMonitorStates();
     }
   };
@@ -554,29 +451,23 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
    * 但 AccountStore 里根本没这个账号的场景：此时「停止」没有意义，用户只
    * 想把这个无效条目从列表里删掉）。
    *
-   * 流程：本地 selectedAccounts 过滤掉该名 → 调用 POST /api/settings
-   * 持久化（复用 onSave 里同一份 saveData 组装方式）→ 刷新 monitor states
-   * 与挂载路径 dry run → 返回成功/失败 toast。
+   * 流程：本地 selectedAccounts 过滤掉该名 → 调用 /api/lifeMonitor
+   * 持久化并热刷新 → 返回成功/失败 toast。
    */
   const handleRemoveFromMonitor = async (account: string) => {
     try {
       const nextSelected = selectedAccounts.filter(a => a !== account);
+      const nextMappings = pathMappings.filter(mapping => mapping.account !== account);
 
-      // 与 onSave 共用同一组装逻辑，重点覆盖 lifeMonitor.accounts，避免字段漂移
-      const saveData = buildSaveData({ accounts: nextSelected });
+      await axiosInstance.post("/api/lifeMonitor", {
+        action: "updateConfig",
+        updates: buildMonitorUpdates({ accounts: nextSelected, pathMappings: nextMappings }),
+      });
 
-      await axiosInstance.post("/api/settings", saveData);
-
-      // 与 onSave 同步更新本地 state，避免「移除后再点保存又回退」
-      setData(saveData);
       setSelectedAccounts(nextSelected);
+      setPathMappings(nextMappings);
 
-      const dry = await fetchMountDryRun();
-      toast.success(
-        dry?.diff.changed
-          ? `已从监控列表移除「${account}」；挂载路径有变化，请手动同步`
-          : `已从监控列表移除「${account}」`
-      );
+      toast.success(`已从监控列表移除「${account}」`);
 
       // 移除后刷新 monitor states，让卡片消失
       await refreshMonitorStates();
@@ -648,12 +539,6 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
           setGlobalMinFileSizeMb={setGlobalMinFileSizeMb}
           globalBlacklistInput={globalBlacklistInput}
           setGlobalBlacklistInput={setGlobalBlacklistInput}
-          mountDryRun={mountDryRun}
-          mountDryRunLoading={mountDryRunLoading}
-          mountSyncing={mountSyncing}
-          lastSyncApply={lastSyncApply}
-          fetchMountDryRun={fetchMountDryRun}
-          applyMountSync={applyMountSync}
           saving={saving}
           onSave={onSave}
         />
@@ -704,8 +589,6 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
           handleStopMonitor={handleStopMonitor}
           handleStartAccount={handleStartAccount}
           handleRemoveFromMonitor={handleRemoveFromMonitor}
-          saving={saving}
-          onSave={onSave}
           handleStartMonitor={handleStartMonitor}
         />
       )}

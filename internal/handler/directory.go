@@ -375,8 +375,16 @@ func HandleLocalDirListChildren(deps DirectoryDeps) http.HandlerFunc {
 			})
 			return
 		}
+		if !info.IsDir() {
+			httpx.WriteJson(w, http.StatusOK, map[string]any{
+				"code":    400,
+				"message": "路径不是目录",
+				"data":    []map[string]any{},
+			})
+			return
+		}
 
-		// 如果是目录，列出子项
+		// 列出子项
 		var children []map[string]any
 		if info.IsDir() {
 			entries, err := os.ReadDir(cleaned)

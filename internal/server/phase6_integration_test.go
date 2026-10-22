@@ -80,15 +80,16 @@ func TestPhase6_InitDepsAndWiring(t *testing.T) {
 		if notifyDeps.Dispatcher == nil {
 			t.Fatal("Dispatcher should not be nil even if Telegram unconfigured")
 		}
-		// 未配置 BotToken → TelegramBot / PollingManager / CommandHandler 均为 nil
+		// 未配置 BotToken → TelegramBot / PollingManager 为 nil；CommandHandler 必须预创建，
+		// 否则 Webhook 模式下后配 Bot 的消息无人处理。
 		if notifyDeps.TelegramBot != nil {
 			t.Error("TelegramBot should be nil when botToken is empty")
 		}
 		if notifyDeps.PollingManager != nil {
 			t.Error("PollingManager should be nil when botToken is empty")
 		}
-		if notifyDeps.CommandHandler != nil {
-			t.Error("CommandHandler should be nil when botToken is empty")
+		if notifyDeps.CommandHandler == nil {
+			t.Error("CommandHandler should be pre-created even when botToken is empty")
 		}
 		// Dispatcher.Notify 应静默成功（不报错）
 		if err := notifyDeps.Dispatcher.Notify(context.Background(), "test"); err != nil {

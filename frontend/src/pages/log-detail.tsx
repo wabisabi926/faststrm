@@ -53,12 +53,13 @@ export default function DownloadProgressPage() {
         return;
       }
 
-      // 1) 先查询执行摘要（状态等）
-      const historyResponse = await axiosInstance.get("/api/taskHistory");
-      const allHistoryRaw = historyResponse.data;
-      const allHistory = Array.isArray(allHistoryRaw) ? allHistoryRaw : (allHistoryRaw?.items || []);
-      // 后端 id 为 int64，URL 参数为字符串，统一成字符串比较
-      const execution = allHistory.find((h: { id: number | string }) => String(h.id) === String(executionId));
+      // 1) 精确查询执行摘要，不能只在前 100 条里找（旧记录会误报“不存在”）
+      const historyResponse = await axiosInstance.get(
+        `/api/taskHistory?executionId=${encodeURIComponent(String(executionId))}`
+      );
+      const historyRaw = historyResponse.data;
+      const historyItems = Array.isArray(historyRaw) ? historyRaw : (historyRaw?.items || []);
+      const execution = historyItems[0];
 
       if (execution) {
         setConnectionStatus("历史记录");

@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -750,15 +749,18 @@ func computeCdnURLCacheExpires(cdnURL string, defaultTTL time.Duration) time.Tim
 	return now.Add(remain)
 }
 
-// StrmRouteConfig 从 config 中取 STRM 路由策略（兜底默认）
-func StrmRouteConfig(cfg *config.AppConfig) struct {
+// StrmRouteConfig 从当前设置中取 STRM 路由策略（兜底默认）
+func StrmRouteConfig(cfg *model.Settings) struct {
 	ForceProxyUaTokens           []string
 	AccountProxyConcurrencyLimit int
 	RedirectCheckTimeout         time.Duration
 	ForceProxyFormats            []string
 	ForceProxySeekFormats        []string
 } {
-	st := cfg.Settings.Strm
+	if cfg == nil {
+		cfg = model.DefaultSettings()
+	}
+	st := cfg.Strm
 	tokens := st.ForceProxyUaTokens
 	// 尊重用户配置：即使为空也不回填默认值，确保默认全部直连。
 	proxyLimit := st.AccountProxyConcurrencyLimit

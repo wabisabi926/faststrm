@@ -3,6 +3,8 @@ package emby
 import (
 	"testing"
 	"time"
+
+	"github.com/wabisabi926/faststrm/internal/model"
 )
 
 // === DefaultRefreshOptions ===
@@ -215,5 +217,23 @@ func TestItemInfoToDetail(t *testing.T) {
 	}
 	if detail.ImageTags["Primary"] != "tag123" {
 		t.Fatalf("ImageTags: got %v", detail.ImageTags)
+	}
+}
+
+func TestDeletionNotificationsEnabled(t *testing.T) {
+	cases := []struct {
+		name string
+		s    model.EmbySettings
+		want bool
+	}{
+		{"all off", model.EmbySettings{}, false},
+		{"notifyMediaRemoved only", model.EmbySettings{NotifyMediaRemoved: true}, true},
+		{"sync delete notify on", model.EmbySettings{SyncDeleteEnabled: true, SyncDeleteNotify: true}, true},
+		{"sync notify without enabled", model.EmbySettings{SyncDeleteNotify: true}, false},
+	}
+	for _, c := range cases {
+		if got := deletionNotificationsEnabled(c.s); got != c.want {
+			t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+		}
 	}
 }

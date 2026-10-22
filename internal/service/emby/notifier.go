@@ -440,11 +440,16 @@ func (n *Notifier) flushAddedEpisodeBuffer(ctx context.Context, seriesID string)
 
 // ==================== 删除通知 ====================
 
+// deletionNotificationsEnabled 统一删除通知开关：
+// 「删除通知」或「删除同步通知」任一开启都算开启，所有删除分支必须共用同一判断。
+func deletionNotificationsEnabled(settings model.EmbySettings) bool {
+	return settings.NotifyMediaRemoved || (settings.SyncDeleteEnabled && settings.SyncDeleteNotify)
+}
+
 // handleMediaDeleted 处理删除通知
 func (n *Notifier) handleMediaDeleted(ctx context.Context, item ItemInfo) error {
 	settings := n.settingsFn()
-	// 统一通知开关：Emby 删除通知 或 同步删除通知 任一开启即通知
-	if !settings.NotifyMediaRemoved && !(settings.SyncDeleteEnabled && settings.SyncDeleteNotify) {
+	if !deletionNotificationsEnabled(settings) {
 		return nil
 	}
 	switch item.Type {
@@ -476,7 +481,7 @@ func (n *Notifier) handleSeriesEpisodeDeleted(ctx context.Context, item ItemInfo
 	if item.SeriesID == "" {
 		if item.Type == "Series" || item.Type == "Season" {
 			settings := n.settingsFn()
-			if !settings.NotifyMediaRemoved {
+			if !deletionNotificationsEnabled(settings) {
 				return
 			}
 			typeLabel := "整剧"
@@ -553,7 +558,7 @@ func (n *Notifier) flushDeletedEpisodeBuffer(ctx context.Context, seriesID strin
 	}
 
 	settings := n.settingsFn()
-	if !settings.NotifyMediaRemoved {
+	if !deletionNotificationsEnabled(settings) {
 		return
 	}
 

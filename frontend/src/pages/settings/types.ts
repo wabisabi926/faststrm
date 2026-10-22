@@ -30,7 +30,6 @@ export type Settings = {
   "user-agent"?: string;
   strmExtensions?: string[];
   downloadExtensions?: string[];
-  mediaMountPath?: string[];
   // 全局 STRM 生成设置
   strmPrefix?: string;
   // URL 参数编码开关（默认 true）：关闭后 file_name 等参数原样写入 URL
@@ -61,7 +60,7 @@ export type Settings = {
     // STRM URL 模板：由「标准 URL + 附加参数勾选」生成；空 = 走后端硬编码默认
     strmUrlTemplate?: string;
   };
-  // 115 API 限流（服务启动时生效，修改后需重启）
+  // 115 API 限流（保存后即时重建令牌桶）
   rateLimit?: {
     api115Qpm?: number;
     playbackQpm?: number;
@@ -120,35 +119,6 @@ export const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
   // 移出映射时删除本地旧 STRM（默认开启，符合直觉：移出即清理）
   moveOutRemoveLocalStrm: true,
 };
-
-// 媒体挂载路径相关类型（在主组件和 BasicSettingsTab 间共享）
-export type MountSourceTag = "global" | "global_302" | "task" | "life_monitor";
-export type MountEntryRow = {
-  prefix: string;
-  source: MountSourceTag;
-  sourceLabel: string;
-  account?: string;
-  taskId?: string;
-};
-export type MountDryRunData = {
-  persisted: string[];
-  computed: MountEntryRow[];
-  final: string[];
-  diff: {
-    added: string[];
-    removed: string[];
-    kept: string[];
-    changed: boolean;
-  };
-} | null;
-export type MountSyncApplyData = {
-  changed: boolean;
-  added: string[];
-  removed: string[];
-  final: string[];
-  nginx: { attempted: boolean; available: boolean; skipped: boolean; ok: boolean; message: string };
-  error?: string;
-} | null;
 
 // 监控验证结果类型（在主组件和 MonitorSettingsTab 间共享）
 export type VerifyResult = {

@@ -57,18 +57,18 @@ func initPhase6Deps(
 	if tgSettings.Enabled {
 		dispatcher.SetEnabled(true)
 	}
-	dispatcher.SetWebhook(tgSettings.WebhookURL)
 
 	// 延迟注入 Notifier 到 execDeps（因为 dispatcher 刚创建好）
 	// execDeps 是参数值拷贝，本函数内修改影响 menuActionsAdapter
 	execDeps.Notifier = dispatcher
 
 	var pollingMgr *notify.PollingManager
-	var cmdHandler *notify.CommandHandler
 	if tgBot != nil {
 		pollingMgr = notify.NewPollingManager(tgBot)
-		cmdHandler = notify.NewCommandHandler(tgBot, settingsStore, tasksStore, accountStore)
 	}
+	// 即使启动时未配置 Bot 也创建 CommandHandler：Webhook 模式下用户之后补配 Bot 时，
+	// 消息需要立即有处理器接管，不能等到重启。
+	cmdHandler := notify.NewCommandHandler(tgBot, settingsStore, tasksStore, accountStore)
 
 	notifyDeps := handler.NotifyDeps{
 		SettingsStore:  settingsStore,
@@ -97,6 +97,7 @@ func initPhase6Deps(
 
 	embyDeps := handler.EmbyDeps{
 		SettingsStore:    settingsStore,
+		AccountStore:     accountStore,
 		EmbyNotifier:     embyNotifier,
 		EmbyClient:       embyClient,
 		SyncDelete:       embySyncDel,

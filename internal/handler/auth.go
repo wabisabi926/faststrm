@@ -340,9 +340,19 @@ func ChangeCredentials() http.HandlerFunc {
 // ==================== Logout ====================
 
 // Logout POST /api/auth/logout
-// JWT 无状态，客户端清除 token 即可
+// JWT 无状态，但登录时下发的 HttpOnly cookie 仍可建立 SSE，必须同时过期。
 func Logout() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		secureCookie := r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+		http.SetCookie(w, &http.Cookie{
+			Name:     "token",
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   secureCookie,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+		})
 		httpx.OkJson(w, map[string]string{"message": "已退出登录"})
 	}
 }

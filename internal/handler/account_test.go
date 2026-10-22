@@ -475,6 +475,41 @@ func TestGetAccountStatus_115NoCookie(t *testing.T) {
 	}
 }
 
+func TestGetAccountStatus_DeepCheckWithoutNetwork(t *testing.T) {
+	s := newTestAccountStore(t)
+	_ = s.Upsert(&model.AccountInfo{Name: "empty", AccountType: "115"})
+	_ = s.Upsert(&model.AccountInfo{Name: "ol", AccountType: "openlist", URL: "http://openlist"})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/account/status?deep=true", nil)
+	GetAccountStatus(s).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var resp struct {
+		Results     []AccountStatusInfo `json:"results"`
+		DeepResults []map[string]any    `json:"deepResults"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 2 || len(resp.DeepResults) != 2 {
+		t.Fatalf("results=%d deepResults=%d, want 2/2 (body=%s)", len(resp.Results), len(resp.DeepResults), w.Body.String())
+	}
+	for _, result := range resp.DeepResults {
+		switch result["account"] {
+		case "empty":
+			if result["valid"] != false {
+				t.Fatalf("empty 115 account should be invalid: %+v", result)
+			}
+		case "ol":
+			if result["valid"] != true {
+				t.Fatalf("configured openlist account should be valid: %+v", result)
+			}
+		}
+	}
+}
+
 // ---------- Verify handlers（无网络分支） ----------
 
 func TestVerifyAccount_MissingName(t *testing.T) {

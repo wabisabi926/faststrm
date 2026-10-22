@@ -24,6 +24,13 @@
 
 `GET /api/events/stream` 提供任务进度/清理事件；前端自动降级为轮询。
 
+## 专题
+
+- [STRM 播放与诊断](strm.md)
+- [Emby 反向代理](emby-proxy.md)
+- [Emby 通知与 Webhook](emby-notify.md)
+- [系统状态与系统事件](runtime.md)
+
 ## OpenAPI
 
 生成的 Swagger 在 `internal/server/swagger.json`；`scripts/swagger.json` 为脚本副本。接口变更时同步更新，不要只改一份。

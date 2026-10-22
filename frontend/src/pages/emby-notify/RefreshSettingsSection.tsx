@@ -2,7 +2,6 @@
 // 从 emby-notify.tsx 抽出，逻辑零变更。
 // 详见 v1.1.1 改进任务清单 T4。
 
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,16 +10,12 @@ import type { EmbySettings } from "./types";
 
 export interface RefreshSettingsSectionProps {
   settings: EmbySettings;
-  loading: boolean;
   updateSetting: <K extends keyof EmbySettings>(key: K, value: EmbySettings[K]) => void;
-  onSave: () => void;
 }
 
 export function RefreshSettingsSection({
   settings,
-  loading,
   updateSetting,
-  onSave,
 }: RefreshSettingsSectionProps) {
   return (
     <section className="border rounded-md p-3 sm:p-5 space-y-5">
@@ -74,7 +69,7 @@ export function RefreshSettingsSection({
             <Input
               id="debounceSeconds"
               type="number"
-              min="0"
+              min="1"
               max="300"
               placeholder="10"
               value={settings.debounceSeconds ?? 10}
@@ -83,16 +78,11 @@ export function RefreshSettingsSection({
               }
             />
             <p className="text-xs text-muted-foreground">
-              多次事件合并为一次刷库
+              同一文件路径的连续变动在窗口内合并为一次刷新
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onSave} disabled={loading}>
-            {loading ? "保存中..." : "保存设置"}
-          </Button>
-        </div>
       </div>
     </section>
   );

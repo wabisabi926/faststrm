@@ -166,8 +166,9 @@ export function useLocalDirectoryTree(
     [expandedNodes, tree],
   );
 
-  // 选择路径
+  // 选择路径（只允许目录；文件路径交给手动输入校验拒绝）
   const handleSelect = useCallback((node: TreeNode) => {
+    if (!node.isDir) return;
     setSelectedPath(node.id);
     // 同步到手动输入框，方便用户在此基础上微调
     setManualPath(node.id);
@@ -242,13 +243,9 @@ export function useLocalDirectoryTree(
   // 确认选择
   const handleConfirm = useCallback(() => {
     if (selectedPath) {
-      // 返回给调用方的路径统一做一次规范化（去掉盘符末尾多余反斜杠，保持 API 友好）
-      let finalPath = selectedPath;
-      // Windows 盘符: "C:\" -> "C:" (去掉尾部\，便于后续 join 不会出 C:\\foo)
-      if (/^[A-Za-z]:\\$/.test(finalPath)) {
-        finalPath = finalPath.slice(0, -1);
-      }
-      onSelect(finalPath);
+      // 盘符根必须保留反斜杠：Windows 上 "C:" 是盘符相对路径，
+      // filepath.IsAbs("C:")=false，后续 Join 会落到进程工作目录。
+      onSelect(selectedPath);
       onOpenChange(false);
     }
   }, [selectedPath, onSelect, onOpenChange]);

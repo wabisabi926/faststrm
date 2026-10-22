@@ -68,15 +68,43 @@ type ExecutorDeps struct {
 	PublicBaseURL    string                // 公开可访问的 baseUrl（302 模式用户可配置）
 }
 
+// emitTaskStarted 通知调用方“是否真正拿到了账号锁并开始执行”。
+// HTTP handler 依赖它把 blocked 同步返回，避免“提示已启动、实际没跑”。
+func emitTaskStarted(callbacks []func(ExecuteResult), res ExecuteResult) {
+	for _, cb := range callbacks {
+		if cb != nil {
+			cb(res)
+		}
+	}
+}
+
+// finishCancelledTask 把任务收敛为 cancelled，避免取消后又被写成 completed/failed。
+func finishCancelledTask(rt *Runtime, sseServer *sse.Server, taskID string, started time.Time) ExecuteResult {
+	rt.SetState(taskID, func(s *RuntimeState) {
+		s.Status = StatusCancelled
+		s.EndedAt = time.Now().UnixMilli()
+		s.Stage = string(StatusCancelled)
+		s.StageDetail = "任务已取消"
+		s.Error = ""
+	})
+	sseServer.EmitComplete(sse.CompletePayload{
+		TaskID: taskID, Status: string(StatusCancelled),
+		DurationMs: time.Since(started).Milliseconds(),
+	})
+	return ExecuteResult{Success: false, Reason: "cancelled", Message: "任务已取消"}
+}
+
 // ExecuteTask 执行一个任务（同步执行，调用方应开 goroutine 异步调用）
-// 仅执行前的抢占检查同步返回 ExecuteResult，任务本身通过 SSE 广播进度
-func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteResult { //nolint:cyclop // complexity: 112
+// onStarted 可选：在拿到账号锁并注册运行态后回调一次真实启动结果。
+func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarted ...func(ExecuteResult)) ExecuteResult { //nolint:cyclop // complexity: 112
 	rt := GetRuntime()
 
 	// 1) 找到任务定义
 	tasks, err := deps.TasksStore.ReadTasks()
 	if err != nil {
-		return ExecuteResult{Success: false, Reason: "error", Message: err.Error()}
+		res := ExecuteResult{Success: false, Reason: "error", Message: err.Error()}
+		emitTaskStarted(onStarted, res)
+		return res
 	}
 	var task *Task
 	for i := range tasks {
@@ -86,7 +114,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		}
 	}
 	if task == nil {
-		return ExecuteResult{Success: false, Reason: "not_found", Message: "Task not found"}
+		res := ExecuteResult{Success: false, Reason: "not_found", Message: "Task not found"}
+		emitTaskStarted(onStarted, res)
+		return res
 	}
 	taskLabel := strings.TrimSpace(task.Name)
 	if taskLabel == "" {
@@ -96,10 +126,12 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	// 2) 账号级独占锁
 	ok, conflictID := rt.TryEnter(task.Account, task.ID)
 	if !ok {
-		return ExecuteResult{
+		res := ExecuteResult{
 			Success: false, Blocked: true, Reason: "account_running",
-			Message: "Account already has an active task: " + conflictID,
+			Message: "该账号已有任务在执行：" + conflictID,
 		}
+		emitTaskStarted(onStarted, res)
+		return res
 	}
 	defer rt.Exit(task.Account)
 
@@ -109,6 +141,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	go func() {
 		<-runCtx.Done()
 	}()
+	emitTaskStarted(onStarted, ExecuteResult{Success: true, TaskID: task.ID, Message: "任务已启动"})
 
 	sseServer := sse.GetServer()
 	taskStart := time.Now()
@@ -131,6 +164,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	// P0-4 STRM 执行历史埋点状态（defer 统一记录，避免每个 return 点重复代码）
 	// downloaded 提前声明，供 defer 闭包引用（后续 worker pool 累加）
 	histSuccess := true
+	histCancelled := false
 	histErrMsg := ""
 	totalFiles := 0
 	downloaded := new(int64)
@@ -163,7 +197,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		if deps.TaskHistory != nil && execID > 0 {
 			status := "completed"
 			errMsg := ""
-			if !histSuccess {
+			if histCancelled {
+				status = string(StatusCancelled)
+			} else if !histSuccess {
 				status = "failed"
 				errMsg = histErrMsg
 			}
@@ -183,11 +219,16 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 				}
 			}
 		}
-		if histSuccess {
+		switch {
+		case histCancelled:
+			journal.Warn("task", fmt.Sprintf("任务「%s」已取消", taskLabel), map[string]any{
+				"taskId": task.ID, "account": task.Account, "durationMs": elapsedMs,
+			})
+		case histSuccess:
 			journal.Info("task", fmt.Sprintf("任务「%s」完成：处理 %d/%d 个文件", taskLabel, dl, totalFiles), map[string]any{
 				"taskId": task.ID, "account": task.Account, "durationMs": elapsedMs, "deleted": cleanupDeleted,
 			})
-		} else {
+		default:
 			journal.Error("task", fmt.Sprintf("任务「%s」失败：%s", taskLabel, histErrMsg), map[string]any{
 				"taskId": task.ID, "account": task.Account, "durationMs": elapsedMs,
 			})
@@ -325,6 +366,11 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	var scanStats ScanStats
 	fileEntries, err := scanAllFiles(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist, task.ID, rt, sseServer, deps.SQLiteDB, task.Account, &scanStats)
 	if err != nil {
+		if runCtx.Err() != nil {
+			sseServer.EmitLog(task.ID, "warn", "任务已取消，停止扫描")
+			histCancelled = true
+			return finishCancelledTask(rt, sseServer, task.ID, taskStart)
+		}
 		msg := "list files failed: " + err.Error()
 		histSuccess = false
 		histErrMsg = msg
@@ -343,6 +389,10 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		return ExecuteResult{Success: true, TaskID: task.ID}
 	}
 
+	if runCtx.Err() != nil {
+		histCancelled = true
+		return finishCancelledTask(rt, sseServer, task.ID, taskStart)
+	}
 	totalFiles = len(fileEntries)
 	rt.SetState(task.ID, func(s *RuntimeState) { s.TotalFiles = totalFiles })
 	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Total files: %d (strm=%d, download=%d)",
@@ -515,6 +565,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		for _, f := range strmFiles {
 			f := f
 			pool.Submit(func() error {
+				if runCtx.Err() != nil {
+					return nil
+				}
 				// P1-4 文件名模板优先，否则回退默认（.iso 保留双扩展名）
 				strmRelPath := resolveStrmRelPath(strmFilenameTemplate, task.Account, f)
 				savePath := filepath.Join(task.TargetPath, strmRelPath)
@@ -724,7 +777,11 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 		}
 	}
 
-	// 12) 完成
+	// 12) 完成（取消优先：用户点取消后不能又被写成 completed）
+	if runCtx.Err() != nil {
+		histCancelled = true
+		return finishCancelledTask(rt, sseServer, task.ID, taskStart)
+	}
 	rt.SetState(task.ID, func(s *RuntimeState) {
 		s.Status = StatusCompleted
 		s.DownloadedFiles = int(atomic.LoadInt64(downloaded))

@@ -7,12 +7,16 @@ import { Copy, Check, Play } from "lucide-react";
 
 export interface WebhookInfoCardProps {
   webhookUrl: string;
+  authConfigured: boolean;
+  telegramConfigured: boolean;
   copied: boolean;
   onCopy: () => void;
 }
 
 export function WebhookInfoCard({
   webhookUrl,
+  authConfigured,
+  telegramConfigured,
   copied,
   onCopy,
 }: WebhookInfoCardProps) {
@@ -27,9 +31,10 @@ export function WebhookInfoCard({
       </p>
       <div className="space-y-3">
         <div className="space-y-2">
-          <h4 className="font-medium">步骤 1：打开 Emby Webhook 设置</h4>
+          <h4 className="font-medium">步骤 1：安装并打开 Emby Webhooks</h4>
           <p className="text-sm text-muted-foreground">
-            在 Emby 后台：<code className="bg-muted px-1 rounded">设置 → 通知 → Webhook</code>
+            在 Emby 后台：<code className="bg-muted px-1 rounded">设置 → 高级 → 插件</code> 安装「Webhooks」；
+            新版本也可能在 <code className="bg-muted px-1 rounded">设置 → 通知</code> 中直接提供。
           </p>
         </div>
 
@@ -43,6 +48,7 @@ export function WebhookInfoCard({
               variant="outline"
               size="sm"
               onClick={onCopy}
+              disabled={!authConfigured}
               className="shrink-0"
             >
               {copied ? (
@@ -58,6 +64,14 @@ export function WebhookInfoCard({
               )}
             </Button>
           </div>
+          {!authConfigured && (
+            <p className="text-xs text-amber-600 dark:text-amber-500">
+              请先在上方填写 Webhook 鉴权密钥，否则该 URL 会被 401 拒绝。
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            URL 由当前浏览器地址生成。请确认 Emby 服务器能访问该地址；如果 FastStrm 通过反代/外网访问，请把主机名替换成 Emby 可达的地址。
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -84,7 +98,9 @@ export function WebhookInfoCard({
         </div>
 
         <p className="text-xs text-muted-foreground pt-1">
-          💡 配置完成后，Emby 的媒体变动（入库/删除）和播放状态将实时推送到你的 Telegram。
+          {telegramConfigured
+            ? "配置完成后，Emby 的媒体变动（入库/删除）和播放状态会推送到 Telegram。"
+            : "通知通过 Telegram 发送：请先在「通知中心 → Telegram」启用机器人，否则 Emby 通知会被静默丢弃。"}
         </p>
       </div>
     </section>

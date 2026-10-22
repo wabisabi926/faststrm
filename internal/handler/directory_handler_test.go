@@ -348,15 +348,11 @@ func TestHandleLocalDirListChildren_FileNotDir(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"] != float64(200) {
-		t.Fatalf("code: got %v, want 200 (file exists, just not a dir)", resp["code"])
+	if resp["code"] != float64(400) {
+		t.Fatalf("code: got %v, want 400（文件不是目录，必须拒绝）", resp["code"])
 	}
-	// 文件不是目录，children 应为 nil
-	data := resp["data"]
-	if data != nil {
-		if arr, ok := data.([]any); ok && len(arr) > 0 {
-			t.Fatalf("file should have no children, got %d", len(arr))
-		}
+	if msg, _ := resp["message"].(string); !strings.Contains(msg, "不是目录") {
+		t.Fatalf("message: got %q, want 包含「不是目录」", msg)
 	}
 }
 

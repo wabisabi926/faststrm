@@ -86,7 +86,7 @@ func (m *Monitor) isDownloadExtFile(fileName string) bool {
 	if ext == "" {
 		return false
 	}
-	for _, e := range s.StrmExtensions {
+	for _, e := range s.EffectiveStrmExtensions() {
 		if strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(e), "."), strings.TrimPrefix(ext, ".")) {
 			return false
 		}

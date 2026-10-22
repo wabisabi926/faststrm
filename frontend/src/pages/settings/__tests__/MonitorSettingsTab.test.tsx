@@ -54,8 +54,6 @@ function buildProps(overrides: Partial<MonitorSettingsTabProps> = {}): MonitorSe
     handleStopMonitor: vi.fn(),
     handleStartAccount: vi.fn(),
     handleRemoveFromMonitor: vi.fn(),
-    saving: false,
-    onSave: vi.fn(),
     handleStartMonitor: vi.fn(),
     ...overrides,
   };
@@ -137,7 +135,7 @@ describe("MonitorSettingsTab", () => {
         {...buildProps({ monitorEnabled: true, selectedAccounts: [], pathMappings: [] })}
       />
     );
-    const startBtn = screen.getByRole("button", { name: "保存并启动监控" });
+    const startBtn = screen.getByRole("button", { name: "保存并应用监控" });
     expect(startBtn).toBeDisabled();
     expect(screen.getByText(/请至少选择一个监控账号/)).toBeInTheDocument();
 

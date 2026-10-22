@@ -45,7 +45,8 @@ export type StaleStrm = {
 
 export type MissingStrm = {
   relPath: string;
-  mediaExtension: string;
+  cloudRelPath?: string;
+  mediaExtension?: string;
   mappingId: string;
 };
 

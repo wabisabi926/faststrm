@@ -163,10 +163,9 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 			out.LifeMonitor.EventTypes.Rename, out.LifeMonitor.EventTypes.Move)
 	}
 
-	if len(out.StrmExtensions) == 0 {
-		out.StrmExtensions = append([]string{}, def.StrmExtensions...)
-		changed = true
-	} else {
+	// 显式留空表示「不写入自定义扩展名列表」，运行时由 EffectiveStrmExtensions 兜底；
+	// 这里只做非空列表的规范化，不再把空列表写回默认值。
+	if len(out.StrmExtensions) > 0 {
 		// 规范化：去空白、去前导点、小写、去重。
 		// 历史 settings.json 里 ".iso"×N 与 "iso" 并存会被重复处理，也让匹配/展示出现歧义。
 		if norm, normChanged := normalizeExtensions(out.StrmExtensions); normChanged {
@@ -174,10 +173,7 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 			changed = true
 			logger.S().Infof("[SettingsStore] 迁移: STRM 扩展名已规范化去重: %v", out.StrmExtensions)
 		}
-		if len(out.StrmExtensions) == 0 {
-			out.StrmExtensions = append([]string{}, def.StrmExtensions...)
-			changed = true
-		} else if !sliceContains(out.StrmExtensions, "iso") {
+		if len(out.StrmExtensions) > 0 && !sliceContains(out.StrmExtensions, "iso") {
 			// v1.1.1 新增 "iso" 扩展名：对老用户 settings.json 做定向追加（不破坏用户已有自定义）
 			out.StrmExtensions = append(out.StrmExtensions, "iso")
 			changed = true
@@ -228,10 +224,8 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 	if backfillStrmRouteDefaults(out, def) {
 		changed = true
 	}
-	if out.UserAgent == "" {
-		out.UserAgent = def.UserAgent
-		changed = true
-	}
+	// User-Agent 显式留空表示「不写入自定义 UA」，运行时由 EffectiveUserAgent 兜底；
+	// 不再把默认 UA 写回输入框/配置。
 	// 老配置没有 rateLimit 块时补默认值，避免前端只改其中一项导致其余配额被写成 0（不限流）。
 	if out.RateLimit == (model.RateLimitSettings{}) {
 		out.RateLimit = def.RateLimit
@@ -239,6 +233,12 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		logger.S().Infof("[SettingsStore] 迁移: 补齐 115 API 限流默认值: %+v", out.RateLimit)
 	}
 	if applyMetadataDefaults(out, def) {
+		changed = true
+	}
+	// 同步删除尚未启用时，缺字段默认开启试运行（首次勾选不会立刻真删）；
+	// 已经启用同步删除的老用户保持原值，避免升级后突然停止删除。
+	if !out.Emby.SyncDeleteDryRunProvided() && !out.Emby.SyncDeleteEnabled {
+		out.Emby.SyncDeleteDryRun = true
 		changed = true
 	}
 	if out.Strm.AccountProxyConcurrencyLimit == 0 {
@@ -296,8 +296,8 @@ func applyMetadataDefaults(out, def *model.Settings) bool {
 
 // backfillStrmRouteDefaults 回填 STRM 路由策略里「可安全补默认」的两个列表。
 //
-// ForceProxyFormats：v1.5.0 起改为可配置，旧配置没有该字段，补默认值写回，
-// 让用户能在 settings.json 里看到并调整（例如把 .ts 移除）。空数组同样补默认——
+// ForceProxyFormats：v1.5.0 起改为可配置。字段缺失（nil）时补默认值；
+// 显式 [] 表示用户清空自定义列表，保留为空，由运行时兜底内置默认。
 // 想关掉按格式代理有独立的 disableSeekFormatProxy 开关，不需要靠清空列表表达。
 //
 // ForceProxyUaTokens：只区分「从未配置」与「明确清空」——
@@ -313,7 +313,7 @@ func backfillStrmRouteDefaults(out, def *model.Settings) bool {
 		changed = true
 		logger.S().Infof("[SettingsStore] 迁移: 强制代理格式从旧默认 10 项收敛为 %v", out.Strm.ForceProxyFormats)
 	}
-	if len(out.Strm.ForceProxyFormats) == 0 {
+	if out.Strm.ForceProxyFormats == nil {
 		out.Strm.ForceProxyFormats = def.Strm.ForceProxyFormats
 		changed = true
 	}

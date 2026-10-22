@@ -24,10 +24,8 @@ import type { EmbySettings } from "./types";
 
 export interface SyncDeleteSectionProps {
   settings: EmbySettings;
-  loading: boolean;
   accounts: string[];
   updateSetting: <K extends keyof EmbySettings>(key: K, value: EmbySettings[K]) => void;
-  onSave: () => void;
   // 路径映射管理
   newMappingEmbyPath: string;
   newMappingCloudPath: string;
@@ -47,10 +45,8 @@ export interface SyncDeleteSectionProps {
 
 export function SyncDeleteSection({
   settings,
-  loading,
   accounts,
   updateSetting,
-  onSave,
   newMappingEmbyPath,
   newMappingCloudPath,
   newMappingAccount,
@@ -133,7 +129,7 @@ export function SyncDeleteSection({
                 删除通知
               </Label>
               <p className="text-xs text-muted-foreground">
-                删除时发送 TG 通知（替代上方删除通知）
+                同步删除（含试运行）时发送结果通知
               </p>
             </div>
           </div>
@@ -153,7 +149,9 @@ export function SyncDeleteSection({
               <Label htmlFor="syncDeleteDeleteSymlink" className="cursor-pointer">
                 删除软链本身
               </Label>
-              <p className="text-xs text-muted-foreground">只删本地软链接，不跟随目标</p>
+              <p className="text-xs text-muted-foreground">
+                只删本地软链接、不跟随目标；关闭时软链 STRM 会被跳过
+              </p>
             </div>
           </div>
 
@@ -416,13 +414,8 @@ export function SyncDeleteSection({
 
           <p className="text-xs text-muted-foreground break-words">
             只有匹配到 Emby 路径前缀的删除事件才会被处理。账号留空时遍历所有 115 账号删除 DB 记录。
+            删除映射后需点底部「保存 Emby 设置」生效；添加映射会立即保存。
           </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onSave} disabled={loading}>
-            {loading ? "保存中..." : "保存设置"}
-          </Button>
         </div>
 
         <p className="text-xs text-muted-foreground">

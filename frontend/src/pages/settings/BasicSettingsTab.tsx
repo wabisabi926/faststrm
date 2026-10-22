@@ -3,14 +3,8 @@ import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown, Settings, Filter } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -18,11 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type {
-  Settings as SettingsType,
-  MountDryRunData,
-  MountSyncApplyData,
-} from "./types";
+import type { Settings as SettingsType } from "./types";
 
 /** 低频/进阶配置默认折叠，减少基础设置页的纵向噪音。 */
 function CollapsibleSection({
@@ -89,12 +79,6 @@ export interface BasicSettingsTabProps {
   setGlobalMinFileSizeMb: Dispatch<SetStateAction<string>>;
   globalBlacklistInput: string;
   setGlobalBlacklistInput: Dispatch<SetStateAction<string>>;
-  mountDryRun: MountDryRunData;
-  mountDryRunLoading: boolean;
-  mountSyncing: boolean;
-  lastSyncApply: MountSyncApplyData;
-  fetchMountDryRun: () => Promise<MountDryRunData>;
-  applyMountSync: () => Promise<void>;
   saving: boolean;
   onSave: () => Promise<void>;
 }
@@ -115,12 +99,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
     setGlobalMinFileSizeMb,
     globalBlacklistInput,
     setGlobalBlacklistInput,
-    mountDryRun,
-    mountDryRunLoading,
-    mountSyncing,
-    lastSyncApply,
-    fetchMountDryRun,
-    applyMountSync,
     saving,
     onSave,
   } = props;
@@ -157,7 +135,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             />
             <p className="text-xs text-muted-foreground">
               访问 115 API 和后台任务时使用的兜底 UA；播放时优先使用播放器自己的 UA。
-              <span className="font-medium">留空恢复默认（内置 iOS Chrome UA）</span>，一般无需修改。
+              <span className="font-medium">留空使用内置默认 UA</span>，不会写回配置；需要显式配置时点「填入默认值」。
             </p>
           </div>
           <div className="space-y-3">
@@ -178,7 +156,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
             />
             <p className="text-xs text-muted-foreground">
               逗号分隔，自动添加点号前缀；BDMV/STREAM 目录内的视频流不生成 STRM。
-              <span className="font-medium">留空恢复默认 17 项</span>，也可点右上角「填入默认值」。
+              <span className="font-medium">留空使用内置默认 17 项</span>，不会写回配置；需要显式配置时点「填入默认值」。
             </p>
           </div>
           <div className="space-y-3 md:col-span-2">
@@ -332,7 +310,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 <p className="text-xs text-muted-foreground">
                   逗号分隔，匹配 User-Agent 或 Emby 客户端名。命中即强制走服务端代理（适合 302 播不了的客户端）。
                   <span className="font-medium">留空表示「全部 302 直连」</span>
-                  ——与其他字段的「留空恢复默认」不同，这里是关闭该功能。
+                  （关闭该功能）；需要推荐列表时点「填入默认值」。
                   下方格式列表内的原盘不受此项影响，始终按格式代理。
                 </p>
               </div>
@@ -371,8 +349,9 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                     placeholder={DEFAULT_FORCE_PROXY_FORMATS.join(", ")}
                   />
                   <p className="text-xs text-muted-foreground">
-                    逗号分隔，大小写不敏感、点号可省略。两层共用这一份列表；留空恢复默认值
-                    （iso, bdmv, bdav, dvd, bluray）。
+                    逗号分隔，大小写不敏感、点号可省略。两层共用这一份列表；
+                    <span className="font-medium">留空使用内置默认（iso, bdmv, bdav, dvd, bluray）</span>，
+                    不会写回配置；如需关闭按格式代理，请用上方开关。
                     m2ts、ts、vob 属于普通视频流，默认 302 直连；某些客户端播不了时再加回列表。
                   </p>
                 </div>
@@ -564,190 +543,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 />
                 <p className="text-xs text-muted-foreground">同时下载元数据/关联文件的并发上限，默认 2</p>
               </div>
-            </div>
-          </div>
-        </div>
-      </CollapsibleSection>
-
-      <Separator />
-
-      <CollapsibleSection
-        title="高级维护：媒体挂载路径"
-        description="由系统自动计算并维护，通常无需手动修改；需要核对时展开。"
-      >
-        <div className="grid grid-cols-1 gap-4">
-          <div className="space-y-2 md:col-span-2">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
-              <div>
-                <Label>媒体挂载路径</Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  根据<span className="font-medium">全局 STRM 前缀</span>、
-                  <span className="font-medium">任务设置</span>和
-                  <span className="font-medium">生活事件监控</span>自动收敛得到，通常无需手动修改。
-                </p>
-              </div>
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  onClick={fetchMountDryRun}
-                  disabled={mountDryRunLoading || mountSyncing}
-                  className="w-full sm:w-auto"
-                >
-                  {mountDryRunLoading ? "计算中..." : "刷新视图"}
-                </Button>
-                <Button
-                  variant="default"
-                  size="sm"
-                  type="button"
-                  onClick={applyMountSync}
-                  disabled={mountSyncing || !mountDryRun?.diff.changed}
-                  className="w-full sm:w-auto"
-                >
-                  {mountSyncing ? "同步中..." : "立即同步并持久化"}
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded-md border p-2.5 sm:p-3 space-y-3 bg-muted/30">
-              {mountDryRunLoading && !mountDryRun ? (
-                <p className="text-sm text-muted-foreground">正在计算期望集合...</p>
-              ) : mountDryRun && mountDryRun.computed.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  暂无项。请先配置全局 STRM 前缀，或创建带自定义前缀的任务。
-                </p>
-              ) : mountDryRun ? (
-                <>
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    <span className="px-2 py-0.5 rounded bg-background border">
-                      共 <b>{mountDryRun.computed.length}</b> 条期望
-                    </span>
-                    {mountDryRun.diff.changed ? (
-                      <>
-                        {mountDryRun.diff.added.length > 0 && (
-                          <span className="px-2 py-0.5 rounded border bg-green-500/20 text-green-400 border-green-500/30">
-                            +{mountDryRun.diff.added.length} 待新增
-                          </span>
-                        )}
-                        {mountDryRun.diff.removed.length > 0 && (
-                          <span className="px-2 py-0.5 rounded border bg-red-500/20 text-red-400 border-red-500/30">
-                            -{mountDryRun.diff.removed.length} 待删除
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded border bg-background text-muted-foreground">
-                        与 settings.json 一致，无差异
-                      </span>
-                    )}
-                    <span className="px-2 py-0.5 rounded border bg-background text-muted-foreground">
-                      已持久化 {mountDryRun.persisted.length} 条
-                    </span>
-                  </div>
-
-                  {mountDryRun.diff.removed.length > 0 && (
-                    <details className="text-xs">
-                      <summary className="cursor-pointer text-red-400">
-                        以下 {mountDryRun.diff.removed.length} 条在 settings.json 中存在，但已不再被任何引用方需要
-                      </summary>
-                      <ul className="mt-2 space-y-1 pl-4 list-disc font-mono break-all">
-                        {mountDryRun.diff.removed.map((p) => (
-                          <li key={`rm-${p}`}>{p}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-
-                  <ul className="space-y-2 text-sm">
-                    {mountDryRun.computed.map((row) => {
-                      const added = mountDryRun.diff.added.includes(row.prefix);
-                      return (
-                        <li
-                          key={row.prefix}
-                          className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1.5 sm:gap-2 rounded border bg-background px-2.5 sm:px-3 py-2"
-                        >
-                          <Tooltip>
-                            <TooltipTrigger asChild className="min-w-0 flex-1">
-                              <span
-                                className="block font-mono whitespace-nowrap overflow-hidden text-ellipsis text-xs sm:text-sm"
-                                title={row.prefix}
-                              >
-                                {row.prefix}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent className="font-mono text-xs max-w-[90vw] break-all whitespace-normal">
-                              {row.prefix}
-                            </TooltipContent>
-                          </Tooltip>
-                          <span
-                            className={
-                              "px-1.5 py-0.5 rounded text-[10px] border " +
-                              (row.source === "global" || row.source === "global_302"
-                                ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30"
-                                : row.source === "task"
-                                  ? "bg-sky-500/20 text-sky-400 border-sky-500/30"
-                                  : "bg-amber-500/20 text-amber-400 border-amber-500/30")
-                            }
-                          >
-                            {row.sourceLabel}
-                          </span>
-                          {row.account && (
-                            <span className="text-xs text-muted-foreground">
-                              账号：<b>{row.account}</b>
-                            </span>
-                          )}
-                          {row.taskId && (
-                            <span className="text-xs text-muted-foreground font-mono">
-                              task #{row.taskId.slice(0, 8)}
-                            </span>
-                          )}
-                          {added && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-green-500/20 text-green-400 border-green-500/30">
-                              待新增
-                            </span>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">未加载数据</p>
-              )}
-
-              {lastSyncApply && (
-                <div
-                  className={
-                    "rounded border px-3 py-2 text-xs " +
-                    (lastSyncApply.error || lastSyncApply.nginx?.ok === false
-                      ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                      : "bg-slate-500/10 border-slate-500/30 text-slate-400")
-                  }
-                >
-                  <div className="font-medium mb-1">最近一次同步结果</div>
-                  <ul className="list-disc pl-4 space-y-0.5">
-                    <li>变更：{lastSyncApply.changed ? "已写入" : "无变化"}</li>
-                    {lastSyncApply.added.length > 0 && (
-                      <li>新增 {lastSyncApply.added.length} 条：<span className="font-mono">{lastSyncApply.added.join(", ")}</span></li>
-                    )}
-                    {lastSyncApply.removed.length > 0 && (
-                      <li>删除 {lastSyncApply.removed.length} 条：<span className="font-mono">{lastSyncApply.removed.join(", ")}</span></li>
-                    )}
-                    <li>
-                      nginx：
-                      {lastSyncApply.nginx.attempted
-                        ? lastSyncApply.nginx.ok
-                          ? "已成功 reload"
-                          : `reload 失败 - ${lastSyncApply.nginx.message}`
-                        : lastSyncApply.nginx.skipped
-                          ? "已按设置跳过 reload"
-                          : "系统未检测到 nginx"}
-                    </li>
-                    {lastSyncApply.error && <li>错误：{lastSyncApply.error}</li>}
-                  </ul>
-                </div>
-              )}
             </div>
           </div>
         </div>

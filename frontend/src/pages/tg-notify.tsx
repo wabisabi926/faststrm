@@ -53,6 +53,8 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
   const [tokenModified, setTokenModified] = useState<boolean>(false);
   // webhook secret 输入值：空串=保持现状（后端沿用旧值）；"-"=清除；其他=设置新值
   const [webhookSecretInput, setWebhookSecretInput] = useState<string>("");
+  // 显式清空代理（空字符串本身无法区分“未提供”和“清空”）
+  const [clearProxy, setClearProxy] = useState<boolean>(false);
   // 授权用户白名单：空列表表示允许所有 Telegram 用户
   const [allowedUsers, setAllowedUsers] = useState<Array<{ id: number }>>([]);
   const [newUserID, setNewUserID] = useState<string>("");
@@ -119,6 +121,7 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
         enabled: config.enabled !== false,
         autoPolling: config.autoPolling !== false,
         proxyUrl: config.proxyUrl,
+        clearProxy,
         // 留空不传=后端沿用旧值；"-"=清除；其他=设置新值
         ...(webhookSecretInput.trim() !== "" ? { webhookSecretToken: webhookSecretInput.trim() } : {}),
       });
@@ -129,6 +132,7 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
         const savedToken = tokenModified && config.botToken ? config.botToken : originalTokenPlain;
         setOriginalTokenPlain(savedToken);
         setTokenModified(false);
+        setClearProxy(false);
         setConfig({
           botToken: maskToken(savedToken || ""),
           chatId: response.data.chatId || "",
@@ -138,6 +142,7 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
           proxyUrl: config.proxyUrl || "",
         });
         await loadBotInfo();
+        await checkPollingStatus();
       }
     } catch (error) {
       const axiosError = error as { response?: { data?: { error?: string; details?: string } }; message?: string };
@@ -397,9 +402,19 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
                 id="webhookUrl"
                 placeholder="https://<你的公网域名>/api/notify/webhook"
                 value={config.webhookUrl || ""}
-                onChange={(e) => setConfig({ ...config, webhookUrl: e.target.value })}
+                onChange={(e) => {
+                  const url = e.target.value;
+                  setConfig({
+                    ...config,
+                    webhookUrl: url,
+                    // Webhook 与自动轮询互斥：填写 URL 时关闭自动轮询
+                    autoPolling: url.trim() ? false : config.autoPolling,
+                  });
+                }}
               />
-              <p className="text-xs text-muted-foreground">留空使用轮询模式（5秒延迟），填写则使用 Webhook（毫秒级）</p>
+              <p className="text-xs text-muted-foreground">
+                留空使用轮询模式（5秒延迟），填写则使用 Webhook（毫秒级）。两者只能二选一。
+              </p>
             </div>
 
             {config.webhookUrl && (
@@ -426,13 +441,30 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
 
             <div className="space-y-1.5 min-w-0">
               <Label htmlFor="proxyUrl">代理 URL <span className="text-xs text-muted-foreground">（可选，国内必填）</span></Label>
-              <Input
-                id="proxyUrl"
-                placeholder="socks5://127.0.0.1:7890 或 http://127.0.0.1:7890"
-                value={config.proxyUrl || ""}
-                onChange={(e) => setConfig({ ...config, proxyUrl: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">支持 HTTP/HTTPS/SOCKS5 协议，国内访问 Telegram 时填写</p>
+              <div className="flex gap-1">
+                <Input
+                  id="proxyUrl"
+                  placeholder="socks5://127.0.0.1:7890 或 http://127.0.0.1:7890"
+                  value={config.proxyUrl || ""}
+                  onChange={(e) => {
+                    setClearProxy(false);
+                    setConfig({ ...config, proxyUrl: e.target.value });
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => {
+                    setClearProxy(true);
+                    setConfig({ ...config, proxyUrl: "" });
+                  }}
+                >
+                  清除
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">支持 HTTP/HTTPS/SOCKS5 协议，国内访问 Telegram 时填写；点「清除」保存后生效</p>
             </div>
           </div>
         </details>
@@ -453,7 +485,14 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
               <Checkbox
                 id="autoPolling"
                 checked={config.autoPolling !== false}
-                onCheckedChange={(checked) => setConfig({ ...config, autoPolling: checked === true })}
+                onCheckedChange={(checked) =>
+                  setConfig({
+                    ...config,
+                    autoPolling: checked === true,
+                    // 开启自动轮询时清空 Webhook URL，避免重启后被轮询覆盖
+                    webhookUrl: checked === true ? "" : config.webhookUrl,
+                  })
+                }
               />
               <label htmlFor="autoPolling" className="text-sm font-medium leading-none cursor-pointer">
                 启动时自动轮询
@@ -589,7 +628,11 @@ export default function TelegramNotifyPage({ embedded = false }: { embedded?: bo
             <h2 className="text-base font-medium">轮询控制</h2>
             {pollingStatus && (
               <Badge variant={pollingStatus.polling ? "default" : "outline"} className="ml-1">
-                {pollingStatus.polling ? "轮询中" : "Webhook"}
+                {pollingStatus.polling
+                  ? "轮询中"
+                  : pollingStatus.message?.includes("Webhook")
+                    ? "Webhook"
+                    : "未运行"}
               </Badge>
             )}
           </div>

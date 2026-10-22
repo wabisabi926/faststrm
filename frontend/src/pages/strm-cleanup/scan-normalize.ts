@@ -1,8 +1,9 @@
 import type { MappingResult, MissingStrm, ScanSummary, StaleStrm } from "./types";
 
-export type RawScanMapping = Omit<MappingResult, "mappingId" | "staleStrms" | "missingStrms"> & {
+export type RawScanMapping = Omit<MappingResult, "mappingId" | "staleStrms" | "missingStrms" | "unmanagedStrms"> & {
   staleStrms?: Array<Omit<StaleStrm, "localPath" | "mappingId">>;
   missingStrms?: Array<Omit<MissingStrm, "mappingId">>;
+  unmanagedStrms?: Array<Omit<StaleStrm, "localPath" | "mappingId">>;
   dbRecordCount?: number;
   associatedFileCount?: number;
   unmanagedCount?: number;
@@ -53,6 +54,11 @@ export function normalizeScanResponse(raw: RawScanResponse, idPrefix: string): S
     }),
     missingStrms: (m.missingStrms || []).map((mi) => ({
       ...mi,
+      mappingId: `${idPrefix}-${idx}`,
+    })),
+    unmanagedStrms: (m.unmanagedStrms || []).map((s) => ({
+      ...s,
+      localPath: m.localPath,
       mappingId: `${idPrefix}-${idx}`,
     })),
     error: m.error,

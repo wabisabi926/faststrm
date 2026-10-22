@@ -38,7 +38,7 @@ type RequestOptions struct {
 
 func (c *Client) buildCommonHeaders(opt RequestOptions) map[string]string {
 	h := map[string]string{
-		"User-Agent":   c.UserAgent,
+		"User-Agent":   c.UA(),
 		"Accept":       "application/json, text/plain, */*",
 		"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
 		"Referer":      "https://115.com/",
@@ -174,7 +174,7 @@ func (c *Client) request115(
 	if opt.UseCommonHeaders {
 		headers = c.buildCommonHeaders(opt)
 	} else {
-		headers["User-Agent"] = c.UserAgent
+		headers["User-Agent"] = c.UA()
 		if opt.Cookie != "" {
 			headers["Cookie"] = opt.Cookie
 		}
@@ -283,7 +283,7 @@ func (c *Client) GetDownloadUrlWebFull(
 	// 而非 c.UserAgent（115 客户端 UA）。115 API 返回的 CDN URL 可能有 UA 绑定。
 	ua := userAgent
 	if ua == "" {
-		ua = c.UserAgent
+		ua = c.UA()
 	}
 	headers := map[string]string{
 		"User-Agent":     ua,

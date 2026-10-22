@@ -11,9 +11,16 @@ import {
   DEFAULT_NOTIFY_SETTINGS,
 } from "./types";
 
+export interface TelegramStatus {
+  enabled: boolean;
+  configured: boolean;
+}
+
 export interface UseEmbySettingsResult {
   // 基础状态
   settings: EmbySettings;
+  loaded: boolean;
+  telegram: TelegramStatus;
   loading: boolean;
   error: string | null;
   success: string | null;
@@ -57,6 +64,8 @@ export interface UseEmbySettingsResult {
 
 export function useEmbySettings(): UseEmbySettingsResult {
   const [settings, setSettings] = useState<EmbySettings>({ ...DEFAULT_NOTIFY_SETTINGS });
+  const [loaded, setLoaded] = useState(false);
+  const [telegram, setTelegram] = useState<TelegramStatus>({ enabled: false, configured: false });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -97,17 +106,27 @@ export function useEmbySettings(): UseEmbySettingsResult {
   const loadSettings = async () => {
     try {
       const response = await axiosInstance.get("/api/settings");
-      if (response.data?.emby) {
-        setSettings({ ...DEFAULT_NOTIFY_SETTINGS, ...response.data.emby });
+      if (!response.data?.emby) {
+        throw new Error("设置中没有 Emby 配置");
       }
+      setSettings({ ...DEFAULT_NOTIFY_SETTINGS, ...response.data.emby });
+      const tg = response.data?.telegram || {};
+      setTelegram({
+        enabled: tg.enabled !== false && Boolean(tg.botToken) && Boolean(tg.chatId),
+        configured: Boolean(tg.botToken) && Boolean(tg.chatId),
+      });
+      setError(null);
+      setLoaded(true);
     } catch (err) {
       console.error("加载设置失败:", err);
+      setLoaded(false);
+      setError("加载 Emby 设置失败，请刷新页面重试；加载成功前不会保存，避免覆盖现有配置。");
     }
   };
 
   // persistSettings 统一的保存实现：/api/emby/settings 收全量 EmbySettings，
   // 所以「保存设置」与「添加路径映射」可以共用同一条落库路径。
-  const persistSettings = async (next: EmbySettings, successMsg: string) => {
+  const persistSettings = async (next: EmbySettings, successMsg: string): Promise<boolean> => {
     try {
       setLoading(true);
       setError(null);
@@ -116,8 +135,14 @@ export function useEmbySettings(): UseEmbySettingsResult {
       const response = await axiosInstance.post("/api/emby/settings", next);
 
       if (response.data?.success) {
-        setSuccess(successMsg);
+        if (response.data?.proxyError) {
+          setError(response.data.message || `设置已保存，但反向代理启动失败：${response.data.proxyError}`);
+        } else {
+          setSuccess(successMsg);
+        }
+        return true;
       }
+      return false;
     } catch (raw) {
       const err = raw as {
         response?: { data?: { error?: string; details?: string; message?: string } };
@@ -126,6 +151,7 @@ export function useEmbySettings(): UseEmbySettingsResult {
       const apiMsg = err.response?.data?.error || err.response?.data?.message;
       const detail = err.response?.data?.details;
       setError(apiMsg ? (detail ? `${apiMsg}：${detail}` : apiMsg) : "保存设置失败");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -146,21 +172,43 @@ export function useEmbySettings(): UseEmbySettingsResult {
     setNewMappingAccount("");
   };
 
+  // 后端会静默丢弃不合法的映射；前端先校验并阻止保存，避免“保存成功但行消失”。
+  const validateMappings = (mappings: EmbySettings["syncDeletePathMappings"]): string | null => {
+    for (const [index, mapping] of (mappings || []).entries()) {
+      const embyPath = (mapping.embyPath || "").trim();
+      const cloudPath = (mapping.cloudPath || "").trim();
+      if (!embyPath) return `第 ${index + 1} 条路径映射缺少 Emby 路径`;
+      const absolute =
+        embyPath.startsWith("/") ||
+        /^[A-Za-z]:[\\/]/.test(embyPath) ||
+        embyPath.startsWith("\\\\");
+      if (!absolute) return `第 ${index + 1} 条 Emby 路径必须是绝对路径`;
+      if (!cloudPath) return `第 ${index + 1} 条路径映射缺少网盘路径`;
+    }
+    return null;
+  };
+
   const handleSave = async () => {
     // 「保存设置」也要吸收还没点「添加」的那一行：用户填完路径直接点保存时，
     // 不该因为少点一次「添加」而丢掉刚填的映射（原来必须先添加再保存，两次点击才生效）。
     const pending = takePendingMapping();
-    if (pending) {
-      const next: EmbySettings = {
-        ...settings,
-        syncDeletePathMappings: [...(settings.syncDeletePathMappings || []), pending],
-      };
-      setSettings(next);
-      clearPendingMapping();
-      await persistSettings(next, "Emby 通知设置已保存（含新增路径映射）！");
+    const next: EmbySettings = pending
+      ? { ...settings, syncDeletePathMappings: [...(settings.syncDeletePathMappings || []), pending] }
+      : settings;
+    const mappingError = validateMappings(next.syncDeletePathMappings);
+    if (mappingError) {
+      setError(mappingError);
       return;
     }
-    await persistSettings(settings, "Emby 通知设置已保存！");
+    if (pending) {
+      const ok = await persistSettings(next, "Emby 通知设置已保存（含新增路径映射）！");
+      if (ok) {
+        setSettings(next);
+        clearPendingMapping();
+      }
+      return;
+    }
+    await persistSettings(next, "Emby 通知设置已保存！");
   };
 
   const testConnection = async () => {
@@ -226,9 +274,17 @@ export function useEmbySettings(): UseEmbySettingsResult {
       ...settings,
       syncDeletePathMappings: [...(settings.syncDeletePathMappings || []), pending],
     };
-    setSettings(next);
-    clearPendingMapping();
-    await persistSettings(next, "路径映射已添加并保存");
+    const mappingError = validateMappings(next.syncDeletePathMappings);
+    if (mappingError) {
+      setError(mappingError);
+      return;
+    }
+    const ok = await persistSettings(next, "路径映射已添加并保存");
+    // 只有保存成功才写入本地状态，避免失败后界面仍显示新增行
+    if (ok) {
+      setSettings(next);
+      clearPendingMapping();
+    }
   };
 
   const removePathMapping = (index: number) => {
@@ -287,6 +343,8 @@ export function useEmbySettings(): UseEmbySettingsResult {
 
   return {
     settings,
+    loaded,
+    telegram,
     loading,
     error,
     success,

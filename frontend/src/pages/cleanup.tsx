@@ -37,7 +37,12 @@ export default function CleanupPage() {
   const save = async (): Promise<boolean> => {
     setSaving(true);
     try {
-      await axiosInstance.post("/api/settings", data);
+      // 只提交清理页负责的字段：cleanup + 自动清理模式（download.fullSyncCleanupOrphans）。
+      // 带上完整 download 快照，避免后端把未提交的 minFileSize 等字段重置为 0。
+      await axiosInstance.post("/api/settings", {
+        cleanup: data.cleanup,
+        download: data.download,
+      });
       toast.success("清理策略已保存");
       return true;
     } catch (err) {

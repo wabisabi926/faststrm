@@ -23,7 +23,6 @@ func newContractSettings() *model.Settings {
 	s.EnablePathEncoding = false
 	s.StrmExtensions = []string{"mkv", "mp4", "iso"}
 	s.DownloadExtensions = []string{"srt", "nfo"}
-	s.MediaMountPath = []string{"/media/movies"}
 	s.CleanupDefaultsV2 = true
 	s.CleanupDefaultsV3 = true
 
@@ -155,6 +154,42 @@ func TestSettingsContract_GetPostGetRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSettingsContract_PostDoesNotOverwriteEmbyTelegram(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
+	original := newContractSettings()
+	if err := settingsStore.SaveSettings(original); err != nil {
+		t.Fatal(err)
+	}
+	deps := EmbyDeps{SettingsStore: settingsStore}
+
+	body := []byte(`{
+		"emby":{"url":"http://evil-emby:8096","apiKey":"evil-key","proxyPort":9999},
+		"telegram":{"botToken":"evil-token","chatId":"999","enabled":false,"autoPolling":true}
+	}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(deps)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	stored, err := settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Emby.URL != original.Emby.URL || stored.Emby.APIKey != original.Emby.APIKey || stored.Emby.ProxyPort != original.Emby.ProxyPort {
+		t.Fatalf("generic settings POST overwrote Emby config: %+v", stored.Emby)
+	}
+	if stored.Telegram.BotToken != original.Telegram.BotToken ||
+		stored.Telegram.ChatID != original.Telegram.ChatID ||
+		stored.Telegram.Enabled != original.Telegram.Enabled ||
+		stored.Telegram.AutoPolling != original.Telegram.AutoPolling {
+		t.Fatalf("generic settings POST overwrote Telegram config: %+v", stored.Telegram)
+	}
+}
+
 func TestSettingsContract_StrmAdvancedFieldsWritable(t *testing.T) {
 	dir := t.TempDir()
 	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
@@ -182,6 +217,36 @@ func TestSettingsContract_StrmAdvancedFieldsWritable(t *testing.T) {
 	}
 	if stored.Download.StrmMaxConcurrent == nil || *stored.Download.StrmMaxConcurrent != 12 {
 		t.Fatalf("strmMaxConcurrent not applied: %v", stored.Download.StrmMaxConcurrent)
+	}
+}
+
+func TestSettingsContract_PartialDownloadPatchPreservesMinFileSize(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
+	original := newContractSettings()
+	original.Download.MinFileSize = 12345
+	if err := settingsStore.SaveSettings(original); err != nil {
+		t.Fatal(err)
+	}
+	deps := EmbyDeps{SettingsStore: settingsStore}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings",
+		bytes.NewReader([]byte(`{"download":{"fullSyncCleanupOrphans":"auto_clean"}}`)))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(deps)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Download.FullSyncCleanupOrphans != "auto_clean" {
+		t.Fatalf("cleanup mode = %q, want auto_clean", stored.Download.FullSyncCleanupOrphans)
+	}
+	if stored.Download.MinFileSize != 12345 {
+		t.Fatalf("omitted minFileSize was reset to %d", stored.Download.MinFileSize)
 	}
 }
 
@@ -299,9 +364,9 @@ func TestSettingsContract_CanClearOptionalStringsAndMinFileSize(t *testing.T) {
 	if stored.LifeMonitor.MinFileSize != 0 {
 		t.Fatalf("minFileSize should be cleared to 0, got %d", stored.LifeMonitor.MinFileSize)
 	}
-	// 空 UA 会由 SettingsStore 的默认值迁移补回默认 UA，而不是保留旧自定义值
-	if stored.UserAgent == "custom-agent" {
-		t.Fatalf("user-agent should not keep old custom value, got %q", stored.UserAgent)
+	// 显式清空必须保持为空，运行时由 EffectiveUserAgent 兜底默认 UA。
+	if stored.UserAgent != "" {
+		t.Fatalf("user-agent should be cleared, got %q", stored.UserAgent)
 	}
 }
 
@@ -364,13 +429,11 @@ func TestSettingsContract_RateLimitPatch(t *testing.T) {
 	}
 }
 
-// TestSettingsContract_EmptyMeansRestoreDefaults 校验留空语义：
-//   - User-Agent / STRM 扩展名：留空 → 默认值（空值属于非法配置）
+// TestSettingsContract_EmptyValuesKeptAsEmpty 校验留空语义：
+//   - User-Agent / STRM 扩展名：留空 → 保持空，运行时由 Effective* 兜底
 //   - 元数据扩展名：留空 → 保持空，表示不下载附带文件
 //   - 强制代理 UA 标识：留空 → 保持为空（= 全部直连）
-//
-// 同时校验 POST 响应里的 saved 是「生效后的值」。
-func TestSettingsContract_EmptyMeansRestoreDefaults(t *testing.T) {
+func TestSettingsContract_EmptyValuesKeptAsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
 	pre := model.DefaultSettings()
@@ -396,11 +459,11 @@ func TestSettingsContract_EmptyMeansRestoreDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.UserAgent != model.DefaultUserAgent {
-		t.Fatalf("空 UA 应恢复默认，got %q", stored.UserAgent)
+	if stored.UserAgent != "" {
+		t.Fatalf("空 UA 应保持为空，got %q", stored.UserAgent)
 	}
-	if !reflect.DeepEqual(stored.StrmExtensions, model.DefaultStrmExtensions) {
-		t.Fatalf("空 STRM 扩展名应恢复默认，got %v", stored.StrmExtensions)
+	if stored.StrmExtensions == nil || len(stored.StrmExtensions) != 0 {
+		t.Fatalf("空 STRM 扩展名应保持为空，got %#v", stored.StrmExtensions)
 	}
 	if len(stored.DownloadExtensions) != 0 {
 		t.Fatalf("空元数据扩展名应表示不下载，got %v", stored.DownloadExtensions)
@@ -413,9 +476,10 @@ func TestSettingsContract_EmptyMeansRestoreDefaults(t *testing.T) {
 		t.Fatalf("空强制代理 UA 应保持为空，got %v", stored.Strm.ForceProxyUaTokens)
 	}
 
-	// 响应里的 saved 必须是生效值（不是空数组），否则前端无法提示"恢复了几项"
+	// saved 也必须回传用户提交的空值，前端不再做默认值回填。
 	var resp struct {
 		Saved struct {
+			UserAgent          string   `json:"user-agent"`
 			StrmExtensions     []string `json:"strmExtensions"`
 			DownloadExtensions []string `json:"downloadExtensions"`
 		} `json:"saved"`
@@ -423,8 +487,11 @@ func TestSettingsContract_EmptyMeansRestoreDefaults(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Saved.StrmExtensions) != len(model.DefaultStrmExtensions) {
-		t.Fatalf("saved.strmExtensions 应是生效值，got %v", resp.Saved.StrmExtensions)
+	if resp.Saved.UserAgent != "" {
+		t.Fatalf("saved.user-agent should stay empty, got %q", resp.Saved.UserAgent)
+	}
+	if len(resp.Saved.StrmExtensions) != 0 {
+		t.Fatalf("saved.strmExtensions should stay empty, got %v", resp.Saved.StrmExtensions)
 	}
 	if len(resp.Saved.DownloadExtensions) != 0 {
 		t.Fatalf("saved.downloadExtensions 应保持空，got %v", resp.Saved.DownloadExtensions)

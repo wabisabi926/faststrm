@@ -23,8 +23,22 @@ const accountInspectInitialDelay = 90 * time.Second
 // accountInspectPerAccountTimeout 单账号探测超时
 const accountInspectPerAccountTimeout = 15 * time.Second
 
+// accountAlertNotifier 账号状态通知的最小接口（由 notify.Dispatcher 实现）。
+type accountAlertNotifier interface {
+	Notify(ctx context.Context, message string) error
+}
+
+// loadAccountAlerts 读取账号状态通知配置；读取失败时返回 nil（不发送）。
+func loadAccountAlerts(settingsStore *store.SettingsStore) *model.AccountAlertsSettings {
+	s, err := settingsStore.ReadSettings()
+	if err != nil || s == nil {
+		return nil
+	}
+	return s.Telegram.AccountAlerts
+}
+
 // startAccountInspector 启动主动巡检后台循环（阻塞，调用方需 go 起）。
-func startAccountInspector(ctx context.Context, settingsStore *store.SettingsStore, accountStore *store.AccountStore) {
+func startAccountInspector(ctx context.Context, settingsStore *store.SettingsStore, accountStore *store.AccountStore, notifier accountAlertNotifier) {
 	timer := time.NewTimer(accountInspectInitialDelay)
 	defer timer.Stop()
 
@@ -37,7 +51,7 @@ func startAccountInspector(ctx context.Context, settingsStore *store.SettingsSto
 
 		cfg := loadCookieInspectSettings(settingsStore)
 		if cfg.IsEnabled() {
-			runAccountInspection(ctx, accountStore)
+			runAccountInspection(ctx, accountStore, notifier, loadAccountAlerts(settingsStore))
 		} else {
 			logger.S().Infof("[CookieInspect] 主动巡检已关闭，跳过本轮")
 		}
@@ -56,15 +70,17 @@ func loadCookieInspectSettings(settingsStore *store.SettingsStore) model.CookieI
 }
 
 // runAccountInspection 对所有 115 账号执行一次权威探测并回写状态。
-func runAccountInspection(ctx context.Context, accountStore *store.AccountStore) {
+func runAccountInspection(ctx context.Context, accountStore *store.AccountStore, notifier accountAlertNotifier, alerts *model.AccountAlertsSettings) {
 	accounts := accountStore.List()
 	checked, invalid := 0, 0
+	alertsEnabled := alerts != nil && alerts.Enabled
 
 	for _, acc := range accounts {
 		if acc == nil || acc.AccountType != "115" || acc.Cookie == "" {
 			continue
 		}
 
+		oldStatus := acc.EffectiveCookieStatus()
 		pctx, cancel := context.WithTimeout(ctx, accountInspectPerAccountTimeout)
 		err := client115.ProbeAccount(pctx, acc.Cookie)
 		cancel()
@@ -83,8 +99,23 @@ func runAccountInspection(ctx context.Context, accountStore *store.AccountStore)
 		if status == model.CookieStatusInvalid {
 			invalid++
 			logger.S().Warnf("[CookieInspect] account=%s Cookie 已失效，请重新登录: %v", acc.Name, err)
+			if alertsEnabled && alerts.OnError && oldStatus != model.CookieStatusInvalid && notifier != nil {
+				msg := fmt.Sprintf("账号 %s Cookie 已失效，请重新登录", acc.Name)
+				if err != nil {
+					msg += "：" + err.Error()
+				}
+				if nerr := notifier.Notify(ctx, msg); nerr != nil {
+					logger.S().Warnf("[CookieInspect] account=%s 发送失效通知失败: %v", acc.Name, nerr)
+				}
+			}
 		} else {
 			logger.S().Infof("[CookieInspect] account=%s Cookie 有效", acc.Name)
+			if alertsEnabled && alerts.OnRecover && oldStatus == model.CookieStatusInvalid && notifier != nil {
+				msg := fmt.Sprintf("账号 %s Cookie 已恢复有效", acc.Name)
+				if nerr := notifier.Notify(ctx, msg); nerr != nil {
+					logger.S().Warnf("[CookieInspect] account=%s 发送恢复通知失败: %v", acc.Name, nerr)
+				}
+			}
 		}
 	}
 

@@ -78,19 +78,30 @@ func HandleStartTask(deps TaskHandlerDeps) http.HandlerFunc {
 			return
 		}
 
-		// 异步执行任务（立即返回，实际执行通过 SSE 广播进度）
-		// 注意：独占锁由 task.ExecuteTask 内部处理，这里不重复获取
+		// 异步执行任务，但等待执行器真实拿到账号锁后再返回，
+		// 避免同账号已有任务时前端误报“已启动”（实际被 blocked）。
+		startedCh := make(chan task.ExecuteResult, 1)
 		go func() {
-			res := task.ExecuteTask(context.Background(), req.TaskID, deps.ExecutorDeps)
+			res := task.ExecuteTask(context.Background(), req.TaskID, deps.ExecutorDeps, func(started task.ExecuteResult) {
+				startedCh <- started
+			})
 			// 无论成功失败，重新读取任务刷新调度
 			go deps.Scheduler.RefreshAll(deps.TasksStore)
 			_ = res
 		}()
 
-		// 立即返回启动成功
-		httpx.WriteJson(w, http.StatusOK, task.ExecuteResult{
-			Success: true, TaskID: req.TaskID, Message: "任务已启动",
-		})
+		select {
+		case res := <-startedCh:
+			if !res.Success {
+				httpx.WriteJson(w, http.StatusConflict, res)
+				return
+			}
+			httpx.WriteJson(w, http.StatusOK, res)
+		case <-time.After(5 * time.Second):
+			httpx.WriteJson(w, http.StatusGatewayTimeout, task.ExecuteResult{
+				Success: false, Reason: "start_timeout", Message: "任务启动超时，请稍后刷新状态",
+			})
+		}
 	}
 }
 
@@ -126,9 +137,8 @@ func HandleCancelTask(deps TaskHandlerDeps) http.HandlerFunc {
 			return
 		}
 		if !deps.Runtime.Cancel(tid) {
-			// 如果不是运行中，但尝试 cancel 也 OK（返回成功但提示 not running）
 			httpx.WriteJson(w, http.StatusOK, task.CancelResult{
-				Success: true, Reason: "not_running", Message: "task not running",
+				Success: false, Reason: "not_running", Message: "任务当前未在运行",
 			})
 			return
 		}
@@ -550,6 +560,20 @@ func HandleUpsertTask(deps TaskHandlerDeps, isUpdate bool) http.HandlerFunc {
 		}
 
 		t := req.toTask(existing)
+		if target := strings.TrimSpace(t.TargetPath); target != "" {
+			if !filepath.IsAbs(target) {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+					"error": "本地目标路径必须是绝对路径（如 /app/data/strm 或 D:\\strm）",
+				})
+				return
+			}
+			if info, statErr := os.Stat(target); statErr == nil && !info.IsDir() {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+					"error": "本地目标路径必须是目录，不能是文件",
+				})
+				return
+			}
+		}
 		if err := deps.TasksStore.UpsertTask(t); err != nil {
 			logger.S().Errorf("[UpsertTask] save %s: %v", t.ID, err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

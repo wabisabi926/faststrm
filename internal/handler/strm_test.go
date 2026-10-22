@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/model"
 )
 
@@ -22,7 +21,9 @@ func buildBaseStrmOptions(t *testing.T) StrmOptions {
 	valid := true
 	_ = accountStore.Upsert(&model.AccountInfo{Name: "acc1", AccountType: "115", Cookie: "UID=1", CookieValid: &valid})
 	return StrmOptions{
-		Cfg:          &config.AppConfig{Settings: &model.Settings{}},
+		Settings: func() *model.Settings {
+			return &model.Settings{}
+		},
 		Client115:    nil, // 参数校验路径用不到；如果被调用就会 panic（测试失败）
 		AccountStore: accountStore,
 	}

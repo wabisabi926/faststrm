@@ -17,7 +17,6 @@ type Settings struct {
 	InternalToken      string   `json:"internalToken"`
 	StrmExtensions     []string `json:"strmExtensions"`
 	DownloadExtensions []string `json:"downloadExtensions"`
-	MediaMountPath     []string `json:"mediaMountPath"`
 	StrmPrefix         string   `json:"strmPrefix"`
 	// EnablePathEncoding URL 参数编码开关（默认开启）：对 account / pickcode / file_name
 	// 等 URL 参数做百分号编码；关闭后原样写入（文件名含 # & ? 空格时会破坏 URL 解析）。
@@ -66,7 +65,7 @@ func (s *Settings) DownloadExtensionsProvided() bool {
 // 大库全量扫描时播放取直链会被饿死（表现为播放转圈、超时）。
 // 分桶后扫描与播放互不影响；GlobalCapQpm 作为多账号叠加时的风控兜底。
 //
-// 注意：本配置在服务启动时生效，修改后需重启（令牌桶会按新额度重建）。
+// 注意：保存设置后会按新额度重建令牌桶，无需重启服务。
 type RateLimitSettings struct {
 	// API115Qpm 扫描/目录/元数据等常规调用，每账号每分钟，默认 60
 	API115Qpm int `json:"api115Qpm"`
@@ -160,6 +159,7 @@ type DownloadSettings struct {
 
 	// 用于区分「字段缺失」与「显式关闭」。
 	autoDownloadMetadataSet bool
+	minFileSizeSet          bool
 }
 
 // UnmarshalJSON 记录 downloadExtensions / autoDownloadMetadata 是否出现在配置里。
@@ -175,12 +175,18 @@ func (d *DownloadSettings) UnmarshalJSON(data []byte) error {
 	}
 	*d = DownloadSettings(decoded)
 	_, d.autoDownloadMetadataSet = raw["autoDownloadMetadata"]
+	_, d.minFileSizeSet = raw["minFileSize"]
 	return nil
 }
 
 // AutoDownloadMetadataProvided 是否显式提供过 autoDownloadMetadata。
 func (d *DownloadSettings) AutoDownloadMetadataProvided() bool {
 	return d != nil && d.autoDownloadMetadataSet
+}
+
+// MinFileSizeProvided 是否显式提供过 minFileSize（支持局部更新不清零）。
+func (d *DownloadSettings) MinFileSizeProvided() bool {
+	return d != nil && d.minFileSizeSet
 }
 
 // StrmSettings strm 子项（STRM 路由策略）
@@ -305,6 +311,30 @@ type EmbySettings struct {
 	// ExternalPlayerEnabled 是否在 Web 详情页注入外部播放器起播按钮
 	// （PotPlayer / VLC / Infuse / MPV），默认 false
 	ExternalPlayerEnabled bool `json:"externalPlayerEnabled"`
+
+	syncDeleteDryRunSet bool
+}
+
+// UnmarshalJSON 记录 syncDeleteDryRun 是否出现在配置里，用于区分
+// 「字段缺失（迁移为安全默认）」和「用户显式关闭试运行」。
+func (e *EmbySettings) UnmarshalJSON(data []byte) error {
+	type plain EmbySettings
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*e = EmbySettings(decoded)
+	_, e.syncDeleteDryRunSet = raw["syncDeleteDryRun"]
+	return nil
+}
+
+// SyncDeleteDryRunProvided 是否显式提供过 syncDeleteDryRun。
+func (e *EmbySettings) SyncDeleteDryRunProvided() bool {
+	return e != nil && e.syncDeleteDryRunSet
 }
 
 // SyncDeletePathMapping 删除同步路径映射
@@ -421,11 +451,31 @@ type AppConfig struct {
 // DefaultUserAgent 115 API 默认 UA（iOS 115 客户端）
 const DefaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/116.0.5845.89 Mobile/15E148 Safari/604.1"
 
+// EffectiveUserAgent 返回运行时生效的 UA。
+// 配置显式留空表示「不写入自定义 UA」，请求时仍必须有 UA，因此兜底内置默认值。
+func (s *Settings) EffectiveUserAgent() string {
+	if s != nil {
+		if ua := strings.TrimSpace(s.UserAgent); ua != "" {
+			return ua
+		}
+	}
+	return DefaultUserAgent
+}
+
 // DefaultStrmExtensions STRM 扩展名默认值
 var DefaultStrmExtensions = []string{
 	"mp4", "mkv", "avi", "mov", "rmvb", "webm", "flv", "m3u8",
 	"mp3", "flac", "wav", "aac", "ogg", "m4a", "ts", "m2ts",
 	"iso",
+}
+
+// EffectiveStrmExtensions 返回运行时生效的 STRM 扩展名列表。
+// 配置显式留空表示「不写入自定义列表」，运行时按内置默认值兜底。
+func (s *Settings) EffectiveStrmExtensions() []string {
+	if s != nil && len(s.StrmExtensions) > 0 {
+		return s.StrmExtensions
+	}
+	return DefaultStrmExtensions
 }
 
 // DefaultDownloadExtensions 下载扩展名默认值
@@ -439,7 +489,6 @@ func DefaultSettings() *Settings {
 		UserAgent:          DefaultUserAgent,
 		StrmExtensions:     append([]string{}, DefaultStrmExtensions...),
 		DownloadExtensions: append([]string{}, DefaultDownloadExtensions...),
-		MediaMountPath:     []string{},
 		EnablePathEncoding: true, // URL 路径编码 —— 含特殊字符的路径不编码会挂
 		Download: DownloadSettings{
 			StrmMaxConcurrent:     intPtr(20), // STRM 写入并发数默认 20
@@ -475,9 +524,11 @@ func DefaultSettings() *Settings {
 			NotifyMediaRemoved:   true,
 			NotifyPlayback:       true,
 			PlaybackShowProgress: true,
-			RefreshOnCreate:      true,
-			RefreshOnDelete:      true,
-			DebounceSeconds:      10,
+			// 同步删除首次启用默认先试运行，避免一勾选就真删。
+			SyncDeleteDryRun: true,
+			RefreshOnCreate:  true,
+			RefreshOnDelete:  true,
+			DebounceSeconds:  10,
 		},
 		Telegram: TelegramSettings{
 			AccountAlerts: &AccountAlertsSettings{

@@ -100,8 +100,10 @@ type MissingStrm struct {
 	// {file_path}）；早期实现误把 RelPath 当源文件名，导致补建出的 STRM 里
 	// file_name 写成 "xxx.strm"，播放器拿不到真实容器扩展名。
 	CloudRelPath string `json:"cloudRelPath,omitempty"`
-	PickCode     string `json:"pickCode"`
-	Size         int64  `json:"size"`
+	// MediaExtension 源文件扩展名（无点、小写），供前端明细展示。
+	MediaExtension string `json:"mediaExtension,omitempty"`
+	PickCode       string `json:"pickCode"`
+	Size           int64  `json:"size"`
 }
 
 type MappingScanResult struct {
@@ -806,10 +808,11 @@ func scanMapping(ctx context.Context, m MappingScanRequest, deps StrmCleanupDeps
 			continue
 		}
 		result.MissingStrms = append(result.MissingStrms, MissingStrm{
-			RelPath:      strmRel,
-			CloudRelPath: it.RelPath,
-			PickCode:     it.PickCode,
-			Size:         it.Size,
+			RelPath:        strmRel,
+			CloudRelPath:   it.RelPath,
+			MediaExtension: strings.TrimPrefix(strings.ToLower(filepath.Ext(it.RelPath)), "."),
+			PickCode:       it.PickCode,
+			Size:           it.Size,
 		})
 	}
 

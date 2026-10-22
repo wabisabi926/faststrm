@@ -58,6 +58,37 @@ func TestLogout(t *testing.T) {
 	if !strings.Contains(body, "已退出登录") {
 		t.Fatalf("expected response to contain '已退出登录', got %s", body)
 	}
+
+	var tokenCookie *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "token" {
+			tokenCookie = c
+			break
+		}
+	}
+	if tokenCookie == nil {
+		t.Fatal("logout must expire the token cookie")
+	}
+	if tokenCookie.Value != "" {
+		t.Fatalf("logout cookie value = %q, want empty", tokenCookie.Value)
+	}
+	if tokenCookie.MaxAge != -1 {
+		t.Fatalf("logout cookie MaxAge = %d, want -1", tokenCookie.MaxAge)
+	}
+	if !tokenCookie.HttpOnly {
+		t.Fatal("logout cookie must remain HttpOnly")
+	}
+
+	t.Run("forwarded https marks cookie secure", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+		req.Header.Set("X-Forwarded-Proto", "https")
+		rec := httptest.NewRecorder()
+		Logout()(rec, req)
+		cookies := rec.Result().Cookies()
+		if len(cookies) == 0 || !cookies[0].Secure {
+			t.Fatal("expected Secure cookie behind https proxy")
+		}
+	})
 }
 
 // ==================== Login ====================

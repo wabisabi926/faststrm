@@ -29,7 +29,6 @@ export interface ConnectionSectionProps {
   settings: EmbySettings;
   loading: boolean;
   updateSetting: <K extends keyof EmbySettings>(key: K, value: EmbySettings[K]) => void;
-  onSave: () => void;
   onTest: () => void;
 }
 
@@ -37,13 +36,30 @@ export function ConnectionSection({
   settings,
   loading,
   updateSetting,
-  onSave,
   onTest,
 }: ConnectionSectionProps) {
   // ✅ 直接从 settings.proxyPort 派生，与后端数据实时同步
   const proxyEnabled = (settings.proxyPort ?? 0) > 0;
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+
+  const fallbackClientAddr = (() => {
+    try {
+      const parsed = new URL(settings.url || "");
+      return `http://${parsed.hostname}:${settings.proxyPort || 8097}`;
+    } catch {
+      return `http://你的Emby地址:${settings.proxyPort || 8097}`;
+    }
+  })();
+  const clientAddr = proxyStatus?.clientAddr || fallbackClientAddr;
+
+  const generateWebhookAuth = () => {
+    const token =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID().replace(/-/g, "")
+        : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    updateSetting("webhookAuth", token);
+  };
 
   const refreshProxyStatus = async () => {
     setStatusLoading(true);
@@ -101,16 +117,21 @@ export function ConnectionSection({
             <Label htmlFor="embyWebhookAuth">
               Webhook 鉴权密钥 <span className="text-xs text-muted-foreground">（Webhook 必填）</span>
             </Label>
-            <Input
-              id="embyWebhookAuth"
-              type="password"
-              placeholder="留空不校验；设置后 Webhook URL 自动带 ?auth=..."
-              value={settings.webhookAuth || ""}
-              onChange={(e) => updateSetting("webhookAuth", e.target.value)}
-              autoComplete="off"
-            />
+            <div className="flex gap-2">
+              <Input
+                id="embyWebhookAuth"
+                type="password"
+                placeholder="必填；未设置时 Emby Webhook 会被 401 拒绝"
+                value={settings.webhookAuth || ""}
+                onChange={(e) => updateSetting("webhookAuth", e.target.value)}
+                autoComplete="off"
+              />
+              <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={generateWebhookAuth}>
+                生成
+              </Button>
+            </div>
             <p className="text-xs text-muted-foreground">
-              现在必须配置：未设置密钥时 Emby Webhook 会被直接拒绝。Emby 侧请使用下方“Webhook 配置指引”里复制出的带 auth 参数 URL。
+              必填。未设置密钥时 Emby Webhook 会被直接拒绝；Emby 侧请使用下方「Webhook 配置指引」里复制出的带 auth 参数 URL。
             </p>
           </div>
         </div>
@@ -136,7 +157,8 @@ export function ConnectionSection({
             <span className="min-w-0 flex-1">
               <span className="text-sm font-medium">Emby 反向代理</span>
               <span className="block text-xs text-muted-foreground mt-0.5">
-                开启后 Emby 网页端播放 STRM 会重定向到网盘直链：禁转码、流量不走 NAS。Emby for Kodi Next Gen 直接读 STRM，无需开启
+                开启后 Emby 网页端播放 STRM 会禁转码：普通格式 302 直连网盘，ISO/BDMV 等原盘按需经 NAS 代理。
+                客户端必须连反代端口；Emby for Kodi Next Gen 直接读 STRM，无需开启。
               </span>
             </span>
           </label>
@@ -157,7 +179,7 @@ export function ConnectionSection({
                   <div>
                     <span className="font-medium">客户端必须连 </span>
                     <code className="bg-amber-500/15 px-1.5 py-0.5 rounded break-all font-mono text-xs">
-                      {`http://${settings.url?.replace(/^https?:\/\//, "")?.replace(/:\d+$/, "") || "你的Emby地址"}:${settings.proxyPort || 8097}`}
+                      {clientAddr}
                     </code>
                   </div>
                   <div className="text-muted-foreground">
@@ -234,7 +256,7 @@ export function ConnectionSection({
                           proxyStatus.forceProxyFormatsSource === "custom" ? "自定义" : "内置默认"
                         }）；其余格式 302`}
                     {proxyStatus.forceProxyUaTokens && proxyStatus.forceProxyUaTokens.length > 0
-                      ? ` · 强制代理客户端：${proxyStatus.forceProxyUaTokens.join(", ")}`
+                      ? ` · STRM 端点强制代理客户端：${proxyStatus.forceProxyUaTokens.join(", ")}`
                       : ""}
                   </div>
                 )}
@@ -242,7 +264,8 @@ export function ConnectionSection({
               {!proxyStatus?.running && (
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed">
                   <span className="font-medium">反代未运行：ISO/BDMV 原盘会失败，普通格式不受影响。</span>
-                  请检查端口是否被占用，处理后重启 FastStrm。
+                  {!settings.url && " 请先填写 Emby URL；"}
+                  请检查端口是否被占用，保存后仍失败请查看错误提示。
                 </div>
               )}
             </div>
@@ -250,9 +273,6 @@ export function ConnectionSection({
         </div>
 
         <div className="flex flex-col sm:flex-row flex-wrap gap-2">
-          <Button onClick={onSave} disabled={loading} className="w-full sm:w-auto">
-            {loading ? "保存中..." : "保存配置"}
-          </Button>
           <Button variant="outline" onClick={onTest} disabled={loading} className="w-full sm:w-auto">
             <RefreshCw className="h-4 w-4 mr-2" />
             测试连接

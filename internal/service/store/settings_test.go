@@ -263,6 +263,46 @@ func TestReadSettings_LegacyForceProxyFormatsMigrated(t *testing.T) {
 	}
 }
 
+func TestReadSettings_SyncDeleteDryRunDefaultsOnWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"emby":{"syncDeleteEnabled":false}}`)
+	got, err := NewSettingsStore("test_salt", dir).ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Emby.SyncDeleteDryRun {
+		t.Fatal("同步删除未启用且缺 dryRun 字段时，应默认开启试运行")
+	}
+
+	dir2 := t.TempDir()
+	writeSettings(t, dir2, `{"emby":{"syncDeleteEnabled":true,"syncDeleteDryRun":false}}`)
+	got2, err := NewSettingsStore("test_salt", dir2).ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.Emby.SyncDeleteDryRun {
+		t.Fatal("显式 syncDeleteDryRun=false 必须保留")
+	}
+}
+
+func TestReadSettings_ExplicitEmptyValuesKept(t *testing.T) {
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"user-agent":"","strmExtensions":[],"strm":{"forceProxyFormats":[]}}`)
+	got, err := NewSettingsStore("test_salt", dir).ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserAgent != "" {
+		t.Fatalf("explicit empty user-agent must stay empty, got %q", got.UserAgent)
+	}
+	if got.StrmExtensions == nil || len(got.StrmExtensions) != 0 {
+		t.Fatalf("explicit empty strmExtensions must stay empty, got %#v", got.StrmExtensions)
+	}
+	if got.Strm.ForceProxyFormats == nil || len(got.Strm.ForceProxyFormats) != 0 {
+		t.Fatalf("explicit empty forceProxyFormats must stay empty, got %#v", got.Strm.ForceProxyFormats)
+	}
+}
+
 func TestReadSettings_CustomForceProxyFormatsKept(t *testing.T) {
 	dir := t.TempDir()
 	writeSettings(t, dir, `{"strm":{"forceProxyFormats":["iso","m2ts"]}}`)

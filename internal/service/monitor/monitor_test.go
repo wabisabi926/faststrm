@@ -77,6 +77,11 @@ func TestResetConsecutiveFailures_ClearsBackoff(t *testing.T) {
 // 去重闸——它与 oncePoll 不清零共同保证「通知只发一次，直到验证成功」。
 func TestHandlePollError_CookieInvalidNotifyOnce(t *testing.T) {
 	m, fn := newAggTestMonitor()
+	m.SetAppSettingsFn(func() *model.Settings {
+		return &model.Settings{Telegram: model.TelegramSettings{
+			AccountAlerts: &model.AccountAlertsSettings{Enabled: true, OnError: true, OnRecover: true},
+		}}
+	})
 	authErr := errors.New("未登录") // 命中 isAuthError 的 "未登录" 模式
 
 	// 连续 3 次认证错误：第 3 次触发标记 + 发 1 条通知（阈值 consecutiveFailures>=3）

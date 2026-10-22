@@ -3,6 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import axiosInstance from "@/lib/axios";
 import {
   Dialog,
@@ -178,6 +179,9 @@ export function AddTaskDialog({
       onSuccess?.();
       setOpen(false);
       form.reset();
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { error?: string; message?: string } } };
+      toast.error(apiError.response?.data?.error || apiError.response?.data?.message || "保存任务失败");
     } finally {
       setLoading(false);
     }

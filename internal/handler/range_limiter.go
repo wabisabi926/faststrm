@@ -33,11 +33,14 @@ func (l *accountRangeLimiter) acquire(ctx context.Context, account string, limit
 	if limit > 8 {
 		limit = 8
 	}
+	// 池按「账号 + 上限」区分：用户改并发上限后新请求立即使用新容量，
+	// 旧池的在途请求自然退出后回收，避免容量只在首次请求时固化。
+	key := fmt.Sprintf("%s|%d", account, limit)
 	l.mu.Lock()
-	sem := l.accounts[account]
+	sem := l.accounts[key]
 	if sem == nil {
 		sem = make(chan struct{}, limit)
-		l.accounts[account] = sem
+		l.accounts[key] = sem
 	}
 	l.mu.Unlock()
 

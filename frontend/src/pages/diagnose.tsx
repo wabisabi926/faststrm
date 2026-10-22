@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Activity, ArrowLeft, Loader2, Play, ShieldCheck } from "lucide-react";
+import { Activity, ArrowLeft, Eraser, Loader2, Play, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -87,6 +88,19 @@ export default function DiagnosePage() {
   const [error, setError] = useState("");
   const [details, setDetails] = useState("");
   const [result, setResult] = useState<DiagnoseResult | null>(null);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  const clearDirectUrlCache = async () => {
+    setClearingCache(true);
+    try {
+      const response = await axiosInstance.post("/api/strm/cache/clear");
+      toast.success(`已清除 ${response.data?.cleared ?? 0} 条直链缓存`);
+    } catch {
+      toast.error("清除直链缓存失败");
+    } finally {
+      setClearingCache(false);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -152,12 +166,23 @@ export default function DiagnosePage() {
             检查 STRM 的实际路由、CDN 可达性与代理回退原因。
           </p>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/">
-            <ArrowLeft className="mr-1 h-4 w-4" />
-            返回概览
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void clearDirectUrlCache()}
+            disabled={clearingCache}
+          >
+            <Eraser className="mr-1 h-4 w-4" />
+            {clearingCache ? "清除中..." : "清除直链缓存"}
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/">
+              <ArrowLeft className="mr-1 h-4 w-4" />
+              返回概览
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

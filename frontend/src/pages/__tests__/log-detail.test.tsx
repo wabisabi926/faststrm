@@ -55,7 +55,7 @@ beforeEach(async () => {
 describe("DownloadProgressPage 历史日志加载", () => {
   it("数字 id 与字符串 executionId 匹配，走 logs 接口并解析日志", async () => {
     axiosGetMock.mockImplementation(async (url: string) => {
-      if (url === "/api/taskHistory") {
+      if (url === "/api/taskHistory?executionId=123") {
         return { data: { items: [{ id: 123, taskId: "task-1", status: "completed" }] } };
       }
       if (url === "/api/taskHistory/123/logs") {
@@ -84,7 +84,7 @@ describe("DownloadProgressPage 历史日志加载", () => {
   it("找不到 execution 时显示历史记录不存在", async () => {
     hoisted.executionId = "999";
     axiosGetMock.mockImplementation(async (url: string) => {
-      if (url === "/api/taskHistory") {
+      if (url === "/api/taskHistory?executionId=999") {
         return { data: { items: [] } };
       }
       if (url === "/api/taskHistory/999/logs") {

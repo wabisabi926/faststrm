@@ -2,7 +2,6 @@
 // 从 emby-notify.tsx 抽出，逻辑零变更。
 // 详见 v1.1.1 改进任务清单 T4。
 
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Bell } from "lucide-react";
@@ -10,16 +9,12 @@ import type { EmbySettings } from "./types";
 
 export interface NotifySettingsSectionProps {
   settings: EmbySettings;
-  loading: boolean;
   updateSetting: <K extends keyof EmbySettings>(key: K, value: EmbySettings[K]) => void;
-  onSave: () => void;
 }
 
 export function NotifySettingsSection({
   settings,
-  loading,
   updateSetting,
-  onSave,
 }: NotifySettingsSectionProps) {
   return (
     <section className="border rounded-md p-3 sm:p-5 space-y-5">
@@ -129,11 +124,6 @@ export function NotifySettingsSection({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onSave} disabled={loading}>
-            {loading ? "保存中..." : "保存设置"}
-          </Button>
-        </div>
       </div>
     </section>
   );

@@ -3,7 +3,9 @@
 // 详见 v1.1.1 改进任务清单 T4。
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Check, ChevronDown, Server, XCircle } from "lucide-react";
 import { LocalDirectoryTreeDialog } from "@/pages/task/components/LocalDirectoryTreeDialog";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
@@ -20,6 +22,8 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
 
   const {
     settings,
+    loaded,
+    telegram,
     loading,
     error,
     success,
@@ -100,6 +104,18 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
         </Alert>
       )}
 
+      {loaded && !telegram.configured && (
+        <Alert>
+          <Server className="h-4 w-4" />
+          <AlertDescription>
+            Emby 通知通过 Telegram 发送，但当前未配置 Telegram 机器人，通知会被静默丢弃。
+            <Link to="/notify?tab=telegram" className="ml-1 underline underline-offset-2">
+              去配置 Telegram
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {success && (
         <Alert>
           <Check className="h-4 w-4" />
@@ -119,16 +135,13 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
         settings={settings}
         loading={loading}
         updateSetting={updateSetting}
-        onSave={handleSave}
         onTest={testConnection}
       />
 
       {/* 通知设置 */}
       <NotifySettingsSection
         settings={settings}
-        loading={loading}
         updateSetting={updateSetting}
-        onSave={handleSave}
       />
 
       {/* 高级设置：刷库、Webhook 指引、删除同步 */}
@@ -156,23 +169,21 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
           <div className="space-y-4">
             <RefreshSettingsSection
               settings={settings}
-              loading={loading}
               updateSetting={updateSetting}
-              onSave={handleSave}
             />
 
             <WebhookInfoCard
               webhookUrl={webhookUrl}
+              authConfigured={Boolean(webhookAuth)}
+              telegramConfigured={telegram.configured}
               copied={webhookCopied}
               onCopy={copyWebhookUrl}
             />
 
             <SyncDeleteSection
               settings={settings}
-              loading={loading}
               accounts={accounts}
               updateSetting={updateSetting}
-              onSave={handleSave}
               newMappingEmbyPath={newMappingEmbyPath}
               newMappingCloudPath={newMappingCloudPath}
               newMappingAccount={newMappingAccount}
@@ -188,6 +199,17 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
               openCloudPickerForMapping={openCloudPickerForMapping}
             />
           </div>
+        )}
+      </div>
+
+      <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 border-t bg-background/95 px-1 py-3 backdrop-blur-sm">
+        <Button onClick={() => void handleSave()} disabled={!loaded || loading} className="w-full sm:w-auto">
+          {loading ? "保存中..." : "保存 Emby 设置"}
+        </Button>
+        {!loaded && (
+          <span className="text-xs text-muted-foreground">
+            设置尚未加载成功，保存已禁用，避免覆盖现有配置。
+          </span>
         )}
       </div>
 

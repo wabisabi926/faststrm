@@ -575,52 +575,86 @@ func GetAccountStatus(accountStore *store.AccountStore) http.HandlerFunc {
 			targets = accounts
 		}
 
-		results := make([]AccountStatusInfo, 0, len(targets))
 		now := time.Now().UnixMilli()
+		deepByAccount := make(map[string]map[string]any, len(targets))
+
+		// Deep check: 有界并发探测，避免账号多时串行 10s×N 超过前端超时。
+		if deepCheck {
+			type probeTarget struct {
+				name, accountType, cookie, url string
+			}
+			snapshots := make([]probeTarget, 0, len(targets))
+			for _, acc := range targets {
+				snapshots = append(snapshots, probeTarget{
+					name: acc.Name, accountType: acc.AccountType, cookie: acc.Cookie, url: acc.URL,
+				})
+			}
+			sem := make(chan struct{}, 3)
+			var mu sync.Mutex
+			var wg sync.WaitGroup
+			for _, t := range snapshots {
+				wg.Add(1)
+				go func(t probeTarget) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+
+					var result map[string]any
+					switch {
+					case t.accountType == "115" && t.cookie != "":
+						ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+						probeErr := client115.ProbeAccount(ctx, t.cookie)
+						cancel()
+						status := classifyProbeStatus(probeErr)
+						_ = accountStore.SetCookieStatus(t.name, status, client115.ErrnoOf(probeErr), model.CookieSourceProbe)
+						result = map[string]any{
+							"account":   t.name,
+							"type":      "115",
+							"valid":     status == model.CookieStatusValid,
+							"status":    status,
+							"missing":   []string{},
+							"error":     probeMessage(probeErr),
+							"checkedAt": now,
+						}
+					case t.accountType == "115":
+						result = map[string]any{
+							"account":   t.name,
+							"type":      "115",
+							"valid":     false,
+							"missing":   []string{"UID", "CID", "SEID", "KID"},
+							"error":     "Cookie 为空",
+							"checkedAt": now,
+						}
+					default:
+						result = map[string]any{
+							"account":   t.name,
+							"type":      t.accountType,
+							"valid":     t.url != "",
+							"checkedAt": now,
+						}
+					}
+					mu.Lock()
+					deepByAccount[t.name] = result
+					mu.Unlock()
+				}(t)
+			}
+			wg.Wait()
+			accountStore.Flush()
+		}
+
+		// 探测完成后再构建 results，确保返回的是探测后的最新状态。
+		results := make([]AccountStatusInfo, 0, len(targets))
 		for _, acc := range targets {
 			results = append(results, checkAccountStatusInfo(*acc))
 		}
-
-		// Deep check: 同步执行账号验证
 		var deepResults []map[string]any
 		if deepCheck {
 			deepResults = make([]map[string]any, 0, len(targets))
 			for _, acc := range targets {
-				if acc.AccountType == "115" && acc.Cookie != "" {
-					ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-					probeErr := client115.ProbeAccount(ctx, acc.Cookie)
-					cancel()
-					status := classifyProbeStatus(probeErr)
-					_ = accountStore.SetCookieStatus(acc.Name, status, client115.ErrnoOf(probeErr), model.CookieSourceProbe)
-					deepResults = append(deepResults, map[string]any{
-						"account":   acc.Name,
-						"type":      "115",
-						"valid":     status == model.CookieStatusValid,
-						"status":    status,
-						"missing":   []string{},
-						"error":     probeMessage(probeErr),
-						"checkedAt": now,
-					})
-				} else if acc.AccountType == "115" && acc.Cookie == "" {
-					deepResults = append(deepResults, map[string]any{
-						"account":   acc.Name,
-						"type":      "115",
-						"valid":     false,
-						"missing":   []string{"UID", "CID", "SEID", "KID"},
-						"error":     "Cookie 为空",
-						"checkedAt": now,
-					})
-				} else {
-					// openlist 等非 115 账号，配置有效即视为 ok
-					deepResults = append(deepResults, map[string]any{
-						"account":   acc.Name,
-						"type":      acc.AccountType,
-						"valid":     acc.URL != "",
-						"checkedAt": now,
-					})
+				if result, ok := deepByAccount[acc.Name]; ok {
+					deepResults = append(deepResults, result)
 				}
 			}
-			accountStore.Flush()
 		}
 
 		resp := map[string]any{

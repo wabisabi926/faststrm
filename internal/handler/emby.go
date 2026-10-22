@@ -28,10 +28,13 @@ import (
 // EmbyDeps Emby 相关 handler 依赖
 type EmbyDeps struct {
 	SettingsStore    *store.SettingsStore
+	AccountStore     *store.AccountStore
 	EmbyNotifier     *emby.Notifier
 	EmbyClient       *emby.Client
 	SyncDelete       *emby.SyncDelete
 	EmbyProxyManager *embyproxy.Manager
+	// OnSettingsSaved 设置保存后的运行时同步钩子（更新 UA 快照、刷新生活监控等）。
+	OnSettingsSaved func(*model.Settings)
 }
 
 // ==================== 辅助 ====================
@@ -62,6 +65,10 @@ func embyWebhookAuthorized(r *http.Request, expected string) bool {
 	provided := strings.TrimSpace(r.Header.Get("X-Webhook-Auth"))
 	if provided == "" {
 		provided = strings.TrimSpace(r.URL.Query().Get("auth"))
+	}
+	if provided == "" {
+		// 兼容旧 Wiki 的 ?token=xxx 配置，避免按旧文档配置的用户全部 401。
+		provided = strings.TrimSpace(r.URL.Query().Get("token"))
 	}
 	if provided == "" {
 		authz := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -344,6 +351,11 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			return
 		}
 
+		if patch.ProxyPort != nil && (*patch.ProxyPort < 0 || *patch.ProxyPort > 65535) {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "反代端口必须在 0-65535 之间"})
+			return
+		}
+
 		savedSettings, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
 			em := settings.Emby
 
@@ -424,6 +436,7 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 
 		// ============ EmbyProxy 热重启 ============
 		// ProxyPort 或 Emby.URL 变更时自动启停反代，无需重启主程序
+		proxyError := ""
 		if deps.EmbyProxyManager != nil {
 			mgr := deps.EmbyProxyManager
 			if em.ProxyPort > 0 && em.URL != "" {
@@ -439,6 +452,7 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 				// 强制代理格式热更新（空则回落内置默认值）
 				embyproxy.SetForceProxyFormats(savedSettings.Strm.ForceProxyFormats)
 				if err := mgr.Restart(host, em.ProxyPort, em.URL, forceProxyUaTokens); err != nil {
+					proxyError = err.Error()
 					logger.S().Warnf("[EmbyProxy] 热重启失败: %v", err)
 				} else {
 					logger.S().Infof("[EmbyProxy] 热重启完成: %s:%d → %s", host, em.ProxyPort, em.URL)
@@ -462,11 +476,16 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 		// 返回保存后的配置（apiKey 脱敏）
 		saved := em
 		saved.APIKey = maskAPIKey(em.APIKey)
-		httpx.OkJson(w, map[string]any{
+		resp := map[string]any{
 			"success": true,
 			"message": "Emby 通知设置已保存",
 			"saved":   saved,
-		})
+		}
+		if proxyError != "" {
+			resp["proxyError"] = proxyError
+			resp["message"] = "Emby 设置已保存，但反向代理启动失败：" + proxyError
+		}
+		httpx.OkJson(w, resp)
 	}
 }
 
@@ -667,54 +686,31 @@ type settingsPostBody struct {
 	UserAgent          *string  `json:"user-agent"`
 	StrmExtensions     []string `json:"strmExtensions"`
 	DownloadExtensions []string `json:"downloadExtensions"`
-	MediaMountPath     []string `json:"mediaMountPath"`
 	StrmPrefix         *string  `json:"strmPrefix"`
 	// EnablePathEncoding URL 参数编码开关（默认开启）；指针区分「未提供」与显式 false
 	EnablePathEncoding *bool                    `json:"enablePathEncoding"`
 	Download           *model.DownloadSettings  `json:"download"`
 	Strm               *model.StrmSettings      `json:"strm"`
-	Emby               *model.EmbySettings      `json:"emby"`
-	Telegram           *model.TelegramSettings  `json:"telegram"`
 	LifeMonitor        *LifeMonitorPatch        `json:"lifeMonitor"`
 	Cleanup            *cleanupPatch            `json:"cleanup"`
 	RateLimit          *model.RateLimitSettings `json:"rateLimit"`
 }
 
-// applyAgentAndExtensions 应用「留空 = 恢复内置默认值」的三个字段：
-// User-Agent / STRM 文件扩展名 / 附带下载的元数据扩展名。
+// applyAgentAndExtensions 写入用户提交的 UA 与扩展名列表。
 //
-// 为什么这三个可以「空即默认」：它们的空值都是无意义的非法配置——空 UA 会被 115 拒绝、
-// 空扩展名什么都不会生成、想不下载元数据有 autoDownloadMetadata 开关。
-//
-// 为什么必须在这里显式赋值（而不是只靠 SettingsStore 读取时的兜底）：Update 返回的是
-// 内存对象，若留空让读取层补默认，POST 响应里的 saved 仍是空数组，前端拿不到
-// 「恢复成了什么」，也就无法给出「已恢复默认 N 项」的提示。
-//
-// 注意：forceProxyUaTokens 不在此列——它的空值有语义（= 全部直连、关闭强制代理），
-// 回填默认值会让这个选择永久失效，见 store/settings.go 的同名注释。
+// 空值不再替换成默认值：输入框和 settings.json 都保持空，
+// 运行时分别由 EffectiveUserAgent / EffectiveStrmExtensions 兜底内置默认。
+// 附带下载扩展名的空值有独立语义（= 不下载），原样保留。
 func applyAgentAndExtensions(settings *model.Settings, body settingsPostBody) {
 	if body.UserAgent != nil {
-		ua := strings.TrimSpace(*body.UserAgent)
-		if ua == "" {
-			ua = model.DefaultUserAgent
-		}
-		settings.UserAgent = ua
+		settings.UserAgent = strings.TrimSpace(*body.UserAgent)
 	}
 	if body.StrmExtensions != nil {
-		settings.StrmExtensions = emptyMeansDefault(body.StrmExtensions, model.DefaultStrmExtensions)
+		settings.StrmExtensions = body.StrmExtensions
 	}
 	if body.DownloadExtensions != nil {
-		// 显式空数组 = 不下载任何附带文件；只有字段缺失才补默认。
 		settings.DownloadExtensions = body.DownloadExtensions
 	}
-}
-
-// emptyMeansDefault 空切片返回默认值的副本（拷贝一份，避免调用方后续修改污染全局默认值）。
-func emptyMeansDefault(v, def []string) []string {
-	if len(v) == 0 {
-		return append([]string{}, def...)
-	}
-	return v
 }
 
 // containsAsterisk 判定是否是脱敏值（含 *）
@@ -723,7 +719,6 @@ func containsAsterisk(s string) bool { return strings.Contains(s, "*") }
 // HandleSettingsPOST POST /api/settings 接受 React SPA 的嵌套 JSON 提交
 // 前端通过 saveData 发送完整设置（含 strm/lifeMonitor/download/emby/telegram 嵌套对象）
 // 后端解码后与现有设置合并：字符串非空才覆盖、数组直接覆盖、敏感字段脱敏值跳过
-// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
 func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // complexity: 69
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body settingsPostBody
@@ -737,13 +732,13 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 			return
 		}
 
+		var badRequestMsg string
 		savedSettings, err := deps.SettingsStore.Update(func(settings *model.Settings) error {
 			// ====== 通用字段（指针区分“未提供”和显式清空） ======
 			applyAgentAndExtensions(settings, body)
 			if body.StrmPrefix != nil {
 				settings.StrmPrefix = strings.TrimSpace(*body.StrmPrefix)
 			}
-			// mediaMountPath 由 SSOT 自动管理，不从保存请求覆盖
 
 			// ====== 布尔/数值字段（前端总是发送全量，直接覆盖） ======
 			// URL 参数编码开关（默认 true）：关闭后 file_name 等参数原样写入 URL
@@ -785,7 +780,7 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				settings.Cleanup = c
 			}
 
-			// ====== 115 API 限流（服务启动时生效，保存后需重启） ======
+			// ====== 115 API 限流（保存后按新额度重建令牌桶） ======
 			if body.RateLimit != nil {
 				settings.RateLimit = *body.RateLimit
 			}
@@ -799,8 +794,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 					settings.Download.StrmMaxConcurrent = body.Download.StrmMaxConcurrent
 				}
 				// 扩展名列表是唯一开关；autoDownloadMetadata 由它派生，兼容旧逻辑。
-				// 全局文件过滤：最小文件大小阈值（字节），前端始终发送全量值，直接覆盖
-				settings.Download.MinFileSize = body.Download.MinFileSize
+				// 全局文件过滤：最小文件大小阈值（字节）；未提供时保留旧值，支持局部更新。
+				if body.Download.MinFileSizeProvided() {
+					settings.Download.MinFileSize = body.Download.MinFileSize
+				}
 				// 全局文件过滤：文件名黑名单（nil 表示未提供，保留旧值；空数组表示用户主动清空）
 				if body.Download.StrmGenerateBlacklist != nil {
 					settings.Download.StrmGenerateBlacklist = body.Download.StrmGenerateBlacklist
@@ -853,56 +850,8 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				}
 			}
 
-			// ====== Emby 嵌套对象 ======
-			if body.Emby != nil {
-				em := settings.Emby
-				if body.Emby.URL != "" {
-					em.URL = strings.TrimSpace(body.Emby.URL)
-				}
-				if body.Emby.APIKey != "" && !containsAsterisk(body.Emby.APIKey) {
-					em.APIKey = strings.TrimSpace(body.Emby.APIKey)
-				}
-				if body.Emby.WebhookAuth != "" && !containsAsterisk(body.Emby.WebhookAuth) {
-					em.WebhookAuth = strings.TrimSpace(body.Emby.WebhookAuth)
-				}
-				if body.Emby.LibraryID != "" {
-					em.LibraryID = strings.TrimSpace(body.Emby.LibraryID)
-				}
-				em.NotifyMediaAdded = body.Emby.NotifyMediaAdded
-				em.NotifyMediaRemoved = body.Emby.NotifyMediaRemoved
-				em.NotifyPlayback = body.Emby.NotifyPlayback
-				em.PlaybackShowProgress = body.Emby.PlaybackShowProgress
-				em.PlaybackShowOverview = body.Emby.PlaybackShowOverview
-				em.SyncDeleteEnabled = body.Emby.SyncDeleteEnabled
-				em.SyncDeleteDryRun = body.Emby.SyncDeleteDryRun
-				if body.Emby.SyncDeletePathMappings != nil {
-					em.SyncDeletePathMappings = sanitizeSyncDeleteMappings(body.Emby.SyncDeletePathMappings)
-				}
-				settings.Emby = em
-			}
-
-			// ====== Telegram 嵌套对象 ======
-			if body.Telegram != nil {
-				tg := settings.Telegram
-				if body.Telegram.BotToken != "" && !containsAsterisk(body.Telegram.BotToken) {
-					tg.BotToken = strings.TrimSpace(body.Telegram.BotToken)
-				}
-				if body.Telegram.ChatID != "" {
-					tg.ChatID = strings.TrimSpace(body.Telegram.ChatID)
-				}
-				if body.Telegram.WebhookURL != "" {
-					tg.WebhookURL = strings.TrimSpace(body.Telegram.WebhookURL)
-				}
-				tg.Enabled = body.Telegram.Enabled
-				tg.AutoPolling = body.Telegram.AutoPolling
-				if body.Telegram.AllowedUsers != nil {
-					tg.AllowedUsers = body.Telegram.AllowedUsers
-				}
-				if body.Telegram.AccountAlerts != nil {
-					tg.AccountAlerts = body.Telegram.AccountAlerts
-				}
-				settings.Telegram = tg
-			}
+			// Emby / Telegram 有各自专用接口，通用设置保存不得覆盖它们，
+			// 否则清理页/设置页的旧快照会把通知配置回滚。
 
 			// ====== LifeMonitor 嵌套对象 ======
 			if body.LifeMonitor != nil {
@@ -964,6 +913,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				if body.LifeMonitor.NotifyOnlyOnError != nil {
 					lm.NotifyOnlyOnError = *body.LifeMonitor.NotifyOnlyOnError
 				}
+				if msg := validateLifeMonitorAccounts(lm, deps.AccountStore); msg != "" {
+					badRequestMsg = msg
+					return fmt.Errorf("%s", msg)
+				}
 				settings.LifeMonitor = lm
 			}
 
@@ -971,6 +924,10 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 		})
 		if err != nil {
 			logger.S().Errorf("[settings POST] update: %v", err)
+			if badRequestMsg != "" {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": badRequestMsg})
+				return
+			}
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存失败"})
 			return
 		}
@@ -980,6 +937,9 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 		// 按格式强制代理：格式列表 + 两层统一开关，保存即生效
 		embyproxy.SetForceProxyFormats(savedSettings.Strm.ForceProxyFormats)
 		embyproxy.SetSeekFormatProxyEnabled(!savedSettings.Strm.DisableSeekFormatProxy)
+		if deps.OnSettingsSaved != nil {
+			deps.OnSettingsSaved(savedSettings)
+		}
 
 		// 返回保存后的聚合（脱敏）供前端对比
 		saved := *savedSettings

@@ -42,12 +42,10 @@ func HandleStrmDiagnose(opts StrmOptions) http.HandlerFunc {
 			return
 		}
 
+		settings := opts.currentSettings()
 		ua := strings.TrimSpace(q.Get("ua"))
 		if ua == "" {
-			ua = opts.Cfg.Settings.UserAgent
-		}
-		if ua == "" {
-			ua = "Mozilla/5.0"
+			ua = settings.EffectiveUserAgent()
 		}
 
 		meta, err := strm.ResolveDownloadUrl(r.Context(), opts.Client115, pickcode, accountName, account.Cookie, ua)
@@ -59,7 +57,7 @@ func HandleStrmDiagnose(opts StrmOptions) http.HandlerFunc {
 			return
 		}
 
-		routeCfg := strm.StrmRouteConfig(opts.Cfg)
+		routeCfg := strm.StrmRouteConfig(settings)
 		privateNetwork := strm.IsPrivateNetworkIp(strm.GetClientIp(r))
 		explicitMode := ""
 		if privateNetwork {
@@ -91,8 +89,8 @@ func HandleStrmDiagnose(opts StrmOptions) http.HandlerFunc {
 		// 原盘/seek 格式与分片参数：排查「为什么走了 302 / 为什么没走分片」的关键
 		seekFormat := strm.IsSeekFormatName(finalName, routeCfg.ForceProxySeekFormats)
 		rangeProxy := "off"
-		if !opts.Cfg.Settings.Strm.DisableRangeProxy {
-			rangeProxy = fmt.Sprintf("%dMBx%d", opts.Cfg.Settings.Strm.ProxyChunkSizeMB, opts.Cfg.Settings.Strm.ProxyConcurrency)
+		if !settings.Strm.DisableRangeProxy {
+			rangeProxy = fmt.Sprintf("%dMBx%d", settings.Strm.ProxyChunkSizeMB, settings.Strm.ProxyConcurrency)
 		}
 
 		httpx.OkJson(w, map[string]any{

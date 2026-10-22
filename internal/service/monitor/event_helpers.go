@@ -25,24 +25,35 @@ import (
 // matchPathMapping 为云端路径匹配最佳路径映射
 // 对齐 TS matchPathMapping
 func matchPathMapping(cloudPath string, mappings []model.MonitorPathMapping, account string) *pathMapping {
-	// 过滤账号并按 cloudPath 长度降序排序（最长匹配优先）
-	var candidates []model.MonitorPathMapping
+	normalizedCloud := normalizeCloudPath(cloudPath)
+	if normalizedCloud == "" {
+		return nil
+	}
+	// 过滤账号并按规范化后的 cloudPath 长度降序排序（最长匹配优先）。
+	// 配置里可能写成 "/电影" 或 "电影"，事件路径统一无前导斜杠，两侧都必须 normalize。
+	type candidate struct {
+		mapping model.MonitorPathMapping
+		prefix  string
+	}
+	candidates := make([]candidate, 0, len(mappings))
 	for _, mp := range mappings {
-		if mp.Account != "" && mp.Account != account {
+		mappedAccount := strings.TrimSpace(mp.Account)
+		if mappedAccount != "" && mappedAccount != account {
 			continue
 		}
-		candidates = append(candidates, mp)
+		prefix := normalizeCloudPath(mp.CloudPath)
+		if prefix == "" {
+			continue
+		}
+		candidates = append(candidates, candidate{mapping: mp, prefix: prefix})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		return len(strings.TrimRight(candidates[i].CloudPath, "/")) >
-			len(strings.TrimRight(candidates[j].CloudPath, "/"))
+		return len(candidates[i].prefix) > len(candidates[j].prefix)
 	})
-	for _, mp := range candidates {
-		key := strings.TrimRight(mp.CloudPath, "/")
-		normalizedKey := key + "/"
-
+	for _, c := range candidates {
+		mp := c.mapping
 		// 精确匹配
-		if cloudPath == mp.CloudPath || cloudPath == key {
+		if normalizedCloud == c.prefix {
 			return &pathMapping{
 				cloudPath:    mp.CloudPath,
 				localPath:    mp.LocalPath,
@@ -50,8 +61,8 @@ func matchPathMapping(cloudPath string, mappings []model.MonitorPathMapping, acc
 			}
 		}
 		// 前缀匹配
-		if strings.HasPrefix(cloudPath, normalizedKey) {
-			relativePath := cloudPath[len(normalizedKey):]
+		if strings.HasPrefix(normalizedCloud, c.prefix+"/") {
+			relativePath := normalizedCloud[len(c.prefix)+1:]
 			localPath := filepath.Join(mp.LocalPath, sanitizePathParts(relativePath))
 			return &pathMapping{
 				cloudPath:    mp.CloudPath,

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/skip2/go-qrcode"
@@ -104,8 +105,10 @@ type QrCodeStatusResp struct {
 
 // Client 115 API HTTP 客户端
 type Client struct {
-	HTTP      *http.Client
+	HTTP *http.Client
+	// UserAgent 保护下的当前 UA；业务代码请用 UA()/SetUserAgent()。
 	UserAgent string
+	uaMu      sync.RWMutex
 	// DefaultLimiter 该客户端发起请求时的默认限流用途。
 	// 零值等价于 rate.TypeAPI115（扫描/目录类）。
 	// 生活事件客户端会设置为 rate.TypeLife，使其与扫描互不抢占配额。
@@ -123,6 +126,33 @@ func NewClient(userAgent string) *Client {
 		},
 		UserAgent: userAgent,
 	}
+}
+
+// SetUserAgent 热更新客户端 UA（设置保存后调用，避免必须重启）。
+func (c *Client) SetUserAgent(ua string) {
+	if c == nil {
+		return
+	}
+	ua = strings.TrimSpace(ua)
+	if ua == "" {
+		ua = DefaultUA
+	}
+	c.uaMu.Lock()
+	c.UserAgent = ua
+	c.uaMu.Unlock()
+}
+
+// UA 返回当前 UA（并发安全）。
+func (c *Client) UA() string {
+	if c == nil {
+		return DefaultUA
+	}
+	c.uaMu.RLock()
+	defer c.uaMu.RUnlock()
+	if c.UserAgent == "" {
+		return DefaultUA
+	}
+	return c.UserAgent
 }
 
 // ==================== 扫码登录三阶段 ====================
@@ -261,7 +291,7 @@ func (c *Client) GetQrcodeResult(uid, clientType string) (string, error) {
 	if specialUA != "" {
 		req.Header.Set("User-Agent", specialUA)
 	} else {
-		req.Header.Set("User-Agent", c.UserAgent)
+		req.Header.Set("User-Agent", c.UA())
 	}
 
 	// 不跟随重定向，保留 Set-Cookie
@@ -383,7 +413,7 @@ func (c *Client) httpGet(urlStr string, headers map[string]string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", c.UserAgent)
+	req.Header.Set("User-Agent", c.UA())
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

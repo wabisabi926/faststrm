@@ -212,12 +212,14 @@ func HandleNotifyBotGET(deps NotifyDeps) http.HandlerFunc {
 
 // NotifyBotRequest POST /api/notify/bot 配置机器人请求
 type NotifyBotRequest struct {
-	BotToken    string `json:"botToken"`
-	ChatID      string `json:"chatId"`
-	WebhookURL  string `json:"webhookUrl"`
-	ProxyURL    string `json:"proxyUrl"`
-	Enabled     *bool  `json:"enabled"`
-	AutoPolling *bool  `json:"autoPolling"`
+	BotToken   string `json:"botToken"`
+	ChatID     string `json:"chatId"`
+	WebhookURL string `json:"webhookUrl"`
+	ProxyURL   string `json:"proxyUrl"`
+	// ClearProxy 显式清空代理（空字符串本身无法区分“未提供”和“清空”）
+	ClearProxy  bool  `json:"clearProxy,omitempty"`
+	Enabled     *bool `json:"enabled"`
+	AutoPolling *bool `json:"autoPolling"`
 	// WebhookSecretToken webhook 密钥：空串=保持不变；"-"=清除；其他=设置新值
 	WebhookSecretToken string `json:"webhookSecretToken,omitempty"`
 }
@@ -263,10 +265,10 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 
 		// 回退 2：如果本次前端因缓存/老版本根本没传 ProxyURL，但旧 settings 里已经有代理，
 		// 用户只改 ChatID/勾选 自动轮询 时，若探测不带代理必然失败（国内直连 404/重置）。
-		// 规则：req.ProxyURL 为空 且 old.ProxyURL 非空 → 复用旧 ProxyURL 用于探测。
-		// （用户显式想清空代理：前端要传空字符串目前与"没传"无法区分，暂时保持"没传=沿用旧代理"语义，
-		//  如需真清空代理，后续可新增 clearProxy bool 字段。）
-		if req.ProxyURL == "" && old.ProxyURL != "" {
+		// clearProxy=true 时不再复用旧代理，实现真正的清空。
+		if req.ClearProxy {
+			req.ProxyURL = ""
+		} else if req.ProxyURL == "" && old.ProxyURL != "" {
 			req.ProxyURL = old.ProxyURL
 		}
 
@@ -327,6 +329,17 @@ func HandleNotifyBotPOST(deps NotifyDeps) http.HandlerFunc {
 		// 若未提供 chatId，沿用旧值
 		if newTg.ChatID == "" {
 			newTg.ChatID = old.ChatID
+		}
+		// Webhook 与自动轮询只能二选一：配置了 Webhook 就关闭 AutoPolling，
+		// 否则重启时会被开机轮询逻辑删掉 Webhook。
+		if strings.TrimSpace(newTg.WebhookURL) != "" {
+			if strings.TrimSpace(newTg.WebhookSecretToken) == "" {
+				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
+					"error": "Webhook 模式必须配置 Webhook 密钥",
+				})
+				return
+			}
+			newTg.AutoPolling = false
 		}
 		// 用 Update 重新读取当前配置后合并，避免覆盖并发修改的 allowedUsers/alerts
 		if _, err := deps.SettingsStore.Update(func(current *model.Settings) error {
@@ -438,8 +451,14 @@ func HandleNotifyBotDELETE(deps NotifyDeps) http.HandlerFunc {
 			}
 		}
 
-		// 重置共享轮询管理器
+		// 停止所有轮询并关闭通知，避免删除后仍用旧 token 长轮询/推送。
+		if deps.PollingManager != nil {
+			deps.PollingManager.Stop()
+		}
 		resetSharedPolling()
+		if deps.Dispatcher != nil {
+			deps.Dispatcher.ApplySettings(model.TelegramSettings{})
+		}
 		// 保留 allowedUsers / accountAlerts 子配置，仅清空 bot 本体相关字段
 		if _, err := deps.SettingsStore.Update(func(current *model.Settings) error {
 			tgNow := current.Telegram
@@ -685,6 +704,10 @@ func HandleNotifySend(deps NotifyDeps) http.HandlerFunc {
 		}
 		if deps.Dispatcher == nil {
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "Dispatcher 未初始化"})
+			return
+		}
+		if !deps.Dispatcher.IsConfigured() {
+			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "Telegram 未启用或未配置完整，无法发送测试通知"})
 			return
 		}
 

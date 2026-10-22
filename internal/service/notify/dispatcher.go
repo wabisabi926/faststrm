@@ -17,7 +17,6 @@ import (
 
 type Dispatcher struct {
 	tg       *TelegramBot
-	webhook  *WebhookSender
 	enabled  bool
 	botToken string
 	chatID   string
@@ -121,14 +120,9 @@ func (d *Dispatcher) SetEnabled(enabled bool) {
 	d.enabled = enabled
 }
 
-func (d *Dispatcher) SetWebhook(url string) {
-	d.webhook = NewWebhookSender(url)
-}
-
 // ApplySettings 热更新 Telegram 配置（通过 Web UI 保存配置后调用，避免重启服务）
-// 1) 更新内部 TelegramBot 的 Token/ChatID/代理（如果代理变更则重建 Bot）
-// 2) 同步 enabled / webhook / dispatcher 内部缓存字段
-// 3) 如果启用了 WebhookURL，创建 WebhookSender；否则清空
+// 更新内部 TelegramBot 的 Token/ChatID/代理，并同步 enabled 缓存。
+// 注意：WebhookURL 是 Telegram 回调本服务的地址，不是出站通知通道。
 func (d *Dispatcher) ApplySettings(tg model.TelegramSettings) {
 	// 如果代理配置变更，需要重建 Bot
 	if d.tg == nil && tg.BotToken != "" {
@@ -150,15 +144,15 @@ func (d *Dispatcher) ApplySettings(tg model.TelegramSettings) {
 	d.botToken = tg.BotToken
 	d.chatID = tg.ChatID
 	d.enabled = tg.Enabled && tg.BotToken != "" && tg.ChatID != ""
-	if tg.WebhookURL != "" {
-		d.webhook = NewWebhookSender(tg.WebhookURL)
-	} else {
-		d.webhook = nil
-	}
 }
 
 func (d *Dispatcher) isConfigured() bool {
 	return d.tg != nil && d.enabled && d.botToken != "" && d.chatID != ""
+}
+
+// IsConfigured 暴露当前是否具备发送条件，供 HTTP 层返回真实失败。
+func (d *Dispatcher) IsConfigured() bool {
+	return d != nil && d.isConfigured()
 }
 
 func (d *Dispatcher) Notify(ctx context.Context, message string) error {
@@ -206,7 +200,6 @@ func (d *Dispatcher) sendTG(ctx context.Context, content string) {
 // dispatchTextDirect 直接发送纯文本（绕过队列，用于队列满时降级）
 func (d *Dispatcher) dispatchTextDirect(ctx context.Context, message string) {
 	d.sendTG(ctx, message)
-	d.sendWebhookText(ctx, message)
 }
 
 // dispatchPhotoDirect 直接发送图片（绕过队列，用于队列满时降级）
@@ -241,12 +234,10 @@ func (d *Dispatcher) dispatchPhotoDirect(ctx context.Context, caption, photo str
 		if err := d.tg.SendPhotoFromFile(ctx, d.chatID, caption, finalPath); err != nil {
 			// 严格对齐 QMS handlers.go L104-107：SendPhoto 失败不再发纯文本兜底，直接记录错误返回
 			d.tgGuard.onFailure(err)
-			d.sendWebhookText(ctx, caption)
 			return
 		}
 		d.tgGuard.onSuccess()
 	}
-	d.sendWebhookText(ctx, caption)
 }
 
 // isLocalFilePath 判断字符串是否是本地文件路径（而非 http(s):// URL 或其他 scheme）
@@ -379,7 +370,6 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 			p, err := downloadImageToTemp(ctx, n.ImageURL)
 			if err != nil {
 				logger.S().Warnf("Dispatch photo: 下载图片失败，降级纯文本: %v", err)
-				d.sendWebhookNotification(ctx, n)
 				d.sendTG(ctx, n.Content)
 				return
 			}
@@ -396,7 +386,6 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 				d.tgGuard.onSuccess()
 			}
 		}
-		d.sendWebhookNotification(ctx, n)
 		return
 	}
 
@@ -404,35 +393,13 @@ func (d *Dispatcher) dispatchRawDirect(ctx context.Context, n *Notification) {
 	if len(buttons) > 0 {
 		if err := d.tg.SendMessageWithButtons(ctx, d.chatID, n.Content, buttons); err != nil {
 			logger.S().Warnf("Dispatch with buttons failed, fallback to text: %v", err)
-			d.sendWebhookNotification(ctx, n)
 			d.sendTG(ctx, n.Content)
 			return
 		}
-		d.sendWebhookNotification(ctx, n)
 		return
 	}
 
-	d.sendWebhookNotification(ctx, n)
 	d.sendTG(ctx, n.Content)
-}
-
-func (d *Dispatcher) sendWebhookText(ctx context.Context, message string) {
-	if d.webhook == nil {
-		logger.S().Debug("Webhook not configured, skipping webhook notification")
-		return
-	}
-	if err := d.webhook.Send(ctx, message); err != nil {
-		logger.S().Warnf("Webhook notification failed (non-critical): %v", err)
-	}
-}
-
-func (d *Dispatcher) sendWebhookNotification(ctx context.Context, n *Notification) {
-	if d.webhook == nil {
-		return
-	}
-	if err := d.webhook.SendNotification(ctx, n); err != nil {
-		logger.S().Warnf("Webhook notification failed (non-critical): %v", err)
-	}
 }
 
 func (d *Dispatcher) buildInlineKeyboard(n *Notification) [][]InlineKeyboardButton {

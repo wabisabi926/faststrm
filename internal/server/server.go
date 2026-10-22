@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -62,6 +63,15 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 		return fmt.Errorf("init account store: %w", err)
 	}
 	settingsStore := store.NewSettingsStore(cfg.Salt, cfg.Paths.ConfigDir)
+	// 运行时设置快照：设置保存后由 OnSettingsSaved 原子替换，
+	// 让 STRM 播放/诊断不必重启即可读到最新 UA、代理与分片参数。
+	var runtimeSettings atomic.Pointer[model.Settings]
+	settingsFn := func() *model.Settings {
+		if s := runtimeSettings.Load(); s != nil {
+			return s
+		}
+		return model.DefaultSettings()
+	}
 	tasksStore := store.NewTasksStore(cfg.Paths.ConfigDir)
 	strmCacheStore := store.NewStrmCacheStore(cfg.Paths.ConfigDir)
 	stateMgr := runtime.Init(cfg.Paths.ConfigDir)
@@ -122,7 +132,12 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	}
 	var embyClient *emby.Client
 	initSettings, _ := settingsStore.ReadSettings()
-	if initSettings != nil && initSettings.Emby.URL != "" && initSettings.Emby.APIKey != "" {
+	if initSettings == nil {
+		initSettings = model.DefaultSettings()
+	}
+	runtimeSettings.Store(initSettings)
+	client.SetUserAgent(initSettings.EffectiveUserAgent())
+	if initSettings.Emby.URL != "" && initSettings.Emby.APIKey != "" {
 		embyClient = emby.NewClient(initSettings.Emby.URL, initSettings.Emby.APIKey)
 	}
 	// 限流参数装配：按「账号 × 用途」分桶，扫描与播放互不抢占配额。
@@ -223,7 +238,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// 自身 /api/strm 在进程内执行，避免 Emby 反代通过域名/NAT 再请求自己。
 	// 外部 STRM / 自定义模板仍走 Proxy 内部的 HTTP fallback。
 	embyProxyManager.SetInternalStrmHandler(handler.HandleStrm(handler.StrmOptions{
-		Cfg: cfg, Client115: client, AccountStore: accountStore,
+		Settings: settingsFn, Client115: client, AccountStore: accountStore,
 	}))
 
 	notifyDeps, embyDeps, lifeMonitorDeps, mon := initPhase6Deps(
@@ -239,6 +254,18 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// 2) 注入到调度器内部 deps（调度器内部持有参数副本的指针）
 	scheduler.SetNotifier(notifyDeps.Dispatcher)
 
+	// 设置保存后的运行时同步：替换 STRM 快照、热更新 115 UA、刷新生活监控配置。
+	embyDeps.OnSettingsSaved = func(saved *model.Settings) {
+		if saved == nil {
+			return
+		}
+		runtimeSettings.Store(saved)
+		client.SetUserAgent(saved.EffectiveUserAgent())
+		if mon != nil {
+			mon.Refresh()
+		}
+	}
+
 	// 延迟注入 TelegramBot 到 cleanupInteraction（在 initPhase6Deps 创建 notifyDeps.TelegramBot 之后）
 	if cleanupInteraction != nil && notifyDeps.TelegramBot != nil {
 		cleanupInteraction.SetBot(notifyDeps.TelegramBot)
@@ -246,7 +273,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	}
 
 	// 注册路由
-	RegisterRoutes(server, cfg, issuer, client, accountStore, settingsStore, tasksStore, strmCacheStore,
+	RegisterRoutes(server, settingsFn, issuer, client, accountStore, settingsStore, tasksStore, strmCacheStore,
 		taskHistoryRepo, taskRuntime, scheduler, execDeps,
 		notifyDeps, embyDeps, lifeMonitorDeps, cleanupInteraction)
 
@@ -260,7 +287,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	}
 
 	// 账号 Cookie 主动巡检（默认每 6 小时一次，可在 settings.cookieInspect 关闭/调整）
-	go startAccountInspector(context.Background(), settingsStore, accountStore)
+	go startAccountInspector(context.Background(), settingsStore, accountStore, notifyDeps.Dispatcher)
 
 	// ==================== Telegram 开机自动轮询（AutoPolling） ====================
 	if initSettings != nil {
@@ -270,11 +297,12 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 			// 网络拨号会拖住主流程，导致 server.Run 迟迟不执行 server.Start()，
 			// 最终 http://localhost:8090 打不开。异步化后 Web 服务立即可用。
 			tg := initSettings.Telegram
+			if tg.Enabled && tg.BotToken != "" && notifyDeps.TelegramBot != nil && tg.WebhookURL != "" {
+				// 用户显式配置了 Webhook：重启后不能把它删掉改回轮询。
+				logger.S().Infof("[Telegram] 已配置 Webhook，跳过开机自动轮询")
+				return
+			}
 			if tg.Enabled && tg.AutoPolling && tg.BotToken != "" && notifyDeps.TelegramBot != nil {
-				// Webhook 与轮询互斥：有 webhook 配置但也开了 AutoPolling 时，优先按用户勾选走轮询
-				if tg.WebhookURL != "" {
-					logger.S().Infof("[Telegram] AutoPolling 已启用，忽略 WebhookURL 配置")
-				}
 				// 1) 确保删除 webhook（轮询与 webhook 互斥）
 				delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				if err := notifyDeps.TelegramBot.DeleteWebhook(delCtx); err != nil {

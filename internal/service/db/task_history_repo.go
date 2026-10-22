@@ -228,11 +228,12 @@ func (r *TaskHistoryRepo) TrimExecutions(ctx context.Context, keep int) error {
 
 // List 按 taskId / account / status / time 分页查询
 type TaskHistoryQuery struct {
-	TaskID   string
-	Account  string
-	Status   string
-	BeforeMs int64 // < BeforeMs
-	Limit    int
+	ExecutionID int64
+	TaskID      string
+	Account     string
+	Status      string
+	BeforeMs    int64 // < BeforeMs
+	Limit       int
 }
 
 // Query 查询执行历史
@@ -242,6 +243,10 @@ func (r *TaskHistoryRepo) Query(ctx context.Context, q TaskHistoryQuery) ([]Task
 	}
 	where := []string{"1=1"}
 	args := []any{}
+	if q.ExecutionID > 0 {
+		where = append(where, "id = ?")
+		args = append(args, q.ExecutionID)
+	}
 	if q.TaskID != "" {
 		where = append(where, "task_id = ?")
 		args = append(args, q.TaskID)

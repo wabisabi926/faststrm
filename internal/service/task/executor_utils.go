@@ -539,12 +539,13 @@ func runDownloads(
 					return nil
 				}
 			}
-			meta, err := c115.GetDownloadUrlWebFull(ctx, f.PickCode, cookie, c115.UserAgent)
+			ua := c115.UA()
+			meta, err := c115.GetDownloadUrlWebFull(ctx, f.PickCode, cookie, ua)
 			if err != nil {
 				sseServer.EmitLog(taskID, "error", fmt.Sprintf("resolve dl url %s: %v", f.RelPath, err))
 				return nil
 			}
-			if err := downloadFileWithProgress(ctx, meta.URL, savePath, taskID, f, cookie, c115.UserAgent,
+			if err := downloadFileWithProgress(ctx, meta.URL, savePath, taskID, f, cookie, ua,
 				perFile, rt, sseServer, downloaded, total); err != nil {
 				sseServer.EmitLog(taskID, "error", fmt.Sprintf("download %s: %v", f.RelPath, err))
 			}

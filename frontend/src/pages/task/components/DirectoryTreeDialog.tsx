@@ -196,11 +196,10 @@ export function DirectoryTreeDialog({
               if (node.isDir) {
                 toggleNode(node, parentPath);
               }
-            } else {
+            } else if (node.isDir) {
+              // 这里选择的是“目录前缀”，文件不可选。
               handleSelect(currentPath);
-              if (node.isDir) {
-                toggleNode(node, parentPath);
-              }
+              toggleNode(node, parentPath);
             }
           }}
         >

@@ -140,7 +140,7 @@ func clearDirSettings(provider func() *model.Settings) *model.Settings {
 
 func clearDirKeepExtensions(settings *model.Settings) map[string]struct{} {
 	keep := make(map[string]struct{})
-	for _, ext := range settings.StrmExtensions {
+	for _, ext := range settings.EffectiveStrmExtensions() {
 		keep[strings.ToLower(normalizeExt(ext))] = struct{}{}
 	}
 	for _, ext := range settings.DownloadExtensions {

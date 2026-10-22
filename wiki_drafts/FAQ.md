@@ -218,7 +218,7 @@ mkv 等 302 直链不受影响。
 
 A: 这是 Emby for Kodi 的 PlaybackInfo 强制转码导致的。解决方案：
 
-1. 进入「Emby 通知」页面 → 「Emby 反向代理」卡片
+1. 进入「设置 → 通知中心 → Emby」→「Emby 反向代理」卡片
 2. **勾选启用**，代理端口默认 `8097`
 3. 在 Emby for Kodi 中，服务器地址改为 `http://你的faststrm地址:8097`（原生 Emby 端口 8096 保持不变）
 

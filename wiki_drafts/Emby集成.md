@@ -32,7 +32,7 @@ Fast Strm 与 Emby 的集成包含五部分：**媒体库刷新**、**Webhook �
 
 ### 启用步骤
 
-1. 进入「Emby 通知」页面 → 「Emby 反向代理」卡片
+1. 进入「设置 → 通知中心 → Emby」→「Emby 反向代理」卡片
 2. 勾选「启用 Emby 反向代理」
 3. **代理端口**默认 `8097`（确保不与主服务 `8090` 和 Emby `8096` 冲突）
 4. 填写 Emby Server 地址（如 `http://192.168.1.10:8096`）
@@ -118,7 +118,7 @@ Emby 服务器地址: http://192.168.1.10:8097
 ### 启用步骤
 
 1. 先开启 **Emby 反向代理**（见上节，端口如 `8097`），并让 Emby Web 通过反代端口访问
-2. 进入「Emby 通知」页面 → 「Emby 反向代理」卡片
+2. 进入「设置 → 通知中心 → Emby」→「Emby 反向代理」卡片
 3. 勾选 **「外部播放器按钮」**（对应 `emby.externalPlayerEnabled`）
 4. 保存即生效（**热更新，无需重启**）
 5. 打开任意影片详情页，操作区应出现四个播放器按钮
@@ -167,7 +167,7 @@ Emby Web 打开详情页
 
 ### 配置
 
-进入「Emby 通知」页面：
+进入「设置 → 通知中心 → Emby」：
 
 | 字段 | 说明 |
 |------|------|
@@ -179,13 +179,15 @@ Emby Web 打开详情页
 
 ## Webhook 通知
 
+通知统一通过 Telegram 发送，需先在「设置 → 通知中心 → Telegram」启用 Bot；未配置时 Webhook 仍会被接收，但不会推送消息。
+
 ### Emby 端配置
 
 1. Emby → 设置 → 高级 → 插件 → 安装「Webhooks」
 2. 添加 Webhook：
    - URL：`http://faststrm地址:8090/api/emby/webhook`
-   - 事件勾选：项目新增、项目删除、播放开始、播放结束
-3. （可选）在 faststrm 配置 `webhookAuth` 令牌，Emby Webhook URL 加 `?token=xxx`
+   - 事件勾选：项目新增、项目删除、播放开始、播放暂停、播放结束
+3. 在「设置 → 通知中心 → Emby」配置 **Webhook 鉴权密钥（必填）**，Webhook URL 使用 `?auth=xxx`（也支持 `X-Webhook-Auth` 或 `Authorization: Bearer`；旧 `?token=` 仍兼容）
 
 ### faststrm 端配置
 
@@ -227,7 +229,7 @@ Emby webhook 到达（media.added）
 
 ### 启用
 
-进入「Emby 通知」页面 → 「删除同步」卡片：
+进入「设置 → 通知中心 → Emby」→「删除同步」卡片：
 
 1. 勾选「启用删除同步」
 2. **首次启用建议勾选「试运行模式」**（只记日志不删除）

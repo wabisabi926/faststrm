@@ -16,7 +16,6 @@ import (
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 
-	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/journal"
@@ -90,9 +89,20 @@ func proxyCountNow(name string) int {
 
 // StrmOptions Handler 所需依赖
 type StrmOptions struct {
-	Cfg          *config.AppConfig
+	// Settings 返回当前生效设置（启动装配与保存设置后共享同一快照）。
+	Settings     func() *model.Settings
 	Client115    *client115.Client
 	AccountStore *store.AccountStore
+}
+
+// currentSettings 返回当前设置；测试或旧调用未注入时回退默认值。
+func (o StrmOptions) currentSettings() *model.Settings {
+	if o.Settings != nil {
+		if s := o.Settings(); s != nil {
+			return s
+		}
+	}
+	return model.DefaultSettings()
 }
 
 // HandleStrm GET/HEAD /api/strm?account=&pickcode=&file_name=&mode=
@@ -125,13 +135,14 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			return
 		}
 
+		settings := opts.currentSettings()
 		userAgent := r.Header.Get("user-agent")
 		if userAgent == "" {
-			userAgent = opts.Cfg.Settings.UserAgent
+			userAgent = settings.EffectiveUserAgent()
 		}
 		logger.S().Infof("[STRM] account=%s pickcode=%s UA=%s mode=%s", accountName, pickcode, userAgent, rawMode)
 
-		routeCfg := strm.StrmRouteConfig(opts.Cfg)
+		routeCfg := strm.StrmRouteConfig(settings)
 
 		// 解析直链
 		meta, err := strm.ResolveDownloadUrl(r.Context(), opts.Client115, pickcode, accountName, account.Cookie, userAgent)
@@ -214,8 +225,8 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		elapsed := time.Since(t0).Milliseconds()
 		// 诊断：seek 格式与分片参数一次打全，排查「为何 302 / 为何不走分片」时直接看这一行
 		rpLog := "off"
-		if !opts.Cfg.Settings.Strm.DisableRangeProxy {
-			rpLog = fmt.Sprintf("%dMBx%d", opts.Cfg.Settings.Strm.ProxyChunkSizeMB, opts.Cfg.Settings.Strm.ProxyConcurrency)
+		if !settings.Strm.DisableRangeProxy {
+			rpLog = fmt.Sprintf("%dMBx%d", settings.Strm.ProxyChunkSizeMB, settings.Strm.ProxyConcurrency)
 		}
 		logger.S().Infof("[STRM] account=%s pickcode=%s decision=%s reason=%s seek=%v range_proxy=%s redirect_check=%s%s method=%s ua=%q elapsed=%dms",
 			accountName, shortPc, finalDecision, finalReason, isSeek, rpLog, rcs, sizeLog, r.Method, userAgent, elapsed)
@@ -244,11 +255,11 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			defer proxyCountDec(accountName)
 			// 分片并发参数：关闭时 streamRangeProxy 直接返回 false，走单连接
 			rp := rangeProxyOptions{
-				Enabled:    !opts.Cfg.Settings.Strm.DisableRangeProxy,
-				Chunk:      int64(opts.Cfg.Settings.Strm.ProxyChunkSizeMB) * 1024 * 1024,
-				Parallel:   opts.Cfg.Settings.Strm.ProxyConcurrency,
+				Enabled:    !settings.Strm.DisableRangeProxy,
+				Chunk:      int64(settings.Strm.ProxyChunkSizeMB) * 1024 * 1024,
+				Parallel:   settings.Strm.ProxyConcurrency,
 				Account:    accountName,
-				RangeLimit: opts.Cfg.Settings.Strm.ProxyConcurrency,
+				RangeLimit: settings.Strm.ProxyConcurrency,
 			}
 			handleProxy(w, r, cdnURL, account.Cookie, userAgent, finalName, func(ctx context.Context) (string, error) {
 				// 先失效缓存，否则会拿回同一个已失效的 URL

@@ -422,6 +422,10 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 	// 生活事件可用不等于下载直链可用，故以权威探测结果回写账号状态：
 	// 探测有效 → valid（清除此前的失效标记）；探测失败 → 按类型判定。
 	if m.accountReader != nil {
+		oldStatus := ""
+		if acc := m.accountReader.Get(account); acc != nil {
+			oldStatus = acc.EffectiveCookieStatus()
+		}
 		status := model.CookieStatusUnknown
 		errno := 0
 		switch perr := client115.ProbeAccount(ctx, cookie); {
@@ -433,6 +437,10 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 		}
 		if serr := m.accountReader.SetCookieStatus(account, status, errno, model.CookieSourceMonitor); serr != nil {
 			logger.S().Warnf("[Monitor] 回写账号状态失败 account=%s: %v", account, serr)
+		}
+		if status == model.CookieStatusValid && oldStatus == model.CookieStatusInvalid && m.accountAlertEnabled(false) && m.notifier != nil {
+			msg := fmt.Sprintf("账号 %s Cookie 已恢复有效", account)
+			_ = m.notifier.Notify(ctx, msg)
 		}
 	}
 
@@ -665,10 +673,21 @@ func (m *Monitor) pullEventsWithRetry(
 	}
 	m.mu.RUnlock()
 
-	// 首次启动：从5分钟前开始，确保捕获最近操作
+	// 首次启动（无持久化游标）：按用户选择的首次拉取模式决定起点。
 	if fromTime == 0 && fromID == 0 {
-		fromTime = time.Now().Unix() - 300
-		logger.S().Infof("[Monitor] 首次启动 fromTime=%d (now-300)", fromTime)
+		switch config.FirstPullMode {
+		case "all":
+			// 拉取全部历史事件；用户明确选择，可能产生较多事件。
+			fromTime = 1
+			logger.S().Infof("[Monitor] 首次启动 fromTime=1 (all history)")
+		case "last":
+			// 无游标时退回最近 5 分钟，避免把“继续”误解为拉全量。
+			fromTime = time.Now().Unix() - 300
+			logger.S().Infof("[Monitor] 首次启动无游标，fromTime=%d (now-300)", fromTime)
+		default:
+			fromTime = time.Now().Unix() - 300
+			logger.S().Infof("[Monitor] 首次启动 fromTime=%d (now-300)", fromTime)
+		}
 	}
 
 	maxRetries := config.MaxRetries
@@ -878,11 +897,37 @@ func (m *Monitor) markCookiePotentiallyInvalid(account string, err error) {
 	logger.S().Warnf("[Monitor] 账号 %s cookie 可能已失效: %v", account, err)
 }
 
+// accountAlertsConfig 返回账号状态通知配置；未配置时返回 nil。
+func (m *Monitor) accountAlertsConfig() *model.AccountAlertsSettings {
+	if m.appSettingsFn == nil {
+		return nil
+	}
+	s := m.appSettingsFn()
+	if s == nil {
+		return nil
+	}
+	return s.Telegram.AccountAlerts
+}
+
+func (m *Monitor) accountAlertEnabled(onError bool) bool {
+	alerts := m.accountAlertsConfig()
+	if alerts == nil || !alerts.Enabled {
+		return false
+	}
+	if onError {
+		return alerts.OnError
+	}
+	return alerts.OnRecover
+}
+
 // notifyPollError 主动推送轮询错误到 TG（参考项目 post_message 通知策略）
 // 节流：普通错误同一账号 10 分钟内最多 1 条；风控告警独立 30 分钟节流；
-// cookie 失效通知绕过节流（已由 cookieMarkedInvalid 去重）。
+// cookie 失效通知绕过节流（已由 cookieMarkedInvalid 去重，且受账号告警开关控制）。
 func (m *Monitor) notifyPollError(account, stage string, err error) {
 	if m.notifier == nil {
+		return
+	}
+	if stage == cookieInvalidStage && !m.accountAlertEnabled(true) {
 		return
 	}
 	// cookie 失效通知绕过节流（关键告警，且已去重）

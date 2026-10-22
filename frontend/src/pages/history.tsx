@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { PageTabs } from "@/components/page-tabs";
+import { StrmHistoryTab } from "@/pages/StrmHistoryTab";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -20,6 +23,8 @@ import {
   Trash2,
   Eye,
   FileText,
+  ListChecks,
+  FileSearch,
 } from "lucide-react";
 import { logger } from "@/lib/logger";
 
@@ -82,9 +87,20 @@ function HistoryStatCard({ label, value }: { label: string; value: ReactNode }) 
   );
 }
 
+type HistoryTab = "tasks" | "strm";
+
+const HISTORY_TABS = [
+  { id: "tasks" as const, label: "任务记录", icon: ListChecks },
+  { id: "strm" as const, label: "STRM 操作", icon: FileSearch },
+];
+
 export default function TaskHistoryPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab: HistoryTab = searchParams.get("tab") === "strm" ? "strm" : "tasks";
   const [history, setHistory] = useState<TaskExecutionHistory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
 
   const taskStats = useMemo(() => {
     let success = 0;
@@ -122,17 +138,42 @@ export default function TaskHistoryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const PAGE_SIZE = 100;
+
   const fetchHistory = async () => {
     try {
       setLoading(true);
-      const response = await axiosInstance.get("/api/taskHistory");
+      const response = await axiosInstance.get(`/api/taskHistory?limit=${PAGE_SIZE}`);
       const data = response.data;
-      setHistory(Array.isArray(data) ? data : (data?.items || []));
+      const items = Array.isArray(data) ? data : (data?.items || []);
+      setHistory(items);
+      setHasMore(items.length >= PAGE_SIZE);
     } catch (error) {
       logger.error("Failed to fetch task history:", error);
       toast.error("获取任务历史失败");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreHistory = async () => {
+    const last = history[history.length - 1];
+    if (!last || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const before = last.startedAt > 0 ? `&before=${last.startedAt - 1}` : "";
+      const response = await axiosInstance.get(
+        `/api/taskHistory?limit=${PAGE_SIZE}${before}`
+      );
+      const data = response.data;
+      const items: TaskExecutionHistory[] = Array.isArray(data) ? data : (data?.items || []);
+      setHistory(prev => [...prev, ...items]);
+      setHasMore(items.length >= PAGE_SIZE);
+    } catch (error) {
+      logger.error("Failed to load more task history:", error);
+      toast.error("加载更多历史失败");
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -166,22 +207,42 @@ export default function TaskHistoryPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
-          <h1 className="text-xl sm:text-2xl font-semibold break-words">任务记录</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold break-words">
+            {activeTab === "strm" ? "STRM 操作" : "任务记录"}
+          </h1>
           <p className="text-sm text-muted-foreground mt-1 break-words">
-            每次全量/定时任务的运行结果、耗时与历史日志。
+            {activeTab === "strm"
+              ? "STRM 生成、删除、移动、重命名与生活事件的逐条执行历史。"
+              : "每次全量/定时任务的运行结果、耗时与历史日志。"}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2 shrink-0">
-          <Button onClick={fetchHistory} variant="outline">
-            刷新
-          </Button>
-          <Button onClick={deleteAllHistory} variant="outline">
-            删除所有历史
-          </Button>
-        </div>
+        {activeTab === "tasks" && (
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <Button onClick={fetchHistory} variant="outline">
+              刷新
+            </Button>
+            <Button onClick={deleteAllHistory} variant="outline">
+              删除所有历史
+            </Button>
+          </div>
+        )}
       </div>
 
-      {loading ? (
+      <PageTabs
+        tabs={HISTORY_TABS}
+        value={activeTab}
+        onChange={(tab) => {
+          const next = new URLSearchParams(searchParams);
+          if (tab === "tasks") next.delete("tab");
+          else next.set("tab", tab);
+          setSearchParams(next, { replace: true });
+        }}
+        ariaLabel="历史类型"
+      />
+
+      {activeTab === "strm" ? (
+        <StrmHistoryTab />
+      ) : loading ? (
           <div className="flex items-center justify-center h-64">
             <p className="text-sm text-muted-foreground">加载中...</p>
           </div>
@@ -197,7 +258,7 @@ export default function TaskHistoryPage() {
         ) : (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <HistoryStatCard label="总记录" value={taskStats.total} />
+              <HistoryStatCard label="已加载记录" value={taskStats.total} />
               <HistoryStatCard
                 label="成功 / 失败"
                 value={
@@ -302,6 +363,18 @@ export default function TaskHistoryPage() {
                 </TableBody>
               </Table>
             </div>
+            {hasMore && (
+              <div className="flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void loadMoreHistory()}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? "加载中..." : "加载更多"}
+                </Button>
+              </div>
+            )}
           </>
       )}
     </div>

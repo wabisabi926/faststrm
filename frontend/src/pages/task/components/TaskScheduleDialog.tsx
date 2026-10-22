@@ -112,9 +112,8 @@ export function TaskScheduleDialog({
       setOpen(false);
       onSuccess?.();
     } catch (err) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response
-        ?.data?.message || "保存失败";
-      toast.error(msg);
+      const data = (err as { response?: { data?: { error?: string; message?: string } } })?.response?.data;
+      toast.error(data?.error || data?.message || "保存失败");
     } finally {
       setSaving(false);
     }

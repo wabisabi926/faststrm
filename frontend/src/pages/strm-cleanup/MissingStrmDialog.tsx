@@ -81,7 +81,9 @@ export function MissingStrmDialog({
                     </TableCell>
                     <TableCell className="font-mono text-xs">{m.relPath}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{m.mediaExtension}</Badge>
+                      <Badge variant="secondary">
+                        {m.mediaExtension || (m.cloudRelPath?.split(".").pop() ?? "-")}
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 );

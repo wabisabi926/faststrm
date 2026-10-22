@@ -57,7 +57,6 @@ export interface UseStrmCleanupResult {
   handleScan: () => Promise<void>;
   handleExecuteDelete: () => Promise<void>;
   handleDeleteAll: () => Promise<void>;
-  handleDeleteAndRegenerate: () => Promise<void>;
   handleRegenerate: () => Promise<void>;
   // 日志
   appendLog: (action: string, detail: string, success: boolean) => void;
@@ -335,41 +334,6 @@ export function useStrmCleanup(
     });
   };
 
-  const handleCombinedResult = (r: ExecuteResult, opts?: { localUpdate?: boolean }) => {
-    const summary = r.cleanupSummary;
-    const parts: string[] = [];
-    if (summary) {
-      parts.push(`清理 ${summary.deleted}`);
-      parts.push(`补生成 ${summary.regenerated}`);
-      if (summary.failed > 0) parts.push(`失败 ${summary.failed}`);
-    }
-    const skipped =
-      (r.skippedUnmanaged ?? 0) + (r.skippedCloudRestored ?? 0) + (r.skippedCloudUnverified ?? 0);
-    if (skipped > 0) parts.push(`保留 ${skipped}（云端复核/归属变化）`);
-    appendLog("清理+补生成", parts.join(" / "), (summary?.failed || 0) === 0);
-    toast.success(`组合操作完成：${parts.join("，")}`);
-    if (opts?.localUpdate === false) return;
-    // 同步移除：已删失效 STRM + 已生成漏项 STRM
-    const regenSet = new Set(r.regeneratedPaths || []);
-    const deletedKeys = new Set(selectedStale);
-    setScanResult((prev) => {
-      if (!prev) return prev;
-      const newMappings = prev.mappings.map((m) => ({
-        ...m,
-        staleStrms: m.staleStrms.filter(
-          (s) => !deletedKeys.has(staleKey(s.mappingId, s.relPath))
-        ),
-        missingStrms: m.missingStrms.filter((mi) => !regenSet.has(mi.relPath)),
-      }));
-      const remainingStale = newMappings.reduce((s, m) => s + m.staleStrms.length, 0);
-      const remainingMissing = newMappings.reduce((s, m) => s + m.missingStrms.length, 0);
-      const next = { ...prev, mappings: newMappings, totalStale: remainingStale, totalMissing: remainingMissing };
-      return applyRefreshedStats(r, next);
-    });
-    setSelectedStale(new Set());
-    callbacks.setStaleDialogOpen(false);
-  };
-
   const handleExecuteDelete = async () => {
     const scanId = scanResult?.scanId;
     if (!scanId) {
@@ -433,40 +397,6 @@ export function useStrmCleanup(
     }
   };
 
-  const handleDeleteAndRegenerate = async () => {
-    const scanId = scanResult?.scanId;
-    if (!scanId) {
-      toast.error("扫描结果已过期，请重新扫描");
-      return;
-    }
-    setExecuting(true);
-    try {
-      const entries = buildEntriesFromSelection(selectedStale, allStale);
-      const missingItems = allMissing.map((m) => ({
-        localPath: scanResult!.mappings.find((x) => x.mappingId === m.mappingId)?.localPath || "",
-        relPath: m.relPath,
-        mappingId: m.mappingId,
-      }));
-      const res = await axiosInstance.post("/api/strmCleanup/execute", {
-        entries,
-        action: "delete_and_regenerate",
-        scanId,
-        missingItems,
-        dryRun: false,
-      });
-      if (handleBlockedExecuteResult(res.data)) return;
-      handleCombinedResult(res.data, { localUpdate: false });
-      await refreshAfterBulk();
-    } catch (err) {
-      const axiosErr = err as AxiosError;
-      const msg = friendlyHttpError(axiosErr, "组合操作失败");
-      appendLog("清理+补生成", msg, false);
-      toast.error(msg);
-    } finally {
-      setExecuting(false);
-    }
-  };
-
   const handleRegenerate = async () => {
     const scanId = scanResult?.scanId;
     if (!scanId) {
@@ -513,7 +443,6 @@ export function useStrmCleanup(
     handleScan,
     handleExecuteDelete,
     handleDeleteAll,
-    handleDeleteAndRegenerate,
     handleRegenerate,
     appendLog,
     clearLogs,

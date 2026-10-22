@@ -260,8 +260,14 @@ export function useTasks(): UseTasksResult {
   // 取消任务
   const cancelTask = async (id: string) => {
     try {
-      await axiosInstance.post("/api/cancelTask", { taskId: id });
+      const res = await axiosInstance.post("/api/cancelTask", { taskId: id });
+      if (res.data?.success === false) {
+        toast.info(res.data?.message || "任务当前未在运行");
+        void fetchTasks();
+        return;
+      }
       toast.success("任务已取消");
+      void fetchTasks();
     } catch {
       toast.error("任务取消失败");
     }

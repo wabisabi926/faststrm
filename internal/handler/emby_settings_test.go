@@ -262,6 +262,9 @@ func TestEmbyWebhookAuthorized(t *testing.T) {
 	if !embyWebhookAuthorized(newReq("/api/emby/webhook?auth=s3cret"), "s3cret") {
 		t.Fatal("query auth should pass")
 	}
+	if !embyWebhookAuthorized(newReq("/api/emby/webhook?token=s3cret"), "s3cret") {
+		t.Fatal("legacy ?token= should pass")
+	}
 	r := newReq("/api/emby/webhook")
 	r.Header.Set("X-Webhook-Auth", "s3cret")
 	if !embyWebhookAuthorized(r, "s3cret") {
