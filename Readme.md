@@ -58,6 +58,7 @@ docker pull wabisabi926/faststrm:latest
 docker run -d \
   --name faststrm \
   -p 8090:8090 \
+  -p 8097:8097 \
   -v ./config:/app/config \
   -v ./data:/app/data \
   -v /path/to/your/strm:/app/data/strm \
@@ -66,6 +67,9 @@ docker run -d \
   --restart unless-stopped \
   wabisabi926/faststrm:latest
 ```
+
+> `8097:8097` 是 Emby 反向代理端口（可选）：UI 里「反代监听端口」填 8097 时才需要。
+> 容器侧端口必须与 UI 一致，宿主机侧可换成别的端口（如 `18097:8097`），客户端用宿主机端口访问。
 
 启动后访问 `http://localhost:8090`。v1.5.2 起全新安装会先进入初始化页面，创建管理员账号后即可使用；已有安装继续使用原密码。
 
