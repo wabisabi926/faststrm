@@ -106,6 +106,10 @@ func RegisterRoutes(
 		// 账号状态
 		{Method: http.MethodGet, Path: "/api/account/status", Handler: corsJWT(handler.GetAccountStatus(accountStore))},
 
+		// 运行状态 / 系统事件（当前进程，不是任务日志）
+		{Method: http.MethodGet, Path: "/api/runtime/status", Handler: corsJWT(handler.HandleRuntimeStatus(embyDeps))},
+		{Method: http.MethodGet, Path: "/api/runtime/journal", Handler: corsJWT(handler.HandleRuntimeJournal())},
+
 		// STRM 缓存管理
 		{Method: http.MethodPost, Path: "/api/strm/cache/clear", Handler: corsJWT(handler.HandleStrmCacheClear())},
 		// 播放诊断（受 JWT 保护）：只做路由判断与 CDN 探测，不代理大文件

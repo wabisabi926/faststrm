@@ -14,6 +14,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/handler"
 	"github.com/wabisabi926/faststrm/internal/server"
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -53,6 +54,7 @@ func main() {
 		println("InitApp failed:", err.Error())
 		os.Exit(1)
 	}
+	journal.Info("server", "FastStrm 服务启动", map[string]any{"version": version, "configDir": cfg.Paths.ConfigDir})
 
 	// 3. 计算服务器 URL 并初始化系统托盘
 	//    注意：cfg.Server.Host 可能是 0.0.0.0（监听所有网卡），但给用户展示/跳转时必须用 localhost。
@@ -96,6 +98,7 @@ func main() {
 		logger.S().Infof("托盘请求退出，正在关闭...")
 	}
 
+	journal.Info("server", "FastStrm 服务关闭", nil)
 	logger.S().Infof("FastStrm 已关闭")
 }
 

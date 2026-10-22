@@ -13,8 +13,15 @@ import type { EmbySettings } from "./types";
 interface ProxyStatus {
   running: boolean;
   addr?: string;
+  listenAddr?: string;
+  clientAddr?: string;
   embyURL?: string;
   externalPlayerEnabled?: boolean;
+  startedAt?: string;
+  forceProxyFormats?: string[];
+  forceProxyUaTokens?: string[];
+  disableSeekFormatProxy?: boolean;
+  rangeProxy?: string;
 }
 
 export interface ConnectionSectionProps {
@@ -175,31 +182,59 @@ export function ConnectionSection({
                 </span>
               </label>
 
-              <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2 text-xs">
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${
-                    proxyStatus?.running ? "bg-green-500" : "bg-red-500"
-                  }`}
-                />
-                <span>
-                  {proxyStatus?.running
-                    ? `反代运行中 · ${proxyStatus.addr || ""}`
-                    : "反代未运行"}
-                </span>
-                <span className="text-muted-foreground">
-                  · 外部播放器 {proxyStatus?.externalPlayerEnabled ? "已启用" : "未启用"}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="ml-auto h-6 px-2 text-xs"
-                  onClick={() => void refreshProxyStatus()}
-                  disabled={statusLoading}
-                >
-                  <RefreshCw className={`mr-1 h-3 w-3 ${statusLoading ? "animate-spin" : ""}`} />
-                  刷新状态
-                </Button>
+              <div className="space-y-1.5 rounded-md border bg-muted/30 px-2.5 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${
+                      proxyStatus?.running ? "bg-green-500" : "bg-red-500"
+                    }`}
+                  />
+                  <span>
+                    {proxyStatus?.running ? "反代运行中" : "反代未运行"}
+                  </span>
+                  {proxyStatus?.running && (
+                    <span className="text-muted-foreground">
+                      监听 {proxyStatus.listenAddr || proxyStatus.addr || "-"}
+                    </span>
+                  )}
+                  <span className="text-muted-foreground">
+                    外部播放器 {proxyStatus?.externalPlayerEnabled ? "已启用" : "未启用"}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-6 px-2 text-xs"
+                    onClick={() => void refreshProxyStatus()}
+                    disabled={statusLoading}
+                  >
+                    <RefreshCw className={`mr-1 h-3 w-3 ${statusLoading ? "animate-spin" : ""}`} />
+                    刷新状态
+                  </Button>
+                </div>
+                {proxyStatus?.running && (
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
+                    <span>
+                      客户端连接{" "}
+                      <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+                        {proxyStatus.clientAddr || "无法确定，请检查 Emby URL"}
+                      </code>
+                    </span>
+                    {proxyStatus.rangeProxy && (
+                      <span>· Range 分片 {proxyStatus.rangeProxy}</span>
+                    )}
+                  </div>
+                )}
+                {proxyStatus?.running && (
+                  <div className="text-muted-foreground">
+                    {proxyStatus.disableSeekFormatProxy
+                      ? "按格式代理已关闭，原盘按普通格式处理"
+                      : `默认代理：${(proxyStatus.forceProxyFormats || []).join(" / ") || "无"}；其余格式 302`}
+                    {proxyStatus.forceProxyUaTokens && proxyStatus.forceProxyUaTokens.length > 0
+                      ? ` · 强制代理客户端：${proxyStatus.forceProxyUaTokens.join(" / ")}`
+                      : ""}
+                  </div>
+                )}
               </div>
               {!proxyStatus?.running && (
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed">

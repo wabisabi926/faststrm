@@ -16,6 +16,7 @@ import LogDetailPage from "@/pages/log-detail";
 import AccountSecurityPage from "@/pages/account-security";
 import CleanupPage from "@/pages/cleanup";
 import DiagnosePage from "@/pages/diagnose";
+import RuntimePage from "@/pages/runtime";
 
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/cleanup" element={<CleanupPage />} />
               <Route path="/diagnose" element={<DiagnosePage />} />
+              <Route path="/runtime" element={<RuntimePage />} />
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/life-events" element={<LifeEventsHubPage />} />
               <Route path="/account-alerts" element={<Navigate to="/account" replace />} />

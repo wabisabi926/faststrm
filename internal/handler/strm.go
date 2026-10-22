@@ -19,6 +19,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/config"
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/internal/service/strm"
@@ -144,6 +145,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 					logger.S().Warnf("[STRM] account=%s write cookie status failed: %v", accountName, serr)
 				}
 				logger.S().Errorf("[STRM] account=%s cookie expired%s: %v", accountName, errnoSuffix(errno), err)
+				journal.Warn("account", "115 Cookie 已失效", map[string]any{"account": accountName, "errno": errno})
 				writeJSON(w, http.StatusBadGateway, map[string]string{
 					"error": "115 账号 Cookie 已失效，请重新登录" + errnoSuffix(errno),
 				})

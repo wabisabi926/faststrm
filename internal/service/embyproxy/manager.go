@@ -12,15 +12,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
 // Status 当前反代运行状态
 type Status struct {
-	Running               bool   `json:"running"`
-	Addr                  string `json:"addr,omitempty"`    // 正在监听的 host:port
-	EmbyURL               string `json:"embyURL,omitempty"` // 当前代理的 Emby 源 URL
-	ExternalPlayerEnabled bool   `json:"externalPlayerEnabled"`
+	Running               bool      `json:"running"`
+	Addr                  string    `json:"addr,omitempty"`    // 正在监听的 host:port
+	EmbyURL               string    `json:"embyURL,omitempty"` // 当前代理的 Emby 源 URL
+	ExternalPlayerEnabled bool      `json:"externalPlayerEnabled"`
+	StartedAt             time.Time `json:"startedAt,omitempty"`
 }
 
 // Manager 管理反代 server 生命周期
@@ -31,6 +33,7 @@ type Manager struct {
 	addr               string // 当前监听地址 "host:port"
 	embyURL            string // 当前代理的 Emby 源 URL
 	forceProxyUaTokens []string
+	startedAt          time.Time
 	// externalPlayerEnabled 外部播放器链接注入开关，热更新（无需重启 server）
 	externalPlayerEnabled bool
 }
@@ -71,6 +74,7 @@ func (m *Manager) Start(host string, port int, embyURL string, forceProxyUaToken
 		m.addr = ""
 		m.embyURL = ""
 		m.forceProxyUaTokens = nil
+		m.startedAt = time.Time{}
 	}
 
 	// 创建新 Proxy
@@ -84,6 +88,7 @@ func (m *Manager) Start(host string, port int, embyURL string, forceProxyUaToken
 	// 同步预检测端口是否可用（避免异步 ListenAndServe 失败但 Start 已返回 nil）
 	ln, err := net.Listen("tcp", wantAddr)
 	if err != nil {
+		journal.Warn("proxy", "反代端口不可用", map[string]any{"addr": wantAddr, "error": err.Error()})
 		return fmt.Errorf("bind %s: %w", wantAddr, err)
 	}
 	_ = ln.Close() // 仅检测，立即释放；ListenAndServe 会重新绑定
@@ -101,6 +106,8 @@ func (m *Manager) Start(host string, port int, embyURL string, forceProxyUaToken
 	m.addr = wantAddr
 	m.embyURL = embyURL
 	m.forceProxyUaTokens = uaTokens
+	m.startedAt = time.Now()
+	journal.Info("proxy", "Emby 反代已启动", map[string]any{"addr": wantAddr, "embyURL": embyURL})
 
 	go func() {
 		logger.S().Infof("[EmbyProxy] 启动中: %s → %s", wantAddr, embyURL)
@@ -141,7 +148,9 @@ func (m *Manager) Stop(ctx context.Context) error {
 	m.addr = ""
 	m.embyURL = ""
 	m.forceProxyUaTokens = nil
+	m.startedAt = time.Time{}
 	m.mu.Unlock()
+	journal.Info("proxy", "Emby 反代已停止", nil)
 
 	if shutdownErr != nil {
 		return fmt.Errorf("embyproxy.Shutdown: %w", shutdownErr)
@@ -182,5 +191,6 @@ func (m *Manager) Status() Status {
 		Addr:                  m.addr,
 		EmbyURL:               m.embyURL,
 		ExternalPlayerEnabled: m.externalPlayerEnabled,
+		StartedAt:             m.startedAt,
 	}
 }

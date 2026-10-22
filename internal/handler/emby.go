@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"path"
 	"path/filepath"
 	"strings"
@@ -16,8 +18,10 @@ import (
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
 	"github.com/wabisabi926/faststrm/internal/service/embyproxy"
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/internal/service/rate"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -188,24 +192,98 @@ func HandleEmbySettingsGET(deps EmbyDeps) http.HandlerFunc {
 }
 
 // HandleEmbyProxyStatus GET /api/emby/proxy/status
-// 只读诊断：反代是否运行、监听地址、源地址与外部播放器注入开关。
+// 只读诊断：反代是否运行、监听地址、客户端连接地址、源地址与当前格式策略。
 func HandleEmbyProxyStatus(deps EmbyDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if deps.EmbyProxyManager == nil {
-			httpx.OkJson(w, map[string]any{
-				"running":               false,
-				"externalPlayerEnabled": false,
-			})
-			return
-		}
-		st := deps.EmbyProxyManager.Status()
-		httpx.OkJson(w, map[string]any{
-			"running":               st.Running,
-			"addr":                  st.Addr,
-			"embyURL":               st.EmbyURL,
-			"externalPlayerEnabled": st.ExternalPlayerEnabled,
-		})
+		httpx.OkJson(w, buildProxyStatus(deps))
 	}
+}
+
+func buildProxyStatus(deps EmbyDeps) map[string]any {
+	out := map[string]any{
+		"running":               false,
+		"externalPlayerEnabled": false,
+		"forceProxyFormats":     model.DefaultForceProxyFormats,
+		"forceProxyUaTokens":    []string{},
+		"rangeProxy":            "off",
+	}
+	if deps.EmbyProxyManager == nil {
+		return out
+	}
+	st := deps.EmbyProxyManager.Status()
+	out["running"] = st.Running
+	out["addr"] = st.Addr
+	out["listenAddr"] = st.Addr
+	out["embyURL"] = st.EmbyURL
+	out["externalPlayerEnabled"] = st.ExternalPlayerEnabled
+	if !st.StartedAt.IsZero() {
+		out["startedAt"] = st.StartedAt
+	}
+	out["clientAddr"] = proxyClientAddr(st.EmbyURL, st.Addr)
+
+	if deps.SettingsStore == nil {
+		return out
+	}
+	settings, err := deps.SettingsStore.ReadSettings()
+	if err != nil || settings == nil {
+		return out
+	}
+	if len(settings.Strm.ForceProxyFormats) > 0 {
+		out["forceProxyFormats"] = settings.Strm.ForceProxyFormats
+	}
+	out["forceProxyUaTokens"] = settings.Strm.ForceProxyUaTokens
+	out["disableSeekFormatProxy"] = settings.Strm.DisableSeekFormatProxy
+	if !settings.Strm.DisableRangeProxy {
+		chunk := settings.Strm.ProxyChunkSizeMB
+		if chunk <= 0 {
+			chunk = 10
+		}
+		parallel := settings.Strm.ProxyConcurrency
+		if parallel <= 0 {
+			parallel = 2
+		}
+		out["rangeProxy"] = fmt.Sprintf("%dMBx%d", chunk, parallel)
+	}
+	return out
+}
+
+// proxyClientAddr 把监听地址转换成客户端真正可访问的地址。
+// 0.0.0.0/:: 是监听通配地址，不能直接给客户端使用；优先使用 Emby URL 的主机名，
+// Emby URL 缺失或为回环地址时退回本机局域网 IP。
+func proxyClientAddr(embyURL, listenAddr string) string {
+	port := ""
+	listenHost := ""
+	if h, p, err := net.SplitHostPort(listenAddr); err == nil {
+		listenHost, port = h, p
+	} else if idx := strings.LastIndex(listenAddr, ":"); idx > 0 {
+		port = strings.TrimSpace(listenAddr[idx+1:])
+	}
+	if port == "" {
+		return ""
+	}
+	host := ""
+	if u, err := neturl.Parse(embyURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	if host == "" && !isWildcardOrLoopback(listenHost) {
+		host = listenHost
+	}
+	if host == "" || isWildcardOrLoopback(host) {
+		host = strm.DetectLANIP()
+	}
+	if host == "" {
+		return ""
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+func isWildcardOrLoopback(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	if h == "" || h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(h, "[]"))
+	return ip != nil && (ip.IsUnspecified() || ip.IsLoopback())
 }
 
 // embySettingsPatch POST /api/emby/settings 局部 patch（仅允许白名单字段）
@@ -352,6 +430,11 @@ func HandleEmbySettingsPOST(deps EmbyDeps) http.HandlerFunc {
 			// 外部播放器开关热更新（无需重启反代 server）
 			mgr.SetExternalPlayers(em.ExternalPlayerEnabled)
 		}
+		journal.Info("settings", "Emby 设置已保存", map[string]any{
+			"proxyPort":             em.ProxyPort,
+			"externalPlayerEnabled": em.ExternalPlayerEnabled,
+			"forceProxyFormats":     savedSettings.Strm.ForceProxyFormats,
+		})
 
 		// 返回保存后的配置（apiKey 脱敏）
 		saved := em
