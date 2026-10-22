@@ -22,3 +22,12 @@ func TestProxyClientAddr(t *testing.T) {
 		})
 	}
 }
+
+func TestSameStringSet(t *testing.T) {
+	if !sameStringSet([]string{"iso", "bdmv"}, []string{"bdmv", "iso"}) {
+		t.Fatal("order-insensitive sets should match")
+	}
+	if sameStringSet([]string{"iso", "m2ts"}, []string{"iso", "bdmv"}) {
+		t.Fatal("different sets must not match")
+	}
+}

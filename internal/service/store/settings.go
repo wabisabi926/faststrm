@@ -238,12 +238,7 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		changed = true
 		logger.S().Infof("[SettingsStore] 迁移: 补齐 115 API 限流默认值: %+v", out.RateLimit)
 	}
-	if len(out.DownloadExtensions) == 0 {
-		out.DownloadExtensions = append([]string{}, def.DownloadExtensions...)
-		changed = true
-	} else if norm, normChanged := normalizeExtensions(out.DownloadExtensions); normChanged {
-		// 关联文件扩展名同样规范化去重（".JPG"/".jpg" 并存会重复统计）
-		out.DownloadExtensions = norm
+	if applyMetadataDefaults(out, def) {
 		changed = true
 	}
 	if out.Strm.AccountProxyConcurrencyLimit == 0 {
@@ -266,6 +261,39 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 	return changed
 }
 
+// applyMetadataDefaults 统一附带下载扩展名语义：
+//   - 字段缺失 → 默认列表
+//   - 显式 [] → 不下载任何附带文件
+//   - 旧 autoDownloadMetadata=false → 迁移为空列表
+//
+// autoDownloadMetadata 作为兼容字段由列表长度派生。
+func applyMetadataDefaults(out, def *model.Settings) bool {
+	changed := false
+	provided := out.DownloadExtensionsProvided()
+	if out.Download.AutoDownloadMetadataProvided() && !out.Download.AutoDownloadMetadata {
+		if len(out.DownloadExtensions) > 0 || !provided {
+			out.DownloadExtensions = []string{}
+			changed = true
+			logger.S().Infof("[SettingsStore] 迁移: 自动下载元数据已关闭，附带下载扩展名置空")
+		}
+	} else if !provided {
+		out.DownloadExtensions = append([]string{}, def.DownloadExtensions...)
+		changed = true
+	}
+	if len(out.DownloadExtensions) > 0 {
+		if norm, normChanged := normalizeExtensions(out.DownloadExtensions); normChanged {
+			out.DownloadExtensions = norm
+			changed = true
+		}
+	}
+	autoDownload := len(out.DownloadExtensions) > 0
+	if out.Download.AutoDownloadMetadata != autoDownload {
+		out.Download.AutoDownloadMetadata = autoDownload
+		changed = true
+	}
+	return changed
+}
+
 // backfillStrmRouteDefaults 回填 STRM 路由策略里「可安全补默认」的两个列表。
 //
 // ForceProxyFormats：v1.5.0 起改为可配置，旧配置没有该字段，补默认值写回，
@@ -278,6 +306,13 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 //   - []（显式空数组）→ 保持为空，表示用户主动选择「全部直连」，绝不回填。
 func backfillStrmRouteDefaults(out, def *model.Settings) bool {
 	changed := false
+	// v1.5.4：旧默认列表把 m2ts/ts/vob/ifo/bup 也当原盘强制代理。
+	// 只有“整份列表正好等于旧默认”才迁移，用户自定义过的列表保持原样。
+	if isLegacyForceProxyFormats(out.Strm.ForceProxyFormats) {
+		out.Strm.ForceProxyFormats = append([]string{}, def.Strm.ForceProxyFormats...)
+		changed = true
+		logger.S().Infof("[SettingsStore] 迁移: 强制代理格式从旧默认 10 项收敛为 %v", out.Strm.ForceProxyFormats)
+	}
 	if len(out.Strm.ForceProxyFormats) == 0 {
 		out.Strm.ForceProxyFormats = def.Strm.ForceProxyFormats
 		changed = true
@@ -288,6 +323,27 @@ func backfillStrmRouteDefaults(out, def *model.Settings) bool {
 		changed = true
 	}
 	return changed
+}
+
+var legacyDefaultForceProxyFormats = []string{"iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "ts", "vob", "ifo", "bup"}
+
+// isLegacyForceProxyFormats 只匹配旧默认整份列表（顺序不敏感）；用户增删过任一项都保留。
+func isLegacyForceProxyFormats(formats []string) bool {
+	if len(formats) != len(legacyDefaultForceProxyFormats) {
+		return false
+	}
+	want := make(map[string]struct{}, len(legacyDefaultForceProxyFormats))
+	for _, f := range legacyDefaultForceProxyFormats {
+		want[strings.ToLower(strings.TrimPrefix(strings.TrimSpace(f), "."))] = struct{}{}
+	}
+	for _, f := range formats {
+		key := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(f), "."))
+		if _, ok := want[key]; !ok {
+			return false
+		}
+		delete(want, key)
+	}
+	return len(want) == 0
 }
 
 // SaveSettings 保存 Settings

@@ -473,13 +473,10 @@ func resolvedStrmExtensions(config model.LifeMonitorSettings) []string {
 	return model.DefaultStrmExtensions
 }
 
-// buildDownloadExtSet 规范化 DownloadExtensions 为带 "." 前缀、小写的扩展名集合
-// 空列表时回退到 model.DefaultDownloadExtensions
+// buildDownloadExtSet 规范化 DownloadExtensions 为带 "." 前缀、小写的扩展名集合。
+// 空列表表示不下载附带文件；继承/默认由调用方先决定。
 func buildDownloadExtSet(extensions []string) map[string]struct{} {
 	exts := extensions
-	if len(exts) == 0 {
-		exts = model.DefaultDownloadExtensions
-	}
 	set := make(map[string]struct{}, len(exts))
 	for _, e := range exts {
 		if e == "" {

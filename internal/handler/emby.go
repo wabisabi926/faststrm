@@ -201,11 +201,12 @@ func HandleEmbyProxyStatus(deps EmbyDeps) http.HandlerFunc {
 
 func buildProxyStatus(deps EmbyDeps) map[string]any {
 	out := map[string]any{
-		"running":               false,
-		"externalPlayerEnabled": false,
-		"forceProxyFormats":     model.DefaultForceProxyFormats,
-		"forceProxyUaTokens":    []string{},
-		"rangeProxy":            "off",
+		"running":                 false,
+		"externalPlayerEnabled":   false,
+		"forceProxyFormats":       model.DefaultForceProxyFormats,
+		"forceProxyFormatsSource": "default",
+		"forceProxyUaTokens":      []string{},
+		"rangeProxy":              "off",
 	}
 	if deps.EmbyProxyManager == nil {
 		return out
@@ -230,6 +231,10 @@ func buildProxyStatus(deps EmbyDeps) map[string]any {
 	}
 	if len(settings.Strm.ForceProxyFormats) > 0 {
 		out["forceProxyFormats"] = settings.Strm.ForceProxyFormats
+		out["forceProxyFormatsSource"] = "custom"
+		if sameStringSet(settings.Strm.ForceProxyFormats, model.DefaultForceProxyFormats) {
+			out["forceProxyFormatsSource"] = "default"
+		}
 	}
 	out["forceProxyUaTokens"] = settings.Strm.ForceProxyUaTokens
 	out["disableSeekFormatProxy"] = settings.Strm.DisableSeekFormatProxy
@@ -275,6 +280,24 @@ func proxyClientAddr(embyURL, listenAddr string) string {
 		return ""
 	}
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		set[strings.ToLower(strings.TrimPrefix(strings.TrimSpace(v), "."))] = struct{}{}
+	}
+	for _, v := range b {
+		key := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(v), "."))
+		if _, ok := set[key]; !ok {
+			return false
+		}
+		delete(set, key)
+	}
+	return len(set) == 0
 }
 
 func isWildcardOrLoopback(host string) bool {
@@ -681,7 +704,8 @@ func applyAgentAndExtensions(settings *model.Settings, body settingsPostBody) {
 		settings.StrmExtensions = emptyMeansDefault(body.StrmExtensions, model.DefaultStrmExtensions)
 	}
 	if body.DownloadExtensions != nil {
-		settings.DownloadExtensions = emptyMeansDefault(body.DownloadExtensions, model.DefaultDownloadExtensions)
+		// 显式空数组 = 不下载任何附带文件；只有字段缺失才补默认。
+		settings.DownloadExtensions = body.DownloadExtensions
 	}
 }
 
@@ -774,7 +798,7 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				if body.Download.StrmMaxConcurrent != nil {
 					settings.Download.StrmMaxConcurrent = body.Download.StrmMaxConcurrent
 				}
-				settings.Download.AutoDownloadMetadata = body.Download.AutoDownloadMetadata
+				// 扩展名列表是唯一开关；autoDownloadMetadata 由它派生，兼容旧逻辑。
 				// 全局文件过滤：最小文件大小阈值（字节），前端始终发送全量值，直接覆盖
 				settings.Download.MinFileSize = body.Download.MinFileSize
 				// 全局文件过滤：文件名黑名单（nil 表示未提供，保留旧值；空数组表示用户主动清空）
@@ -787,6 +811,8 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 					settings.Download.FullSyncCleanupOrphans = body.Download.FullSyncCleanupOrphans
 				}
 			}
+			// 列表是唯一开关：空列表 = 不下载附带文件。
+			settings.Download.AutoDownloadMetadata = len(settings.DownloadExtensions) > 0
 
 			// ====== STRM 嵌套对象 ======
 			if body.Strm != nil {

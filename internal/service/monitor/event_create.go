@@ -397,10 +397,21 @@ func (m *Monitor) handleCreateFolderRecursive(
 		matcher = concurrency.NewStringMatcher(config.StrmGenerateBlacklist)
 	}
 	pageLimit := 1000
-	// 关联资源扩展名集合（生活监控 DownloadExtensions，空则继承全局默认）
-	// 对齐全量生成：视频生成 STRM，关联资源扩展名匹配则真实下载
-	downloadExts := buildDownloadExtSet(config.DownloadExtensions)
+	// 关联资源扩展名集合（生活监控 DownloadExtensions，空则继承全局；
+	// 全局也为空表示不下载附带文件）。
+	downloadExtSrc := config.DownloadExtensions
 	autoDownload := config.AutoDownloadMetadata
+	if m.appSettingsFn != nil {
+		if global := m.appSettingsFn(); global != nil {
+			if len(downloadExtSrc) == 0 {
+				downloadExtSrc = global.DownloadExtensions
+			}
+			if !global.Download.AutoDownloadMetadata {
+				autoDownload = false
+			}
+		}
+	}
+	downloadExts := buildDownloadExtSet(downloadExtSrc)
 
 	for offset := 0; ; offset += pageLimit {
 		select {

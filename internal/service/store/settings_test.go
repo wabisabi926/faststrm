@@ -244,3 +244,68 @@ func TestReadSettings_ForceProxyUaTokensNilVsEmpty(t *testing.T) {
 		t.Fatalf("已有值应原样保留，got %v", s3.Strm.ForceProxyUaTokens)
 	}
 }
+
+func TestReadSettings_LegacyForceProxyFormatsMigrated(t *testing.T) {
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"strm":{"forceProxyFormats":["iso","bdmv","bdav","dvd","bluray","m2ts","ts","vob","ifo","bup"]}}`)
+	got, err := NewSettingsStore("test_salt", dir).ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := model.DefaultSettings().Strm.ForceProxyFormats
+	if len(got.Strm.ForceProxyFormats) != len(want) {
+		t.Fatalf("legacy list should migrate to %v, got %v", want, got.Strm.ForceProxyFormats)
+	}
+	for i := range want {
+		if got.Strm.ForceProxyFormats[i] != want[i] {
+			t.Fatalf("formats = %v, want %v", got.Strm.ForceProxyFormats, want)
+		}
+	}
+}
+
+func TestReadSettings_CustomForceProxyFormatsKept(t *testing.T) {
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"strm":{"forceProxyFormats":["iso","m2ts"]}}`)
+	got, err := NewSettingsStore("test_salt", dir).ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Strm.ForceProxyFormats) != 2 || got.Strm.ForceProxyFormats[1] != "m2ts" {
+		t.Fatalf("custom list must be kept, got %v", got.Strm.ForceProxyFormats)
+	}
+}
+
+func TestReadSettings_DownloadExtensionsEmptyMeansNone(t *testing.T) {
+	// 缺失 → 默认列表 + auto=true
+	dir1 := t.TempDir()
+	writeSettings(t, dir1, `{}`)
+	s1, err := NewSettingsStore("test_salt", dir1).ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s1.DownloadExtensions) == 0 || !s1.Download.AutoDownloadMetadata {
+		t.Fatalf("missing list should use defaults, got %v auto=%v", s1.DownloadExtensions, s1.Download.AutoDownloadMetadata)
+	}
+
+	// 显式 [] → 不下载，auto=false
+	dir2 := t.TempDir()
+	writeSettings(t, dir2, `{"downloadExtensions":[]}`)
+	s2, err := NewSettingsStore("test_salt", dir2).ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s2.DownloadExtensions) != 0 || s2.Download.AutoDownloadMetadata {
+		t.Fatalf("explicit empty should disable, got %v auto=%v", s2.DownloadExtensions, s2.Download.AutoDownloadMetadata)
+	}
+
+	// 旧开关 false + 非空列表 → 迁移为空
+	dir3 := t.TempDir()
+	writeSettings(t, dir3, `{"downloadExtensions":["srt"],"download":{"autoDownloadMetadata":false}}`)
+	s3, err := NewSettingsStore("test_salt", dir3).ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s3.DownloadExtensions) != 0 || s3.Download.AutoDownloadMetadata {
+		t.Fatalf("legacy toggle off should clear list, got %v auto=%v", s3.DownloadExtensions, s3.Download.AutoDownloadMetadata)
+	}
+}

@@ -34,6 +34,30 @@ type Settings struct {
 	CleanupDefaultsV3 bool                  `json:"cleanupDefaultsV3"`
 	Cleanup           CleanupSettings       `json:"cleanup"`
 	CookieInspect     CookieInspectSettings `json:"cookieInspect"`
+
+	downloadExtensionsSet bool
+}
+
+// UnmarshalJSON 记录 downloadExtensions 是否出现在配置里，用于区分
+// “字段缺失（补默认）”和“显式留空（不下载附带文件）”。
+func (s *Settings) UnmarshalJSON(data []byte) error {
+	type plain Settings
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*s = Settings(decoded)
+	_, s.downloadExtensionsSet = raw["downloadExtensions"]
+	return nil
+}
+
+// DownloadExtensionsProvided 是否显式提供过 downloadExtensions。
+func (s *Settings) DownloadExtensionsProvided() bool {
+	return s != nil && s.downloadExtensionsSet
 }
 
 // RateLimitSettings 115 API 限流配置（按「账号 × 用途」分桶）
@@ -133,6 +157,30 @@ type DownloadSettings struct {
 	//   "auto_clean" 自动软删（.deleted.bak），超阈值时复用 CleanupSettings 二次确认流程
 	// 对齐参考项目 full_sync_remove_unless_strm
 	FullSyncCleanupOrphans string `json:"fullSyncCleanupOrphans"`
+
+	// 用于区分「字段缺失」与「显式关闭」。
+	autoDownloadMetadataSet bool
+}
+
+// UnmarshalJSON 记录 downloadExtensions / autoDownloadMetadata 是否出现在配置里。
+func (d *DownloadSettings) UnmarshalJSON(data []byte) error {
+	type plain DownloadSettings
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*d = DownloadSettings(decoded)
+	_, d.autoDownloadMetadataSet = raw["autoDownloadMetadata"]
+	return nil
+}
+
+// AutoDownloadMetadataProvided 是否显式提供过 autoDownloadMetadata。
+func (d *DownloadSettings) AutoDownloadMetadataProvided() bool {
+	return d != nil && d.autoDownloadMetadataSet
 }
 
 // StrmSettings strm 子项（STRM 路由策略）

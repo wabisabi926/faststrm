@@ -364,11 +364,12 @@ func TestSettingsContract_RateLimitPatch(t *testing.T) {
 	}
 }
 
-// TestSettingsContract_EmptyMeansRestoreDefaults 校验「留空 = 恢复内置默认值」的语义：
-//   - User-Agent / STRM 扩展名 / 元数据扩展名：留空 → 默认值（这三者的空值都是非法配置）
-//   - 强制代理 UA 标识：留空 → 保持为空（= 全部直连），不能被默认值回填
+// TestSettingsContract_EmptyMeansRestoreDefaults 校验留空语义：
+//   - User-Agent / STRM 扩展名：留空 → 默认值（空值属于非法配置）
+//   - 元数据扩展名：留空 → 保持空，表示不下载附带文件
+//   - 强制代理 UA 标识：留空 → 保持为空（= 全部直连）
 //
-// 同时校验 POST 响应里的 saved 是「生效后的值」，前端据此提示"已恢复默认 N 项"。
+// 同时校验 POST 响应里的 saved 是「生效后的值」。
 func TestSettingsContract_EmptyMeansRestoreDefaults(t *testing.T) {
 	dir := t.TempDir()
 	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
@@ -401,8 +402,11 @@ func TestSettingsContract_EmptyMeansRestoreDefaults(t *testing.T) {
 	if !reflect.DeepEqual(stored.StrmExtensions, model.DefaultStrmExtensions) {
 		t.Fatalf("空 STRM 扩展名应恢复默认，got %v", stored.StrmExtensions)
 	}
-	if !reflect.DeepEqual(stored.DownloadExtensions, model.DefaultDownloadExtensions) {
-		t.Fatalf("空元数据扩展名应恢复默认，got %v", stored.DownloadExtensions)
+	if len(stored.DownloadExtensions) != 0 {
+		t.Fatalf("空元数据扩展名应表示不下载，got %v", stored.DownloadExtensions)
+	}
+	if stored.Download.AutoDownloadMetadata {
+		t.Fatal("空元数据扩展名时 autoDownloadMetadata 应为 false")
 	}
 	// 强制代理 UA 的空值有语义（全部直连），必须保持为空
 	if len(stored.Strm.ForceProxyUaTokens) != 0 {
@@ -422,7 +426,7 @@ func TestSettingsContract_EmptyMeansRestoreDefaults(t *testing.T) {
 	if len(resp.Saved.StrmExtensions) != len(model.DefaultStrmExtensions) {
 		t.Fatalf("saved.strmExtensions 应是生效值，got %v", resp.Saved.StrmExtensions)
 	}
-	if len(resp.Saved.DownloadExtensions) != len(model.DefaultDownloadExtensions) {
-		t.Fatalf("saved.downloadExtensions 应是生效值，got %v", resp.Saved.DownloadExtensions)
+	if len(resp.Saved.DownloadExtensions) != 0 {
+		t.Fatalf("saved.downloadExtensions 应保持空，got %v", resp.Saved.DownloadExtensions)
 	}
 }
