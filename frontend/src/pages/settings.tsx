@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Activity, Settings2, Stethoscope } from "lucide-react";
+import { Activity, BellRing, Settings2, ShieldCheck, Stethoscope } from "lucide-react";
 import axiosInstance from "@/lib/axios";
 import { PageTabs, type PageTabItem } from "@/components/page-tabs";
 import type { AxiosError } from "axios";
@@ -19,25 +19,40 @@ import type {
 import { DEFAULT_MONITOR_CONFIG } from "./settings/types";
 import { BasicSettingsTab } from "./settings/BasicSettingsTab";
 import { MonitorSettingsTab } from "./settings/MonitorSettingsTab";
+import NotificationCenterPage from "@/pages/notification-center";
+import AccountSecurityPage from "@/pages/account-security";
 
-type SettingsTab = "basic" | "monitor";
+type SettingsTab = "general" | "monitor" | "notify" | "security";
 
 const SETTINGS_TABS: readonly PageTabItem<SettingsTab>[] = [
-  { id: "basic", label: "基础设置", icon: Settings2 },
-  { id: "monitor", label: "生活事件监控", icon: Activity },
+  { id: "general", label: "常规", icon: Settings2 },
+  { id: "monitor", label: "生活事件", icon: Activity },
+  { id: "notify", label: "通知", icon: BellRing },
+  { id: "security", label: "账号安全", icon: ShieldCheck },
 ];
+
+function normalizeSettingsTab(value: string | null, forceTab?: "monitor" | "notify" | "security"): SettingsTab {
+  if (forceTab) return forceTab;
+  switch (value) {
+    case "monitor":
+    case "notify":
+    case "security":
+      return value;
+    default:
+      return "general"; // 兼容旧 tab=basic / 空值
+  }
+}
 
 export default function SettingsPage({
   embedded = false,
   forceTab,
 }: {
   embedded?: boolean;
-  forceTab?: "monitor";
+  forceTab?: "monitor" | "notify" | "security";
 } = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const activeTab: SettingsTab =
-    forceTab === "monitor" || searchParams.get("tab") === "monitor" ? "monitor" : "basic";
+  const activeTab = normalizeSettingsTab(searchParams.get("tab"), forceTab);
 
   // 兼容旧书签：清理已独立成页
   useEffect(() => {
@@ -47,7 +62,8 @@ export default function SettingsPage({
   }, [searchParams, navigate]);
 
   const setTab = (tab: SettingsTab) => {
-    navigate(tab === "monitor" ? "/settings?tab=monitor" : "/settings", { replace: true });
+    const query = tab === "general" ? "" : `?tab=${tab}`;
+    navigate(`/settings${query}`, { replace: true });
   };
 
   const [data, setData] = useState<SettingsType>({});
@@ -274,7 +290,7 @@ export default function SettingsPage({
   const buildSaveData = (lifeMonitorOverride: Partial<{ accounts: string[] }> = {}) => {
     const parseExts = (raw: string) =>
       raw
-        .split(",")
+        .split(/[,，;；]/)
         .map(ext => ext.trim())
         .filter(ext => ext.length > 0)
         .map(ext => (ext.startsWith(".") ? ext : `.${ext}`))
@@ -306,13 +322,15 @@ export default function SettingsPage({
 
     // 注意：mediaMountPath 不在此处手工写入，由 SSOT 统一维护；
     //       保存设置不会自动同步挂载路径，需在「媒体挂载路径」区块手动点「立即同步并持久化」。
+    const downloadExtensions = parseExts(downloadExtensionsInput);
     return {
       ...data,
       strmExtensions: parseExts(strmExtensionsInput),
-      downloadExtensions: parseExts(downloadExtensionsInput),
+      downloadExtensions,
       download: {
         ...data.download,
-        autoDownloadMetadata: data.download?.autoDownloadMetadata ?? true,
+        // 扩展名列表是唯一开关；留空 = 不下载附带文件。
+        autoDownloadMetadata: downloadExtensions.length > 0,
         minFileSize: parseMb(globalMinFileSizeMb),
         strmGenerateBlacklist: globalBlacklist,
       },
@@ -352,17 +370,11 @@ export default function SettingsPage({
       const restored: string[] = [];
       if (saved) {
         const savedStrmExts = Array.isArray(saved.strmExtensions) ? (saved.strmExtensions as string[]) : [];
-        const savedDlExts = Array.isArray(saved.downloadExtensions)
-          ? (saved.downloadExtensions as string[])
-          : [];
         if (!strmExtensionsInput.trim()) {
           setStrmExtensionsInput(savedStrmExts.join(", "));
           restored.push(`STRM 扩展名 ${savedStrmExts.length} 项`);
         }
-        if (!downloadExtensionsInput.trim()) {
-          setDownloadExtensionsInput(savedDlExts.join(", "));
-          restored.push(`元数据扩展名 ${savedDlExts.length} 项`);
-        }
+        // 元数据扩展名留空是有语义的（不下载），不回填默认值。
         if (!(saveData["user-agent"] || "").trim() && saved["user-agent"]) {
           restored.push("User-Agent");
         }
@@ -633,9 +645,9 @@ export default function SettingsPage({
       {!embedded && (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between px-1">
           <div>
-            <h1 className="text-xl sm:text-2xl font-semibold">设置中心</h1>
+            <h1 className="text-xl sm:text-2xl font-semibold">设置</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              基础设置与生活事件监控；通知渠道在「通知中心」配置。
+              常规、生活事件、通知与账号安全统一在这里配置。
             </p>
           </div>
           <Link
@@ -657,7 +669,7 @@ export default function SettingsPage({
         />
       )}
 
-      {activeTab === "basic" && (
+      {activeTab === "general" && (
         <BasicSettingsTab
           data={data}
           setData={setData}
@@ -734,6 +746,9 @@ export default function SettingsPage({
           handleStartMonitor={handleStartMonitor}
         />
       )}
+
+      {activeTab === "notify" && <NotificationCenterPage embedded />}
+      {activeTab === "security" && <AccountSecurityPage embedded />}
 
     </div>
 

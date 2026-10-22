@@ -6,7 +6,7 @@ import { UserCog } from "lucide-react";
 import { toast } from "sonner";
 import axiosInstance, { getUsername, setUsername, clearToken, clearUsername, setMustChangePassword } from "@/lib/axios";
 
-export default function AccountSecurityPage() {
+export default function AccountSecurityPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [currentPwd, setCurrentPwd] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [newPwd, setNewPwd] = useState("");
@@ -105,14 +105,15 @@ export default function AccountSecurityPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 sm:space-y-6 pb-8">
-      {/* Page Title */}
-      <div className="px-1">
-        <h1 className="text-xl sm:text-2xl font-semibold">账号安全</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          修改管理员账户的用户名和密码
-        </p>
-      </div>
+    <div className={embedded ? "space-y-4 sm:space-y-6" : "mx-auto max-w-5xl space-y-4 sm:space-y-6 pb-8"}>
+      {!embedded && (
+        <div className="px-1">
+          <h1 className="text-xl sm:text-2xl font-semibold">账号安全</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            修改管理员账户的用户名和密码
+          </p>
+        </div>
+      )}
 
       <section className="border rounded-md p-3 sm:p-5 space-y-5">
         <div className="flex items-center gap-2">

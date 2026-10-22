@@ -4,10 +4,8 @@ import {
   ListChecks,
   Trash2,
   Activity,
-  BellRing,
   History,
   Settings,
-  ShieldCheck,
   Stethoscope,
   Gauge,
   Github,
@@ -60,9 +58,7 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
   {
     label: "设置",
     items: [
-      { title: "通知中心", url: "/notify", icon: BellRing },
-      { title: "设置中心", url: "/settings", icon: Settings },
-      { title: "账号安全", url: "/account-security", icon: ShieldCheck },
+      { title: "设置", url: "/settings", icon: Settings },
     ],
   },
 ];

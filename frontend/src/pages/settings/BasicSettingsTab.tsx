@@ -65,6 +65,12 @@ function CollapsibleSection({
 // 与 internal/model/settings.go 的 DefaultSettings().Strm.ForceProxyUaTokens 保持一致。
 // 只用于「填入默认值」按钮与 placeholder，不参与保存逻辑（保存以输入框内容为准）。
 const DEFAULT_FORCE_PROXY_UA_TOKENS = ["Infuse", "VidHub", "SenPlayer", "SenPlayerHD"];
+const DEFAULT_FORCE_PROXY_FORMATS = ["iso", "bdmv", "bdav", "dvd", "bluray"];
+const DEFAULT_STRM_EXTENSIONS = [
+  "mp4", "mkv", "avi", "mov", "rmvb", "webm", "flv", "m3u8",
+  "mp3", "flac", "wav", "aac", "ogg", "m4a", "ts", "m2ts", "iso",
+];
+const DEFAULT_DOWNLOAD_EXTENSIONS = ["srt", "ass", "sub", "nfo", "jpg", "png"];
 
 export interface BasicSettingsTabProps {
   data: SettingsType;
@@ -139,63 +145,50 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               placeholder="留空使用内置默认 UA"
             />
             <p className="text-xs text-muted-foreground">
-              访问 115 API 时使用的 UA。<span className="font-medium">留空恢复默认</span>（115 iOS 客户端 UA）。
+              访问 115 API 和后台任务时使用的兜底 UA；播放时优先使用播放器自己的 UA。
+              <span className="font-medium">留空恢复默认（内置 iOS Chrome UA）</span>，一般无需修改。
             </p>
           </div>
           <div className="space-y-3">
-            <Label>STRM 文件扩展名</Label>
+            <div className="flex items-center justify-between">
+              <Label>STRM 文件扩展名</Label>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => setStrmExtensionsInput(DEFAULT_STRM_EXTENSIONS.join(", "))}
+              >
+                填入默认值
+              </button>
+            </div>
             <Input
               value={strmExtensionsInput}
               onChange={(e) => setStrmExtensionsInput(e.target.value)}
-              placeholder="mkv, mp4, iso, ts"
+              placeholder={DEFAULT_STRM_EXTENSIONS.join(", ")}
             />
             <p className="text-xs text-muted-foreground">
-              用逗号分隔，自动添加点号前缀；BDMV/STREAM 目录内的视频流不生成 STRM。
-              <span className="font-medium">留空恢复默认 17 项</span>
-              （mp4/mkv/avi/mov/rmvb/webm/flv/m3u8/mp3/flac/wav/aac/ogg/m4a/ts/m2ts/iso）。
+              逗号分隔，自动添加点号前缀；BDMV/STREAM 目录内的视频流不生成 STRM。
+              <span className="font-medium">留空恢复默认 17 项</span>，也可点右上角「填入默认值」。
             </p>
           </div>
           <div className="space-y-3 md:col-span-2">
-            <Label>附带下载的元数据扩展名</Label>
+            <div className="flex items-center justify-between">
+              <Label>附带下载的元数据扩展名</Label>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => setDownloadExtensionsInput(DEFAULT_DOWNLOAD_EXTENSIONS.join(", "))}
+              >
+                填入默认值
+              </button>
+            </div>
             <Input
               value={downloadExtensionsInput}
               onChange={(e) => setDownloadExtensionsInput(e.target.value)}
-              placeholder="srt, ass, sub, nfo, jpg, png"
+              placeholder={DEFAULT_DOWNLOAD_EXTENSIONS.join(", ")}
             />
             <p className="text-xs text-muted-foreground">
-              用逗号分隔，自动添加点号前缀。<span className="font-medium">留空恢复默认 6 项</span>
-              （srt/ass/sub/nfo/jpg/png）。不想下载元数据请关掉下方的「自动下载媒体元数据」开关。
-            </p>
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <div className="flex items-center justify-between">
-              <Label>自动下载媒体元数据</Label>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={data.download?.autoDownloadMetadata ?? true}
-                onClick={() =>
-                  setData({
-                    ...data,
-                    download: {
-                      ...(data.download || {}),
-                      autoDownloadMetadata: !(data.download?.autoDownloadMetadata ?? true)
-                    },
-                  })
-                }
-                className={`inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  (data.download?.autoDownloadMetadata ?? true) ? "bg-primary" : "bg-muted"
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    (data.download?.autoDownloadMetadata ?? true) ? "translate-x-4" : "translate-x-0.5"
-                  }`}
-                />
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              全量同步时自动下载上方扩展名对应的 nfo/jpg/png/srt 等元数据。关闭后只生成 STRM 视频索引文件。
+              逗号分隔，自动添加点号前缀。<span className="font-medium">留空 = 不下载任何附带文件</span>；
+              需要时点「填入默认值」（srt, ass, sub, nfo, jpg, png）。
             </p>
           </div>
         </div>
@@ -351,15 +344,24 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   关闭后两层都不再按格式代理，镜像也走 302（可能播放失败）。
                 </p>
                 <div className="space-y-2 pt-1">
-                  <Label>强制代理的容器/扩展名</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>强制代理的容器/扩展名</Label>
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      onClick={() => setForceProxyFormatsInput(DEFAULT_FORCE_PROXY_FORMATS.join(", "))}
+                    >
+                      填入默认值
+                    </button>
+                  </div>
                   <Input
                     value={forceProxyFormatsInput}
                     onChange={(e) => setForceProxyFormatsInput(e.target.value)}
-                    placeholder="iso, bdmv, bluray"
+                    placeholder={DEFAULT_FORCE_PROXY_FORMATS.join(", ")}
                   />
                   <p className="text-xs text-muted-foreground">
                     逗号分隔，大小写不敏感、点号可省略。两层共用这一份列表；留空恢复默认值
-                    （iso / bdmv / bdav / dvd / bluray）。
+                    （iso, bdmv, bdav, dvd, bluray）。
                     m2ts、ts、vob 属于普通视频流，默认 302 直连；某些客户端播不了时再加回列表。
                   </p>
                 </div>
@@ -744,7 +746,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
       <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
         <span>其他配置入口：</span>
         <Link to="/cleanup" className="text-primary hover:underline">清理策略</Link>
-        <Link to="/notify" className="text-primary hover:underline">Emby / Telegram 通知</Link>
+        <Link to="/settings?tab=notify" className="text-primary hover:underline">Emby / Telegram 通知</Link>
         <Link to="/account" className="text-primary hover:underline">Cookie 巡检</Link>
       </div>
 

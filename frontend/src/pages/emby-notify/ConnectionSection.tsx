@@ -19,6 +19,7 @@ interface ProxyStatus {
   externalPlayerEnabled?: boolean;
   startedAt?: string;
   forceProxyFormats?: string[];
+  forceProxyFormatsSource?: string;
   forceProxyUaTokens?: string[];
   disableSeekFormatProxy?: boolean;
   rangeProxy?: string;
@@ -229,9 +230,11 @@ export function ConnectionSection({
                   <div className="text-muted-foreground">
                     {proxyStatus.disableSeekFormatProxy
                       ? "按格式代理已关闭，原盘按普通格式处理"
-                      : `默认代理：${(proxyStatus.forceProxyFormats || []).join(" / ") || "无"}；其余格式 302`}
+                      : `默认代理：${(proxyStatus.forceProxyFormats || []).join(", ") || "无"}（${
+                          proxyStatus.forceProxyFormatsSource === "custom" ? "自定义" : "内置默认"
+                        }）；其余格式 302`}
                     {proxyStatus.forceProxyUaTokens && proxyStatus.forceProxyUaTokens.length > 0
-                      ? ` · 强制代理客户端：${proxyStatus.forceProxyUaTokens.join(" / ")}`
+                      ? ` · 强制代理客户端：${proxyStatus.forceProxyUaTokens.join(", ")}`
                       : ""}
                   </div>
                 )}
