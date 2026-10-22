@@ -34,7 +34,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
@@ -772,14 +771,10 @@ func init() {
 }
 
 // buildForceProxySet 把配置中的格式列表规范化为查找集合。
-// 空列表回落内置默认值；每个格式同时写入带点与不带点两种键。
+// 空列表表示关闭按格式代理；每个格式同时写入带点与不带点两种键。
 func buildForceProxySet(formats []string) map[string]struct{} {
-	src := formats
-	if len(src) == 0 {
-		src = model.DefaultForceProxyFormats
-	}
-	set := make(map[string]struct{}, len(src)*2)
-	for _, f := range src {
+	set := make(map[string]struct{}, len(formats)*2)
+	for _, f := range formats {
 		f = strings.ToLower(strings.TrimSpace(f))
 		f = strings.TrimPrefix(f, ".")
 		if f == "" {
@@ -791,40 +786,24 @@ func buildForceProxySet(formats []string) map[string]struct{} {
 	return set
 }
 
-// SetForceProxyFormats 覆盖强制代理格式列表（空表示使用默认值）。
+// SetForceProxyFormats 覆盖强制代理格式列表（空 = 关闭按格式代理）。
 // 由 server 启动装配与 Emby 设置保存时调用，对后续请求立即生效。
 func SetForceProxyFormats(formats []string) {
 	forceProxyFormats.Store(buildForceProxySet(formats))
 	if len(formats) == 0 {
-		logger.S().Infof("[EmbyProxy] 强制代理格式: 使用默认 %v", model.DefaultForceProxyFormats)
+		logger.S().Infof("[EmbyProxy] 按格式强制代理已关闭（格式列表为空）")
 		return
 	}
 	logger.S().Infof("[EmbyProxy] 强制代理格式: %v", formats)
 }
 
-// seekFormatProxyDisabled 「按格式强制代理」的统一关闭标记。
-//
-// 与 STRM 端点层（handler/strm.go 的 DecideRoute）共用 settings.strm.disableSeekFormatProxy：
-// 开启时两层都按 forceProxyFormats 强制代理，关闭时两层都退回 UA 白名单 / 302。
-var seekFormatProxyDisabled atomic.Bool
-
-// SetSeekFormatProxyEnabled 设置是否启用「按格式强制代理」（两层统一开关）。
-// 由 server 启动装配与 Emby 设置保存时调用，对后续请求立即生效。
-func SetSeekFormatProxyEnabled(enabled bool) {
-	seekFormatProxyDisabled.Store(!enabled)
-	logger.S().Infof("[EmbyProxy] 按格式强制代理: %v", enabled)
-}
-
 // isSeekRequiredFormat 判断 STRM 源是否需要代理流（而非 302）。
 // 依据：Emby 的 Container 字段，或文件名扩展名。
-// 「按格式强制代理」被关闭时直接返回 false（原盘也走 302）。
+// 格式列表为空时直接返回 false（原盘也走 302）。
 func isSeekRequiredFormat(container, name string) bool {
-	if seekFormatProxyDisabled.Load() {
-		return false
-	}
 	set, _ := forceProxyFormats.Load().(map[string]struct{})
-	if set == nil {
-		set = buildForceProxySet(nil)
+	if len(set) == 0 {
+		return false
 	}
 	if c := strings.ToLower(strings.TrimSpace(container)); c != "" {
 		if _, ok := set[c]; ok {

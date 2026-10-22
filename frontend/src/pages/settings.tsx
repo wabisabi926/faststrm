@@ -77,6 +77,8 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
   const [moveMediaMode, setMoveMediaMode] = useState<"recreate" | "local_move">("local_move");
   // 移出映射时删除本地旧 STRM（默认开启）
   const [moveOutRemoveLocalStrm, setMoveOutRemoveLocalStrm] = useState(true);
+  // 旧 STRM 扩展搜索目录（多行文本，一行一个路径）
+  const [mediaMountPaths, setMediaMountPaths] = useState("");
 
   // New path mapping input
   const [newCloudPath, setNewCloudPath] = useState("");
@@ -149,6 +151,7 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
         setFirstPullMode(monitor.firstPullMode || "latest");
         setMoveMediaMode(monitor.moveMediaMode || "local_move");
         setMoveOutRemoveLocalStrm(monitor.moveOutRemoveLocalStrm ?? true);
+        setMediaMountPaths((monitor.mediaMountPath || []).join("\n"));
 
         // Load accounts（生活监控仅支持 115）
         const accountsResp = await axiosInstance.get("/api/account");
@@ -203,6 +206,17 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
     return Number.isFinite(mb) && mb > 0 ? Math.floor(mb * 1024 * 1024) : 0;
   };
 
+  // 解析「一行一个」的多行输入：去空行、去首尾空格、去重
+  const parseLines = (raw: string) =>
+    Array.from(
+      new Set(
+        raw
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+      )
+    );
+
   // 常规设置只提交自己负责的字段，避免把 Emby/Telegram/清理配置按旧快照覆盖。
   const buildSaveData = () => {
     // 解析强制代理 UA tokens
@@ -242,10 +256,11 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
         forceProxyFormats,
         accountProxyConcurrencyLimit: data.strm?.accountProxyConcurrencyLimit,
         redirectCheckTimeoutMs: data.strm?.redirectCheckTimeoutMs,
-        disableSeekFormatProxy: data.strm?.disableSeekFormatProxy,
         disableRangeProxy: data.strm?.disableRangeProxy,
         proxyChunkSizeMB: data.strm?.proxyChunkSizeMB,
         proxyConcurrency: data.strm?.proxyConcurrency,
+        strmUrlTemplate: data.strm?.strmUrlTemplate ?? "",
+        strmFilenameTemplate: data.strm?.strmFilenameTemplate ?? "",
       },
       rateLimit: data.rateLimit,
     };
@@ -268,6 +283,7 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
     firstPullMode,
     moveMediaMode,
     moveOutRemoveLocalStrm,
+    mediaMountPath: parseLines(mediaMountPaths),
     ...overrides,
   });
 
@@ -568,6 +584,8 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
           setMoveMediaMode={setMoveMediaMode}
           moveOutRemoveLocalStrm={moveOutRemoveLocalStrm}
           setMoveOutRemoveLocalStrm={setMoveOutRemoveLocalStrm}
+          mediaMountPaths={mediaMountPaths}
+          setMediaMountPaths={setMediaMountPaths}
           pathMappings={pathMappings}
           setPathMappings={setPathMappings}
           newMappingAccount={newMappingAccount}

@@ -11,7 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FolderOpen, Info } from "lucide-react";
+import { FolderOpen, Info, ChevronDown } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
   TooltipContent,
@@ -56,6 +57,9 @@ export interface MonitorSettingsTabProps {
   setMoveMediaMode: Dispatch<SetStateAction<"recreate" | "local_move">>;
   moveOutRemoveLocalStrm: boolean;
   setMoveOutRemoveLocalStrm: Dispatch<SetStateAction<boolean>>;
+  /** 旧 STRM 扩展搜索目录（多行文本，一行一个本地绝对路径） */
+  mediaMountPaths: string;
+  setMediaMountPaths: Dispatch<SetStateAction<string>>;
   pathMappings: PathMapping[];
   setPathMappings: Dispatch<SetStateAction<PathMapping[]>>;
   newMappingAccount: string;
@@ -104,6 +108,8 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
     setMoveMediaMode,
     moveOutRemoveLocalStrm,
     setMoveOutRemoveLocalStrm,
+    mediaMountPaths,
+    setMediaMountPaths,
     pathMappings,
     setPathMappings,
     newMappingAccount,
@@ -298,6 +304,35 @@ export function MonitorSettingsTab(props: MonitorSettingsTabProps) {
               </p>
             </div>
           </div>
+
+          {/* Legacy STRM search dirs */}
+          <details className="group space-y-3 border-t pt-4">
+            <summary className="flex cursor-pointer list-none items-center gap-2">
+              <span className="text-sm font-medium">高级：旧 STRM 扩展搜索目录</span>
+              <span className="hidden text-xs text-muted-foreground sm:inline">
+                路径映射之外的本地目录
+              </span>
+              <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="space-y-2 pt-2">
+              <Label htmlFor="media-mount-paths">扩展搜索目录</Label>
+              <Textarea
+                id="media-mount-paths"
+                value={mediaMountPaths}
+                onChange={(e) => setMediaMountPaths(e.target.value)}
+                placeholder={"一行一个本地绝对路径，例如：\n/app/data/media/电影\nD:\\Strm"}
+                rows={3}
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                当旧 STRM 不在当前路径映射内（例如以前映射到别的目录、后来改了保存路径）时，
+                删除/移动/重命名事件会先在这些目录里按文件名找旧 STRM 再清理。留空表示只在路径映射内查找。
+              </p>
+              <p className="text-xs text-muted-foreground">
+                目录越多，单次事件处理越慢；请只填确实存放过旧 STRM 的目录。
+              </p>
+            </div>
+          </details>
 
           {/* Min File Size */}
           <div className="space-y-3">

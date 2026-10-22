@@ -205,6 +205,103 @@ func TestHandleTaskHistoryDelete_InvalidParams(t *testing.T) {
 	}
 }
 
+// ================================================================
+// HandleTaskHistoryStats — GET /api/taskHistory/stats
+// ================================================================
+
+func TestHandleTaskHistoryStats_NilRepo(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/taskHistory/stats", nil)
+	HandleTaskHistoryStats(TaskHistoryDeps{Repo: nil}).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("nil repo status: got %d, want 200", w.Code)
+	}
+	var stats db.TaskHistoryStats
+	if err := json.Unmarshal(w.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if stats.Total != 0 {
+		t.Errorf("nil repo total: got %d, want 0", stats.Total)
+	}
+}
+
+func TestHandleTaskHistoryStats_AggregatesAllRecords(t *testing.T) {
+	repo := newTestTaskHistoryRepo(t)
+	ctx := context.Background()
+
+	records := []db.TaskExecution{
+		{
+			TaskID: "t1", Account: "acc-a", Status: "completed", CreatedAt: 1000, DurationMs: 2000,
+			Summary: db.TaskExecutionSummary{TotalFiles: 10, DownloadedFiles: 8},
+		},
+		{
+			TaskID: "t2", Account: "acc-a", Status: "failed", CreatedAt: 2000, DurationMs: 4000,
+			Summary: db.TaskExecutionSummary{TotalFiles: 5, DownloadedFiles: 2},
+		},
+		{
+			TaskID: "t3", Account: "acc-b", Status: "cancelled", CreatedAt: 3000,
+			Summary: db.TaskExecutionSummary{TotalFiles: 3, DownloadedFiles: 1},
+		},
+	}
+	for _, rec := range records {
+		if _, err := repo.CreateExecution(ctx, rec); err != nil {
+			t.Fatalf("CreateExecution %s: %v", rec.TaskID, err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/taskHistory/stats", nil)
+	HandleTaskHistoryStats(TaskHistoryDeps{Repo: repo}).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	var stats db.TaskHistoryStats
+	if err := json.Unmarshal(w.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if stats.Total != 3 || stats.Completed != 1 || stats.Failed != 1 || stats.Cancelled != 1 {
+		t.Errorf("counts wrong: %+v", stats)
+	}
+	if stats.FilesDownloaded != 11 || stats.FilesTotal != 18 {
+		t.Errorf("file totals wrong: %+v", stats)
+	}
+	// 只有 2 条记录有耗时：(2000+4000)/2 = 3000
+	if stats.AvgDurationMs != 3000 {
+		t.Errorf("avg duration: got %d, want 3000", stats.AvgDurationMs)
+	}
+}
+
+func TestHandleTaskHistoryStats_FilterByAccount(t *testing.T) {
+	repo := newTestTaskHistoryRepo(t)
+	ctx := context.Background()
+
+	for _, rec := range []db.TaskExecution{
+		{TaskID: "t1", Account: "acc-a", Status: "completed", CreatedAt: 1000, DurationMs: 1000},
+		{TaskID: "t2", Account: "acc-b", Status: "completed", CreatedAt: 2000, DurationMs: 1000},
+	} {
+		if _, err := repo.CreateExecution(ctx, rec); err != nil {
+			t.Fatalf("CreateExecution %s: %v", rec.TaskID, err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/taskHistory/stats?account=acc-b", nil)
+	HandleTaskHistoryStats(TaskHistoryDeps{Repo: repo}).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var stats db.TaskHistoryStats
+	if err := json.Unmarshal(w.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if stats.Total != 1 || stats.Completed != 1 {
+		t.Errorf("filtered stats wrong: %+v", stats)
+	}
+}
+
 func TestSSEFrameLine(t *testing.T) {
 	if got, ok := sseFrameLine("data: {\"event\":\"log\",\"message\":\"x\"}\n\n"); !ok || got != `{"event":"log","message":"x"}` {
 		t.Fatalf("sse frame decode = %q, %v", got, ok)

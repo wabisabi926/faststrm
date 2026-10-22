@@ -284,18 +284,50 @@ func TestSettingsContract_PartialPostPreservesOmittedFields(t *testing.T) {
 	}
 }
 
-func TestSettingsContract_StrmBoolPatchPreservesOmittedFields(t *testing.T) {
+func TestSettingsContract_CanClearStrmTemplatesAndFormats(t *testing.T) {
 	dir := t.TempDir()
 	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
 	original := newContractSettings()
-	original.Strm.DisableRangeProxy = true
-	original.Strm.DisableSeekFormatProxy = true
+	original.Strm.StrmUrlTemplate = "http://old/api/strm?pickcode={pickcode}"
+	original.Strm.StrmFilenameTemplate = "{stem}.old.strm"
+	original.Strm.ForceProxyFormats = []string{"iso"}
 	if err := settingsStore.SaveSettings(original); err != nil {
 		t.Fatal(err)
 	}
 	deps := EmbyDeps{SettingsStore: settingsStore}
 
-	// 只提交分片大小，两个 bool 开关未提供，应保留 true
+	body := []byte(`{"strm":{"strmUrlTemplate":"","strmFilenameTemplate":"","forceProxyFormats":[]}}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	HandleSettingsPOST(deps)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := settingsStore.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Strm.StrmUrlTemplate != "" || stored.Strm.StrmFilenameTemplate != "" {
+		t.Fatalf("templates should be cleared: url=%q name=%q",
+			stored.Strm.StrmUrlTemplate, stored.Strm.StrmFilenameTemplate)
+	}
+	if len(stored.Strm.ForceProxyFormats) != 0 {
+		t.Fatalf("forceProxyFormats should be empty (proxy off), got %v", stored.Strm.ForceProxyFormats)
+	}
+}
+
+func TestSettingsContract_StrmBoolPatchPreservesOmittedFields(t *testing.T) {
+	dir := t.TempDir()
+	settingsStore := store.NewSettingsStore("contract_salt_32b_padding_________", dir)
+	original := newContractSettings()
+	original.Strm.DisableRangeProxy = true
+	if err := settingsStore.SaveSettings(original); err != nil {
+		t.Fatal(err)
+	}
+	deps := EmbyDeps{SettingsStore: settingsStore}
+
+	// 只提交分片大小，range 开关未提供，应保留 true
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader([]byte(`{"strm":{"proxyChunkSizeMB":16}}`)))
 	req.Header.Set("Content-Type", "application/json")
@@ -307,9 +339,8 @@ func TestSettingsContract_StrmBoolPatchPreservesOmittedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stored.Strm.DisableRangeProxy || !stored.Strm.DisableSeekFormatProxy {
-		t.Fatalf("omitted bool fields should be preserved: range=%v seek=%v",
-			stored.Strm.DisableRangeProxy, stored.Strm.DisableSeekFormatProxy)
+	if !stored.Strm.DisableRangeProxy {
+		t.Fatal("omitted disableRangeProxy should be preserved")
 	}
 	if stored.Strm.ProxyChunkSizeMB != 16 {
 		t.Fatalf("proxyChunkSizeMB=%d, want 16", stored.Strm.ProxyChunkSizeMB)
@@ -318,7 +349,7 @@ func TestSettingsContract_StrmBoolPatchPreservesOmittedFields(t *testing.T) {
 	// 显式 false 必须覆盖
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/settings",
-		bytes.NewReader([]byte(`{"strm":{"disableRangeProxy":false,"disableSeekFormatProxy":false}}`)))
+		bytes.NewReader([]byte(`{"strm":{"disableRangeProxy":false}}`)))
 	req.Header.Set("Content-Type", "application/json")
 	HandleSettingsPOST(deps)(rec, req)
 	if rec.Code != http.StatusOK {
@@ -328,9 +359,8 @@ func TestSettingsContract_StrmBoolPatchPreservesOmittedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Strm.DisableRangeProxy || stored.Strm.DisableSeekFormatProxy {
-		t.Fatalf("explicit false should be applied: range=%v seek=%v",
-			stored.Strm.DisableRangeProxy, stored.Strm.DisableSeekFormatProxy)
+	if stored.Strm.DisableRangeProxy {
+		t.Fatal("explicit false should be applied")
 	}
 }
 

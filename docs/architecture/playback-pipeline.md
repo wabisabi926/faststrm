@@ -66,4 +66,4 @@
 | `forceProxyUaTokens` 命中的客户端 | 全部代理 |
 | BDMV 目录 | 生成阶段跳过 |
 
-设置项：`strm.forceProxyFormats`、`strm.forceProxyUaTokens`、`strm.disableSeekFormatProxy`、`strm.disableRangeProxy`、`strm.proxyChunkSizeMB`、`strm.proxyConcurrency`。
+设置项：`strm.forceProxyFormats`、`strm.forceProxyUaTokens`、`strm.disableRangeProxy`、`strm.proxyChunkSizeMB`、`strm.proxyConcurrency`。

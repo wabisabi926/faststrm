@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,77 +5,31 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { HeartPulse } from "lucide-react";
 import { toast } from "sonner";
-import axiosInstance from "@/lib/axios";
-
-interface CookieInspectConfig {
-  enabled: boolean;
-  intervalHours: number;
-}
-
-interface AccountAlertsConfig {
-  enabled: boolean;
-  onError: boolean;
-  onRecover: boolean;
-  cookieInspect: CookieInspectConfig;
-}
+import {
+  clampInspectIntervalHours,
+  useAccountAlertsConfig,
+} from "@/hooks/useAccountAlertsConfig";
 
 interface AccountHealthPanelProps {
   accountNames: string[];
   statusMap: Record<string, { status: "ok" | "error" | "unknown" }>;
 }
 
-const DEFAULT_CONFIG: AccountAlertsConfig = {
-  enabled: false,
-  onError: true,
-  onRecover: true,
-  cookieInspect: { enabled: true, intervalHours: 6 },
-};
-
+/**
+ * 账号页的健康概览 + Cookie 巡检开关。
+ * 通知开关（异常/恢复）在「通知中心 › 账号告警」维护，这里只做入口跳转，
+ * 配置读写统一走 useAccountAlertsConfig，避免两页各写一套。
+ */
 export function AccountHealthPanel({ accountNames, statusMap }: AccountHealthPanelProps) {
-  const [config, setConfig] = useState<AccountAlertsConfig>(DEFAULT_CONFIG);
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const { config, loaded, saving, error, update, save } = useAccountAlertsConfig();
+  const { cookieInspect } = config;
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const response = await axiosInstance.get("/api/notify/alerts");
-        if (cancelled) return;
-        const data = response.data || {};
-        setConfig({
-          enabled: data.enabled ?? false,
-          onError: data.onError ?? true,
-          onRecover: data.onRecover ?? true,
-          cookieInspect: {
-            enabled: data.cookieInspect?.enabled ?? true,
-            intervalHours: data.cookieInspect?.intervalHours ?? 6,
-          },
-        });
-        setLoaded(true);
-      } catch {
-        if (!cancelled) setError("加载巡检设置失败");
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const save = async () => {
-    setSaving(true);
-    setError("");
-    try {
-      await axiosInstance.post("/api/notify/alerts", config);
-      toast.success("巡检设置已保存");
-    } catch (err) {
-      const axiosErr = err as { response?: { data?: { error?: string } } };
-      setError(axiosErr.response?.data?.error || "保存巡检设置失败");
-    } finally {
-      setSaving(false);
-    }
+  const saveInspect = async () => {
+    const ok = await save(
+      { cookieInspect: { enabled: cookieInspect.enabled, intervalHours: cookieInspect.intervalHours } },
+      "巡检设置已保存"
+    );
+    if (ok) toast.success("巡检设置已保存");
   };
 
   const counts = accountNames.reduce(
@@ -114,13 +67,10 @@ export function AccountHealthPanel({ accountNames, statusMap }: AccountHealthPan
         <div className="flex items-center gap-2">
           <Checkbox
             id="cookieInspectEnabled"
-            checked={config.cookieInspect.enabled}
+            checked={cookieInspect.enabled}
             disabled={!loaded || saving}
             onCheckedChange={(checked) =>
-              setConfig({
-                ...config,
-                cookieInspect: { ...config.cookieInspect, enabled: checked === true },
-              })
+              update({ cookieInspect: { enabled: checked === true } })
             }
           />
           <label htmlFor="cookieInspectEnabled" className="cursor-pointer text-sm">
@@ -134,21 +84,19 @@ export function AccountHealthPanel({ accountNames, statusMap }: AccountHealthPan
             max="168"
             aria-label="巡检间隔（小时）"
             className="h-8 w-20"
-            disabled={!loaded || saving || !config.cookieInspect.enabled}
-            value={config.cookieInspect.intervalHours}
+            disabled={!loaded || saving || !cookieInspect.enabled}
+            value={cookieInspect.intervalHours}
             onChange={(e) =>
-              setConfig({
-                ...config,
+              update({
                 cookieInspect: {
-                  ...config.cookieInspect,
-                  intervalHours: Math.min(168, Math.max(1, parseInt(e.target.value) || 6)),
+                  intervalHours: clampInspectIntervalHours(parseInt(e.target.value, 10)),
                 },
               })
             }
           />
           <span className="text-xs text-muted-foreground">小时</span>
         </div>
-        <Button size="sm" variant="outline" onClick={() => void save()} disabled={!loaded || saving}>
+        <Button size="sm" variant="outline" onClick={() => void saveInspect()} disabled={!loaded || saving}>
           {saving ? "保存中..." : "保存巡检设置"}
         </Button>
         <Link to="/notify?tab=alerts" className="text-xs text-primary hover:underline">

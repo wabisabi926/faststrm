@@ -287,7 +287,7 @@ func TestReadSettings_SyncDeleteDryRunDefaultsOnWhenDisabled(t *testing.T) {
 
 func TestReadSettings_ExplicitEmptyValuesKept(t *testing.T) {
 	dir := t.TempDir()
-	writeSettings(t, dir, `{"user-agent":"","strmExtensions":[],"strm":{"forceProxyFormats":[]}}`)
+	writeSettings(t, dir, `{"formatProxyDefaultsV1":true,"user-agent":"","strmExtensions":[],"strm":{"forceProxyFormats":[]}}`)
 	got, err := NewSettingsStore("test_salt", dir).ReadSettings()
 	if err != nil {
 		t.Fatal(err)
@@ -301,6 +301,48 @@ func TestReadSettings_ExplicitEmptyValuesKept(t *testing.T) {
 	if got.Strm.ForceProxyFormats == nil || len(got.Strm.ForceProxyFormats) != 0 {
 		t.Fatalf("explicit empty forceProxyFormats must stay empty, got %#v", got.Strm.ForceProxyFormats)
 	}
+}
+
+func TestReadSettings_FormatProxyDefaultsMigration(t *testing.T) {
+	t.Run("old switch off clears list", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSettings(t, dir, `{"strm":{"forceProxyFormats":["iso","bdmv","bdav","dvd","bluray"],"disableSeekFormatProxy":true}}`)
+		got, err := NewSettingsStore("test_salt", dir).ReadSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Strm.ForceProxyFormats) != 0 {
+			t.Fatalf("old switch off should migrate to empty list, got %v", got.Strm.ForceProxyFormats)
+		}
+		if !got.FormatProxyDefaultsV1 || got.Strm.DisableSeekFormatProxy {
+			t.Fatalf("migration marker/flags wrong: marker=%v flag=%v", got.FormatProxyDefaultsV1, got.Strm.DisableSeekFormatProxy)
+		}
+	})
+
+	t.Run("old empty list becomes default", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSettings(t, dir, `{"strm":{"forceProxyFormats":[]}}`)
+		got, err := NewSettingsStore("test_salt", dir).ReadSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := model.DefaultSettings().Strm.ForceProxyFormats
+		if len(got.Strm.ForceProxyFormats) != len(want) {
+			t.Fatalf("old empty list should migrate to default %v, got %v", want, got.Strm.ForceProxyFormats)
+		}
+	})
+
+	t.Run("migrated empty list stays off", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSettings(t, dir, `{"formatProxyDefaultsV1":true,"strm":{"forceProxyFormats":[]}}`)
+		got, err := NewSettingsStore("test_salt", dir).ReadSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Strm.ForceProxyFormats) != 0 {
+			t.Fatalf("migrated empty list should stay empty, got %v", got.Strm.ForceProxyFormats)
+		}
+	})
 }
 
 func TestReadSettings_CustomForceProxyFormatsKept(t *testing.T) {

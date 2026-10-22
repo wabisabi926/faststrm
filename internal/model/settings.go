@@ -30,9 +30,12 @@ type Settings struct {
 	// CleanupDefaultsV2 标记「清理默认值已迁移」，避免每次启动反复覆盖用户的选择
 	CleanupDefaultsV2 bool `json:"cleanupDefaultsV2"`
 	// CleanupDefaultsV3 标记「破坏性连带动作已关闭」的一次性迁移（v1.5）
-	CleanupDefaultsV3 bool                  `json:"cleanupDefaultsV3"`
-	Cleanup           CleanupSettings       `json:"cleanup"`
-	CookieInspect     CookieInspectSettings `json:"cookieInspect"`
+	CleanupDefaultsV3 bool `json:"cleanupDefaultsV3"`
+	// FormatProxyDefaultsV1 标记「按格式代理」从开关+列表迁移为单一列表语义：
+	// 列表为空 = 不按格式代理；迁移后不再把空列表回填默认值。
+	FormatProxyDefaultsV1 bool                  `json:"formatProxyDefaultsV1"`
+	Cleanup               CleanupSettings       `json:"cleanup"`
+	CookieInspect         CookieInspectSettings `json:"cookieInspect"`
 
 	downloadExtensionsSet bool
 }
@@ -221,22 +224,16 @@ type StrmSettings struct {
 	// ProxyConcurrency 单次播放的分片并发数，默认 2。
 	// 每个播放请求占用 1 个代理槽位；分片会额外建立 CDN 连接，不等同于槽位数。
 	ProxyConcurrency int `json:"proxyConcurrency"`
-	// DisableSeekFormatProxy 关闭「按格式强制代理」（两层统一开关）。
-	//
-	// faststrm 有两处按格式强制代理的决策点，二者共用本开关与 ForceProxyFormats：
-	//  1. EmbyProxy 层（Emby 反代拦截 media stream）
-	//  2. STRM 端点层（/api/strm 决策 302 还是代理流）
-	//
-	// 开启（默认）：列表内格式在两层都走服务端代理，保证 ISO/BDMV 等原盘的 Range 不被 CDN 拒绝。
-	// 关闭：两层都不再按格式代理，原盘与普通格式一样走 UA 白名单 / 默认 302
-	//（ISO 可能因 CDN 拒绝而播放失败）。
-	DisableSeekFormatProxy bool `json:"disableSeekFormatProxy"`
+	// DisableSeekFormatProxy 已废弃：v1.5.4 起「按格式强制代理」由 ForceProxyFormats
+	// 单一控制，列表为空即关闭。字段仅用于读取老配置并迁移。
+	DisableSeekFormatProxy bool `json:"disableSeekFormatProxy,omitempty"`
 
-	disableRangeProxySet      bool
-	disableSeekFormatProxySet bool
+	disableRangeProxySet    bool
+	strmUrlTemplateSet      bool
+	strmFilenameTemplateSet bool
 }
 
-// UnmarshalJSON 记录两个 bool 开关是否出现在 JSON 中，供 POST 合并时区分
+// UnmarshalJSON 记录 bool 开关/模板字段是否出现在 JSON 中，供 POST 合并时区分
 // 「未提供」与「显式 false」；未提供时保留旧配置，避免旧前端把用户已关闭的开关重置。
 func (s *StrmSettings) UnmarshalJSON(data []byte) error {
 	type plain StrmSettings
@@ -250,16 +247,20 @@ func (s *StrmSettings) UnmarshalJSON(data []byte) error {
 	}
 	*s = StrmSettings(decoded)
 	_, s.disableRangeProxySet = raw["disableRangeProxy"]
-	_, s.disableSeekFormatProxySet = raw["disableSeekFormatProxy"]
+	_, s.strmUrlTemplateSet = raw["strmUrlTemplate"]
+	_, s.strmFilenameTemplateSet = raw["strmFilenameTemplate"]
 	return nil
 }
 
 // DisableRangeProxyProvided 表示请求是否显式提供了 disableRangeProxy。
 func (s *StrmSettings) DisableRangeProxyProvided() bool { return s != nil && s.disableRangeProxySet }
 
-// DisableSeekFormatProxyProvided 表示请求是否显式提供了 disableSeekFormatProxy。
-func (s *StrmSettings) DisableSeekFormatProxyProvided() bool {
-	return s != nil && s.disableSeekFormatProxySet
+// StrmUrlTemplateProvided 表示请求是否显式提供了 strmUrlTemplate（支持清空）。
+func (s *StrmSettings) StrmUrlTemplateProvided() bool { return s != nil && s.strmUrlTemplateSet }
+
+// StrmFilenameTemplateProvided 表示请求是否显式提供了 strmFilenameTemplate（支持清空）。
+func (s *StrmSettings) StrmFilenameTemplateProvided() bool {
+	return s != nil && s.strmFilenameTemplateSet
 }
 
 // DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）。

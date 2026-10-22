@@ -16,7 +16,9 @@ ISO/BDMV 等格式在 302 后由客户端直连 CDN，Range 请求可能因 UA �
 
 命中原盘格式时走服务端 Range 代理，不降级 302。普通格式仍默认 302。
 
-统一开关为 `strm.disableSeekFormatProxy`；关闭后两层都回到 UA 白名单/默认 302。
+统一控制为 `strm.forceProxyFormats` 本身：列表为空 = 关闭按格式代理，两层都回到 UA 白名单/默认 302。
+
+> 2026-10-22 调整：移除独立的 `disableSeekFormatProxy` 开关（仅保留字段用于老配置迁移）。旧开关关闭 → 迁移为空列表；旧开关开启且列表为空 → 补默认 5 项。
 
 ## 后果
 

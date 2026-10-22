@@ -224,6 +224,9 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 	if backfillStrmRouteDefaults(out, def) {
 		changed = true
 	}
+	if applyFormatProxyDefaults(out, def) {
+		changed = true
+	}
 	// User-Agent 显式留空表示「不写入自定义 UA」，运行时由 EffectiveUserAgent 兜底；
 	// 不再把默认 UA 写回输入框/配置。
 	// 老配置没有 rateLimit 块时补默认值，避免前端只改其中一项导致其余配额被写成 0（不限流）。
@@ -241,6 +244,16 @@ func applyDefaults(out, def *model.Settings, eventTypesMissing bool) bool {
 		out.Emby.SyncDeleteDryRun = true
 		changed = true
 	}
+	if applyStrmRuntimeDefaults(out, def) {
+		changed = true
+	}
+	return changed
+}
+
+// applyStrmRuntimeDefaults 回填 STRM 路由的运行时数值默认值（0 = 旧配置未配置）。
+// 拆出来是为了控制 applyDefaults 的圈复杂度。
+func applyStrmRuntimeDefaults(out, def *model.Settings) bool {
+	changed := false
 	if out.Strm.AccountProxyConcurrencyLimit == 0 {
 		out.Strm.AccountProxyConcurrencyLimit = def.Strm.AccountProxyConcurrencyLimit
 		changed = true
@@ -297,8 +310,7 @@ func applyMetadataDefaults(out, def *model.Settings) bool {
 // backfillStrmRouteDefaults 回填 STRM 路由策略里「可安全补默认」的两个列表。
 //
 // ForceProxyFormats：v1.5.0 起改为可配置。字段缺失（nil）时补默认值；
-// 显式 [] 表示用户清空自定义列表，保留为空，由运行时兜底内置默认。
-// 想关掉按格式代理有独立的 disableSeekFormatProxy 开关，不需要靠清空列表表达。
+// v1.5.4 起列表是「按格式强制代理」的唯一控制，显式 [] 表示关闭。
 //
 // ForceProxyUaTokens：只区分「从未配置」与「明确清空」——
 //   - nil（settings.json 里没有这个键，典型是 v1.5.x 之前的老配置）→ 补默认值并写回，
@@ -323,6 +335,25 @@ func backfillStrmRouteDefaults(out, def *model.Settings) bool {
 		changed = true
 	}
 	return changed
+}
+
+// applyFormatProxyDefaults 一次性迁移「开关 + 列表」到单一列表语义：
+//   - 老开关关闭（DisableSeekFormatProxy=true）→ 清空列表，保持关闭；
+//   - 老开关开启且列表为空 → 补默认 5 项，保持原有“空=默认”的行为；
+//   - 迁移后列表为空表示明确关闭，不再回填。
+func applyFormatProxyDefaults(out, def *model.Settings) bool {
+	if out.FormatProxyDefaultsV1 {
+		return false
+	}
+	if out.Strm.DisableSeekFormatProxy {
+		out.Strm.ForceProxyFormats = []string{}
+	} else if len(out.Strm.ForceProxyFormats) == 0 {
+		out.Strm.ForceProxyFormats = append([]string{}, def.Strm.ForceProxyFormats...)
+	}
+	out.Strm.DisableSeekFormatProxy = false
+	out.FormatProxyDefaultsV1 = true
+	logger.S().Infof("[SettingsStore] 迁移: 按格式代理改为单列表控制，当前列表 %v", out.Strm.ForceProxyFormats)
+	return true
 }
 
 var legacyDefaultForceProxyFormats = []string{"iso", "bdmv", "bdav", "dvd", "bluray", "m2ts", "ts", "vob", "ifo", "bup"}

@@ -55,6 +55,29 @@ func HandleTaskHistory(deps TaskHistoryDeps) http.HandlerFunc {
 	}
 }
 
+// HandleTaskHistoryStats GET /api/taskHistory/stats
+// query: taskId, account, status（与列表相同的过滤条件，但统计全部记录）
+func HandleTaskHistoryStats(deps TaskHistoryDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Repo == nil {
+			httpx.WriteJson(w, http.StatusOK, &db.TaskHistoryStats{})
+			return
+		}
+		q := r.URL.Query()
+		query := db.TaskHistoryQuery{
+			TaskID:  q.Get("taskId"),
+			Account: q.Get("account"),
+			Status:  q.Get("status"),
+		}
+		stats, err := deps.Repo.Stats(r.Context(), query)
+		if err != nil {
+			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		httpx.WriteJson(w, http.StatusOK, stats)
+	}
+}
+
 // HandleTaskHistoryLogs GET /api/taskHistory/:executionId/logs
 // 返回指定 execution 的日志行数组
 func HandleTaskHistoryLogs(deps TaskHistoryDeps) http.HandlerFunc {

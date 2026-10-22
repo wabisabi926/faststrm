@@ -2,35 +2,17 @@ package embyproxy
 
 import (
 	"testing"
+
+	"github.com/wabisabi926/faststrm/internal/model"
 )
 
-// resetForceProxyFormats 恢复默认格式列表与开关，避免用例间相互污染
+// resetForceProxyFormats 恢复默认格式列表，避免用例间相互污染。
 func resetForceProxyFormats(t *testing.T) {
 	t.Helper()
-	SetForceProxyFormats(nil)
-	SetSeekFormatProxyEnabled(true)
+	SetForceProxyFormats(model.DefaultForceProxyFormats)
 	t.Cleanup(func() {
-		SetForceProxyFormats(nil)
-		SetSeekFormatProxyEnabled(true)
+		SetForceProxyFormats(model.DefaultForceProxyFormats)
 	})
-}
-
-// TestSetSeekFormatProxyEnabled_DisablesAll 统一开关关闭后，原盘也不再按格式代理
-func TestSetSeekFormatProxyEnabled_DisablesAll(t *testing.T) {
-	resetForceProxyFormats(t)
-
-	SetSeekFormatProxyEnabled(false)
-	if isSeekRequiredFormat("iso", "movie.iso") {
-		t.Fatal("开关关闭后 iso 不应再走代理")
-	}
-	if isSeekRequiredFormat("m2ts", "00000.m2ts") {
-		t.Fatal("开关关闭后 m2ts 不应再走代理")
-	}
-
-	SetSeekFormatProxyEnabled(true)
-	if !isSeekRequiredFormat("iso", "movie.iso") {
-		t.Fatal("开关恢复后 iso 应重新走代理")
-	}
 }
 
 // TestIsSeekRequiredFormat_Default 默认列表：只有原盘/镜像格式命中。
@@ -70,11 +52,10 @@ func TestIsSeekRequiredFormat_Default(t *testing.T) {
 	}
 }
 
-// TestSetForceProxyFormats_RemoveTS 把 .ts 移除后，TS 文件应走 302 而非代理
+// TestSetForceProxyFormats_RemoveTS 把 .ts 移除后，TS 文件应走 302 而非代理。
 func TestSetForceProxyFormats_RemoveTS(t *testing.T) {
 	resetForceProxyFormats(t)
 
-	// 只保留原盘类，去掉 ts
 	SetForceProxyFormats([]string{"iso", "bdmv", "m2ts"})
 
 	if isSeekRequiredFormat("", "record.ts") {
@@ -83,7 +64,6 @@ func TestSetForceProxyFormats_RemoveTS(t *testing.T) {
 	if isSeekRequiredFormat("ts", "") {
 		t.Fatal("container ts should NOT require proxy after being removed")
 	}
-	// 原盘仍应命中
 	if !isSeekRequiredFormat("", "movie.iso") {
 		t.Fatal("iso should still require proxy")
 	}
@@ -92,7 +72,7 @@ func TestSetForceProxyFormats_RemoveTS(t *testing.T) {
 	}
 }
 
-// TestSetForceProxyFormats_Normalization 大小写、点号、空白都应被规范化
+// TestSetForceProxyFormats_Normalization 大小写、点号、空白都应被规范化。
 func TestSetForceProxyFormats_Normalization(t *testing.T) {
 	resetForceProxyFormats(t)
 
@@ -113,12 +93,15 @@ func TestSetForceProxyFormats_Normalization(t *testing.T) {
 	}
 }
 
-// TestSetForceProxyFormats_EmptyFallsBackToDefault 空列表回落默认
-func TestSetForceProxyFormats_EmptyFallsBackToDefault(t *testing.T) {
+// TestSetForceProxyFormats_EmptyDisablesAll 空列表 = 关闭按格式代理。
+func TestSetForceProxyFormats_EmptyDisablesAll(t *testing.T) {
 	resetForceProxyFormats(t)
 
-	SetForceProxyFormats([]string{})
-	if !isSeekRequiredFormat("", "movie.iso") {
-		t.Fatal("empty config should fall back to default list")
+	SetForceProxyFormats(nil)
+	if isSeekRequiredFormat("", "movie.iso") {
+		t.Fatal("empty config should disable format-based proxy")
+	}
+	if isSeekRequiredFormat("iso", "") {
+		t.Fatal("empty config should disable container-based proxy")
 	}
 }

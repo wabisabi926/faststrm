@@ -33,6 +33,8 @@ function buildProps(overrides: Partial<MonitorSettingsTabProps> = {}): MonitorSe
     setMoveMediaMode: noop,
     moveOutRemoveLocalStrm: true,
     setMoveOutRemoveLocalStrm: noop,
+    mediaMountPaths: "",
+    setMediaMountPaths: noop,
     pathMappings: [{ account: "user-a", cloudPath: "/电影", localPath: "/media/电影" }],
     setPathMappings: noop,
     newMappingAccount: "__all__",
@@ -200,6 +202,25 @@ describe("MonitorSettingsTab", () => {
     const deleteBtns = screen.getAllByRole("button", { name: "删除" });
     await user.click(deleteBtns[0]);
     expect(removePathMapping).toHaveBeenCalledWith(0);
+  });
+
+  it("旧 STRM 扩展搜索目录：展示已配置路径并可编辑", async () => {
+    const user = userEvent.setup();
+    const setMediaMountPaths = vi.fn();
+    render(
+      <MonitorSettingsTab
+        {...buildProps({ mediaMountPaths: "/media/old\n/media/older", setMediaMountPaths })}
+      />
+    );
+
+    // 折叠区默认收起，先展开
+    await user.click(screen.getByText(/旧 STRM 扩展搜索目录/));
+    const textarea = screen.getByLabelText("扩展搜索目录") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("/media/old\n/media/older");
+
+    await user.clear(textarea);
+    await user.type(textarea, "/media/new");
+    expect(setMediaMountPaths).toHaveBeenCalled();
   });
 });
 

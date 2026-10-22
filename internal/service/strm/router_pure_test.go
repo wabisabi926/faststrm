@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/wabisabi926/faststrm/internal/model"
 )
 
 // === IsValidPickcode ===
@@ -508,5 +510,15 @@ func TestIsSeekFormatName(t *testing.T) {
 		if got := IsSeekFormatName(name, formats); got != want {
 			t.Fatalf("IsSeekFormatName(%q) = %v, want %v", name, got, want)
 		}
+	}
+}
+
+func TestStrmRouteConfig_EmptyForceProxyFormatsDisablesFormatProxy(t *testing.T) {
+	s := model.DefaultSettings()
+	s.Strm.ForceProxyFormats = []string{}
+	cfg := StrmRouteConfig(s)
+	if len(cfg.ForceProxyFormats) != 0 || len(cfg.ForceProxySeekFormats) != 0 {
+		t.Fatalf("empty list must disable format proxy, got formats=%v seek=%v",
+			cfg.ForceProxyFormats, cfg.ForceProxySeekFormats)
 	}
 }

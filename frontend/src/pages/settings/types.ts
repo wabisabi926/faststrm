@@ -24,6 +24,8 @@ export type LifeMonitorConfig = {
   moveMediaMode?: "recreate" | "local_move";
   // 移出映射（移到非媒体目录）时是否删除本地旧 STRM；默认 true
   moveOutRemoveLocalStrm?: boolean;
+  // 旧 STRM 扩展搜索目录：路径映射之外的本地目录，用于找出历史遗留的旧 STRM
+  mediaMountPath?: string[];
 };
 
 export type Settings = {
@@ -53,12 +55,13 @@ export type Settings = {
     // 需要服务端代理流的容器/扩展名
     forceProxyFormats?: string[];
     // 代理流分片并发（大原盘单连接带宽不足时显著改善）
-    disableSeekFormatProxy?: boolean;
     disableRangeProxy?: boolean;
     proxyChunkSizeMB?: number;
     proxyConcurrency?: number;
     // STRM URL 模板：由「标准 URL + 附加参数勾选」生成；空 = 走后端硬编码默认
     strmUrlTemplate?: string;
+    // STRM 文件名模板：空 = 后端默认（{stem}.strm / {stem}.iso.strm）
+    strmFilenameTemplate?: string;
   };
   // 115 API 限流（保存后即时重建令牌桶）
   rateLimit?: {
@@ -118,6 +121,7 @@ export const DEFAULT_MONITOR_CONFIG: LifeMonitorConfig = {
   moveMediaMode: "local_move",
   // 移出映射时删除本地旧 STRM（默认开启，符合直觉：移出即清理）
   moveOutRemoveLocalStrm: true,
+  mediaMountPath: [],
 };
 
 // 监控验证结果类型（在主组件和 MonitorSettingsTab 间共享）

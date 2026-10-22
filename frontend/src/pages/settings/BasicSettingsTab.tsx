@@ -234,6 +234,49 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </div>
         </details>
 
+        <details className="group space-y-3 pt-2 border-t">
+          <summary className="flex cursor-pointer list-none items-center gap-2">
+            <span className="text-sm font-medium">高级：自定义 URL / 文件名模板</span>
+            <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="strm-url-template">STRM URL 模板</Label>
+              <Input
+                id="strm-url-template"
+                value={data.strm?.strmUrlTemplate || ""}
+                onChange={(e) =>
+                  setData({ ...data, strm: { ...(data.strm || {}), strmUrlTemplate: e.target.value } })
+                }
+                placeholder="{prefix}/api/strm?account={account}&pickcode={pickcode}&file_name={filename}"
+              />
+              <p className="text-xs text-muted-foreground">
+                留空使用默认 URL 拼接。支持 <code>{"{prefix}"}</code> <code>{"{account}"}</code>{" "}
+                <code>{"{pickcode}"}</code> <code>{"{filename}"}</code> <code>{"{ext}"}</code>{" "}
+                <code>{"{stem}"}</code> 等变量。
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="strm-filename-template">STRM 文件名模板</Label>
+              <Input
+                id="strm-filename-template"
+                value={data.strm?.strmFilenameTemplate || ""}
+                onChange={(e) =>
+                  setData({ ...data, strm: { ...(data.strm || {}), strmFilenameTemplate: e.target.value } })
+                }
+                placeholder="{stem}.strm"
+              />
+              <p className="text-xs text-muted-foreground">
+                留空使用默认文件名。支持 <code>{"{filename}"}</code> <code>{"{stem}"}</code>{" "}
+                <code>{"{ext}"}</code>；.iso 会自动保留 .iso.strm。
+              </p>
+            </div>
+            <p className="text-xs text-amber-600 dark:text-amber-500">
+              模板只影响新生成或重建的 STRM；已有文件需要重跑任务或重新生成才会更新。
+            </p>
+          </div>
+        </details>
+
         {/* 全局文件过滤 */}
         <div className="space-y-4 pt-4 border-t">
           <div className="flex items-center gap-2">
@@ -315,46 +358,26 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                 </p>
               </div>
               <div className="space-y-3 rounded-md border p-3">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="disableSeekFormatProxy"
-                    checked={!(data.strm?.disableSeekFormatProxy ?? false)}
-                    onCheckedChange={(checked) =>
-                      setData({ ...data, strm: { ...data.strm, disableSeekFormatProxy: checked !== true } })
-                    }
-                  />
-                  <Label htmlFor="disableSeekFormatProxy" className="cursor-pointer">
-                    按格式强制代理（推荐开启）
-                  </Label>
+                <div className="flex items-center justify-between">
+                  <Label>强制代理的容器/扩展名</Label>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    onClick={() => setForceProxyFormatsInput(DEFAULT_FORCE_PROXY_FORMATS.join(", "))}
+                  >
+                    填入默认值
+                  </button>
                 </div>
+                <Input
+                  value={forceProxyFormatsInput}
+                  onChange={(e) => setForceProxyFormatsInput(e.target.value)}
+                  placeholder={DEFAULT_FORCE_PROXY_FORMATS.join(", ")}
+                />
                 <p className="text-xs text-muted-foreground">
-                  开启后，下方列表内的格式在 <b>Emby 反代</b> 和 <b>STRM 端点</b> 两层都走服务端代理——
-                  ISO 等镜像直接 302 到 CDN 时，部分客户端无法随机读取。
-                  关闭后两层都不再按格式代理，镜像也走 302（可能播放失败）。
+                  逗号分隔，大小写不敏感、点号可省略。两层共用这一份列表；
+                  <span className="font-medium">留空 = 全部 302（关闭按格式代理）</span>；
+                  点「填入默认值」恢复 iso, bdmv, bdav, dvd, bluray。m2ts、ts、vob 默认不代理。
                 </p>
-                <div className="space-y-2 pt-1">
-                  <div className="flex items-center justify-between">
-                    <Label>强制代理的容器/扩展名</Label>
-                    <button
-                      type="button"
-                      className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                      onClick={() => setForceProxyFormatsInput(DEFAULT_FORCE_PROXY_FORMATS.join(", "))}
-                    >
-                      填入默认值
-                    </button>
-                  </div>
-                  <Input
-                    value={forceProxyFormatsInput}
-                    onChange={(e) => setForceProxyFormatsInput(e.target.value)}
-                    placeholder={DEFAULT_FORCE_PROXY_FORMATS.join(", ")}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    逗号分隔，大小写不敏感、点号可省略。两层共用这一份列表；
-                    <span className="font-medium">留空使用内置默认（iso, bdmv, bdav, dvd, bluray）</span>，
-                    不会写回配置；如需关闭按格式代理，请用上方开关。
-                    m2ts、ts、vob 属于普通视频流，默认 302 直连；某些客户端播不了时再加回列表。
-                  </p>
-                </div>
               </div>
             </div>
 

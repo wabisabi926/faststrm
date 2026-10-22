@@ -244,7 +244,7 @@ func buildProxyStatus(deps EmbyDeps) map[string]any {
 		}
 	}
 	out["forceProxyUaTokens"] = settings.Strm.ForceProxyUaTokens
-	out["disableSeekFormatProxy"] = settings.Strm.DisableSeekFormatProxy
+	out["disableSeekFormatProxy"] = len(settings.Strm.ForceProxyFormats) == 0
 	if !settings.Strm.DisableRangeProxy {
 		chunk := settings.Strm.ProxyChunkSizeMB
 		if chunk <= 0 {
@@ -813,13 +813,12 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 			// ====== STRM 嵌套对象 ======
 			if body.Strm != nil {
-				// STRM URL 模板：设置页「标准 URL + 附加参数勾选」生成的完整模板。
-				// 空串视为未提供（保留旧值），兼容旧前端不发送该字段的情况。
-				if body.Strm.StrmUrlTemplate != "" {
-					settings.Strm.StrmUrlTemplate = body.Strm.StrmUrlTemplate
+				// 空串显式提交表示清空模板，回退默认拼接；未提交则保留旧值。
+				if body.Strm.StrmUrlTemplateProvided() {
+					settings.Strm.StrmUrlTemplate = strings.TrimSpace(body.Strm.StrmUrlTemplate)
 				}
-				if body.Strm.StrmFilenameTemplate != "" {
-					settings.Strm.StrmFilenameTemplate = body.Strm.StrmFilenameTemplate
+				if body.Strm.StrmFilenameTemplateProvided() {
+					settings.Strm.StrmFilenameTemplate = strings.TrimSpace(body.Strm.StrmFilenameTemplate)
 				}
 				// 空数组也允许覆盖：用户清空输入框时前端发送 []，必须能清掉旧值
 				if body.Strm.ForceProxyUaTokens != nil {
@@ -838,9 +837,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 				// 分片并发代理：只有显式提供时才覆盖，旧前端/部分提交保留旧值
 				if body.Strm.DisableRangeProxyProvided() {
 					settings.Strm.DisableRangeProxy = body.Strm.DisableRangeProxy
-				}
-				if body.Strm.DisableSeekFormatProxyProvided() {
-					settings.Strm.DisableSeekFormatProxy = body.Strm.DisableSeekFormatProxy
 				}
 				if v := body.Strm.ProxyChunkSizeMB; v >= 1 && v <= 64 {
 					settings.Strm.ProxyChunkSizeMB = v
@@ -936,7 +932,6 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 		rate.ApplySettings(savedSettings)
 		// 按格式强制代理：格式列表 + 两层统一开关，保存即生效
 		embyproxy.SetForceProxyFormats(savedSettings.Strm.ForceProxyFormats)
-		embyproxy.SetSeekFormatProxyEnabled(!savedSettings.Strm.DisableSeekFormatProxy)
 		if deps.OnSettingsSaved != nil {
 			deps.OnSettingsSaved(savedSettings)
 		}

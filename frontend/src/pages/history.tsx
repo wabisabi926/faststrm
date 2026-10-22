@@ -41,6 +41,20 @@ interface TaskExecutionHistory {
   };
   error?: string;
   logs?: string[];
+  /** 记录创建时间（分页游标用） */
+  createdAt: number;
+}
+
+/** 服务端返回的全量统计（不受分页影响） */
+interface TaskHistoryStats {
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  running: number;
+  filesDownloaded: number;
+  filesTotal: number;
+  avgDurationMs: number;
 }
 
 // 状态图标和颜色映射
@@ -86,10 +100,12 @@ function HistoryStatCard({ label, value }: { label: string; value: ReactNode }) 
 export default function TaskHistoryPage() {
   const [searchParams] = useSearchParams();
   const [history, setHistory] = useState<TaskExecutionHistory[]>([]);
+  const [stats, setStats] = useState<TaskHistoryStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
 
+  // 兜底：服务端统计不可用时，退回「已加载记录」的口径，并在卡片上标注
   const taskStats = useMemo(() => {
     let success = 0;
     let failed = 0;
@@ -120,6 +136,19 @@ export default function TaskHistoryPage() {
     };
   }, [history]);
 
+  // 卡片数据：优先服务端全量统计
+  const cards = stats
+    ? {
+        total: stats.total,
+        success: stats.completed,
+        failed: stats.failed,
+        filesOk: stats.filesDownloaded,
+        filesTotal: stats.filesTotal,
+        avgDurationMs: stats.avgDurationMs,
+        scope: "全部记录",
+      }
+    : { ...taskStats, scope: "已加载记录" };
+
   useEffect(() => {
     void fetchHistory();
     // 依赖为 setState + axios 单例，引用稳定；故意不写依赖避免重复加载
@@ -128,10 +157,29 @@ export default function TaskHistoryPage() {
 
   const PAGE_SIZE = 100;
 
+  const fetchStats = async () => {
+    try {
+      const response = await axiosInstance.get("/api/taskHistory/stats");
+      const data = response.data;
+      if (data && typeof data.total === "number") {
+        setStats(data as TaskHistoryStats);
+      } else {
+        setStats(null);
+      }
+    } catch (error) {
+      // 统计失败不影响列表展示，退回本地口径
+      logger.error("Failed to fetch task history stats:", error);
+      setStats(null);
+    }
+  };
+
   const fetchHistory = async () => {
     try {
       setLoading(true);
-      const response = await axiosInstance.get(`/api/taskHistory?limit=${PAGE_SIZE}`);
+      const [response] = await Promise.all([
+        axiosInstance.get(`/api/taskHistory?limit=${PAGE_SIZE}`),
+        fetchStats(),
+      ]);
       const data = response.data;
       const items = Array.isArray(data) ? data : (data?.items || []);
       setHistory(items);
@@ -149,9 +197,10 @@ export default function TaskHistoryPage() {
     if (!last || loadingMore) return;
     setLoadingMore(true);
     try {
-      const before = last.startedAt > 0 ? `&before=${last.startedAt - 1}` : "";
+      // 后端按 created_at 倒序分页，游标必须用 createdAt（startedAt 可能为 0 或晚于创建时间）
+      const cursor = last.createdAt > 0 ? `&before=${last.createdAt}` : "";
       const response = await axiosInstance.get(
-        `/api/taskHistory?limit=${PAGE_SIZE}${before}`
+        `/api/taskHistory?limit=${PAGE_SIZE}${cursor}`
       );
       const data = response.data;
       const items: TaskExecutionHistory[] = Array.isArray(data) ? data : (data?.items || []);
@@ -170,6 +219,7 @@ export default function TaskHistoryPage() {
       await axiosInstance.delete(`/api/taskHistory?executionId=${executionId}`);
       setHistory(history.filter(h => h.id !== executionId));
       toast.success("删除成功");
+      void fetchStats();
     } catch (error) {
       logger.error("Failed to delete history:", error);
       toast.error("删除失败");
@@ -231,20 +281,24 @@ export default function TaskHistoryPage() {
         ) : (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <HistoryStatCard label="已加载记录" value={taskStats.total} />
+              <HistoryStatCard label="记录总数" value={cards.total} />
               <HistoryStatCard
                 label="成功 / 失败"
                 value={
                   <>
-                    <span className="text-green-600 dark:text-green-400">{taskStats.success}</span>
+                    <span className="text-green-600 dark:text-green-400">{cards.success}</span>
                     <span className="text-muted-foreground"> / </span>
-                    <span className="text-red-600 dark:text-red-400">{taskStats.failed}</span>
+                    <span className="text-red-600 dark:text-red-400">{cards.failed}</span>
                   </>
                 }
               />
-              <HistoryStatCard label="条目成功 / 总数" value={`${taskStats.filesOk} / ${taskStats.filesTotal}`} />
-              <HistoryStatCard label="平均耗时" value={formatElapsed(taskStats.avgDurationMs)} />
+              <HistoryStatCard label="条目成功 / 总数" value={`${cards.filesOk} / ${cards.filesTotal}`} />
+              <HistoryStatCard label="平均耗时" value={formatElapsed(cards.avgDurationMs)} />
             </div>
+            <p className="text-xs text-muted-foreground">
+              统计口径：{cards.scope}
+              {hasMore && `，当前列表已加载 ${history.length} 条`}
+            </p>
 
             <div className="rounded-md border overflow-x-auto [&_table]:text-xs">
               <Table>

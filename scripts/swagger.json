@@ -802,6 +802,31 @@
         }
       }
     },
+    "/api/taskHistory/stats": {
+      "get": {
+        "tags": [
+          "Task"
+        ],
+        "summary": "GET /api/taskHistory/stats",
+        "description": "任务历史全量统计（不受分页限制）。支持 taskId / account / status 过滤。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未授权 (JWT 缺失或无效)"
+          },
+          "500": {
+            "description": "服务器错误"
+          }
+        }
+      }
+    },
     "/api/taskHistory/:executionId/logs": {
       "get": {
         "tags": [

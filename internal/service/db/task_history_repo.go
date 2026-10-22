@@ -241,35 +241,14 @@ func (r *TaskHistoryRepo) Query(ctx context.Context, q TaskHistoryQuery) ([]Task
 	if r == nil || r.db == nil {
 		return nil, nil
 	}
-	where := []string{"1=1"}
-	args := []any{}
-	if q.ExecutionID > 0 {
-		where = append(where, "id = ?")
-		args = append(args, q.ExecutionID)
-	}
-	if q.TaskID != "" {
-		where = append(where, "task_id = ?")
-		args = append(args, q.TaskID)
-	}
-	if q.Account != "" {
-		where = append(where, "account = ?")
-		args = append(args, q.Account)
-	}
-	if q.Status != "" {
-		where = append(where, "status = ?")
-		args = append(args, q.Status)
-	}
-	if q.BeforeMs > 0 {
-		where = append(where, "created_at < ?")
-		args = append(args, q.BeforeMs)
-	}
+	where, args := taskHistoryWhere(q)
 	limit := q.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 	//nolint:gosec // G201 — WHERE 子句由代码内置条件构建，值通过 QueryContext 参数化
 	sql := fmt.Sprintf(`SELECT id, task_id, account, origin_path, target_path, status, started_at, ended_at, duration_ms, summary_json, error, created_at
-FROM task_executions WHERE %s ORDER BY created_at DESC, id DESC LIMIT ?`, join(where, " AND "))
+FROM task_executions WHERE %s ORDER BY created_at DESC, id DESC LIMIT ?`, where)
 	args = append(args, limit)
 	rows, err := r.db.QueryContext(ctx, sql, args...)
 	if err != nil {
@@ -292,6 +271,109 @@ FROM task_executions WHERE %s ORDER BY created_at DESC, id DESC LIMIT ?`, join(w
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// TaskHistoryStats 任务历史的全量统计（不受分页限制）。
+type TaskHistoryStats struct {
+	Total           int   `json:"total"`
+	Completed       int   `json:"completed"`
+	Failed          int   `json:"failed"`
+	Cancelled       int   `json:"cancelled"`
+	Running         int   `json:"running"`
+	FilesDownloaded int64 `json:"filesDownloaded"`
+	FilesTotal      int64 `json:"filesTotal"`
+	// AvgDurationMs 只对「有耗时」的记录求平均，避免未结束记录把均值拉低
+	AvgDurationMs int64 `json:"avgDurationMs"`
+}
+
+// Stats 统计符合过滤条件的全部记录。
+//
+// 历史页的卡片此前只能统计「已加载的那一页」，翻页后数字会变；
+// 这里在服务端做一次全量聚合（task_executions 最多保留 200 条，成本可控）。
+func (r *TaskHistoryRepo) Stats(ctx context.Context, q TaskHistoryQuery) (TaskHistoryStats, error) {
+	var stats TaskHistoryStats
+	if r == nil || r.db == nil {
+		return stats, nil
+	}
+	// 统计口径与列表一致，但不带 BeforeMs/分页：分页只是展示手段，统计要看全部
+	q.BeforeMs = 0
+	where, args := taskHistoryWhere(q)
+	//nolint:gosec // G201 — WHERE 子句由代码内置条件构建，值通过 QueryContext 参数化
+	sql := fmt.Sprintf(`SELECT status, duration_ms, summary_json FROM task_executions WHERE %s`, where)
+	rows, err := r.db.QueryContext(ctx, sql, args...)
+	if err != nil {
+		return stats, err
+	}
+	defer rows.Close()
+
+	var durationSum int64
+	var durationCount int64
+	for rows.Next() {
+		var (
+			status string
+			durMs  int64
+			sumStr *string
+		)
+		if err := rows.Scan(&status, &durMs, &sumStr); err != nil {
+			return stats, err
+		}
+		stats.Total++
+		switch status {
+		case "completed":
+			stats.Completed++
+		case "failed":
+			stats.Failed++
+		case "cancelled":
+			stats.Cancelled++
+		case "running", "pending":
+			stats.Running++
+		}
+		if durMs > 0 {
+			durationSum += durMs
+			durationCount++
+		}
+		if sumStr != nil && *sumStr != "" {
+			var s TaskExecutionSummary
+			if err := json.Unmarshal([]byte(*sumStr), &s); err == nil {
+				stats.FilesDownloaded += int64(s.DownloadedFiles)
+				stats.FilesTotal += int64(s.TotalFiles)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return stats, err
+	}
+	if durationCount > 0 {
+		stats.AvgDurationMs = durationSum / durationCount
+	}
+	return stats, nil
+}
+
+// taskHistoryWhere 构建列表与统计共用的 WHERE 子句（含参数）。
+func taskHistoryWhere(q TaskHistoryQuery) (string, []any) {
+	where := []string{"1=1"}
+	args := []any{}
+	if q.ExecutionID > 0 {
+		where = append(where, "id = ?")
+		args = append(args, q.ExecutionID)
+	}
+	if q.TaskID != "" {
+		where = append(where, "task_id = ?")
+		args = append(args, q.TaskID)
+	}
+	if q.Account != "" {
+		where = append(where, "account = ?")
+		args = append(args, q.Account)
+	}
+	if q.Status != "" {
+		where = append(where, "status = ?")
+		args = append(args, q.Status)
+	}
+	if q.BeforeMs > 0 {
+		where = append(where, "created_at < ?")
+		args = append(args, q.BeforeMs)
+	}
+	return join(where, " AND "), args
 }
 
 // GetLogs 读取某执行的日志（按 seq asc，可 limit）

@@ -772,15 +772,9 @@ func StrmRouteConfig(cfg *model.Settings) struct {
 		checkTimeout = model.DefaultSettings().Strm.RedirectCheckTimeout()
 	}
 	formats := st.ForceProxyFormats
-	if len(formats) == 0 {
-		formats = model.DefaultForceProxyFormats
-	}
-	// 按格式强制代理：两层（EmbyProxy / STRM 端点）共用 ForceProxyFormats，
-	// DisableSeekFormatProxy 为统一开关——关闭后两层都不再按格式代理。
+	// 按格式强制代理：两层（EmbyProxy / STRM 端点）共用 ForceProxyFormats。
+	// 列表为空 = 全部 302（关闭按格式代理）。
 	seekFormats := formats
-	if st.DisableSeekFormatProxy {
-		seekFormats = nil // 显式关闭：原盘按普通格式处理
-	}
 	return struct {
 		ForceProxyUaTokens           []string
 		AccountProxyConcurrencyLimit int

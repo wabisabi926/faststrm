@@ -74,7 +74,7 @@
 
 > **配置化**：
 > - 规则 ② 的 UA 列表：`settings.json → strm.forceProxyUaTokens`，**默认预置** `Infuse, VidHub, SenPlayer, SenPlayerHD`（清空即全部 302 直链）。
-> - 规则 ③ 的格式列表：`strm.forceProxySeekFormats`，默认 `iso, bdmv, bdav, dvd, bluray, m2ts, vob, ifo, bup`（**不含 ts**，避免录播误占带宽）；可用 `strm.disableSeekFormatProxy=true` 整体关闭。
+> - 规则 ③ 的格式列表：`strm.forceProxyFormats`，默认 `iso, bdmv, bdav, dvd, bluray`（**不含 m2ts/ts/vob**）；列表为空即整体关闭按格式代理。
 
 ---
 
@@ -165,11 +165,11 @@ http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&fi
 - `pickcode`：115 文件唯一标识（17 位字母数字）
 - `file_name`：文件名（用于 Content-Disposition 和格式判断）
 
-> **注意（v1.5.1 起）**：STRM 路由层**重新对原盘特判**——`iso/bdmv/bdav/dvd/bluray/m2ts/vob/ifo/bup`
-> 一律强制服务端代理。原因：302 后由客户端直连 CDN，ISO 这类镜像的 Range/UA 绑定极易被拒，
+> **注意**：STRM 路由层对格式列表内的原盘特判——默认 `iso/bdmv/bdav/dvd/bluray`
+> 走服务端代理。原因：302 后由客户端直连 CDN，ISO 这类镜像的 Range/UA 绑定极易被拒，
 > 表现为「有时能播、有时卡住」，且服务端无法感知客户端侧的失败。
-> 普通视频（mkv/mp4 等）仍走 302 直链，不占 NAS 带宽。
-> 设置页可关闭「原盘强制走代理」回退旧行为；`ts` 不在默认列表内（录播 302 通常可用）。
+> 普通视频（mkv/mp4/m2ts/ts/vob 等）默认 302 直链，不占 NAS 带宽。
+> 设置页的格式列表留空 = 全部 302；点「填入默认值」恢复推荐 5 项。
 
 ### pickcode 获取方式
 
@@ -216,7 +216,7 @@ http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&fi
 | 配置路径 | 默认值 | 说明 |
 |----------|--------|------|
 | `strm.forceProxyUaTokens` | `Infuse, VidHub, SenPlayer, SenPlayerHD` | 强制代理 UA / Emby 客户端名列表；留空 = 全部 302 直连（不按 UA 代理） |
-| `strm.forceProxyFormats` | `iso, bdmv, bdav, dvd, bluray` | 两层共用的原盘代理格式列表；留空保存后仍为空，运行时用内置 5 项兜底 |
+| `strm.forceProxyFormats` | `iso, bdmv, bdav, dvd, bluray` | 两层共用的原盘代理格式列表；填了才代理，留空 = 全部 302 |
 | `strm.accountProxyConcurrencyLimit` | `8` | 单账号并发代理上限 |
 | `strm.redirectCheckTimeoutMs` | `5000` | HEAD 预检超时(ms) |
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,70 +12,30 @@ import {
   Bell,
   RefreshCw,
 } from "lucide-react";
-import axiosInstance from "@/lib/axios";
+import { useAccountAlertsConfig } from "@/hooks/useAccountAlertsConfig";
 
-interface AccountAlertsConfig {
-  enabled: boolean;
-  onError: boolean;
-  onRecover: boolean;
-  cookieInspect: {
-    enabled: boolean;
-    intervalHours: number;
-  };
-}
-
-const DEFAULT_CONFIG: AccountAlertsConfig = {
-  enabled: false,
-  onError: true,
-  onRecover: true,
-  cookieInspect: { enabled: true, intervalHours: 6 },
-};
-
+/**
+ * 通知中心 › 账号告警：账号状态异常/恢复的 Telegram 通知开关。
+ * 配置读写与账号页健康面板共用 useAccountAlertsConfig，保存时只提交本页字段，
+ * 不会覆盖账号页维护的 Cookie 巡检开关。
+ */
 export default function AccountAlertsPage({
   embedded = false,
 }: {
   embedded?: boolean;
 } = {}) {
-  const [config, setConfig] = useState<AccountAlertsConfig>(DEFAULT_CONFIG);
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = async () => {
-    try {
-      const response = await axiosInstance.get("/api/notify/alerts");
-      const data = response.data || {};
-      setConfig({
-        enabled: data.enabled ?? false,
-        onError: data.onError ?? true,
-        onRecover: data.onRecover ?? true,
-        cookieInspect: {
-          enabled: data.cookieInspect?.enabled ?? true,
-          intervalHours: data.cookieInspect?.intervalHours ?? 6,
-        },
-      });
-    } catch {
-      setError("加载账号告警配置失败");
-    }
-  };
+  const { config, loaded, saving, error, success, reload, save, update, clearFeedback } =
+    useAccountAlertsConfig();
 
   useEffect(() => {
-    void load();
-  }, []);
+    void reload();
+  }, [reload]);
 
-  const save = async () => {
-    setLoading(true);
-    setSuccess(null);
-    setError(null);
-    try {
-      await axiosInstance.post("/api/notify/alerts", config);
-      setSuccess("账号告警设置保存成功");
-    } catch (err) {
-      const axiosErr = err as { response?: { data?: { error?: string } } };
-      setError(axiosErr.response?.data?.error || "保存账号告警设置失败");
-    } finally {
-      setLoading(false);
-    }
+  const handleSave = async () => {
+    await save(
+      { enabled: config.enabled, onError: config.onError, onRecover: config.onRecover },
+      "账号告警设置保存成功"
+    );
   };
 
   return (
@@ -111,9 +71,11 @@ export default function AccountAlertsPage({
             <Checkbox
               id="alertsEnabled"
               checked={config.enabled}
-              onCheckedChange={(checked) =>
-                setConfig({ ...config, enabled: checked === true })
-              }
+              disabled={!loaded || saving}
+              onCheckedChange={(checked) => {
+                clearFeedback();
+                update({ enabled: checked === true });
+              }}
             />
             <label htmlFor="alertsEnabled" className="text-sm font-medium leading-none cursor-pointer">
               启用账号状态通知
@@ -127,10 +89,11 @@ export default function AccountAlertsPage({
               <Checkbox
                 id="onError"
                 checked={config.onError}
-                disabled={!config.enabled}
-                onCheckedChange={(checked) =>
-                  setConfig({ ...config, onError: checked === true })
-                }
+                disabled={!config.enabled || saving}
+                onCheckedChange={(checked) => {
+                  clearFeedback();
+                  update({ onError: checked === true });
+                }}
               />
               <label
                 htmlFor="onError"
@@ -149,10 +112,11 @@ export default function AccountAlertsPage({
               <Checkbox
                 id="onRecover"
                 checked={config.onRecover}
-                disabled={!config.enabled}
-                onCheckedChange={(checked) =>
-                  setConfig({ ...config, onRecover: checked === true })
-                }
+                disabled={!config.enabled || saving}
+                onCheckedChange={(checked) => {
+                  clearFeedback();
+                  update({ onRecover: checked === true });
+                }}
               />
               <label
                 htmlFor="onRecover"
@@ -189,10 +153,10 @@ export default function AccountAlertsPage({
           )}
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={() => void save()} disabled={loading} size="sm">
-              {loading ? "保存中..." : "保存账号告警设置"}
+            <Button onClick={() => void handleSave()} disabled={!loaded || saving} size="sm">
+              {saving ? "保存中..." : "保存账号告警设置"}
             </Button>
-            <Button onClick={() => void load()} disabled={loading} variant="outline" size="sm">
+            <Button onClick={() => void reload()} disabled={saving} variant="outline" size="sm">
               <RefreshCw className="h-4 w-4 mr-1" />
               重新加载
             </Button>
