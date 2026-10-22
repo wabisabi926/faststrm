@@ -23,18 +23,27 @@ import (
 //     避免 4 路分片同时打 115 download API 触发风控
 //   - 客户端断开（w 写失败 / ctx 取消）立即取消所有在途分片并关闭 body
 type rangeChunkFetcher struct {
-	mu       sync.Mutex
-	cdnURL   string
-	headers  map[string]string
-	client   *http.Client
-	chunk    int64
-	parallel int
-	refresh  func(context.Context) (string, error)
+	mu             sync.Mutex
+	cdnURL         string
+	headers        map[string]string
+	client         *http.Client
+	chunk          int64
+	parallel       int
+	refresh        func(context.Context) (string, error)
+	account        string
+	accountLimit   int
+	accountLimiter *accountRangeLimiter
 
 	// refreshMu/refreshSeq 实现换链 singleflight：
 	// 只有持有旧 seq 的第一个分片真正执行 refresh，其余直接复用新 URL。
 	refreshMu  sync.Mutex
 	refreshSeq uint64
+}
+
+type rangeFetcherAccount struct {
+	account string
+	limit   int
+	limiter *accountRangeLimiter
 }
 
 func newRangeChunkFetcher(
@@ -44,6 +53,7 @@ func newRangeChunkFetcher(
 	chunkSize int64,
 	parallel int,
 	refresh func(context.Context) (string, error),
+	accountOpts ...rangeFetcherAccount,
 ) *rangeChunkFetcher {
 	if chunkSize <= 0 {
 		chunkSize = 10 << 20
@@ -54,13 +64,20 @@ func newRangeChunkFetcher(
 	if parallel > 4 {
 		parallel = 4
 	}
+	var acc rangeFetcherAccount
+	if len(accountOpts) > 0 {
+		acc = accountOpts[0]
+	}
 	return &rangeChunkFetcher{
-		cdnURL:   cdnURL,
-		headers:  headers,
-		client:   client,
-		chunk:    chunkSize,
-		parallel: parallel,
-		refresh:  refresh,
+		cdnURL:         cdnURL,
+		headers:        headers,
+		client:         client,
+		chunk:          chunkSize,
+		parallel:       parallel,
+		refresh:        refresh,
+		account:        acc.account,
+		accountLimit:   acc.limit,
+		accountLimiter: acc.limiter,
 	}
 }
 
@@ -103,20 +120,30 @@ func (f *rangeChunkFetcher) refreshIfStale(ctx context.Context, seq uint64) (str
 
 // fetch 拉取 [start,end] 分片，要求 206；失败时换链重试一次。
 func (f *rangeChunkFetcher) fetch(ctx context.Context, start, end int64) (*http.Response, error) {
+	release, err := f.accountLimiter.acquire(ctx, f.account, f.accountLimit)
+	if err != nil {
+		return nil, err
+	}
 	url, headers, seq := f.snapshot()
 	resp, status, err := f.fetchOnce(ctx, url, headers, start, end)
-	if err == nil {
-		return resp, nil
+	if err != nil {
+		if !isRetryableChunk(status) || f.refresh == nil || ctx.Err() != nil {
+			release()
+			return nil, err
+		}
+		if _, rerr := f.refreshIfStale(ctx, seq); rerr != nil {
+			release()
+			return nil, err
+		}
+		url, headers, _ = f.snapshot()
+		resp, _, err = f.fetchOnce(ctx, url, headers, start, end)
+		if err != nil {
+			release()
+			return nil, err
+		}
 	}
-	if !isRetryableChunk(status) || f.refresh == nil || ctx.Err() != nil {
-		return nil, err
-	}
-	if _, rerr := f.refreshIfStale(ctx, seq); rerr != nil {
-		return nil, err
-	}
-	url, headers, _ = f.snapshot()
-	resp, _, err = f.fetchOnce(ctx, url, headers, start, end)
-	return resp, err
+	resp.Body = &releaseReadCloser{body: resp.Body, release: release}
+	return resp, nil
 }
 
 // fetchOnce 发起一次分片请求并校验响应区间。
@@ -340,9 +367,11 @@ func parseContentRange(cr string) (start, end, total int64, ok bool) {
 
 // rangeProxyOptions 分片并发参数（来自设置页）。
 type rangeProxyOptions struct {
-	Enabled  bool
-	Chunk    int64
-	Parallel int
+	Enabled    bool
+	Chunk      int64
+	Parallel   int
+	Account    string
+	RangeLimit int // 同账号 CDN Range 并发上限；0 时使用 Parallel
 }
 
 // streamRangeProxy 首片直写 + 剩余分片并发。
@@ -393,7 +422,12 @@ func streamRangeProxy(
 		return true
 	}
 
-	fetcher := newRangeChunkFetcher(cdnURL, reqHeaders, client, chunk, parallel, refresh)
+	rangeLimit := opts.RangeLimit
+	if rangeLimit <= 0 {
+		rangeLimit = parallel
+	}
+	fetcher := newRangeChunkFetcher(cdnURL, reqHeaders, client, chunk, parallel, refresh,
+		rangeFetcherAccount{account: opts.Account, limit: rangeLimit, limiter: sharedAccountRangeLimiter})
 	written, err := fetcher.streamRemaining(r.Context(), w, start+firstLen, end)
 	if err != nil {
 		log.Printf("[STRM][range-proxy] 分片中断: first=%d rest=%d err=%v", firstLen, written, err)

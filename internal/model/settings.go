@@ -403,6 +403,8 @@ func DefaultSettings() *Settings {
 		},
 		Strm: StrmSettings{
 			// ForceProxyUaTokens 仅对 STRM 端点层生效（命中则强制走 proxy）。
+			// 匹配 User-Agent 或 Emby 客户端名（X-Emby-Client / Authorization Client=），
+			// 因为部分客户端的 UA 不含产品名。
 			// 默认预置已知「坑客户端」：这些客户端对 302 直链/签名/UA 绑定处理不佳，
 			// 直连 115 CDN 时 Range 请求常被拒，表现为原盘/大文件播不出来。
 			// 若带宽紧张，可在设置页清空（清空后全部直连）。

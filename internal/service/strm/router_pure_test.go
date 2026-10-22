@@ -412,6 +412,23 @@ func TestDecideRouteForceProxyUA(t *testing.T) {
 	}
 }
 
+func TestDecideRouteForceProxyByEmbyClientName(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("X-Emby-Client", "Infuse")
+	res := DecideRoute(req, "", []string{"Infuse"}, "", nil)
+	if res.Decision != DecisionProxy {
+		t.Fatalf("X-Emby-Client should force proxy, got %s(%s)", res.Decision, res.Reason)
+	}
+
+	req2 := httptest.NewRequest("GET", "/", nil)
+	req2.Header.Set("Authorization", `MediaBrowser Client="VidHub", Device="iPad", Version="1.0"`)
+	res2 := DecideRoute(req2, "", []string{"VidHub"}, "", nil)
+	if res2.Decision != DecisionProxy {
+		t.Fatalf("Authorization Client= should force proxy, got %s(%s)", res2.Decision, res2.Reason)
+	}
+}
+
 func TestDecideRouteDefaultRedirect(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("user-agent", "LibVLC")

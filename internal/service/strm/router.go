@@ -482,11 +482,11 @@ func DecideRoute(
 		return DecisionResult{Decision: DecisionProxy, Reason: "explicit_mode_proxy"}
 	}
 
-	ua := r.Header.Get("user-agent")
-
-	// 2) 坑客户端（Infuse/VidHub/SenPlayer…）→ 强制代理
+	// 2) 坑客户端（Infuse/VidHub/SenPlayer…）→ 强制代理。
+	// 同时匹配 UA 与 Emby 客户端名：部分客户端 UA 不含产品名，只在
+	// X-Emby-Client / Authorization: MediaBrowser Client="..." 里暴露。
 	for _, tok := range forceProxyUaTokens {
-		if tok != "" && strings.Contains(ua, tok) {
+		if tok != "" && matchesClientToken(r, tok) {
 			return DecisionResult{Decision: DecisionProxy, Reason: "force_proxy_ua:" + tok}
 		}
 	}
@@ -500,6 +500,46 @@ func DecideRoute(
 
 	// 4) 默认 redirect：普通视频由客户端直连 115 CDN，不占 NAS 带宽
 	return DecisionResult{Decision: DecisionRedirect, Reason: "default_redirect"}
+}
+
+// EmbyClientName 提取 Emby 客户端名（X-Emby-Client 或 Authorization 里的 Client=）。
+func EmbyClientName(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Emby-Client")); v != "" {
+		return v
+	}
+	for _, key := range []string{"X-Emby-Authorization", "Authorization"} {
+		raw := strings.TrimSpace(r.Header.Get(key))
+		if raw == "" {
+			continue
+		}
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			part = strings.TrimPrefix(part, "MediaBrowser ")
+			part = strings.TrimPrefix(part, "Emby ")
+			if idx := strings.Index(strings.ToLower(part), "client="); idx >= 0 {
+				value := strings.Trim(part[idx+len("client="):], ` "'`)
+				if value != "" {
+					return value
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func matchesClientToken(r *http.Request, token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	needle := strings.ToLower(token)
+	if strings.Contains(strings.ToLower(r.Header.Get("User-Agent")), needle) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(EmbyClientName(r)), needle)
 }
 
 // IsSeekFormatName 判断文件名扩展名是否属于「需要服务端代理」的原盘格式。

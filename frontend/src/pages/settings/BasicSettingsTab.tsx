@@ -309,7 +309,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
               <h3 className="text-sm font-medium border-t pt-4">代理触发条件</h3>
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <Label>强制代理 UA 标识</Label>
+                  <Label>强制代理 UA / 客户端标识</Label>
                   {/* 这个字段的空值有语义（= 关闭），所以不能靠「清空」表达「恢复默认」，
                       单独给一个填入按钮，避免用户只能手敲默认值。 */}
                   <button
@@ -326,7 +326,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
                   placeholder={DEFAULT_FORCE_PROXY_UA_TOKENS.join(", ")}
                 />
                 <p className="text-xs text-muted-foreground">
-                  逗号分隔。命中即强制走服务端代理（适合 302 播不了的客户端）。
+                  逗号分隔，匹配 User-Agent 或 Emby 客户端名。命中即强制走服务端代理（适合 302 播不了的客户端）。
                   <span className="font-medium">留空表示「全部 302 直连」</span>
                   ——与其他字段的「留空恢复默认」不同，这里是关闭该功能。
                   下方格式列表内的原盘不受此项影响，始终按格式代理。

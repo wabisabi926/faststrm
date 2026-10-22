@@ -243,9 +243,11 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 			defer proxyCountDec(accountName)
 			// 分片并发参数：关闭时 streamRangeProxy 直接返回 false，走单连接
 			rp := rangeProxyOptions{
-				Enabled:  !opts.Cfg.Settings.Strm.DisableRangeProxy,
-				Chunk:    int64(opts.Cfg.Settings.Strm.ProxyChunkSizeMB) * 1024 * 1024,
-				Parallel: opts.Cfg.Settings.Strm.ProxyConcurrency,
+				Enabled:    !opts.Cfg.Settings.Strm.DisableRangeProxy,
+				Chunk:      int64(opts.Cfg.Settings.Strm.ProxyChunkSizeMB) * 1024 * 1024,
+				Parallel:   opts.Cfg.Settings.Strm.ProxyConcurrency,
+				Account:    accountName,
+				RangeLimit: opts.Cfg.Settings.Strm.ProxyConcurrency,
 			}
 			handleProxy(w, r, cdnURL, account.Cookie, userAgent, finalName, func(ctx context.Context) (string, error) {
 				// 先失效缓存，否则会拿回同一个已失效的 URL
