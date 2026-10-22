@@ -220,6 +220,11 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// ==================== 阶段6: 通知 + Emby + 生活监控依赖 ====================
 	// 创建 EmbyProxyManager（支持热重启：用户改 ProxyPort / EmbyURL 后无需重启主程序）
 	embyProxyManager := embyproxy.NewManager()
+	// 自身 /api/strm 在进程内执行，避免 Emby 反代通过域名/NAT 再请求自己。
+	// 外部 STRM / 自定义模板仍走 Proxy 内部的 HTTP fallback。
+	embyProxyManager.SetInternalStrmHandler(handler.HandleStrm(handler.StrmOptions{
+		Cfg: cfg, Client115: client, AccountStore: accountStore,
+	}))
 
 	notifyDeps, embyDeps, lifeMonitorDeps, mon := initPhase6Deps(
 		settingsStore, tasksStore, accountStore,

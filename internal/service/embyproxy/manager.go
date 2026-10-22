@@ -34,6 +34,7 @@ type Manager struct {
 	embyURL            string // 当前代理的 Emby 源 URL
 	forceProxyUaTokens []string
 	startedAt          time.Time
+	internalStrm       http.HandlerFunc
 	// externalPlayerEnabled 外部播放器链接注入开关，热更新（无需重启 server）
 	externalPlayerEnabled bool
 }
@@ -84,6 +85,7 @@ func (m *Manager) Start(host string, port int, embyURL string, forceProxyUaToken
 	}
 	proxy.SetProxyPort(port)
 	proxy.SetExternalPlayers(m.externalPlayerEnabled)
+	proxy.SetInternalStrmHandler(m.internalStrm)
 
 	// 同步预检测端口是否可用（避免异步 ListenAndServe 失败但 Start 已返回 nil）
 	ln, err := net.Listen("tcp", wantAddr)
@@ -161,6 +163,17 @@ func (m *Manager) Stop(ctx context.Context) error {
 // Restart 等价于 Start。在旧实例上换地址/embyURL 时会自动先 Stop 再 Start。
 func (m *Manager) Restart(host string, port int, embyURL string, forceProxyUaTokens ...[]string) error {
 	return m.Start(host, port, embyURL, forceProxyUaTokens...)
+}
+
+// SetInternalStrmHandler 注入进程内 /api/strm Handler；热更新时同步到当前 Proxy。
+func (m *Manager) SetInternalStrmHandler(h http.HandlerFunc) {
+	m.mu.Lock()
+	m.internalStrm = h
+	proxy := m.proxy
+	m.mu.Unlock()
+	if proxy != nil {
+		proxy.SetInternalStrmHandler(h)
+	}
 }
 
 // SetExternalPlayers 热更新外部播放器开关：proxy 在跑则就地更新（原子），

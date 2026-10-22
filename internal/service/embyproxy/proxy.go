@@ -254,6 +254,10 @@ type Proxy struct {
 	// externalPlayersEnabled 是否启用外部播放器链接注入（默认关，由设置热更新）。
 	externalPlayersEnabled atomic.Bool
 
+	// internalStrm 进程内调用 /api/strm Handler，避免服务端通过域名/NAT
+	// 再请求自己的 STRM 端点。只对自身 /api/strm 生效，外部 URL 仍走 HTTP。
+	internalStrm http.HandlerFunc
+
 	// httpClient 透传给 Emby 的客户端（不跟随重定向）
 	httpClient *http.Client
 	// followRedirectClient 用于解析重定向链拿最终 CDN URL（跟随所有重定向）
@@ -354,6 +358,13 @@ func (p *Proxy) SetProxyPort(port int) {
 	if port > 0 {
 		p.proxyPort = port
 	}
+}
+
+// SetInternalStrmHandler 注入进程内 /api/strm Handler。
+// 注入后，自身 STRM 的 seek 代理和 302 解析不再发起 HTTP 回环；
+// 外部 URL、自定义模板仍走原来的 HTTP fallback。
+func (p *Proxy) SetInternalStrmHandler(h http.HandlerFunc) {
+	p.internalStrm = h
 }
 
 // ============================================================
@@ -1117,6 +1128,15 @@ func (p *Proxy) proxyStreamToStrm(w http.ResponseWriter, r *http.Request, strmUR
 	// 长流：解除写超时，避免大文件连续播放被 120s WriteTimeout 截断
 	disableWriteDeadline(w)
 
+	// 自身 /api/strm：进程内调用，避免“服务端请求自己的域名/NAT”失败。
+	// 外部 STRM 或自定义模板仍走下面的 HTTP fallback。
+	if p.internalStrm != nil && isSelfStrmEndpoint(strmURL) {
+		if req, ok := p.internalStrmRequest(r.Context(), strmURL, r.Method, r, false); ok {
+			p.internalStrm(w, req)
+			return
+		}
+	}
+
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, strmURL, nil)
 	if err != nil {
 		logger.S().Warnf("[EmbyProxy] proxyStreamToStrm: 构造请求失败: %v", err)
@@ -1345,6 +1365,77 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusFound)
 }
 
+// internalStrmRequest 把外部 STRM URL 转成进程内 Handler 请求。
+// redirect=true 时追加内部参数，让 HEAD 返回真实 CDN 302。
+func (p *Proxy) internalStrmRequest(ctx context.Context, rawURL, method string, r *http.Request, redirect bool) (*http.Request, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" || !isSelfStrmEndpoint(rawURL) {
+		return nil, false
+	}
+	if redirect {
+		q := u.Query()
+		q.Set("redirect", "1")
+		u.RawQuery = q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
+	if err != nil {
+		return nil, false
+	}
+	if r != nil {
+		req.Header = r.Header.Clone()
+		req.RemoteAddr = r.RemoteAddr
+	}
+	req.Host = u.Host
+	return req, true
+}
+
+// resolveSelfRedirect 在进程内执行 HEAD /api/strm?redirect=1，读取 Location。
+func (p *Proxy) resolveSelfRedirect(ctx context.Context, startURL string, r *http.Request) (string, int, bool) {
+	req, ok := p.internalStrmRequest(ctx, startURL, http.MethodHead, r, true)
+	if !ok {
+		return "", 0, false
+	}
+	rec := &internalStrmRecorder{header: make(http.Header)}
+	p.internalStrm(rec, req)
+	status := rec.statusCode()
+	if location := rec.header.Get("Location"); location != "" && status >= 300 && status < 400 {
+		return location, status, true
+	}
+	return startURL, status, true
+}
+
+type internalStrmRecorder struct {
+	header http.Header
+	status int
+}
+
+func (r *internalStrmRecorder) Header() http.Header {
+	if r.header == nil {
+		r.header = make(http.Header)
+	}
+	return r.header
+}
+
+func (r *internalStrmRecorder) WriteHeader(status int) {
+	if r.status == 0 {
+		r.status = status
+	}
+}
+
+func (r *internalStrmRecorder) Write(p []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return len(p), nil
+}
+
+func (r *internalStrmRecorder) statusCode() int {
+	if r.status == 0 {
+		return http.StatusOK
+	}
+	return r.status
+}
+
 // isSelfStrmEndpoint 判断 STRM 源是否为 FastStrm 自身的 /api/strm 端点。
 // FastStrm 所有 STRM 生成器统一硬编码 `{prefix}/api/strm?account=...&pickcode=...`，
 // 该端点 HEAD 固定返回 200（writeStrmHeadResponse），resolveRedirectChain 无法沿
@@ -1411,6 +1502,15 @@ func (p *Proxy) passthroughToEmby(w http.ResponseWriter, r *http.Request) {
 // 第二个返回值是上游最终 HTTP 状态码（仅用于调用方诊断日志，不影响响应行为）：
 // 无 HTTP 响应（构造失败/超时）时为 0，其余为 resp.StatusCode。
 func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *http.Request, userID string) (string, int) {
+	// 自身 /api/strm：直接在进程内跑一次 HEAD redirect=1，拿 Location，
+	// 不再经过域名/DNS/TLS/NAT 回环。
+	if p.internalStrm != nil && isSelfStrmEndpoint(startURL) {
+		if finalURL, status, ok := p.resolveSelfRedirect(ctx, startURL, r); ok {
+			logger.S().Debugf("[EmbyProxy] resolveSelfRedirect: %s (status=%d)", redactURLForLog(finalURL), status)
+			return finalURL, status
+		}
+	}
+
 	fwdHeaders := buildForwardHeaders(r)
 	if userID != "" {
 		fwdHeaders["X-Emby-UserId"] = userID

@@ -53,6 +53,7 @@
 - 媒体流请求按源格式决定：
   - 原盘格式 → `proxyStreamToStrm`，由 STRM 端点走 Range 代理。
   - 普通格式 → 解析 302 链，客户端直连 CDN；解析不到自身端点时回退代理。
+  - 自身 `/api/strm` 的 seek 代理和 302 解析走进程内 Handler，不经过域名/DNS/NAT 回环；外部 STRM 与自定义模板保留 HTTP fallback。
 - Web HTML/JS 注入 crossOrigin 补丁，避免浏览器跨域拉 CDN 失败。
 - 外部播放器按钮只在通过 8097 访问 Emby 网页端时注入。
 
