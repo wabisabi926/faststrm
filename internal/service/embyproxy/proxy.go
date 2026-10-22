@@ -1257,7 +1257,7 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 
 	// 1a. playbackURLCache — 已解析的最终 CDN URL（命中率最高）
 	if finalURL, ok := p.getCachedPlaybackURL(cacheKey); ok {
-		logger.S().Debugf("[EmbyProxy] playbackURLCache 命中: item=%s source=%s -> %s", itemID, sourceID, finalURL)
+		logger.S().Debugf("[EmbyProxy] playbackURLCache 命中: item=%s source=%s -> %s", itemID, sourceID, redactURLForLog(finalURL))
 		w.Header().Set("Cache-Control", mediaRedirectCacheControl(finalURL))
 		w.Header().Set("Location", finalURL)
 		w.WriteHeader(http.StatusFound)
@@ -1333,13 +1333,13 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 				itemID, sourceID, meta.path)
 		}
 	} else {
-		logger.S().Infof("[EmbyProxy] resolveRedirectChain: item=%s %s -> %s (status=%d)", itemID, meta.path, finalURL, upstreamStatus)
+		logger.S().Infof("[EmbyProxy] resolveRedirectChain: item=%s %s -> %s (status=%d)", itemID, redactURLForLog(meta.path), redactURLForLog(finalURL), upstreamStatus)
 	}
 
 	// ===== 步骤 3: 缓存最终 URL 并 302 =====
 	p.cachePlaybackURL(cacheKey, finalURL)
 
-	logger.S().Infof("[EmbyProxy] media 302: item=%s source=%s -> %s", itemID, sourceID, finalURL)
+	logger.S().Infof("[EmbyProxy] media 302: item=%s source=%s -> %s", itemID, sourceID, redactURLForLog(finalURL))
 	w.Header().Set("Cache-Control", mediaRedirectCacheControl(finalURL))
 	w.Header().Set("Location", finalURL)
 	w.WriteHeader(http.StatusFound)
@@ -1474,7 +1474,7 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 			finalURL = startURL
 		}
 
-		logger.S().Debugf("[EmbyProxy] resolveRedirectChain: %s -> %s (status=%d attempt=%d)", startURL, finalURL, status, attempt+1)
+		logger.S().Debugf("[EmbyProxy] resolveRedirectChain: %s -> %s (status=%d attempt=%d)", redactURLForLog(startURL), redactURLForLog(finalURL), status, attempt+1)
 		return finalURL, status
 	}
 
@@ -1681,6 +1681,19 @@ func isHTTPPath(s string) bool {
 // 优先请求头 X-Emby-Token，其次 Authorization: MediaBrowser Token="xxx" / Token="xxx"，
 // 最后兜底 URL 查询参数。Emby Web 的详情页 Items 等 GET 请求会把令牌放在
 // ?X-Emby-Token=（而非请求头），不兜底会导致外部播放器注入等依赖 apiKey 的功能静默失效。
+// redactURLForLog 只保留 scheme/host/path，丢弃 query/fragment。
+// CDN 直链的 t 参数和 sig 等签名信息不能进日志。
+func redactURLForLog(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<invalid-url>"
+	}
+	return u.Scheme + "://" + u.Host + u.Path
+}
+
 func extractAPIKey(r *http.Request) string {
 	if tk := strings.TrimSpace(r.Header.Get("X-Emby-Token")); tk != "" {
 		return tk

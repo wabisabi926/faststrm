@@ -2297,3 +2297,13 @@ func TestHandler_SetsReferrerPolicy(t *testing.T) {
 	})
 	t.Logf("✅ 全局 Referrer-Policy: no-referrer（302 与 HTML 分支均生效）")
 }
+
+func TestRedactURLForLog(t *testing.T) {
+	got := redactURLForLog("https://cdn.115.com/path/movie.iso?t=123&sig=secret#frag")
+	if got != "https://cdn.115.com/path/movie.iso" {
+		t.Fatalf("redacted = %q", got)
+	}
+	if redactURLForLog("not-a-url") != "<invalid-url>" {
+		t.Fatal("invalid URL should be redacted")
+	}
+}

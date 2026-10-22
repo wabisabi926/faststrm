@@ -44,7 +44,7 @@ func getProxyHTTPClient() *http.Client {
 				MaxIdleConns:          128,
 				MaxIdleConnsPerHost:   64,
 				IdleConnTimeout:       90 * time.Second,
-				ResponseHeaderTimeout: 0, // 流式响应不设超时
+				ResponseHeaderTimeout: 60 * time.Second, // 防止 CDN 卡在响应头导致请求永久挂起
 				DisableCompression:    true,
 				Proxy:                 http.ProxyFromEnvironment,
 			},
@@ -544,7 +544,7 @@ func handleProxy(
 func shouldRefreshUpstream(status int) bool {
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
-		http.StatusRequestTimeout, http.StatusTooManyRequests:
+		http.StatusRequestTimeout, http.StatusTooManyRequests, 430:
 		return true
 	}
 	return status >= 500
@@ -582,8 +582,20 @@ func fetchUpstreamWithRefresh(
 
 	upstream, err := fetch(cdnURL)
 	if err != nil {
-		http.Error(w, "Upstream fetch failed: "+err.Error(), http.StatusBadGateway)
-		return nil, err
+		// 连接被拒/网络错误也可能只是当前 CDN 节点或 URL 的问题，换链一次；
+		// ctx 已取消（客户端断开/建连超时）时不再刷新，避免无意义请求。
+		if refresh != nil && ctx.Err() == nil {
+			if newURL, rerr := refresh(ctx); rerr == nil {
+				logger.S().Infof("[STRM][proxy] 上游连接失败，已刷新直链并重试一次: %v", err)
+				upstream, err = fetch(newURL)
+			} else {
+				logger.S().Warnf("[STRM][proxy] 上游连接失败且刷新失败: %v", rerr)
+			}
+		}
+		if err != nil {
+			http.Error(w, "Upstream fetch failed: "+err.Error(), http.StatusBadGateway)
+			return nil, err
+		}
 	}
 
 	// 链接过期自动刷新：此时尚未向客户端写任何响应头，可以安全地换链重试。

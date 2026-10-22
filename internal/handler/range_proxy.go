@@ -184,7 +184,7 @@ func isRetryableChunk(status int) bool {
 	}
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
-		http.StatusRequestTimeout, http.StatusTooManyRequests:
+		http.StatusRequestTimeout, http.StatusTooManyRequests, 430:
 		return true
 	}
 	return status >= 500
