@@ -74,15 +74,16 @@ Emby 服务器地址: http://192.168.1.10:8097
 | `GET /MediaStream/{id}.{container}` | **302 重定向** — 返回 STRM 文件 URL，交由 `/api/strm` 处理 |
 | `GET /videos/{id}/stream`（Static=true） | **302 重定向** — 直链播放（MKV / MP4 等普通格式） |
 | `GET /videos/{id}/{name}`、`/items/{id}/download`、`/sync/jobitems/{id}/file` | **流拦截** — VIP 原盘 / 特殊格式 / 下载类请求走代理流 |
-| **ISO / BDMV / M2TS / TS 原盘** | **代理流播放（200/206）** — v1.3.2 起走字节 Range 代理，可正常拖动进度，不再 302 后失效 |
+| **ISO / BDMV / BDAV / DVD / Bluray 原盘（默认列表）** | **代理流播放（200/206）** — 走字节 Range 代理，可正常拖动进度，不再 302 后失效 |
+| **M2TS / TS / VOB** | 默认按普通视频 302 直连；某些客户端播不了时可手动加入「强制代理的容器/扩展名」 |
 
-> 说明（v1.5.1 起）：
-> - **反代层**：`isSeekRequiredFormat` 命中 iso/bdmv/m2ts/ts 时走服务端代理流；
-> - **STRM 端点层**：`/api/strm` 也对原盘（iso/bdmv/bdav/dvd/bluray/m2ts/vob/ifo/bup）强制代理，
+> 说明：
+> - **反代层**：命中 `strm.forceProxySeekFormats`（默认 iso/bdmv/bdav/dvd/bluray）时走服务端代理流；
+> - **STRM 端点层**：`/api/strm` 使用同一份 `forceProxyFormats` 列表强制代理，
 >   即使客户端直连 8090 或连 Emby 原生端口也能播；
 > - 两层都有分片并发（默认 10MB×2），大原盘不再因单连接带宽不足卡顿；
-> - 普通视频（mkv/mp4）仍 302 直链，不占 NAS 带宽；
-> - 设置页「原盘强制走代理」可关闭端点层代理（回退旧行为）。
+> - 普通视频（mkv/mp4/m2ts/ts/vob）仍 302 直链，不占 NAS 带宽；
+> - 设置页「按格式强制代理」是两层统一开关，关闭后 ISO 也走 302（可能播放失败）。
 | 其他所有 Emby API | **原样透传** — 登录、刮削、通知、管理等完全不受影响 |
 
 ### 日志验证

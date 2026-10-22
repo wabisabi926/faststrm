@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { PageTabs } from "@/components/page-tabs";
-import { StrmHistoryTab } from "@/pages/StrmHistoryTab";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -23,8 +21,6 @@ import {
   Trash2,
   Eye,
   FileText,
-  ListChecks,
-  FileSearch,
 } from "lucide-react";
 import { logger } from "@/lib/logger";
 
@@ -87,16 +83,8 @@ function HistoryStatCard({ label, value }: { label: string; value: ReactNode }) 
   );
 }
 
-type HistoryTab = "tasks" | "strm";
-
-const HISTORY_TABS = [
-  { id: "tasks" as const, label: "任务记录", icon: ListChecks },
-  { id: "strm" as const, label: "STRM 操作", icon: FileSearch },
-];
-
 export default function TaskHistoryPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab: HistoryTab = searchParams.get("tab") === "strm" ? "strm" : "tasks";
+  const [searchParams] = useSearchParams();
   const [history, setHistory] = useState<TaskExecutionHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -203,46 +191,31 @@ export default function TaskHistoryPage() {
     window.open(`/log/${execution.taskId}?executionId=${String(execution.id)}`, "_blank");
   };
 
+  // 兼容旧链接：STRM 操作页签已移除，明细统一看生活事件日志
+  if (searchParams.get("tab") === "strm") {
+    return <Navigate to="/life-events" replace />;
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
-          <h1 className="text-xl sm:text-2xl font-semibold break-words">
-            {activeTab === "strm" ? "STRM 操作" : "任务记录"}
-          </h1>
+          <h1 className="text-xl sm:text-2xl font-semibold break-words">任务记录</h1>
           <p className="text-sm text-muted-foreground mt-1 break-words">
-            {activeTab === "strm"
-              ? "STRM 生成、删除、移动、重命名与生活事件的逐条执行历史。"
-              : "每次全量/定时任务的运行结果、耗时与历史日志。"}
+            每次全量/定时任务的运行结果、耗时与历史日志。
           </p>
         </div>
-        {activeTab === "tasks" && (
-          <div className="flex flex-wrap gap-2 shrink-0">
-            <Button onClick={fetchHistory} variant="outline">
-              刷新
-            </Button>
-            <Button onClick={deleteAllHistory} variant="outline">
-              删除所有历史
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button onClick={fetchHistory} variant="outline">
+            刷新
+          </Button>
+          <Button onClick={deleteAllHistory} variant="outline">
+            删除所有历史
+          </Button>
+        </div>
       </div>
 
-      <PageTabs
-        tabs={HISTORY_TABS}
-        value={activeTab}
-        onChange={(tab) => {
-          const next = new URLSearchParams(searchParams);
-          if (tab === "tasks") next.delete("tab");
-          else next.set("tab", tab);
-          setSearchParams(next, { replace: true });
-        }}
-        ariaLabel="历史类型"
-      />
-
-      {activeTab === "strm" ? (
-        <StrmHistoryTab />
-      ) : loading ? (
+      {loading ? (
           <div className="flex items-center justify-center h-64">
             <p className="text-sm text-muted-foreground">加载中...</p>
           </div>

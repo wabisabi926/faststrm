@@ -215,8 +215,8 @@ http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&fi
 
 | 配置路径 | 默认值 | 说明 |
 |----------|--------|------|
-| `strm.forceProxyUaTokens` | `[]` | 强制代理 UA 列表（留空 = 不按 UA 强制代理） |
-| `strm.forceProxyFormats` | `iso, bdmv, bdav, dvd, bluray` | 两层共用的原盘代理格式列表；路径级 302 由未命中时的默认策略决定 |
+| `strm.forceProxyUaTokens` | `Infuse, VidHub, SenPlayer, SenPlayerHD` | 强制代理 UA / Emby 客户端名列表；留空 = 全部 302 直连（不按 UA 代理） |
+| `strm.forceProxyFormats` | `iso, bdmv, bdav, dvd, bluray` | 两层共用的原盘代理格式列表；留空保存后仍为空，运行时用内置 5 项兜底 |
 | `strm.accountProxyConcurrencyLimit` | `8` | 单账号并发代理上限 |
 | `strm.redirectCheckTimeoutMs` | `5000` | HEAD 预检超时(ms) |
 

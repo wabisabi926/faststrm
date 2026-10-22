@@ -246,7 +246,7 @@ export default function OverviewPage() {
       list.push({
         title: "最近有 STRM 操作失败",
         detail: failedStrm[0]?.errorMsg || `任务 ${failedStrm[0]?.taskId || "-"} 的 STRM 操作失败`,
-        to: "/history?tab=strm",
+        to: "/life-events",
         tone: "warning",
       });
     }
