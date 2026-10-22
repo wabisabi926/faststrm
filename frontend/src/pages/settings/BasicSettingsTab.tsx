@@ -64,6 +64,8 @@ function CollapsibleSection({
 
 // 与 internal/model/settings.go 的 DefaultSettings().Strm.ForceProxyUaTokens 保持一致。
 // 只用于「填入默认值」按钮与 placeholder，不参与保存逻辑（保存以输入框内容为准）。
+const DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/116.0.5845.89 Mobile/15E148 Safari/604.1";
 const DEFAULT_FORCE_PROXY_UA_TOKENS = ["Infuse", "VidHub", "SenPlayer", "SenPlayerHD"];
 const DEFAULT_FORCE_PROXY_FORMATS = ["iso", "bdmv", "bdav", "dvd", "bluray"];
 const DEFAULT_STRM_EXTENSIONS = [
@@ -136,7 +138,16 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div className="space-y-3">
-            <Label>User-Agent</Label>
+            <div className="flex items-center justify-between">
+              <Label>User-Agent</Label>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => setData({ ...data, ["user-agent"]: DEFAULT_USER_AGENT })}
+              >
+                填入默认值
+              </button>
+            </div>
             <Input
               value={data["user-agent"] || ""}
               onChange={(e) =>
