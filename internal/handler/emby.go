@@ -242,6 +242,9 @@ func buildProxyStatus(deps EmbyDeps) map[string]any {
 		if sameStringSet(settings.Strm.ForceProxyFormats, model.DefaultForceProxyFormats) {
 			out["forceProxyFormatsSource"] = "default"
 		}
+	} else {
+		out["forceProxyFormats"] = []string{}
+		out["forceProxyFormatsSource"] = "off"
 	}
 	out["forceProxyUaTokens"] = settings.Strm.ForceProxyUaTokens
 	out["disableSeekFormatProxy"] = len(settings.Strm.ForceProxyFormats) == 0
