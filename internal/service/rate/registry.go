@@ -117,6 +117,9 @@ func (r *Registry) Configure(l Limits) {
 		r.downloadConcurrent = l.DownloadConcurrent
 	}
 	r.limiters = make(map[string]*Limiter)
+	// 并发上限变更后也要重建 bottleneck，否则第一次创建的 limit 会被永久复用。
+	// 在途流持有旧 semaphore，重建后短暂并存可接受，只发生在保存设置时。
+	r.bottlenecks = make(map[string]*Bottleneck)
 	r.globalCap = nil
 }
 
@@ -135,6 +138,7 @@ func (r *Registry) SetDefaults(api115QPM, downloadQPM, downloadConcurrent int) {
 		r.downloadConcurrent = downloadConcurrent
 	}
 	r.limiters = make(map[string]*Limiter)
+	r.bottlenecks = make(map[string]*Bottleneck)
 	r.globalCap = nil
 }
 

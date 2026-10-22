@@ -454,3 +454,24 @@ func TestStreamRemaining_ClosesBodiesWhenChunkFails(t *testing.T) {
 		t.Fatalf("all fetched bodies must be closed: opened=%d closed=%d", want, got)
 	}
 }
+
+func TestCopyChunkExactly(t *testing.T) {
+	var dst bytes.Buffer
+	n, err := copyChunkExactly(&dst, strings.NewReader("abcdEXTRA"), 4)
+	if err == nil {
+		t.Fatal("overlong chunk should fail")
+	}
+	if n != 4 || dst.String() != "abcd" {
+		t.Fatalf("n=%d body=%q", n, dst.String())
+	}
+
+	dst.Reset()
+	if _, err := copyChunkExactly(&dst, strings.NewReader("abc"), 4); err == nil {
+		t.Fatal("short chunk should fail")
+	}
+
+	dst.Reset()
+	if _, err := copyChunkExactly(&dst, strings.NewReader("abcd"), 4); err != nil {
+		t.Fatalf("exact chunk should pass: %v", err)
+	}
+}

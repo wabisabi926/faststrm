@@ -648,9 +648,12 @@ func ResolveDownloadUrl(
 	}
 	// 对齐 MoviePilot r302cacher：解析 CDN URL 的 t 参数计算精确过期时间
 	// t = 115 CDN 返回的 unix 秒级时间戳（URL 真正过期时间）
-	// 提前 5min 过期（t - 300s），避免客户端拿到已过期的 URL
 	cacheExpires := computeCdnURLCacheExpires(meta.URL, URLCacheTTL)
-	urlCache.SetWithExpires(cacheKey, meta, cacheExpires)
+	// 剩余寿命不足安全余量时不缓存：之前 fallback 到默认 TTL 会把
+	// “只剩 4 分钟”的链接缓存 5 分钟，302 客户端最后 1 分钟必然拿到死链。
+	if cacheExpires.After(time.Now()) {
+		urlCache.SetWithExpires(cacheKey, meta, cacheExpires)
+	}
 	return meta, nil
 }
 
@@ -669,30 +672,42 @@ func InvalidateDownloadURL(accountName, pickcode, userAgent string) {
 	urlNegativeCache.Delete(cacheKey)
 }
 
-// computeCdnURLCacheExpires 从 CDN URL 解析 t 参数，计算缓存过期时间
+// cdnURLCacheSafety 缓存相对 CDN 签名的安全余量。
+// 太大会导致“明明还能播几分钟却不缓存”，太小可能让客户端拿到临界链接；
+// 1 分钟足够覆盖 302 响应和客户端起播。
+const cdnURLCacheSafety = time.Minute
+
+// computeCdnURLCacheExpires 从 CDN URL 解析 t 参数，计算缓存过期时间。
+//
 // 115 CDN URL 格式: http://cdn-xxx.115.com/...?t=1757769600&...
-// t 是 unix 秒级时间戳（URL 真实过期时间），提前 5min 返回
-// 解析失败或 t 已过期时 fallback defaultTTL
+// t 是 unix 秒级时间戳（URL 真实过期时间）。返回值早于 now 表示不应缓存；
+// 只有解析不到 t / t 非法时才回退 defaultTTL（无法判断寿命，按默认缓存）。
 func computeCdnURLCacheExpires(cdnURL string, defaultTTL time.Duration) time.Time {
+	now := time.Now()
 	parsed, err := url.Parse(cdnURL)
 	if err != nil {
-		return time.Now().Add(defaultTTL)
+		return now.Add(defaultTTL)
 	}
 	tStr := parsed.Query().Get("t")
 	if tStr == "" {
-		return time.Now().Add(defaultTTL)
+		return now.Add(defaultTTL)
 	}
 	t, err := strconv.ParseInt(tStr, 10, 64)
 	if err != nil {
-		return time.Now().Add(defaultTTL)
+		return now.Add(defaultTTL)
 	}
-	// 提前 5min 过期，避免 URL 在缓存内到期
-	expires := time.Unix(t, 0).Add(-5 * time.Minute)
-	// 如果算出来已经过期了（t 本身太小），fallback 默认 TTL
-	if time.Now().After(expires) {
-		return time.Now().Add(defaultTTL)
+	expiry := time.Unix(t, 0)
+	if !expiry.After(now) {
+		return now.Add(-time.Second)
 	}
-	return expires
+	remain := expiry.Sub(now) - cdnURLCacheSafety
+	if remain <= 0 {
+		return now.Add(-time.Second)
+	}
+	if remain > defaultTTL {
+		remain = defaultTTL
+	}
+	return now.Add(remain)
 }
 
 // StrmRouteConfig 从 config 中取 STRM 路由策略（兜底默认）

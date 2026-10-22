@@ -291,7 +291,11 @@ func (f *rangeChunkFetcher) streamRemaining(ctx context.Context, w io.Writer, ne
 			drainAndCloseResponse(cur.resp)
 			return written, cur.err
 		}
-		copied, err := io.Copy(w, cur.resp.Body)
+		expected := chunk
+		if i == n-1 {
+			expected = end - (nextStart + int64(i)*chunk) + 1
+		}
+		copied, err := copyChunkExactly(w, cur.resp.Body, expected)
 		_ = cur.resp.Body.Close()
 		written += copied
 		if err != nil {
@@ -299,6 +303,27 @@ func (f *rangeChunkFetcher) streamRemaining(ctx context.Context, w io.Writer, ne
 		}
 	}
 	return written, nil
+}
+
+// copyChunkExactly 只写出 expected 字节，并多读 1 字节检测上游超长。
+// 只校验 Content-Range/Length 不够：chunked 响应没有 Content-Length，
+// 异常 CDN 多写的内容会挤进下一个分片，造成字节错位。
+func copyChunkExactly(w io.Writer, body io.Reader, expected int64) (int64, error) {
+	if expected <= 0 {
+		return 0, fmt.Errorf("非法分片长度: %d", expected)
+	}
+	copied, err := io.Copy(w, io.LimitReader(body, expected))
+	if err != nil {
+		return copied, err
+	}
+	if copied != expected {
+		return copied, fmt.Errorf("分片数据不完整: got %d, want %d", copied, expected)
+	}
+	var extra [1]byte
+	if n, _ := body.Read(extra[:]); n > 0 {
+		return copied, errors.New("分片响应超出请求区间")
+	}
+	return copied, nil
 }
 
 // parseContentRange 解析 "bytes start-end/total"。

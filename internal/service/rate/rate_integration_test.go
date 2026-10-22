@@ -170,3 +170,25 @@ func TestPhase4_RateIntegration(t *testing.T) {
 		pwg.Wait()
 	})
 }
+
+func TestConfigureClearsBottlenecks(t *testing.T) {
+	r := &Registry{
+		limiters:           make(map[string]*Limiter),
+		bottlenecks:        make(map[string]*Bottleneck),
+		api115QPM:          RegistryDefaultAPI115QPM,
+		downloadQPM:        RegistryDefaultDownloadQPM,
+		downloadConcurrent: RegistryDefaultDownloadConcurrent,
+	}
+	b1 := r.GetBottleneck("u1", TypeProxy, 10)
+	if b1.Limit() != 10 {
+		t.Fatalf("limit = %d, want 10", b1.Limit())
+	}
+	r.Configure(Limits{API115QPM: 60, PlaybackQPM: 120, LifeQPM: 60, GlobalCapQPM: 300})
+	b2 := r.GetBottleneck("u1", TypeProxy, 4)
+	if b1 == b2 {
+		t.Fatal("Configure should clear cached bottlenecks so the new limit takes effect")
+	}
+	if b2.Limit() != 4 {
+		t.Fatalf("limit after Configure = %d, want 4", b2.Limit())
+	}
+}

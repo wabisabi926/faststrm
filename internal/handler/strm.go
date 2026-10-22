@@ -281,14 +281,19 @@ func applyProxyConcurrencyLimit(
 	concurrencyLimit int,
 	isSeekFormat bool,
 ) (applyProxyConcurrency bool, leaveBn func(), outReason string, outDecision strm.RouteDecision) {
+	// 普通流与原盘流必须使用同一个 bottleneck limit。
+	// 之前普通流传 concurrencyLimit、原盘传 concurrencyLimit+2，而 Registry 按
+	// account:proxy 缓存第一个实例，谁先到谁决定 limit：原盘可能拿不到软超限，
+	// 设置页修改并发上限也不会生效。
+	proxyLimit := concurrencyLimit + seekFormatSoftOverLimit
+	if proxyLimit <= 0 {
+		proxyLimit = 1
+	}
+
 	if isSeekFormat {
 		// 原盘/seek 格式降级 302 后 CDN 常因 UA/签名拒绝 Range，必然播放失败。
 		// 统一用 Bottleneck 排队（含少量软超限），不再存在“检查后直接放行”的无界分支。
-		limit := concurrencyLimit + seekFormatSoftOverLimit
-		if limit <= 0 {
-			limit = 1
-		}
-		bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, limit)
+		bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, proxyLimit)
 		if enterErr := bn.Enter(rCtx); enterErr != nil {
 			logger.S().Warnf("[STRM] account=%s seek proxy queue canceled: %v", accountName, enterErr)
 			return false, nil, "seek_proxy_queue_canceled", strm.DecisionProxy
@@ -296,6 +301,7 @@ func applyProxyConcurrencyLimit(
 		return true, bn.Leave, "", ""
 	}
 
+	// 普通流仍按设置值做硬上限；bottleneck 的 +2 只留给原盘软超限。
 	current := proxyCountNow(accountName)
 	if current >= concurrencyLimit {
 		reason = fmt.Sprintf("%s -> proxy_concurrency_limit(%d/%d) fallback_redirect",
@@ -304,7 +310,7 @@ func applyProxyConcurrencyLimit(
 			accountName, current, concurrencyLimit)
 		return false, nil, reason, strm.DecisionRedirect
 	}
-	bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, concurrencyLimit)
+	bn := rate.GetRegistry().GetBottleneck(accountName, rate.TypeProxy, proxyLimit)
 	enterCtx, cancel := context.WithTimeout(rCtx, bottleneckEnterTimeout)
 	enterErr := bn.Enter(enterCtx)
 	cancel()
