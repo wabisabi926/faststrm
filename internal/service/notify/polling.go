@@ -18,6 +18,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
@@ -73,6 +74,7 @@ func (m *PollingManager) Start(ctx context.Context, handler UpdateHandler) error
 
 	m.conflict.Store(false)
 	logger.S().Info("[Telegram] Polling started (getUpdates: timeout=30, limit=100)")
+	journal.Info("notify", "Telegram 长轮询已启动", nil)
 	go m.consume(ctx, handler, c)
 	return nil
 }
@@ -114,6 +116,7 @@ func (m *PollingManager) consume(ctx context.Context, handler UpdateHandler, c *
 					logger.S().Errorf("[Telegram] 检测到 409 冲突：同一 Bot Token 可能被另一个实例轮询，"+
 						"或 Webhook 与轮询同时启用。请停掉重复实例 / 关闭其中一个接收方式。(%s)",
 						redactTelegramError(err))
+					journal.Error("notify", "Telegram 轮询 409 冲突：同一 Bot Token 可能被多个实例使用", nil)
 				}
 				if backoff < 30*time.Second {
 					backoff = 30 * time.Second
@@ -186,6 +189,7 @@ func (m *PollingManager) Stop() {
 	}
 	m.running = false
 	logger.S().Info("Telegram polling stopped")
+	journal.Info("notify", "Telegram 长轮询已停止", nil)
 }
 
 // IsRunning 返回当前是否在运行

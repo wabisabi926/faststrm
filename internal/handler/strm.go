@@ -152,6 +152,7 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 				return
 			}
 			logger.S().Errorf("[STRM] account=%s failed to get download URL: %v", accountName, err)
+			noteStrmResolveFailure(accountName, err)
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Failed to get download URL: " + err.Error()})
 			return
 		}
@@ -261,6 +262,13 @@ func HandleStrm(opts StrmOptions) http.HandlerFunc {
 		default:
 			doRedirect(w, finalName, cdnURL)
 		}
+	}
+}
+
+// noteStrmResolveFailure 把上游限流写入系统事件；其他取链失败只记常规日志。
+func noteStrmResolveFailure(accountName string, err error) {
+	if client115.IsRateLimitError(err) {
+		journal.Warn("rate", fmt.Sprintf("账号 %s 触发 115 限流，播放请求失败", accountName), nil)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
 	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/concurrency"
@@ -87,6 +88,10 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 	if task == nil {
 		return ExecuteResult{Success: false, Reason: "not_found", Message: "Task not found"}
 	}
+	taskLabel := strings.TrimSpace(task.Name)
+	if taskLabel == "" {
+		taskLabel = task.ID
+	}
 
 	// 2) 账号级独占锁
 	ok, conflictID := rt.TryEnter(task.Account, task.ID)
@@ -107,6 +112,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 
 	sseServer := sse.GetServer()
 	taskStart := time.Now()
+	journal.Info("task", fmt.Sprintf("任务「%s」开始执行", taskLabel), map[string]any{
+		"taskId": task.ID, "account": task.Account, "origin": task.OriginPath,
+	})
 
 	// 设置启动阶段
 	rt.SetState(task.ID, func(s *RuntimeState) {
@@ -174,6 +182,15 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps) ExecuteR
 					logger.S().Warnf("[Task] persist logs failed exec=%d: %v", execID, lerr)
 				}
 			}
+		}
+		if histSuccess {
+			journal.Info("task", fmt.Sprintf("任务「%s」完成：处理 %d/%d 个文件", taskLabel, dl, totalFiles), map[string]any{
+				"taskId": task.ID, "account": task.Account, "durationMs": elapsedMs, "deleted": cleanupDeleted,
+			})
+		} else {
+			journal.Error("task", fmt.Sprintf("任务「%s」失败：%s", taskLabel, histErrMsg), map[string]any{
+				"taskId": task.ID, "account": task.Account, "durationMs": elapsedMs,
+			})
 		}
 	}()
 

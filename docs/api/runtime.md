@@ -33,7 +33,7 @@ JWT 保护。参数：
 |---|---|
 | `limit` | 默认 100，最大 500 |
 | `level` | `info` / `warn` / `error` |
-| `category` | `server` / `proxy` / `settings` / `account` |
+| `category` | `server` / `task` / `cleanup` / `account` / `notify` / `rate` / `proxy` / `settings` |
 
 返回：
 
@@ -46,4 +46,4 @@ JWT 保护。参数：
 - 这是**当前进程**的事件日志，内存环形缓冲，重启清空。
 - 不记录每次播放；任务执行明细看 `/api/taskHistory` 和任务日志。
 - 不记录 Cookie、Bot Token、完整签名 CDN URL。
-- 当前记录点：服务启动/关闭、反代启动/停止/端口不可用、Emby 设置保存、115 Cookie 失效。
+- 当前记录点：服务启动/关闭、反代启动/停止/端口不可用、Emby 设置保存、115 Cookie 失效、任务开始/完成/失败、STRM 扫描与清理结果、账号巡检、Telegram 轮询启动/停止/409 冲突、115 限流与生活事件风控冷却。

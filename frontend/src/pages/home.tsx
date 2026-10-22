@@ -384,7 +384,7 @@ export default function OverviewPage() {
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <CardTitle className="text-base">任务运行</CardTitle>
+                    <CardTitle className="text-base">任务记录</CardTitle>
                     <CardDescription className="mt-1">当前执行中的任务与最近状态</CardDescription>
                   </div>
                   <Button variant="ghost" size="sm" asChild>

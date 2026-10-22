@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
@@ -88,6 +90,11 @@ func runAccountInspection(ctx context.Context, accountStore *store.AccountStore)
 
 	if checked > 0 {
 		logger.S().Infof("[CookieInspect] 本轮完成：检查 %d 个 115 账号，其中 %d 个失效", checked, invalid)
+		if invalid > 0 {
+			journal.Warn("account", fmt.Sprintf("账号巡检：%d 个 115 账号中 %d 个 Cookie 失效", checked, invalid), nil)
+		} else {
+			journal.Info("account", fmt.Sprintf("账号巡检：%d 个 115 账号 Cookie 均有效", checked), nil)
+		}
 	}
 }
 

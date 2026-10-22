@@ -17,6 +17,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/emby"
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/internal/service/runtime"
 	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -785,6 +786,10 @@ func (m *Monitor) handlePollError(account string, err error) {
 			accMon.rateLimitHits++
 			accMon.consecutiveFailures = 0
 			m.applyRateLimitCooldownLocked(accMon)
+			// 只记首次命中，后续同一次风控由冷却退避拉长间隔，避免日志集中刷屏
+			if accMon.rateLimitHits == 1 {
+				journal.Warn("rate", fmt.Sprintf("账号 %s 触发 115 风控/限流，已进入冷却退避", account), nil)
+			}
 		} else {
 			accMon.rateLimitHits = 0
 			m.applyBackoffLocked(accMon)

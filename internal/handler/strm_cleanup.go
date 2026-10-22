@@ -21,6 +21,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
+	"github.com/wabisabi926/faststrm/internal/service/journal"
 	"github.com/wabisabi926/faststrm/internal/service/store"
 	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/internal/service/task"
@@ -365,6 +366,9 @@ func HandleStrmCleanupScanPOST(deps StrmCleanupDeps) http.HandlerFunc {
 		}
 		// 保存服务端扫描快照：执行只能删除/补建本次扫描确认过的路径。
 		resp.ScanId, resp.ScanExpiresAt = cleanupScanCache.Put(r.Header.Get("X-User"), resp)
+		journal.Info("cleanup", fmt.Sprintf("STRM 扫描完成：%d 条失效、%d 条漏生成", totalStale, totalMissing), map[string]any{
+			"durationMs": resp.DurationMs, "mappings": len(results), "unmanaged": totalUnmanaged,
+		})
 
 		httpx.WriteJson(w, http.StatusOK, resp)
 	}
@@ -434,6 +438,28 @@ func HandleStrmCleanupExecutePOST(deps StrmCleanupDeps) http.HandlerFunc {
 
 		resp := executeCleanup(r.Context(), body, settings, deps, accountMap)
 		resp.DurationMs = time.Since(start).Milliseconds()
+
+		// DryRun 只是预览；真实执行、待确认和阈值拦截才值得进系统事件。
+		if !resp.DryRun {
+			switch {
+			case resp.ThresholdError != "":
+				journal.Warn("cleanup", "清理被保护阈值拦截："+resp.ThresholdError, map[string]any{
+					"totalStale": resp.TotalStaleCount,
+				})
+			case resp.Pending:
+				journal.Warn("cleanup", fmt.Sprintf("清理转入待确认批次：%d 个文件", resp.TotalStaleCount), map[string]any{
+					"requestId": resp.PendingRequestID,
+				})
+			case resp.FailedCount > 0:
+				journal.Warn("cleanup", fmt.Sprintf("STRM 清理完成，但有 %d 个文件失败", resp.FailedCount), map[string]any{
+					"deleted": resp.DeletedCount, "regenerated": resp.RegeneratedCount,
+				})
+			case resp.DeletedCount > 0 || resp.RegeneratedCount > 0:
+				journal.Info("cleanup", fmt.Sprintf("STRM 清理完成：删除 %d 个、补生成 %d 个", resp.DeletedCount, resp.RegeneratedCount), map[string]any{
+					"durationMs": resp.DurationMs, "skippedUnmanaged": resp.SkippedUnmanaged,
+				})
+			}
+		}
 
 		// 转入待确认批次或被阈值拦截时，实际一个文件都没删——把扫描票还回去，
 		// 否则用户必须重新扫描才能再操作（此前 MarkUsed 早于阈值判定）。

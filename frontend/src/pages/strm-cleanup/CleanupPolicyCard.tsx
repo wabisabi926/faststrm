@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { ChevronDown, ChevronRight, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -28,7 +28,6 @@ export interface CleanupPolicyCardProps {
 
 export function CleanupPolicyCard({ data, setData, saving, onSave, compact = false }: CleanupPolicyCardProps) {
   const [dirty, setDirty] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const cleanup = data.cleanup || {};
   const cleanupMode = data.download?.fullSyncCleanupOrphans ?? "auto_clean";
 
@@ -90,32 +89,15 @@ export function CleanupPolicyCard({ data, setData, saving, onSave, compact = fal
         </p>
       </div>
 
-      {/* B. 自动 + 手动共用；低频高级参数，默认折叠 */}
+      {/* B. 自动 + 手动共用；外层“高级清理策略”已折叠，这里不再重复折叠 */}
       <div className="rounded-md border p-3 sm:p-4 space-y-4">
-        <button
-          type="button"
-          className="flex w-full items-start justify-between gap-3 text-left"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          aria-expanded={advancedOpen}
-        >
-          <span>
-            <span className="block text-sm font-medium">保护阈值与清理动作（自动 + 手动共用）</span>
-            <span className="mt-1 block text-xs text-muted-foreground">
-              这些参数同时作用于任务内自动清理和下方手动清理；保护阈值命中时只停删除、不停生成。
-            </span>
-            {!advancedOpen && (
-              <span className="mt-1 block text-xs text-muted-foreground">
-                当前：比例上限 {Math.round((cleanup.maxRatio ?? CLEANUP_DEFAULTS.maxRatio) * 100)}%、
-                绝对上限 {cleanup.maxThreshold ?? CLEANUP_DEFAULTS.maxThreshold}、
-                目录数 {cleanup.maxDirs ?? CLEANUP_DEFAULTS.maxDirs}
-              </span>
-            )}
-          </span>
-          {advancedOpen ? <ChevronDown className="mt-0.5 h-4 w-4 shrink-0" /> : <ChevronRight className="mt-0.5 h-4 w-4 shrink-0" />}
-        </button>
+        <div>
+          <h3 className="text-sm font-medium">保护阈值与清理动作（自动 + 手动共用）</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            这些参数同时作用于任务内自动清理和下方手动清理；保护阈值命中时只停删除、不停生成。
+          </p>
+        </div>
 
-        {advancedOpen && (
-          <>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <Label htmlFor="cleanup-max-threshold">单次删除绝对上限</Label>
@@ -245,8 +227,6 @@ export function CleanupPolicyCard({ data, setData, saving, onSave, compact = fal
             </div>
           </div>
         </div>
-          </>
-        )}
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1">

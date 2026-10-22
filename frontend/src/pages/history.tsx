@@ -166,7 +166,7 @@ export default function TaskHistoryPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
         <div className="min-w-0 break-words">
-          <h1 className="text-xl sm:text-2xl font-semibold break-words">任务运行</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold break-words">任务记录</h1>
           <p className="text-sm text-muted-foreground mt-1 break-words">
             每次全量/定时任务的运行结果、耗时与历史日志。
           </p>
@@ -190,7 +190,7 @@ export default function TaskHistoryPage() {
             <CardContent className="flex items-center justify-center h-32">
               <div className="text-center">
                 <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">暂无任务运行记录</p>
+                <p className="text-sm text-muted-foreground">暂无任务记录</p>
               </div>
             </CardContent>
           </Card>

@@ -52,7 +52,7 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
     label: "日志",
     items: [
       { title: "系统状态", url: "/runtime", icon: Gauge },
-      { title: "任务运行", url: "/history", icon: History },
+      { title: "任务记录", url: "/history", icon: History },
       { title: "生活事件", url: "/life-events", icon: Activity },
       { title: "播放诊断", url: "/diagnose", icon: Stethoscope },
     ],
@@ -62,7 +62,7 @@ const navGroups: Array<{ label?: string; items: NavItem[] }> = [
     items: [
       { title: "常规", url: "/settings", icon: Settings },
       { title: "生活事件", url: "/settings/monitor", icon: Activity },
-      { title: "通知", url: "/notify", icon: BellRing },
+      { title: "通知中心", url: "/notify", icon: BellRing },
       { title: "账号安全", url: "/account-security", icon: ShieldCheck },
     ],
   },
@@ -72,7 +72,7 @@ function isNavActive(url: string, pathname: string): boolean {
   if (url === "/") return pathname === "/";
   // 常规与生活事件是并列菜单，不能让 /settings 把 /settings/monitor 也点亮
   if (url === "/settings") return pathname === "/settings";
-  // 日志详情从任务运行打开，归属于任务运行
+  // 日志详情从任务记录打开，归属于任务记录
   if (url === "/history") return pathname === "/history" || pathname.startsWith("/log/");
   return pathname === url || pathname.startsWith(url + "/");
 }

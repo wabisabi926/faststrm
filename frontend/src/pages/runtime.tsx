@@ -19,13 +19,7 @@ import axiosInstance from "@/lib/axios";
 interface ProxyStatus {
   running?: boolean;
   listenAddr?: string;
-  clientAddr?: string;
   externalPlayerEnabled?: boolean;
-  forceProxyFormats?: string[];
-  forceProxyUaTokens?: string[];
-  rangeProxy?: string;
-  disableSeekFormatProxy?: boolean;
-  startedAt?: string;
 }
 
 interface RuntimeStatus {
@@ -57,6 +51,29 @@ const LEVEL_STYLE: Record<string, string> = {
   error: "bg-red-500/15 text-red-600 dark:text-red-400",
 };
 
+const CATEGORY_LABELS: Record<string, string> = {
+  server: "服务",
+  task: "任务",
+  cleanup: "清理",
+  account: "账号",
+  notify: "通知",
+  rate: "限流",
+  proxy: "反代",
+  settings: "设置",
+};
+
+const CATEGORY_OPTIONS = [
+  { value: "all", label: "全部" },
+  { value: "task", label: "任务" },
+  { value: "cleanup", label: "清理" },
+  { value: "account", label: "账号" },
+  { value: "notify", label: "通知" },
+  { value: "rate", label: "限流" },
+  { value: "proxy", label: "反代" },
+  { value: "settings", label: "设置" },
+  { value: "server", label: "服务" },
+];
+
 function formatUptime(seconds?: number): string {
   if (!seconds || seconds < 0) return "-";
   const d = Math.floor(seconds / 86400);
@@ -87,6 +104,7 @@ export default function RuntimePage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [category, setCategory] = useState("all");
 
   const load = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -134,9 +152,10 @@ export default function RuntimePage() {
   }, [accounts]);
 
   const proxy = status?.proxy;
-  const proxyFormats = proxy?.disableSeekFormatProxy
-    ? "按格式代理已关闭"
-    : `${(proxy?.forceProxyFormats || []).join(", ") || "无"}（其余 302）`;
+  const visibleJournal = useMemo(
+    () => (category === "all" ? journal : journal.filter((event) => event.category === category)),
+    [journal, category],
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -145,7 +164,7 @@ export default function RuntimePage() {
           <h1 className="text-xl font-semibold sm:text-2xl break-words">系统状态</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             当前进程、Emby 反代、账号健康与最近系统事件；任务历史请查看
-            <Link to="/history" className="mx-1 underline underline-offset-4">任务运行</Link>。
+            <Link to="/history" className="mx-1 underline underline-offset-4">任务记录</Link>。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -159,8 +178,8 @@ export default function RuntimePage() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Card>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card className="h-full">
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <Server className="h-4 w-4" /> 服务
@@ -170,13 +189,12 @@ export default function RuntimePage() {
               <Badge className="bg-green-500/15 text-green-600 dark:text-green-400">运行中</Badge>
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1 text-xs text-muted-foreground">
-            <div>启动：{formatTime(status?.startedAt)}</div>
-            <div>已运行：{formatUptime(status?.uptimeSeconds)}</div>
+          <CardContent className="text-xs text-muted-foreground break-words">
+            已运行 {formatUptime(status?.uptimeSeconds)} · 启动于 {formatTime(status?.startedAt)}
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="h-full">
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <Activity className="h-4 w-4" /> Emby 反代
@@ -187,33 +205,30 @@ export default function RuntimePage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-1 text-xs text-muted-foreground">
-            <div>监听：{proxy?.listenAddr || "-"}</div>
-            <div className="break-all">客户端：{proxy?.clientAddr || "无法确定"}</div>
+            <div className="break-all">监听：{proxy?.listenAddr || "-"}</div>
             <div>外部播放器：{proxy?.externalPlayerEnabled ? "已启用" : "未启用"}</div>
-            <div className="break-all">代理格式：{proxyFormats}</div>
-            {proxy?.rangeProxy && <div>Range 分片：{proxy.rangeProxy}</div>}
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="h-full">
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <Users className="h-4 w-4" /> 网盘账号
             </CardDescription>
             <CardTitle className="text-2xl">{accountStats.total}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1 text-xs">
-            <div className="flex items-center gap-2">
+          <CardContent className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span className="inline-flex items-center gap-1">
               <ShieldCheck className="h-3.5 w-3.5 text-green-500" /> 正常 {accountStats.valid}
-            </div>
-            <div className="flex items-center gap-2">
+            </span>
+            <span className="inline-flex items-center gap-1">
               <XCircle className="h-3.5 w-3.5 text-red-500" /> 失效 {accountStats.invalid}
-            </div>
-            {accountStats.unknown > 0 && <div className="text-muted-foreground">未知 {accountStats.unknown}</div>}
-            <Link to="/account" className="inline-block pt-1 underline underline-offset-4">查看账号</Link>
+            </span>
+            {accountStats.unknown > 0 && (
+              <span className="text-muted-foreground">未知 {accountStats.unknown}</span>
+            )}
           </CardContent>
         </Card>
-
       </div>
 
       <Card>
@@ -222,21 +237,39 @@ export default function RuntimePage() {
             <ScrollText className="h-4 w-4" /> 系统事件
           </CardTitle>
           <CardDescription>
-            启动、反代、设置变更、账号异常等状态事件；保留当前进程最近 500 条，重启后清空。
+            启动、任务、清理、账号、通知、限流与反代等状态事件；保留当前进程最近 500 条，重启后清空。
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          {journal.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">暂无系统事件</p>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            {CATEGORY_OPTIONS.map((option) => (
+              <Button
+                key={option.value}
+                type="button"
+                size="sm"
+                variant={category === option.value ? "default" : "outline"}
+                className="h-7 rounded-full px-3 text-xs"
+                onClick={() => setCategory(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+          {visibleJournal.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              {journal.length === 0 ? "暂无系统事件" : "当前分类暂无系统事件"}
+            </p>
           ) : (
             <div className="space-y-2">
-              {journal.map((event) => (
+              {visibleJournal.map((event) => (
                 <div key={event.id} className="flex flex-col gap-1 rounded-md border px-3 py-2 text-sm sm:flex-row sm:items-center sm:gap-3">
                   <Badge className={LEVEL_STYLE[event.level] || LEVEL_STYLE.info}>
                     {event.level === "error" ? "错误" : event.level === "warn" ? "警告" : "信息"}
                   </Badge>
                   <span className="shrink-0 font-mono text-xs text-muted-foreground">{formatTime(event.time)}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">[{event.category}]</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    [{CATEGORY_LABELS[event.category] || event.category}]
+                  </span>
                   <span className="min-w-0 flex-1 break-words">{event.message}</span>
                   {event.level === "error" ? (
                     <XCircle className="hidden h-4 w-4 shrink-0 text-red-500 sm:block" />
