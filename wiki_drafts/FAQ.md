@@ -23,7 +23,7 @@ A: v1.2.3 有一个**架构变更**：统一 STRM 端点、废弃 `enable302` �
 - ✅ `settings.json` 里残留的 `enable302` 字段会被忽略，不会报错
 - ✅ 任务配置里的 `enable302` 同样忽略
 
-> v1.5.4 起，旧 `/api/fs/get` STRM 会 404。可用 `faststrm-migrate -from faststrm -root <STRM目录> -write` 原地替换，或运行全量任务重建。
+> v1.5.4 起，旧 `/api/fs/get` STRM 会返回 410（`LEGACY_ENDPOINT_REMOVED`）。可用 `faststrm-migrate -from faststrm -root <STRM目录> -write` 原地替换，或运行全量任务重建。
 
 **可选清理**（不影响运行）：
 ```bash
