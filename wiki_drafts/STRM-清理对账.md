@@ -16,7 +16,7 @@ v1.5.0 起，清理只处理**本工具生成的 STRM**。
 
 - 写入 STRM 时登记到 SQLite `managed_strms`：本地路径、账号、云端路径、pickcode、file_id、SHA256、size、mtime、来源
 - 历史文件启动时异步纳管；只纳管满足以下条件的文件：
-  - 内容是标准 `/api/strm` 或 `/api/fs/get` URL
+  - 内容是标准 `/api/strm` URL（历史 `/api/fs/get` 仅用于识别归属，路由已删除）
   - pickcode 合法（17 位字母数字）
   - 账号存在，且该 pickcode 在该账号的云端索引中
 - 手写 STRM、第三方工具生成、无法确认来源的文件保持**未托管**

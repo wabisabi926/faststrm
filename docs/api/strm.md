@@ -2,6 +2,8 @@
 
 公开播放端点，播放器无法携带 JWT，因此不要在这里增加需要登录的校验。
 
+> 旧 `/api/fs/get` 兼容路由已在 v1.5.4 删除。旧 STRM 请运行 `faststrm-migrate`（见 `docs/dev/migrate-strm.md`）或重建 STRM；直接访问旧地址会 404。
+
 ## 请求
 
 ```http

@@ -21,6 +21,13 @@ func init() {
 // 直接从 embed.FS 查找文件，未命中则回退到 index.html。
 func SPAHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// 未匹配的 API 不能回退到 index.html：播放器/前端拿到 200 HTML
+		// 会把“接口不存在”误判成成功，排查时非常隐蔽。
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
+			writeAPIError(w, r, r.URL.Path)
+			return
+		}
+
 		cleanPath := strings.TrimPrefix(r.URL.Path, "/")
 		if cleanPath == "" {
 			cleanPath = "index.html"
@@ -51,6 +58,21 @@ func SPAHandler() http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(indexHTML)
+	}
+}
+
+func writeAPIError(w http.ResponseWriter, r *http.Request, path string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	status := http.StatusNotFound
+	body := `{"error":"API route not found"}`
+	if path == "/api/fs/get" || strings.HasPrefix(path, "/api/fs/get/") {
+		status = http.StatusGone
+		body = `{"code":"LEGACY_ENDPOINT_REMOVED","error":"/api/fs/get 已移除，请使用 faststrm-migrate 或重建 STRM"}`
+	}
+	w.WriteHeader(status)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write([]byte(body))
 	}
 }
 

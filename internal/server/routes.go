@@ -67,12 +67,6 @@ func RegisterRoutes(
 		{Method: http.MethodHead, Path: "/api/strm", Handler: middleware.CORS(handler.HandleStrm(handler.StrmOptions{
 			Cfg: cfg, Client115: client, AccountStore: accountStore,
 		}))},
-		{Method: http.MethodGet, Path: "/api/fs/get", Handler: middleware.CORS(handler.HandleFsGet(handler.StrmOptions{
-			Cfg: cfg, Client115: client, AccountStore: accountStore,
-		}))},
-		{Method: http.MethodHead, Path: "/api/fs/get", Handler: middleware.CORS(handler.HandleFsGet(handler.StrmOptions{
-			Cfg: cfg, Client115: client, AccountStore: accountStore,
-		}))},
 	})
 
 	// ========== 受保护路由（JWT + CORS） ==========

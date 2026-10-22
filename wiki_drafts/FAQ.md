@@ -19,9 +19,11 @@ docker-compose up -d
 
 A: v1.2.3 有一个**架构变更**：统一 STRM 端点、废弃 `enable302` 开关。但升级**无需手动操作**，完全向后兼容：
 
-- ✅ 旧 STRM 文件（引用 `/api/fs/get`）自动转发兼容，播放不受影响
+- ⚠️ 旧 STRM 文件（引用 `/api/fs/get`）在 v1.2.3~v1.5.3 自动转发；**v1.5.4 起该兼容路由已删除**，升级后请先迁移/重建
 - ✅ `settings.json` 里残留的 `enable302` 字段会被忽略，不会报错
 - ✅ 任务配置里的 `enable302` 同样忽略
+
+> v1.5.4 起，旧 `/api/fs/get` STRM 会 404。可用 `faststrm-migrate -from faststrm -root <STRM目录> -write` 原地替换，或运行全量任务重建。
 
 **可选清理**（不影响运行）：
 ```bash

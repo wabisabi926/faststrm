@@ -285,7 +285,7 @@ func TestBuildStrmForMissing_WithTemplate(t *testing.T) {
 	settings := &model.Settings{
 		StrmPrefix: "http://example.com",
 		Strm: model.StrmSettings{
-			StrmUrlTemplate: "{prefix}/api/fs/get?a={account}&p={pickcode}&n={filename}",
+			StrmUrlTemplate: "{prefix}/api/strm?a={account}&p={pickcode}&n={filename}",
 		},
 	}
 
@@ -299,8 +299,8 @@ func TestBuildStrmForMissing_WithTemplate(t *testing.T) {
 		t.Errorf("strmPath = %q, want %q", strmPath, wantPath)
 	}
 
-	if !strings.Contains(content, "/api/fs/get") {
-		t.Errorf("content %q 不含模板渲染的 /api/fs/get", content)
+	if !strings.Contains(content, "/api/strm") {
+		t.Errorf("content %q 不含模板渲染的 /api/strm", content)
 	}
 	if !strings.Contains(content, "a=my_account") {
 		t.Errorf("content %q 不含 a=my_account", content)

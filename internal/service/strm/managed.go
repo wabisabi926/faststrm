@@ -200,8 +200,9 @@ func ParseManagedContent(content string) (account, pickcode string) {
 	return q.Get("account"), q.Get("pickcode")
 }
 
-// isStandardStrmURL 判断历史文件是否为本工具默认生成形态（/api/strm 或 /api/fs/get）。
-// 历史纳管只认这两种路径，避免把第三方/手写 URL（即使带 pickcode 参数）误纳管。
+// isStandardStrmURL 判断历史文件是否为本工具生成形态。
+// /api/fs/get 路由已在 v1.5.4 删除，这里仍识别它，仅用于历史纳管/清理归属，
+// 避免旧 STRM 被当成第三方文件；播放端应使用 /api/strm 或先运行迁移工具。
 func isStandardStrmURL(content string) bool {
 	s := strings.TrimSpace(content)
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {

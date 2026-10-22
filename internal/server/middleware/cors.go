@@ -9,7 +9,7 @@ import (
 // CORS 跨域中间件。
 //
 // 管理接口只对同源请求回写 CORS 头：管理接口带 Bearer token，不应把
-// Access-Control-Allow-Origin 反射给任意站点。播放端点（/api/strm、/api/fs/get）
+// Access-Control-Allow-Origin 反射给任意站点。播放端点（/api/strm）
 // 仍需允许任意来源，避免浏览器播放器因跨源被拦。
 func CORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -34,9 +34,7 @@ func CORS(next http.HandlerFunc) http.HandlerFunc {
 
 func isPlaybackPath(path string) bool {
 	return path == "/api/strm" ||
-		strings.HasPrefix(path, "/api/strm/") ||
-		path == "/api/fs/get" ||
-		strings.HasPrefix(path, "/api/fs/get/")
+		strings.HasPrefix(path, "/api/strm/")
 }
 
 func isSameOrigin(origin, host string) bool {

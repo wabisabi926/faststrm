@@ -362,7 +362,7 @@ func TestPlaybackInfo_NoDoubleEncoding(t *testing.T) {
 	strmSrc := mockStrmSrc(t, "")
 	defer strmSrc.Close()
 
-	strmURL := strmSrc.URL + "/api/fs/get?account=%E4%B8%BB%E5%8F%B7&pickcode=csv7hspymtny3dm22&file_name=%E6%9D%9C%E6%AF%94%E8%A7%86%E7%95%8C%20FEL.mkv"
+	strmURL := strmSrc.URL + "/media/movie?account=%E4%B8%BB%E5%8F%B7&pickcode=csv7hspymtny3dm22&file_name=%E6%9D%9C%E6%AF%94%E8%A7%86%E7%95%8C%20FEL.mkv"
 	body := buildStrmPlaybackInfoResp(strmURL, "src1")
 
 	emby := mockEmby(t, func(w http.ResponseWriter, r *http.Request) {

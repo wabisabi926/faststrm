@@ -142,7 +142,7 @@ type StrmSettings struct {
 	RedirectCheckTimeoutMs       int      `json:"redirectCheckTimeoutMs"`
 	// STRM URL/文件名高级自定义模板（P1-4）
 	//   支持变量：{prefix} {account} {pickcode} {filename} {ext} {stem}
-	//   示例："{prefix}/api/fs/get?a={account}&p={pickcode}&n={filename}"
+	//   示例："{prefix}/api/strm?account={account}&pickcode={pickcode}&file_name={filename}"
 	//   空字符串表示走默认拼接逻辑
 	StrmUrlTemplate string `json:"strmUrlTemplate"`
 	// 文件名模板：默认 {stem}.strm（.iso 为 {stem}.iso.strm）

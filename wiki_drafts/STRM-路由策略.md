@@ -2,7 +2,9 @@
 
 当播放器请求 faststrm 的 `/api/strm` 接口（v1.2.3+ 统一端点），faststrm 根据**规则引擎**自动决策走 302 重定向还是代理中转。
 
-> **v1.2.3 架构变更**：`enable302` 开关已废弃，所有 STRM 统一走 `/api/strm`。旧 STRM 文件中引用的 `/api/fs/get` 仍兼容（路由内部自动转发到 `/api/strm`）。
+> **v1.2.3 架构变更**：`enable302` 开关已废弃，所有 STRM 统一走 `/api/strm`。
+>
+> **v1.5.4 变更**：旧 `/api/fs/get` 兼容路由已删除；旧 STRM 请用 `faststrm-migrate` 或全量任务重建。
 
 ---
 
@@ -157,7 +159,7 @@
 http://192.168.50.250:8090/api/strm?account=小号&pickcode=abc123def456GHI78&file_name=电影.mkv
 ```
 
-> **向后兼容**：v1.2.3 前生成的 `/api/fs/get?...` 旧 STRM 仍可正常使用（`/api/fs/get` 路由内部转发到 `/api/strm`），但建议使用 `scripts/rebuild_strm.ps1` 重建。
+> **升级提示**：v1.2.3 前生成的 `/api/fs/get?...` 旧 STRM 在 v1.5.4 起不再兼容，请先用 `faststrm-migrate` 原地迁移，或使用 `scripts/rebuild_strm.ps1` / 全量任务重建。
 
 - `account`：账号名
 - `pickcode`：115 文件唯一标识（17 位字母数字）

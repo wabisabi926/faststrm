@@ -262,26 +262,6 @@
         }
       }
     },
-    "/api/fs/get": {
-      "get": {
-        "tags": [
-          "STRM"
-        ],
-        "summary": "GET /api/fs/get",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "成功"
-          },
-          "401": {
-            "description": "未授权 (JWT 缺失或无效)"
-          },
-          "500": {
-            "description": "服务器错误"
-          }
-        }
-      }
-    },
     "/api/account": {
       "get": {
         "tags": [
