@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Activity, BellRing, Settings2, ShieldCheck, Stethoscope } from "lucide-react";
+import { Stethoscope } from "lucide-react";
 import axiosInstance from "@/lib/axios";
-import { PageTabs, type PageTabItem } from "@/components/page-tabs";
 import type { AxiosError } from "axios";
 import { DirectoryTreeDialog } from "@/pages/task/components/DirectoryTreeDialog";
 import { LocalDirectoryTreeDialog } from "@/pages/task/components/LocalDirectoryTreeDialog";
@@ -19,52 +18,29 @@ import type {
 import { DEFAULT_MONITOR_CONFIG } from "./settings/types";
 import { BasicSettingsTab } from "./settings/BasicSettingsTab";
 import { MonitorSettingsTab } from "./settings/MonitorSettingsTab";
-import NotificationCenterPage from "@/pages/notification-center";
-import AccountSecurityPage from "@/pages/account-security";
 
-type SettingsTab = "general" | "monitor" | "notify" | "security";
+type SettingsTab = "general" | "monitor";
 
-const SETTINGS_TABS: readonly PageTabItem<SettingsTab>[] = [
-  { id: "general", label: "常规", icon: Settings2 },
-  { id: "monitor", label: "生活事件", icon: Activity },
-  { id: "notify", label: "通知", icon: BellRing },
-  { id: "security", label: "账号安全", icon: ShieldCheck },
-];
-
-function normalizeSettingsTab(value: string | null, forceTab?: "monitor" | "notify" | "security"): SettingsTab {
-  if (forceTab) return forceTab;
-  switch (value) {
-    case "monitor":
-    case "notify":
-    case "security":
-      return value;
-    default:
-      return "general"; // 兼容旧 tab=basic / 空值
-  }
-}
-
-export default function SettingsPage({
-  embedded = false,
-  forceTab,
-}: {
-  embedded?: boolean;
-  forceTab?: "monitor" | "notify" | "security";
-} = {}) {
+export default function SettingsPage({ section }: { section?: "general" | "monitor" } = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const activeTab = normalizeSettingsTab(searchParams.get("tab"), forceTab);
+  const activeTab: SettingsTab =
+    section === "monitor" || searchParams.get("tab") === "monitor" ? "monitor" : "general";
 
-  // 兼容旧书签：清理已独立成页
+  // 兼容旧链接：清理独立成页；生活事件设置改为独立菜单；
+  // 早期四页签方案留下的 notify/security 链接回退到原页面。
   useEffect(() => {
-    if (searchParams.get("tab") === "cleanup") {
+    const tab = searchParams.get("tab");
+    if (tab === "cleanup") {
       navigate("/cleanup", { replace: true });
+    } else if (tab === "monitor") {
+      navigate("/settings/monitor", { replace: true });
+    } else if (tab === "notify") {
+      navigate("/notify", { replace: true });
+    } else if (tab === "security") {
+      navigate("/account-security", { replace: true });
     }
   }, [searchParams, navigate]);
-
-  const setTab = (tab: SettingsTab) => {
-    const query = tab === "general" ? "" : `?tab=${tab}`;
-    navigate(`/settings${query}`, { replace: true });
-  };
 
   const [data, setData] = useState<SettingsType>({});
   const [loading, setLoading] = useState(true);
@@ -635,39 +611,26 @@ export default function SettingsPage({
 
   return (
     <>
-    <div
-      className={
-        embedded
-          ? "space-y-4"
-          : "mx-auto max-w-5xl space-y-4 sm:space-y-6 pb-24"
-      }
-    >
-      {!embedded && (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between px-1">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold">设置</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              常规、生活事件、通知与账号安全统一在这里配置。
-            </p>
-          </div>
-          <Link
-            to="/diagnose"
-            className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <Stethoscope className="h-3.5 w-3.5" />
-            播放诊断
-          </Link>
+    <div className="mx-auto max-w-5xl space-y-4 sm:space-y-6 pb-24">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between px-1">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-semibold">
+            {activeTab === "monitor" ? "生活事件" : "常规"}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {activeTab === "monitor"
+              ? "监控开关、路径映射与生活事件运行状态。"
+              : "全局 User-Agent、扩展名、STRM 生成、清理与限流配置。"}
+          </p>
         </div>
-      )}
-
-      {!embedded && (
-        <PageTabs
-          tabs={SETTINGS_TABS}
-          value={activeTab}
-          onChange={setTab}
-          ariaLabel="设置分区"
-        />
-      )}
+        <Link
+          to="/diagnose"
+          className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Stethoscope className="h-3.5 w-3.5" />
+          播放诊断
+        </Link>
+      </div>
 
       {activeTab === "general" && (
         <BasicSettingsTab
@@ -746,9 +709,6 @@ export default function SettingsPage({
           handleStartMonitor={handleStartMonitor}
         />
       )}
-
-      {activeTab === "notify" && <NotificationCenterPage embedded />}
-      {activeTab === "security" && <AccountSecurityPage embedded />}
 
     </div>
 

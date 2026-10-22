@@ -11,7 +11,7 @@ export default function LifeEventsHubPage() {
   // 兼容旧书签：监控设置已迁移到设置中心
   useEffect(() => {
     if (searchParams.get("tab") === "config") {
-      navigate("/settings?tab=monitor", { replace: true });
+      navigate("/settings/monitor", { replace: true });
     }
   }, [searchParams, navigate]);
 
@@ -25,7 +25,7 @@ export default function LifeEventsHubPage() {
           </p>
         </div>
         <Button variant="outline" asChild>
-          <Link to="/settings?tab=monitor">
+          <Link to="/settings/monitor">
             <SlidersHorizontal className="mr-1 h-4 w-4" />
             监控设置
           </Link>

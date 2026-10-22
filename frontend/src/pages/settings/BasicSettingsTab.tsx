@@ -746,7 +746,7 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
       <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
         <span>其他配置入口：</span>
         <Link to="/cleanup" className="text-primary hover:underline">清理策略</Link>
-        <Link to="/settings?tab=notify" className="text-primary hover:underline">Emby / Telegram 通知</Link>
+        <Link to="/notify" className="text-primary hover:underline">Emby / Telegram 通知</Link>
         <Link to="/account" className="text-primary hover:underline">Cookie 巡检</Link>
       </div>
 
