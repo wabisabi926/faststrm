@@ -128,6 +128,7 @@ FastStrm v1.5.0 采用纯 Go 架构：
 | [🔀 STRM 路由策略](https://github.com/wabisabi926/faststrm/wiki/STRM-路由策略) | 302 vs 代理决策逻辑 |
 | [🗑️ 删除同步](https://github.com/wabisabi926/faststrm/wiki/删除同步) | Emby 删除事件自动清理 |
 | [📝 版本日志](https://github.com/wabisabi926/faststrm/wiki/版本更新日志) | 历史版本更新记录 |
+| [🛠️ 开发者文档](docs/README.md) | 架构、ADR、API、构建/发布/迁移 |
 
 ---
 
