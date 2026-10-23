@@ -4,7 +4,7 @@
 
 ```bash
 export SCRIPTS=$(cygpath -u "$PWD/scripts")   # Windows Git Bash
-BUILD_FNOS_QUIET=1 FASTSTRM_VERSION=1.5.5 PATH="$SCRIPTS:$PATH" ./scripts/build-fnos.sh all
+BUILD_FNOS_QUIET=1 FASTSTRM_VERSION=1.5.6 PATH="$SCRIPTS:$PATH" ./scripts/build-fnos.sh all
 ```
 
 产物：

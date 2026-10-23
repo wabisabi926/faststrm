@@ -50,7 +50,7 @@ STRM:  /电影/2024/星际穿越.iso.strm
 
 文件名固定为 `{stem}.strm`（iso 自动变 `{stem}.iso.strm`），不再支持自定义文件名模板。
 
-> **v1.5.5 起自定义 URL / 文件名模板已下线**：老配置首次读取会备份为 `settings.json.templates-v1.*` 后清空；手工写回 `settings.json` 也会在读取/保存时被清空。
+> **v1.5.5 起自定义 URL / 文件名模板已下线，v1.5.6 起彻底失效**：老配置首次读取会备份为 `settings.json.templates-v1.*` 后清空；手工写回 `settings.json` 也会在读取/保存时被清空。
 
 **v1.2.3+ 统一 STRM 模式**：
 - `strmPrefix = http://服务器:8090`（不含 `/api/strm`，前端自动追加）

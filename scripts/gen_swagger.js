@@ -86,7 +86,7 @@ const swagger = {
   openapi: '3.0.3',
   info: {
     title: 'faststrm API',
-    version: 'v1.5.5',
+    version: 'v1.5.6',
     description: 'faststrm 后端 REST API 文档\n\n基于 go-zero rest 框架，JWT Bearer Token 认证。\nSwagger UI: /api/docs/ui'
   },
   servers: [{ url: 'http://localhost:8090', description: '默认端口' }],
