@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func setupTmpDB(t *testing.T) (*sql.DB, func()) {
@@ -24,6 +25,37 @@ func setupTmpDB(t *testing.T) (*sql.DB, func()) {
 func TestDBCreateAndSchema(t *testing.T) {
 	_, cleanup := setupTmpDB(t)
 	defer cleanup()
+}
+
+func TestPurgeStaleFolders(t *testing.T) {
+	db, cleanup := setupTmpDB(t)
+	defer cleanup()
+
+	now := time.Now().Unix()
+	if err := UpsertFolderEntry(db, "acc", FilePathEntry{
+		FileID: "1", Path: "电影/旧目录", FileName: "旧目录", ParentID: "0", UpdateTime: now - 8*24*3600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertFolderEntry(db, "acc", FilePathEntry{
+		FileID: "2", Path: "电影/新目录", FileName: "新目录", ParentID: "0", UpdateTime: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := PurgeStaleFolders(db, now-7*24*3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted=%d, want 1", deleted)
+	}
+	if entry, _ := GetFolderEntry(db, "acc", "1"); entry != nil {
+		t.Fatalf("stale folder should be removed, got %+v", entry)
+	}
+	if entry, _ := GetFolderEntry(db, "acc", "2"); entry == nil {
+		t.Fatal("fresh folder should be kept")
+	}
 }
 
 func TestUpsertAndGet(t *testing.T) {

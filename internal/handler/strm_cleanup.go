@@ -46,6 +46,8 @@ type StrmCleanupDeps struct {
 	CloudChecker CloudAbsenceChecker
 	// TaskHistory 执行记录仓库（供每日维护裁剪超限记录；nil 时跳过裁剪）
 	TaskHistory *db.TaskHistoryRepo
+	// PublicBaseURL 对外可访问地址；全局 STRM 前缀为空时用于补建 STRM 的兜底
+	PublicBaseURL string
 }
 
 // CloudAbsenceChecker 删除前确认云端仍不存在该 pickcode。
@@ -1424,6 +1426,7 @@ func cleanupCandidatePaths(body ExecuteRequest, action string) []string {
 }
 
 func executeCleanup(ctx context.Context, body ExecuteRequest, settings *model.Settings, deps StrmCleanupDeps, accountMap map[string]string) ExecuteResponse { //nolint:cyclop // complexity: 30
+	settings = cleanupSettingsForPrefix(settings, deps.PublicBaseURL)
 	resp := ExecuteResponse{
 		DryRun:              body.DryRun,
 		Errors:              []map[string]string{},
@@ -1739,6 +1742,17 @@ func deleteAllStaleFromScan(ctx context.Context, body ExecuteRequest, resp *Exec
 		}
 	}
 	return resp.DeletedCount - before, resp.FailedCount - beforeFailed
+}
+
+// cleanupSettingsForPrefix 返回清理/补建使用的设置快照。
+// 全局 STRM 前缀为空时回退 PublicBaseURL，避免补建的 STRM 写回固定 8090 的本机地址。
+func cleanupSettingsForPrefix(settings *model.Settings, publicBaseURL string) *model.Settings {
+	if settings == nil || strings.TrimSpace(settings.StrmPrefix) != "" || strings.TrimSpace(publicBaseURL) == "" {
+		return settings
+	}
+	clone := *settings
+	clone.StrmPrefix = strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
+	return &clone
 }
 
 // regenerateMissingStrms 从 body.ScanSummary.Mappings 的 MissingStrms 生成 STRM 文件

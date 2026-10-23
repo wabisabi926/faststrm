@@ -342,10 +342,11 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 						parentID = strconv.FormatInt(top.parentCID, 10)
 					}
 					if ferr := db.UpsertFolderEntry(sqliteDB, account, db.FilePathEntry{
-						FileID:   strconv.FormatInt(top.cid, 10),
-						Path:     dirPath,
-						FileName: filepath.Base(dirPath),
-						ParentID: parentID,
+						FileID:     strconv.FormatInt(top.cid, 10),
+						Path:       dirPath,
+						FileName:   filepath.Base(dirPath),
+						ParentID:   parentID,
+						UpdateTime: time.Now().Unix(),
 					}); ferr != nil {
 						logger.S().Warnf("[listAllFilesRecursive] 写 folders 表失败 cid=%d path=%s: %v", top.cid, dirPath, ferr)
 					}

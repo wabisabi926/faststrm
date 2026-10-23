@@ -16,6 +16,9 @@ const (
 	maintenanceStartupDelay = 1 * time.Minute
 	// trashRetention 回收站保留时长（与设置页文案一致）
 	trashRetention = 7 * 24 * time.Hour
+	// folderCacheRetention folders 目录路径缓存保留时长。
+	// 监控关闭期间云端目录改名不会更新缓存，过期后淘汰并由调用方回退到接口解析。
+	folderCacheRetention = 7 * 24 * time.Hour
 )
 
 // StartMaintenance 启动后台维护：清理过期回收站 + 裁剪执行记录。
@@ -60,6 +63,16 @@ func runMaintenance(deps StrmCleanupDeps) {
 	if deps.TaskHistory != nil {
 		if terr := deps.TaskHistory.TrimExecutions(context.Background(), db.TaskHistoryKeepExecutions); terr != nil {
 			logger.S().Warnf("[maintenance] 裁剪执行记录失败: %v", terr)
+		}
+	}
+
+	// 3) folders 目录缓存：淘汰超过 TTL 的记录，避免监控关闭期间目录改名后继续用旧路径
+	if deps.SQLiteDB != nil {
+		cutoff := time.Now().Add(-folderCacheRetention).Unix()
+		if n, ferr := db.PurgeStaleFolders(deps.SQLiteDB, cutoff); ferr != nil {
+			logger.S().Warnf("[maintenance] 清理 folders 缓存失败: %v", ferr)
+		} else if n > 0 {
+			logger.S().Infof("[maintenance] 已清理 %d 条过期 folders 缓存", n)
 		}
 	}
 

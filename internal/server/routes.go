@@ -221,13 +221,14 @@ func RegisterRoutes(
 		ClientFactory: func(name string) (*client115.Client, error) {
 			return client115.NewClient(""), nil
 		},
-		TasksStore:   tasksStore,
-		StrmCache:    strmCacheStore,
-		Interaction:  cleanupInteraction,
-		SQLiteDB:     execDeps.SQLiteDB,
-		ManagedStrm:  execDeps.ManagedStrm,
-		CloudChecker: execDeps.CloudChecker,
-		TaskHistory:  taskHistoryRepo,
+		TasksStore:    tasksStore,
+		StrmCache:     strmCacheStore,
+		Interaction:   cleanupInteraction,
+		SQLiteDB:      execDeps.SQLiteDB,
+		ManagedStrm:   execDeps.ManagedStrm,
+		CloudChecker:  execDeps.CloudChecker,
+		TaskHistory:   taskHistoryRepo,
+		PublicBaseURL: execDeps.PublicBaseURL,
 	}
 	// 每日维护：清理过期回收站 + 裁剪执行记录（此前只在跑清理/建记录时机会式触发）
 	handler.StartMaintenance(strmCleanupDeps)

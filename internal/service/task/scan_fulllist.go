@@ -307,10 +307,11 @@ func (r *dirPathResolver) upsertChain(chain []client115.FsFilesPathNode, rootCID
 			continue
 		}
 		if err := db.UpsertFolderEntry(r.sqliteDB, r.account, db.FilePathEntry{
-			FileID:   strconv.FormatInt(int64(node.Cid), 10),
-			Path:     full,
-			FileName: name,
-			ParentID: strconv.FormatInt(int64(node.Pid), 10),
+			FileID:     strconv.FormatInt(int64(node.Cid), 10),
+			Path:       full,
+			FileName:   name,
+			ParentID:   strconv.FormatInt(int64(node.Pid), 10),
+			UpdateTime: time.Now().Unix(),
 		}); err != nil {
 			logger.S().Warnf("[fulllist] 回填 folders 失败 cid=%d path=%s: %v", int64(node.Cid), full, err)
 		}

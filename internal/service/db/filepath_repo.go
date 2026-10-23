@@ -374,6 +374,19 @@ func UpsertFolderEntry(db *sql.DB, account string, e FilePathEntry) error {
 	return err
 }
 
+// PurgeStaleFolders 删除超过 TTL 的目录路径缓存。
+// 监控关闭期间云端目录改名不会更新 folders，过期缓存必须淘汰，让调用方回退到接口解析。
+func PurgeStaleFolders(db *sql.DB, cutoffUnix int64) (int64, error) {
+	if db == nil || cutoffUnix <= 0 {
+		return 0, nil
+	}
+	res, err := db.Exec(`DELETE FROM folders WHERE update_time < ?`, cutoffUnix)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // GetFolderEntry 按 (account, fileId) 查 folders 表单条记录
 func GetFolderEntry(db *sql.DB, account string, fileID string) (*FilePathEntry, error) {
 	row := db.QueryRow(`

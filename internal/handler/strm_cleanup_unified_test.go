@@ -194,3 +194,22 @@ func TestBuildStrmForMissing_TemplateUsesSourceExt(t *testing.T) {
 		t.Fatalf("{file_path} 应为「中文编码 + 保留 /」的云端路径，got %q", content)
 	}
 }
+
+func TestCleanupSettingsForPrefix(t *testing.T) {
+	original := &model.Settings{StrmPrefix: ""}
+	got := cleanupSettingsForPrefix(original, "http://nas:9000/")
+	if got == original {
+		t.Fatal("expected a settings clone when falling back to PublicBaseURL")
+	}
+	if got.StrmPrefix != "http://nas:9000" {
+		t.Fatalf("prefix = %q, want http://nas:9000", got.StrmPrefix)
+	}
+	if original.StrmPrefix != "" {
+		t.Fatalf("original settings must not be mutated, got %q", original.StrmPrefix)
+	}
+
+	configured := &model.Settings{StrmPrefix: "http://configured:8090"}
+	if got := cleanupSettingsForPrefix(configured, "http://nas:9000"); got != configured {
+		t.Fatal("configured prefix should take precedence")
+	}
+}
