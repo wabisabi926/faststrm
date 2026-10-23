@@ -10,6 +10,7 @@ import {
   Loader2,
   RefreshCw,
   Server,
+  Sparkles,
   Trash2,
   Users,
 } from "lucide-react";
@@ -528,6 +529,32 @@ export default function OverviewPage() {
               </Card>
             </div>
           </div>
+
+          {!loading && (accountStats.total === 0 || tasks.length === 0) && (
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-md border border-blue-200/70 bg-blue-50/60 px-3 py-2 text-xs text-muted-foreground dark:border-blue-900/60 dark:bg-blue-950/20">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="font-medium text-foreground">新手配置：</span>
+              <Link to="/account" className="text-primary hover:underline">① 添加网盘账号</Link>
+              <span className="text-blue-300 dark:text-blue-700">→</span>
+              <Link to="/settings" className="text-primary hover:underline">② 配置 STRM 前缀</Link>
+              <span className="text-blue-300 dark:text-blue-700">→</span>
+              <Link to="/task" className="text-primary hover:underline">③ 新建任务并运行</Link>
+              <span className="mx-1 text-muted-foreground/50">可选：</span>
+              <Link to="/settings/monitor" className="hover:text-foreground hover:underline">生活事件监控</Link>
+              <span className="text-muted-foreground/50">·</span>
+              <Link to="/notify?tab=telegram" className="hover:text-foreground hover:underline">Telegram</Link>
+              <span className="text-muted-foreground/50">·</span>
+              <Link to="/notify?tab=emby" className="hover:text-foreground hover:underline">Emby 通知</Link>
+              <a
+                href="https://github.com/wabisabi926/faststrm/wiki/Emby%E9%9B%86%E6%88%90"
+                target="_blank"
+                rel="noreferrer"
+                className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                Emby 接入文档 ↗
+              </a>
+            </div>
+          )}
 
         </>
       )}
