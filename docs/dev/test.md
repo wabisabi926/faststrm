@@ -11,6 +11,29 @@ cd frontend && npm run build && npm test
 
 涉及前端交互的改动，必须启动实际二进制，在浏览器里走一遍主路径；不能只凭 `tsc` 通过。
 
+## Playwright E2E
+
+E2E 使用隔离配置目录和独立的管理员账号，不要连接线上实例：
+
+```bash
+# 终端 1：启动隔离后端
+go build -o C:/temp/fs-e2e/faststrm.exe ./cmd/server
+C:/temp/fs-e2e/faststrm.exe --config C:/temp/fs-e2e/config --no-tray
+
+# 首次启动后创建管理员
+curl -X POST http://127.0.0.1:8090/api/setup/admin \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<测试密码>"}'
+
+# 终端 2：跑全量 E2E
+cd frontend
+E2E_USERNAME=admin E2E_PASSWORD='<测试密码>' npx playwright test
+```
+
+2026-10-23 全量结果为 18/18 通过。E2E 断言必须跟随当前侧栏与页面文案更新，
+不要用旧 IA 的链接名（如「账号管理」「执行历史」）作为通过条件。
+
+
 ## 原盘/Range 验证
 
 至少覆盖：
