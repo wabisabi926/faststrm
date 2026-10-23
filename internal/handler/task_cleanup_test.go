@@ -31,6 +31,14 @@ func (f *cleanupFakeManaged) Bootstrap(context.Context, []string, []string) (int
 	return 0, 0, nil
 }
 
+func TestValidateTaskTarget_RejectsFilesystemRoot(t *testing.T) {
+	root := filepath.VolumeName(os.TempDir()) + string(filepath.Separator)
+	code, msg := validateTaskTarget(task.Task{ID: "root", TargetPath: root}, nil)
+	if code != http.StatusBadRequest {
+		t.Fatalf("filesystem root should be rejected, got code=%d msg=%q", code, msg)
+	}
+}
+
 func TestCleanupTaskStrms_OnlyOwnedManagedAndKeepsTrash(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "电影")

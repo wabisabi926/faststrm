@@ -511,6 +511,9 @@ func validateTaskTarget(t task.Task, existing []task.Task) (int, string) {
 		return http.StatusBadRequest, "本地目标路径必须是目录，不能是文件"
 	}
 	cleanTarget := filepath.Clean(target)
+	if filepath.Dir(cleanTarget) == cleanTarget {
+		return http.StatusBadRequest, "本地目标路径不能是文件系统根目录"
+	}
 	for i := range existing {
 		other := existing[i]
 		if other.ID == t.ID || strings.TrimSpace(other.TargetPath) == "" {
