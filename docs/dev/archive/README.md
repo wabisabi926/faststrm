@@ -10,5 +10,5 @@
 
 | 文档 | 时间 | 对应版本 | 说明 |
 |---|---|---|---|
-| [handoff-2026-10-23.md](handoff-2026-10-23.md) | 2026-10-23 | 基于 v1.5.4 的未发布改动 | 删除/清理安全、持久化 fail-closed、STRM 模板下线、Emby Webhook 合并的交接记录 |
+| [handoff-2026-10-23.md](handoff-2026-10-23.md) | 2026-10-23 | v1.5.5 | 删除/清理安全、持久化 fail-closed、STRM 模板下线、Emby Webhook 合并的交接记录 |
 | [handoff-2026-10-22.md](handoff-2026-10-22.md) | 2026-10-22 | v1.5.4 | 设置留空语义、Emby/Telegram 一致性、P1 收尾的会话交接记录 |
