@@ -44,8 +44,8 @@ test.describe('核心页面可达性', () => {
     await expectSidebarGroupVisible(page, '媒体库');
   });
 
-  test('侧栏导航到 /account → 账号管理', async ({ page }) => {
-    await clickSidebarLink(page, '账号管理', true);
+  test('侧栏导航到 /account → 网盘账号', async ({ page }) => {
+    await clickSidebarLink(page, '网盘账号', true);
     await expect(page).toHaveURL(/\/account/, { timeout: 5000 });
     await expectSidebarGroupVisible(page, '媒体库');
   });
@@ -60,20 +60,21 @@ test.describe('核心页面可达性', () => {
     await clickSidebarLink(page, 'STRM 清理', true);
     await expect(page).toHaveURL(/\/cleanup/, { timeout: 5000 });
     await expect(page.getByRole('heading', { name: 'STRM 清理' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /扫描路径映射/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /开始扫描/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /全量对账/ })).toHaveCount(0);
   });
 
-  test('侧栏导航到 /settings → 设置中心', async ({ page }) => {
-    await clickSidebarLink(page, '设置中心', true);
+  test('侧栏导航到 /settings → 常规', async ({ page }) => {
+    await clickSidebarLink(page, '常规', true);
     await expect(page).toHaveURL(/\/settings/, { timeout: 5000 });
     await expectSidebarGroupVisible(page, '设置');
+    await expect(page.getByRole('heading', { name: '常规' })).toBeVisible();
     await expect(page.getByText('配置索引')).toHaveCount(0);
-    await expect(page.getByRole('link', { name: /播放诊断/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: /播放诊断/ }).first()).toBeVisible();
   });
 
-  test('侧栏导航到 /history → 执行历史', async ({ page }) => {
-    await clickSidebarLink(page, '执行历史', true);
+  test('侧栏导航到 /history → 任务记录', async ({ page }) => {
+    await clickSidebarLink(page, '任务记录', true);
     await expect(page).toHaveURL(/\/history/, { timeout: 5000 });
     await expectSidebarGroupVisible(page, '日志');
   });
@@ -120,7 +121,21 @@ test.describe('核心页面可达性', () => {
   });
 
   test('日志详情历史模式渲染文件列表', async ({ page }) => {
-    await page.route(/\/api\/taskHistory$/, (route) =>
+    await page.route(/\/api\/taskHistory\/stats$/, (route) =>
+      route.fulfill({
+        json: {
+          total: 1,
+          completed: 1,
+          failed: 0,
+          cancelled: 0,
+          running: 0,
+          filesDownloaded: 2,
+          filesTotal: 2,
+          avgDurationMs: 5000,
+        },
+      })
+    );
+    await page.route(/\/api\/taskHistory(\?.*)?$/, (route) =>
       route.fulfill({
         json: {
           items: [
@@ -154,8 +169,22 @@ test.describe('核心页面可达性', () => {
     expect(fontSize).toBe('12px');
   });
 
-  test('执行历史两个 tab 使用同一统计卡和表格骨架', async ({ page }) => {
-    await page.route(/\/api\/taskHistory$/, (route) =>
+  test('任务记录使用统计卡和表格骨架', async ({ page }) => {
+    await page.route(/\/api\/taskHistory\/stats$/, (route) =>
+      route.fulfill({
+        json: {
+          total: 1,
+          completed: 1,
+          failed: 0,
+          cancelled: 0,
+          running: 0,
+          filesDownloaded: 2,
+          filesTotal: 2,
+          avgDurationMs: 5000,
+        },
+      })
+    );
+    await page.route(/\/api\/taskHistory(\?.*)?$/, (route) =>
       route.fulfill({
         json: {
           items: [
@@ -212,13 +241,12 @@ test.describe('核心页面可达性', () => {
     );
 
     await page.goto('/history');
-    await expect(page.getByText('总记录')).toBeVisible();
+    await expect(page.getByText('记录总数')).toBeVisible();
     await expect(page.getByText('demo-task')).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '任务 / 路径' })).toBeVisible();
 
-    await page.getByRole('tab', { name: 'STRM 记录' }).click();
-    await expect(page.getByText('总记录')).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'API' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '任务 / 路径' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '耗时' })).toBeVisible();
   });
 
   test('日志详情页可达且深色模式正常', async ({ page }) => {

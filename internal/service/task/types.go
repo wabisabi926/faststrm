@@ -131,12 +131,14 @@ type Runtime struct {
 }
 
 type runningTask struct {
-	task    *Task
-	state   *RuntimeState
-	cancel  context.CancelFunc
-	ctx     context.Context
-	logLock sync.Mutex
-	logs    []string
+	task     *Task
+	state    *RuntimeState
+	cancel   context.CancelFunc
+	ctx      context.Context
+	done     chan struct{}
+	doneOnce sync.Once
+	logLock  sync.Mutex
+	logs     []string
 }
 
 var (
@@ -183,6 +185,7 @@ func (r *Runtime) Register(task *Task) (context.Context, context.CancelFunc) {
 		state:  &RuntimeState{Status: StatusRunning, StartedAt: time.Now().UnixMilli()},
 		cancel: cancel,
 		ctx:    ctx,
+		done:   make(chan struct{}),
 	}
 	r.tasks[task.ID] = rt
 	return ctx, cancel
@@ -193,8 +196,28 @@ func (r *Runtime) Unregister(taskID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if rt, ok := r.tasks[taskID]; ok {
+		rt.doneOnce.Do(func() { close(rt.done) })
 		rt.cancel()
 		delete(r.tasks, taskID)
+	}
+}
+
+// Wait 等待任务退出（状态不再是 running/pending 或运行态已注销）。
+// 返回 false 表示超时；调用方应放弃后续破坏性操作。
+func (r *Runtime) Wait(taskID string, timeout time.Duration) bool {
+	r.mu.Lock()
+	rt, ok := r.tasks[taskID]
+	r.mu.Unlock()
+	if !ok || rt == nil {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-rt.done:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 

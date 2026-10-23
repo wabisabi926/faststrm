@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -55,8 +56,8 @@ func TestReadSettings_MigratesMissingEventTypes(t *testing.T) {
 	}
 }
 
-// TestReadSettings_MigratesCleanupDefaults 清理默认值反转（一次性）：
-// 旧配置没有 fullSyncCleanupOrphans → 开启 pickcode 级清理；用户显式设成 off 时不得覆盖。
+// TestReadSettings_MigratesCleanupDefaults 清理默认值迁移（一次性）：
+// 老配置降为 mark_only（auto_clean 需用户重新确认）；显式 off 不得覆盖。
 func TestReadSettings_MigratesCleanupDefaults(t *testing.T) {
 	dir1 := t.TempDir()
 	writeSettings(t, dir1, `{"download":{"minFileSize":0}}`)
@@ -64,8 +65,8 @@ func TestReadSettings_MigratesCleanupDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadSettings: %v", err)
 	}
-	if got := s1.Download.FullSyncCleanupOrphans; got != "auto_clean" {
-		t.Errorf("缺字段应迁移为 auto_clean, got %q", got)
+	if got := s1.Download.FullSyncCleanupOrphans; got != "mark_only" {
+		t.Errorf("老配置缺字段应迁移为 mark_only, got %q", got)
 	}
 
 	dir2 := t.TempDir()
@@ -76,6 +77,77 @@ func TestReadSettings_MigratesCleanupDefaults(t *testing.T) {
 	}
 	if got := s2.Download.FullSyncCleanupOrphans; got != "off" {
 		t.Errorf("用户显式关闭不应被覆盖, got %q", got)
+	}
+}
+
+// 老配置显式 auto_clean 也降为 mark_only：v1.5 的默认值无法与用户选择区分，
+// 审批后的安全口径是升级后先只标记。
+func TestReadSettings_MigratesAutoCleanToMarkOnly(t *testing.T) {
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"download":{"fullSyncCleanupOrphans":"auto_clean"}}`)
+	s, err := NewSettingsStore("test_salt", dir).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if got := s.Download.FullSyncCleanupOrphans; got != "mark_only" {
+		t.Errorf("老配置 auto_clean 应降为 mark_only, got %q", got)
+	}
+}
+
+// TestReadSettings_FailClosedOnCorruptJSON 损坏配置不得被当成默认值继续写回。
+func TestReadSettings_FailClosedOnCorruptJSON(t *testing.T) {
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"strm":{"forceProxyFormats":[`)
+	s := NewSettingsStore("test_salt", dir)
+	if _, err := s.ReadSettings(); err == nil {
+		t.Fatal("corrupt JSON should return error")
+	}
+	if _, err := s.Update(func(cfg *model.Settings) error {
+		cfg.StrmPrefix = "http://should-not-save"
+		return nil
+	}); err == nil {
+		t.Fatal("Update must fail closed on corrupt config")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"forceProxyFormats":[`) {
+		t.Fatalf("corrupt file must remain untouched, got %s", raw)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "settings.json.corrupt.*"))
+	if len(matches) == 0 {
+		t.Fatal("corrupt config should be backed up")
+	}
+}
+
+// TestReadSettings_MigratesMissingPathEncoding 旧配置缺 enablePathEncoding 时补 true。
+func TestReadSettings_MigratesMissingPathEncoding(t *testing.T) {
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"strmPrefix":"http://192.168.1.10:8090"}`)
+	s, err := NewSettingsStore("test_salt", dir).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if !s.EnablePathEncoding {
+		t.Fatal("missing enablePathEncoding should default true")
+	}
+}
+
+// TestReadSettings_RemovesLegacyTemplates A1：老模板备份后清空。
+func TestReadSettings_RemovesLegacyTemplates(t *testing.T) {
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"strm":{"strmUrlTemplate":"{prefix}/x?pc={pickcode}","strmFilenameTemplate":"[a]{stem}.strm"}}`)
+	s, err := NewSettingsStore("test_salt", dir).ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if s.Strm.StrmUrlTemplate != "" || s.Strm.StrmFilenameTemplate != "" {
+		t.Fatalf("legacy templates should be cleared, got %q / %q", s.Strm.StrmUrlTemplate, s.Strm.StrmFilenameTemplate)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "settings.json.templates-v1.*"))
+	if len(matches) == 0 {
+		t.Fatal("legacy template config should be backed up")
 	}
 }
 

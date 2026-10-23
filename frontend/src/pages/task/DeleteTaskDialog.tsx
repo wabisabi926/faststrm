@@ -18,7 +18,9 @@ export interface DeleteTaskDialogProps {
   open: boolean;
   task: Task | null;
   cleanStrm: boolean;
+  hardDelete: boolean;
   onCleanStrmChange: (checked: boolean) => void;
+  onHardDeleteChange: (checked: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -27,7 +29,9 @@ export function DeleteTaskDialog({
   open,
   task,
   cleanStrm,
+  hardDelete,
   onCleanStrmChange,
+  onHardDeleteChange,
   onCancel,
   onConfirm,
 }: DeleteTaskDialogProps) {
@@ -64,14 +68,28 @@ export function DeleteTaskDialog({
               onCheckedChange={(checked) => onCleanStrmChange(checked === true)}
             />
             <label htmlFor={`clean-strm-${task.id}`} className="text-sm cursor-pointer">
-              同时清理 STRM 文件（{task.targetPath}）
+              同时清理 STRM 文件（移入回收站，{task.targetPath}）
             </label>
           </div>
         )}
-        {cleanStrm && (
-          <p className="text-xs text-red-600 font-medium">
-            ⚠️ 将删除该目录下所有 .strm 文件，并清理空目录！
-          </p>
+        {task && cleanStrm && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={`hard-delete-strm-${task.id}`}
+                checked={hardDelete}
+                onCheckedChange={(checked) => onHardDeleteChange(checked === true)}
+              />
+              <label htmlFor={`hard-delete-strm-${task.id}`} className="text-sm cursor-pointer">
+                永久删除（不进回收站，不可恢复）
+              </label>
+            </div>
+            <p className={`text-xs font-medium ${hardDelete ? "text-red-600" : "text-amber-600"}`}>
+              {hardDelete
+                ? "⚠️ 将永久删除当前任务托管的 .strm，无法从回收站恢复！"
+                : "将当前任务托管的 .strm 移入 .faststrm-trash，可在清理页恢复。"}
+            </p>
+          </div>
         )}
         <DialogFooter className="gap-2">
           <Button

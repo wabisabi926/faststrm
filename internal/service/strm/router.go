@@ -252,22 +252,21 @@ func (g *callGroup) Do(key string, fn func() (*client115.DownloadUrlMeta, error)
 
 // ==================== 工具函数 ====================
 
-// IsPrivateNetworkIp 判断是否为私网 IP
+// IsPrivateNetworkIp 判断是否为私网/回环/链路本地地址。
+// 不能把“所有 IPv6”都当私网：公网 IPv6 客户端会因此绕过 explicit mode 的私网限制。
 func IsPrivateNetworkIp(ip string) bool {
+	ip = strings.Trim(strings.TrimSpace(ip), "[]")
 	if ip == "" {
 		return false
 	}
-	ip = strings.TrimSpace(ip)
-	if strings.HasPrefix(ip, "192.168.") ||
-		strings.HasPrefix(ip, "10.") ||
-		ip == "127.0.0.1" || ip == "::1" || ip == "localhost" ||
-		strings.HasPrefix(ip, "[") {
+	if strings.EqualFold(ip, "localhost") {
 		return true
 	}
-	if re172 := regexp.MustCompile(`^172\.(1[6-9]|2\d|3[0-1])\.`); re172.MatchString(ip) {
-		return true
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
 	}
-	return false
+	return parsed.IsPrivate() || parsed.IsLoopback() || parsed.IsLinkLocalUnicast()
 }
 
 // GetClientIp 从请求头中取客户端 IP（x-forwarded-for -> x-real-ip）

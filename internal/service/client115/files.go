@@ -82,6 +82,10 @@ func isIdempotentMethod(method string) bool {
 // isRetryableStatus 仅 5xx 服务端错误自动重试。
 // 429/430 是限流信号，立即重试会放大风控；交给上层冷却退避。
 func isRetryableStatus(code int) bool {
+	// 599 多为 WAF/网关拦截，立即重试会放大风控；429/430 同理。
+	if code == 599 || code == 429 || code == 430 {
+		return false
+	}
 	return code >= 500
 }
 
@@ -197,8 +201,14 @@ func (c *Client) request115(
 		if err := c.acquireAPI(ctx, opt.Cookie, limiterType); err != nil {
 			return nil, err
 		}
-		data, _, err := c.doHTTPOnce(ctx, method, urlStr, body, headers, opt.Timeout)
-		return data, err
+		data, status, err := c.doHTTPOnce(ctx, method, urlStr, body, headers, opt.Timeout)
+		if err != nil {
+			return nil, err
+		}
+		if status < 200 || status >= 300 {
+			return nil, newHTTPStatusError(status, truncate(data, 256))
+		}
+		return data, nil
 	}
 
 	var lastErr error
@@ -232,9 +242,9 @@ func (c *Client) request115(
 			continue
 		}
 		if status < 200 || status >= 300 {
-			// 429/430 等限流/网关错误必须作为错误返回；把原始 body 当成功会让上层
-			// 把目录解析成空，进而误判本地 STRM 为孤儿。
-			return nil, fmt.Errorf("HTTP %d: %s", status, truncate(data, 256))
+			// 429/430/599 等限流/网关错误必须作为类型化错误返回；把原始 body 当成功
+			// 会让上层把目录解析成空，进而误判本地 STRM 为孤儿。
+			return nil, newHTTPStatusError(status, truncate(data, 256))
 		}
 		return data, nil
 	}

@@ -46,9 +46,15 @@ func (rl *APIRateLimiter) Wait() {
 	if elapsed < rl.minInterval {
 		remaining := rl.minInterval - elapsed
 		rl.blocked++
+		// 在睡眠前先“预占”下一次时间槽，否则唤醒后 lastCall 仍是睡眠前的时间，
+		// 下一次调用会立即放行，形成两次请求背靠背的脉冲。
+		rl.lastCall = now.Add(remaining)
 		rl.mu.Unlock()
 		time.Sleep(remaining)
 		rl.mu.Lock()
+		rl.callCount++
+		rl.mu.Unlock()
+		return
 	}
 
 	rl.lastCall = now

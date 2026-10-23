@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -293,6 +294,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 	// 由调用方做清理保护（防误判孤儿清库）。根目录失败仍是致命错误。
 	pendingRetry := make([]stackEntry, 0, 8)
 	failedDirs := make([]string, 0, 4)
+	consecutiveFailures := 0
 
 	defer func() {
 		logger.S().Infof("[listAllFilesRecursive] done dirs=%d files=%d matched=%d totalOut=%d failedDirs=%d", dirCount.Load(), fileCount.Load(), matchCount.Load(), len(out), len(failedDirs))
@@ -317,6 +319,9 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 
 	for round := 0; ; round++ {
 		for len(stk) > 0 {
+			if cerr := ctx.Err(); cerr != nil {
+				return nil, cerr
+			}
 			top := stk[len(stk)-1]
 			stk = stk[:len(stk)-1]
 			if _, seen := cidSeen[top.cid]; seen {
@@ -366,12 +371,24 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 						logger.S().Errorf("[listAllFilesRecursive] 根目录列目录失败(kind=%s) cid=%d relPath=%s: %s", kind, top.cid, top.relPath, detail)
 						return nil, fmt.Errorf("fs_files root list failed (kind=%s): %s", kind, detail)
 					}
+					// 认证/限流/请求层重试耗尽：继续遍历其余目录只会放大风控和耗时。
+					if err != nil && isFatalScanError(err) {
+						return nil, fmt.Errorf("列目录遇到不可恢复错误，已中止扫描: %w", err)
+					}
+					if err == nil {
+						err = fmt.Errorf("state=false cid=%d", top.cid)
+					}
+					consecutiveFailures++
+					if consecutiveFailures >= 5 {
+						return nil, fmt.Errorf("连续 %d 个目录列目录失败，已中止扫描: %w", consecutiveFailures, err)
+					}
 					// 非根目录：容忍失败，稍后重试（从 cidSeen 摘除以便重试入队）
 					logger.S().Warnf("[listAllFilesRecursive] 目录列目录失败(kind=%s, round=%d) cid=%d relPath=%s: %s，稍后重试", kind, round, top.cid, top.relPath, detail)
 					delete(cidSeen, top.cid)
 					pendingRetry = append(pendingRetry, top)
 					break
 				}
+				consecutiveFailures = 0
 				if len(resp.Data) == 0 {
 					break
 				}
@@ -462,7 +479,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 					return nil, fmt.Errorf("根目录分页不完整，已中止本次扫描: %s", msg)
 				}
 				logger.S().Warnf("[listAllFilesRecursive] %s（其下 STRM 本次不参与清理对账）", msg)
-				failedDirs = append(failedDirs, top.relPath)
+				failedDirs = append(failedDirs, failedDirLocalRel(top.relPath))
 			}
 			logger.S().Infof("[listAllFilesRecursive] cid=%d relPath=%q pageMatched=%d returned=%d count=%d", top.cid, top.relPath, pageMatched, offset, expectedCount)
 		}
@@ -473,7 +490,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 		}
 		if round >= retryRounds {
 			for _, e := range pendingRetry {
-				failedDirs = append(failedDirs, e.relPath)
+				failedDirs = append(failedDirs, failedDirLocalRel(e.relPath))
 			}
 			return out, nil
 		}
@@ -481,7 +498,7 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 		select {
 		case <-ctx.Done():
 			for _, e := range pendingRetry {
-				failedDirs = append(failedDirs, e.relPath)
+				failedDirs = append(failedDirs, failedDirLocalRel(e.relPath))
 			}
 			return out, nil
 		case <-time.After(retryWait):
@@ -490,6 +507,50 @@ func listAllFilesRecursive( //nolint:cyclop // complexity: 56（缺口 2 失败�
 		pendingRetry = pendingRetry[:0]
 	}
 	// unreachable：for round 循环只在内部 return
+}
+
+// validateLocalPathCollisions 检测清理后的本地路径冲突。
+// SanitizeFileName 是多对一映射（? * | 等都会变 _），若不提前拦截，
+// 两个云端文件会写同一个 .strm，最终只剩一个 pickcode。
+func validateLocalPathCollisions(items []*fileItem, template, account string) error {
+	seen := make(map[string]string, len(items))
+	for _, f := range items {
+		var rel string
+		if f.Kind == kindStrm {
+			rel = resolveStrmRelPath(template, account, f)
+		} else {
+			rel = strmutil.SanitizeRelPath(f.RelPath)
+		}
+		key := filepath.Clean(rel)
+		if runtime.GOOS == "windows" {
+			key = strings.ToLower(key)
+		}
+		if prev, ok := seen[key]; ok && prev != f.CloudPath {
+			return fmt.Errorf("本地路径冲突: %q 与 %q 都映射到 %q", prev, f.CloudPath, rel)
+		}
+		seen[key] = f.CloudPath
+	}
+	return nil
+}
+
+// failedDirLocalRel 把云端相对路径转成清理侧使用的本地相对路径，
+// 保证 FailedDirs 保护前缀与本地落盘名（':'→'：'、'?'→'_' 等）一致。
+func failedDirLocalRel(cloudRel string) string {
+	if cloudRel == "" {
+		return ""
+	}
+	return filepath.ToSlash(strmutil.SanitizeRelPath(cloudRel))
+}
+
+// isFatalScanError 判断扫描错误是否应立即中止整轮扫描。
+// 认证失效、限流、请求层重试耗尽都不能按“单目录失败”继续遍历。
+func isFatalScanError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, client115.ErrCookieExpired) ||
+		errors.Is(err, client115.ErrRateLimited) ||
+		errors.Is(err, client115.ErrRequestRetried)
 }
 
 // runDownloads 真实下载文件：并发 + 进度上报 + SSE 广播
@@ -507,8 +568,9 @@ func runDownloads(
 	total int,
 	rt *Runtime,
 	sseServer *sse.Server,
-) {
+) (failed int) {
 	// P2-1：统一用 WorkerPool，不再每处手写 sem+wg 模板
+	failedN := new(int64)
 	pool := concurrency.NewPool(workers)
 	for _, f := range files {
 		f := f
@@ -519,7 +581,13 @@ func runDownloads(
 			default:
 			}
 			savePath := filepath.Join(saveDir, strmutil.SanitizeRelPath(f.RelPath))
+			if serr := strmutil.EnsureNoSymlinkComponents(saveDir, savePath); serr != nil {
+				atomic.AddInt64(failedN, 1)
+				sseServer.EmitLog(taskID, "error", "symlink check "+savePath+": "+serr.Error())
+				return nil
+			}
 			if err := ensureDir(filepath.Dir(savePath)); err != nil {
+				atomic.AddInt64(failedN, 1)
 				sseServer.EmitLog(taskID, "error", "mkdir "+filepath.Dir(savePath)+": "+err.Error())
 				return nil
 			}
@@ -542,17 +610,20 @@ func runDownloads(
 			ua := c115.UA()
 			meta, err := c115.GetDownloadUrlWebFull(ctx, f.PickCode, cookie, ua)
 			if err != nil {
+				atomic.AddInt64(failedN, 1)
 				sseServer.EmitLog(taskID, "error", fmt.Sprintf("resolve dl url %s: %v", f.RelPath, err))
 				return nil
 			}
 			if err := downloadFileWithProgress(ctx, meta.URL, savePath, taskID, f, cookie, ua,
 				perFile, rt, sseServer, downloaded, total); err != nil {
+				atomic.AddInt64(failedN, 1)
 				sseServer.EmitLog(taskID, "error", fmt.Sprintf("download %s: %v", f.RelPath, err))
 			}
 			return nil
 		})
 	}
 	pool.Wait()
+	return int(atomic.LoadInt64(failedN))
 }
 
 // downloadHTTPClient 关联文件/元数据下载使用，避免网络卡死无限占用任务。
@@ -737,6 +808,9 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 83（失败目录保护 
 		if werr != nil {
 			return werr
 		}
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if info.IsDir() {
 			if info.Name() == strmutil.TrashDirName {
 				return filepath.SkipDir
@@ -879,7 +953,15 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 83（失败目录保护 
 	}
 
 	// auto_clean 模式：需二次确认且 ConfirmMode != "none" → 入队
-	if mode == "auto_clean" && verdict == CleanupConfirm && confirmMode != "none" && submitter != nil {
+	if mode == "auto_clean" && verdict == CleanupConfirm && confirmMode != "none" {
+		if submitter == nil {
+			msg := "对账清理需要二次确认，但延迟清理队列不可用；为安全起见本次不删除任何文件"
+			logger.S().Errorf("[cleanupOrphanStrms] %s (taskID=%s)", msg, taskID)
+			if sseServer != nil {
+				sseServer.EmitLog(taskID, "error", msg)
+			}
+			return len(orphans), 0, "", fmt.Errorf("%s", msg)
+		}
 		batch := DeferredCleanupBatch{
 			RequestID:       GenerateCleanupRequestID(),
 			TaskID:          taskID,
@@ -893,20 +975,20 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 83（失败目录保护 
 		}
 		reqID, serr := submitter.SubmitDeferredBatch(ctx, batch)
 		if serr != nil {
-			logger.S().Errorf("[cleanupOrphanStrms] SubmitDeferredBatch failed (taskID=%s): %v，退化为立即软删",
-				taskID, serr)
+			msg := "对账清理入队失败，为安全起见本次不删除任何文件: " + serr.Error()
+			logger.S().Errorf("[cleanupOrphanStrms] %s (taskID=%s)", msg, taskID)
 			if sseServer != nil {
-				sseServer.EmitLog(taskID, "error", "对账入队失败: "+serr.Error())
+				sseServer.EmitLog(taskID, "error", msg)
 			}
-		} else {
-			logger.S().Infof("[cleanupOrphanStrms] 已入队待确认: %s (requestID=%s taskID=%s)",
-				reason, reqID, taskID)
-			if sseServer != nil {
-				sseServer.EmitLog(taskID, "warn", fmt.Sprintf(
-					"对账清理：孤儿 %d 个超稳定阈值，已入队待二次确认 (requestID=%s)", len(orphans), reqID))
-			}
-			return len(orphans), 0, reqID, nil
+			return len(orphans), 0, "", fmt.Errorf("%s", msg)
 		}
+		logger.S().Infof("[cleanupOrphanStrms] 已入队待确认: %s (requestID=%s taskID=%s)",
+			reason, reqID, taskID)
+		if sseServer != nil {
+			sseServer.EmitLog(taskID, "warn", fmt.Sprintf(
+				"对账清理：孤儿 %d 个超稳定阈值，已入队待二次确认 (requestID=%s)", len(orphans), reqID))
+		}
+		return len(orphans), 0, reqID, nil
 	}
 
 	// auto_clean 移入回收站（可恢复；不再硬删）
@@ -918,6 +1000,9 @@ func cleanupOrphanStrms( //nolint:cyclop // complexity: 83（失败目录保护 
 		cloudUnverified := 0
 		trashDir := strmutil.TrashSessionDir(targetPath)
 		for _, p := range orphans {
+			if cerr := ctx.Err(); cerr != nil {
+				return len(orphans), deleted, "", cerr
+			}
 			if managed != nil {
 				pc, _ := strmutil.ExtractPickcode(p)
 				ok, verr := managed.VerifyFile(ctx, p, pc)

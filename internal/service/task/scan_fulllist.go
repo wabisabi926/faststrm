@@ -503,6 +503,10 @@ func scanAllFiles(
 	if err == nil {
 		return items, nil
 	}
+	// 认证/限流/重试耗尽时回退 DFS 会把请求放大到整棵目录树，必须直接失败。
+	if isFatalScanError(err) {
+		return nil, err
+	}
 
 	logger.S().Warnf("[scan] 全量清单不可用，回退 DFS 扫描: %v", err)
 	if sseServer != nil && taskID != "" {

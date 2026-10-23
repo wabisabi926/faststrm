@@ -353,6 +353,23 @@ func (s *AccountStore) flushLocked() error {
 		if acc.ExpiresAt != 0 {
 			m["expiresAt"] = acc.ExpiresAt
 		}
+		// Cookie 三态状态必须持久化：否则重启后 UI 回到“待校验”，
+		// 监控的 invalid 判定与告警去重全部丢失。
+		if acc.LastCookieCheck != 0 {
+			m["lastCookieCheck"] = acc.LastCookieCheck
+		}
+		if acc.CookieValid != nil {
+			m["cookieValid"] = *acc.CookieValid
+		}
+		if acc.CookieStatus != "" {
+			m["cookieStatus"] = acc.CookieStatus
+		}
+		if acc.CookieErrno != 0 {
+			m["cookieErrno"] = acc.CookieErrno
+		}
+		if acc.CookieSource != "" {
+			m["cookieSource"] = acc.CookieSource
+		}
 
 		// 加密敏感字段
 		for _, field := range accountEncryptedFields {
@@ -372,7 +389,15 @@ func (s *AccountStore) flushLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.path, out, 0600); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	s.dirty = false

@@ -11,16 +11,10 @@ import {
   DEFAULT_NOTIFY_SETTINGS,
 } from "./types";
 
-export interface TelegramStatus {
-  enabled: boolean;
-  configured: boolean;
-}
-
 export interface UseEmbySettingsResult {
   // 基础状态
   settings: EmbySettings;
   loaded: boolean;
-  telegram: TelegramStatus;
   loading: boolean;
   error: string | null;
   success: string | null;
@@ -30,6 +24,7 @@ export interface UseEmbySettingsResult {
   updateSetting: <K extends keyof EmbySettings>(key: K, value: EmbySettings[K]) => void;
   handleSave: () => Promise<void>;
   testConnection: () => Promise<void>;
+  saveWebhookAuth: (auth: string) => Promise<boolean>;
   loadSettings: () => Promise<void>;
   loadAccounts: () => Promise<void>;
   // 提示状态清理
@@ -65,7 +60,6 @@ export interface UseEmbySettingsResult {
 export function useEmbySettings(): UseEmbySettingsResult {
   const [settings, setSettings] = useState<EmbySettings>({ ...DEFAULT_NOTIFY_SETTINGS });
   const [loaded, setLoaded] = useState(false);
-  const [telegram, setTelegram] = useState<TelegramStatus>({ enabled: false, configured: false });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -110,11 +104,6 @@ export function useEmbySettings(): UseEmbySettingsResult {
         throw new Error("设置中没有 Emby 配置");
       }
       setSettings({ ...DEFAULT_NOTIFY_SETTINGS, ...response.data.emby });
-      const tg = response.data?.telegram || {};
-      setTelegram({
-        enabled: tg.enabled !== false && Boolean(tg.botToken) && Boolean(tg.chatId),
-        configured: Boolean(tg.botToken) && Boolean(tg.chatId),
-      });
       setError(null);
       setLoaded(true);
     } catch (err) {
@@ -209,6 +198,28 @@ export function useEmbySettings(): UseEmbySettingsResult {
       return;
     }
     await persistSettings(next, "Emby 通知设置已保存！");
+  };
+
+  const saveWebhookAuth = async (auth: string): Promise<boolean> => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+      // 只 patch webhookAuth，避免把页面上其他未保存的编辑一并提交。
+      const response = await axiosInstance.post("/api/emby/settings", { webhookAuth: auth });
+      if (response.data?.success) {
+        setSettings((prev) => ({ ...prev, webhookAuth: auth }));
+        setSuccess("Webhook 鉴权密钥已保存");
+        return true;
+      }
+      return false;
+    } catch (raw) {
+      const err = raw as { response?: { data?: { error?: string; message?: string } }; message?: string };
+      setError(err.response?.data?.error || err.response?.data?.message || "保存 Webhook 密钥失败");
+      return false;
+    } finally {
+      setLoading(false);
+    }
   };
 
   const testConnection = async () => {
@@ -344,7 +355,6 @@ export function useEmbySettings(): UseEmbySettingsResult {
   return {
     settings,
     loaded,
-    telegram,
     loading,
     error,
     success,
@@ -353,6 +363,7 @@ export function useEmbySettings(): UseEmbySettingsResult {
     updateSetting,
     handleSave,
     testConnection,
+    saveWebhookAuth,
     loadSettings,
     loadAccounts,
     setError,

@@ -138,6 +138,9 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 	// 3) 注册为运行态（拿到 cancel 用于支持取消）
 	runCtx, cancel := rt.Register(task)
 	defer cancel()
+	// 必须在历史记录落库 defer 之后注册，确保 Unregister 最后执行：
+	// 先完成 execution/logs 持久化，再释放运行态与内存日志。
+	defer rt.Unregister(task.ID)
 	go func() {
 		<-runCtx.Done()
 	}()
@@ -168,6 +171,8 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 	histErrMsg := ""
 	totalFiles := 0
 	downloaded := new(int64)
+	strmWriteFailed := 0
+	downloadFailed := 0
 	// cleanupDeleted 本次对账清理实际移入回收站的 STRM 数（供任务历史展示「删 N」）
 	cleanupDeleted := 0
 
@@ -252,7 +257,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 	}
 
 	// 4.5) 前置权威探测：Cookie 已失效则快速失败，避免大库任务白跑一趟
-	probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
+	probeCtx, probeCancel := context.WithTimeout(runCtx, 10*time.Second)
 	probeErr := client115.ProbeAccount(probeCtx, account.Cookie)
 	probeCancel()
 	probeStatus := model.CookieStatusUnknown
@@ -329,7 +334,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 	sseServer.EmitLog(task.ID, "info",
 		fmt.Sprintf("Task starting: account=%s origin=%s target=%s", task.Account, task.OriginPath, task.TargetPath))
 
-	cid, err := deps.Client115.FsDirGetID(ctx, task.OriginPath, account.Cookie)
+	cid, err := deps.Client115.FsDirGetID(runCtx, task.OriginPath, account.Cookie)
 	if err != nil {
 		msg := "FsDirGetID failed: " + err.Error()
 		histSuccess = false
@@ -364,7 +369,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 		StageDetail:    "开始扫描云端目录...",
 	})
 	var scanStats ScanStats
-	fileEntries, err := scanAllFiles(ctx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist, task.ID, rt, sseServer, deps.SQLiteDB, task.Account, &scanStats)
+	fileEntries, err := scanAllFiles(runCtx, deps.Client115, account.Cookie, cid, task.OriginPath, resolved.StrmExtensions, resolved.DownloadExtensions, minFileSize, blacklist, task.ID, rt, sseServer, deps.SQLiteDB, task.Account, &scanStats)
 	if err != nil {
 		if runCtx.Err() != nil {
 			sseServer.EmitLog(task.ID, "warn", "任务已取消，停止扫描")
@@ -393,10 +398,37 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 		histCancelled = true
 		return finishCancelledTask(rt, sseServer, task.ID, taskStart)
 	}
-	totalFiles = len(fileEntries)
+	scannedFiles := len(fileEntries)
+	totalFiles = scannedFiles
+	if !settings.Download.AutoDownloadMetadata {
+		// 下载被关闭时这些条目不会被处理，不能计入进度分母和历史 TotalFiles。
+		totalFiles -= countKind(fileEntries, kindDownload)
+		if totalFiles < 0 {
+			totalFiles = 0
+		}
+	}
+	if cerr := validateLocalPathCollisions(fileEntries, settings.Strm.StrmFilenameTemplate, task.Account); cerr != nil {
+		msg := "本地路径冲突，已中止生成以避免覆盖: " + cerr.Error()
+		histSuccess = false
+		histErrMsg = msg
+		sseServer.EmitLog(task.ID, "error", msg)
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Status = StatusFailed
+			s.Error = msg
+			s.EndedAt = time.Now().UnixMilli()
+			s.Stage = StageFailed
+			s.StageDetail = msg
+		})
+		sseServer.EmitComplete(sse.CompletePayload{TaskID: task.ID, Status: string(StatusFailed), Error: msg, DurationMs: time.Since(taskStart).Milliseconds()})
+		if deps.Notifier != nil {
+			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
+		}
+		return ExecuteResult{Success: false, Reason: "path_conflict", Message: msg}
+	}
 	rt.SetState(task.ID, func(s *RuntimeState) { s.TotalFiles = totalFiles })
-	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Total files: %d (strm=%d, download=%d)",
-		totalFiles, countKind(fileEntries, kindStrm), countKind(fileEntries, kindDownload)))
+	sseServer.EmitLog(task.ID, "info", fmt.Sprintf("Total files: %d (scanned=%d, strm=%d, download=%d, autoDownload=%v)",
+		totalFiles, scannedFiles, countKind(fileEntries, kindStrm), countKind(fileEntries, kindDownload),
+		settings.Download.AutoDownloadMetadata))
 	// BDMV 原盘目录提示：这类目录按设计不生成 STRM（一部原盘会拆成上百个 m2ts，
 	// 无差别生成会污染媒体库）。但用户通常不知道"原盘消失"是设计行为而非 bug，
 	// 因此在这里显式告知，并给出可操作的建议。
@@ -456,7 +488,7 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 			}
 			cloudCurrent[f.PickCode] = filepath.Clean(resolveStrmRelPath(strmTemplate, task.Account, f))
 		}
-		orphanN, orphanDeleted, reqID, cerr := cleanupOrphanStrms(ctx, deps.CleanupSubmitter, sseServer,
+		orphanN, orphanDeleted, reqID, cerr := cleanupOrphanStrms(runCtx, deps.CleanupSubmitter, sseServer,
 			task.ID, task.TargetPath, cloudCurrent, snapPickcodes, scanStats.FailedDirs, mode, settings.Cleanup, deps.EmbyRefresh, deps.ManagedStrm, deps.CloudChecker)
 		cleanupDeleted = orphanDeleted
 		if cerr != nil {
@@ -571,6 +603,11 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 				// P1-4 文件名模板优先，否则回退默认（.iso 保留双扩展名）
 				strmRelPath := resolveStrmRelPath(strmFilenameTemplate, task.Account, f)
 				savePath := filepath.Join(task.TargetPath, strmRelPath)
+				if serr := strmutil.EnsureNoSymlinkComponents(task.TargetPath, savePath); serr != nil {
+					atomic.AddInt64(writeFailed, 1)
+					sseServer.EmitLog(task.ID, "error", fmt.Sprintf("symlink check %s: %v", savePath, serr))
+					return nil
+				}
 				content, cerr := buildStrmContent(task, f, resolved, strmUrlTemplate)
 				if cerr != nil {
 					atomic.AddInt64(writeFailed, 1)
@@ -628,10 +665,12 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("内容未变化跳过写盘 %d 个（不触发 Emby 刷库）", *writeUnchanged))
 		}
 		if writeFailed != nil && *writeFailed > 0 {
-			// 写入失败此前只打日志、不计数，导致任务显示成功但实际漏了一批文件。
-			msg := fmt.Sprintf("STRM 生成失败 %d 个（详见上方错误日志），请检查目标目录权限/磁盘空间后重跑", *writeFailed)
+			strmWriteFailed = int(*writeFailed)
+			msg := fmt.Sprintf("STRM 生成失败 %d 个（详见上方错误日志），请检查目标目录权限/磁盘空间后重跑", strmWriteFailed)
 			logger.S().Errorf("[Task] %s", msg)
-			sseServer.EmitLog(task.ID, "warn", msg)
+			sseServer.EmitLog(task.ID, "error", msg)
+			histSuccess = false
+			histErrMsg = msg
 		}
 	}
 
@@ -659,8 +698,17 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 				StageDetail:    fmt.Sprintf("正在下载 %d 个元数据文件...", len(dlFiles)),
 			})
 			sseServer.EmitLog(task.ID, "info", fmt.Sprintf("downloading %d files (concurrency=%d)", len(dlFiles), dlWorkers))
-			runDownloads(runCtx, task.ID, dlFiles, task.TargetPath, task.Account, account.Cookie, deps.Client115,
+			downloadFailed = runDownloads(runCtx, task.ID, dlFiles, task.TargetPath, task.Account, account.Cookie, deps.Client115,
 				dlWorkers, perFilePct, downloaded, totalFiles, rt, sseServer)
+			if downloadFailed > 0 {
+				msg := fmt.Sprintf("关联文件下载失败 %d 个（详见上方错误日志）", downloadFailed)
+				histSuccess = false
+				if histErrMsg != "" {
+					histErrMsg += "；"
+				}
+				histErrMsg += msg
+				sseServer.EmitLog(task.ID, "error", msg)
+			}
 		}
 	}
 
@@ -782,17 +830,46 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 		histCancelled = true
 		return finishCancelledTask(rt, sseServer, task.ID, taskStart)
 	}
-	rt.SetState(task.ID, func(s *RuntimeState) {
-		s.Status = StatusCompleted
-		s.DownloadedFiles = int(atomic.LoadInt64(downloaded))
-		s.EndedAt = time.Now().UnixMilli()
-		s.Stage = StageCompleted
-		dl := atomic.LoadInt64(downloaded)
-		s.StageDetail = fmt.Sprintf("任务完成，共处理 %d 个文件", dl)
-	})
 	dl := atomic.LoadInt64(downloaded)
 	durationMs := time.Since(taskStart).Milliseconds()
 	_, overall := perFilePct.Overall(totalFiles)
+	if !histSuccess {
+		msg := histErrMsg
+		if msg == "" {
+			msg = "任务存在未完成的文件"
+		}
+		rt.SetState(task.ID, func(s *RuntimeState) {
+			s.Status = StatusFailed
+			s.DownloadedFiles = int(dl)
+			s.EndedAt = time.Now().UnixMilli()
+			s.Stage = StageFailed
+			s.StageDetail = msg
+			s.Error = msg
+		})
+		sseServer.EmitProgress(sse.ProgressPayload{
+			TaskID: task.ID, Done: true, OverallPercent: overall,
+			Stage: StageFailed, StageDetail: msg,
+		})
+		sseServer.EmitComplete(sse.CompletePayload{
+			TaskID: task.ID, Status: string(StatusFailed), Error: msg,
+			TotalFiles: totalFiles, DownloadedFiles: int(dl), DurationMs: durationMs,
+		})
+		sseServer.EmitLog(task.ID, "error",
+			fmt.Sprintf("Task failed in %d ms: %d/%d files (writeFailed=%d downloadFailed=%d)",
+				durationMs, dl, totalFiles, strmWriteFailed, downloadFailed))
+		if deps.Notifier != nil {
+			_ = deps.Notifier.NotifyError(context.Background(), task.Name, msg)
+		}
+		return ExecuteResult{Success: false, Reason: "partial_failure", Message: msg}
+	}
+
+	rt.SetState(task.ID, func(s *RuntimeState) {
+		s.Status = StatusCompleted
+		s.DownloadedFiles = int(dl)
+		s.EndedAt = time.Now().UnixMilli()
+		s.Stage = StageCompleted
+		s.StageDetail = fmt.Sprintf("任务完成，共处理 %d 个文件", dl)
+	})
 	sseServer.EmitProgress(sse.ProgressPayload{
 		TaskID: task.ID, Done: true, OverallPercent: overall,
 		Stage: StageCompleted, StageDetail: fmt.Sprintf("任务完成，共处理 %d 个文件", dl),

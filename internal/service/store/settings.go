@@ -2,10 +2,12 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/pkg/logger"
@@ -30,8 +32,10 @@ func NewSettingsStore(salt, configDir string) *SettingsStore {
 	}
 }
 
-// ReadSettings 读取 Settings，不存在或权限不足则返回默认值。
-// 只读场景使用；需要“读取→修改→写回”时必须用 Update，避免并发丢更新。
+// ReadSettings 读取 Settings；文件不存在时返回默认值，读取/解析失败时返回错误。
+//
+// 读取失败绝不能静默回退默认值：Update 会在读取后直接写盘，静默回退会把损坏或
+// 暂时不可读的配置覆盖成默认配置，造成不可逆的配置丢失。
 func (s *SettingsStore) ReadSettings() (*model.Settings, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -82,38 +86,115 @@ func (s *SettingsStore) readLocked() (*model.Settings, bool, error) {
 		if os.IsNotExist(err) {
 			return model.DefaultSettings(), false, nil
 		}
-		logger.S().Warnf("[SettingsStore] ReadSettings failed: %v, returning defaults", err)
-		return model.DefaultSettings(), false, nil
+		return nil, false, fmt.Errorf("读取 settings.json 失败: %w", err)
 	}
 	var out model.Settings
 	// P0-2：判定 lifeMonitor.eventTypes 是否缺失（旧配置/空配置反序列化后 4 个 bool 全为 false，
 	// 会让所有生活事件按 event_type_disabled_* 静默跳过）。只有确认字段存在才视为已配置。
 	eventTypesMissing := true
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &out); err != nil {
-			logger.S().Warnf("[SettingsStore] ReadSettings json unmarshal failed: %v, returning defaults", err)
-			return model.DefaultSettings(), false, nil
+	if len(data) == 0 {
+		s.backupCorruptLocked(data)
+		return nil, false, fmt.Errorf("settings.json 为空，已拒绝加载以避免覆盖原配置")
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		s.backupCorruptLocked(data)
+		return nil, false, fmt.Errorf("解析 settings.json 失败: %w", err)
+	}
+
+	def := model.DefaultSettings()
+	migrationChanged := false
+	// 迁移：旧配置文件没有 notifyOnlyOnError 字段
+	var rawCheck map[string]json.RawMessage
+	if json.Unmarshal(data, &rawCheck) == nil {
+		// 旧配置缺 enablePathEncoding：反序列化得到 false，而历史默认是 true。
+		// 缺少该键不能当成用户“显式关闭”。
+		if _, ok := rawCheck["enablePathEncoding"]; !ok {
+			out.EnablePathEncoding = true
+			migrationChanged = true
+			logger.S().Infof("[SettingsStore] 迁移: 旧配置缺 enablePathEncoding，补默认 true")
 		}
-		// 迁移：旧配置文件没有 notifyOnlyOnError 字段
-		var rawCheck map[string]json.RawMessage
-		if json.Unmarshal(data, &rawCheck) == nil {
-			if lmRaw, ok := rawCheck["lifeMonitor"]; ok {
-				var lmCheck map[string]json.RawMessage
-				if json.Unmarshal(lmRaw, &lmCheck) == nil {
-					if _, hasField := lmCheck["notifyOnlyOnError"]; !hasField {
-						out.LifeMonitor.NotifyOnlyOnError = false
-						logger.S().Infof("[SettingsStore] 迁移: 旧配置无 notifyOnlyOnError 字段，设为默认 false")
-					}
-					if _, hasET := lmCheck["eventTypes"]; hasET {
-						eventTypesMissing = false
-					}
+
+		lmCheck := map[string]json.RawMessage{}
+		if lmRaw, ok := rawCheck["lifeMonitor"]; ok {
+			_ = json.Unmarshal(lmRaw, &lmCheck)
+		}
+		if lmRaw, ok := rawCheck["lifeMonitor"]; ok {
+			var tmp map[string]json.RawMessage
+			if json.Unmarshal(lmRaw, &tmp) == nil {
+				if _, hasField := tmp["notifyOnlyOnError"]; !hasField {
+					out.LifeMonitor.NotifyOnlyOnError = false
+					logger.S().Infof("[SettingsStore] 迁移: 旧配置无 notifyOnlyOnError 字段，设为默认 false")
+				}
+				if _, hasET := tmp["eventTypes"]; hasET {
+					eventTypesMissing = false
 				}
 			}
 		}
+		// 生活监控的布尔默认值同样不能用零值判断：缺键时补默认，显式 false 保留。
+		if _, ok := lmCheck["autoDownloadMetadata"]; !ok {
+			out.LifeMonitor.AutoDownloadMetadata = def.LifeMonitor.AutoDownloadMetadata
+			migrationChanged = true
+		}
+		if _, ok := lmCheck["enableDedup"]; !ok {
+			out.LifeMonitor.EnableDedup = def.LifeMonitor.EnableDedup
+			migrationChanged = true
+		}
+		if _, ok := lmCheck["enableRateLimit"]; !ok {
+			out.LifeMonitor.EnableRateLimit = def.LifeMonitor.EnableRateLimit
+			migrationChanged = true
+		}
+		if _, ok := lmCheck["moveMediaCreateNewStrm"]; !ok {
+			out.LifeMonitor.MoveMediaCreateNewStrm = def.LifeMonitor.MoveMediaCreateNewStrm
+			migrationChanged = true
+		}
+
+		// 孤儿清理：老配置一次性降为 mark_only（auto_clean 需要用户重新确认）。
+		if !out.CleanupOrphansDefaultsV1 {
+			mode := strings.ToLower(strings.TrimSpace(out.Download.FullSyncCleanupOrphans))
+			if mode == "" || mode == "auto_clean" {
+				out.Download.FullSyncCleanupOrphans = "mark_only"
+				logger.S().Infof("[SettingsStore] 迁移: 旧配置孤儿清理降为 mark_only")
+			}
+			out.CleanupOrphansDefaultsV1 = true
+			migrationChanged = true
+		}
 	}
+
+	// A1：自定义 URL/文件名模板下线。老配置先备份，再清空，回到标准 query + 默认文件名。
+	if !out.StrmTemplatesRemovedV1 {
+		if out.Strm.StrmUrlTemplate != "" || out.Strm.StrmFilenameTemplate != "" ||
+			out.LifeMonitor.StrmUrlTemplate != "" || out.LifeMonitor.StrmFilenameTemplate != "" {
+			s.backupFileLocked(data, "templates-v1")
+			logger.S().Warnf("[SettingsStore] 迁移: 自定义 STRM 模板已下线，原配置已备份并清空")
+		}
+		out.Strm.StrmUrlTemplate = ""
+		out.Strm.StrmFilenameTemplate = ""
+		out.LifeMonitor.StrmUrlTemplate = ""
+		out.LifeMonitor.StrmFilenameTemplate = ""
+		out.StrmTemplatesRemovedV1 = true
+		migrationChanged = true
+	}
+
 	// 填充默认值（策略：空则覆盖，非空则对明确新增的默认元素做追加，不破坏用户自定义）
-	changed := applyDefaults(&out, model.DefaultSettings(), eventTypesMissing)
+	changed := applyDefaults(&out, def, eventTypesMissing) || migrationChanged
 	return &out, changed, nil
+}
+
+// backupCorruptLocked 保留损坏配置的现场，便于人工恢复；失败不影响主错误返回。
+func (s *SettingsStore) backupCorruptLocked(data []byte) {
+	s.backupFileLocked(data, "corrupt")
+}
+
+func (s *SettingsStore) backupFileLocked(data []byte, label string) {
+	if len(data) == 0 {
+		return
+	}
+	backup := fmt.Sprintf("%s.%s.%s", s.path, label, time.Now().Format("20060102-150405"))
+	if err := os.WriteFile(backup, data, 0o600); err != nil {
+		logger.S().Warnf("[SettingsStore] 备份配置失败: %v", err)
+		return
+	}
+	logger.S().Errorf("[SettingsStore] 已备份配置到 %s", backup)
 }
 
 // normalizeExtensions 规范化扩展名列表：去空白、去前导点、小写、去重（保留首次出现顺序）。

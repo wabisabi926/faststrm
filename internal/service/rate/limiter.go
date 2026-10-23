@@ -107,6 +107,18 @@ func (l *Limiter) Acquire(ctx context.Context) error {
 	}
 }
 
+// Refund 归还一个已获取但最终未使用的令牌（用于先拿账号桶、再拿全局桶失败时）。
+func (l *Limiter) Refund() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	if l.tokens < l.maxTokens {
+		l.tokens++
+	}
+	l.mu.Unlock()
+}
+
 // AvailableTokens 获取当前可用令牌数
 func (l *Limiter) AvailableTokens() int {
 	l.mu.Lock()

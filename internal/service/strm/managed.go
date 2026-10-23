@@ -34,6 +34,7 @@ type ManagedInput struct {
 type ManagedRecorder interface {
 	Record(ctx context.Context, in ManagedInput) error
 	VerifyFile(ctx context.Context, localPath, pickcode string) (bool, error)
+	OwnedBy(ctx context.Context, localPath, taskID string) (bool, error)
 	MarkDeleted(ctx context.Context, localPath string) error
 	CloudRef(ctx context.Context, localPath string) (*ManagedCloudRef, error)
 	Bootstrap(ctx context.Context, roots []string, accounts []string) (added, skipped int, err error)
@@ -143,6 +144,34 @@ func (r *managedRecorder) VerifyFile(ctx context.Context, localPath, pickcode st
 		if hex.EncodeToString(h[:]) != record.ContentSHA256 {
 			return false, nil
 		}
+	}
+	return true, nil
+}
+
+// OwnedBy 判断文件是否由指定任务登记。
+// TaskID 为空时只要求记录属于 task 来源；用于删除任务时避免误删其他任务/手工文件。
+func (r *managedRecorder) OwnedBy(ctx context.Context, localPath, taskID string) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, nil
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+	}
+	localPath = db.NormalizeManagedLocalPath(localPath)
+	record, err := db.GetManagedStrm(r.db, localPath)
+	if err != nil {
+		return false, err
+	}
+	if record == nil || record.State != "active" {
+		return false, nil
+	}
+	if strings.TrimSpace(taskID) != "" && record.TaskID != taskID {
+		return false, nil
+	}
+	if strings.TrimSpace(taskID) == "" && record.Source != "task" {
+		return false, nil
 	}
 	return true, nil
 }

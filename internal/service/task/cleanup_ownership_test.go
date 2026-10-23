@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,9 @@ type fakeManagedRecorder struct {
 
 func (f *fakeManagedRecorder) Record(context.Context, strm.ManagedInput) error { return nil }
 func (f *fakeManagedRecorder) VerifyFile(_ context.Context, localPath, _ string) (bool, error) {
+	return f.allow[filepath.Clean(localPath)], nil
+}
+func (f *fakeManagedRecorder) OwnedBy(_ context.Context, localPath, _ string) (bool, error) {
 	return f.allow[filepath.Clean(localPath)], nil
 }
 func (f *fakeManagedRecorder) MarkDeleted(context.Context, string) error { return nil }
@@ -103,5 +107,51 @@ func TestCleanupOrphanStrms_OwnershipGuardAndTrash(t *testing.T) {
 	matches, _ := filepath.Glob(filepath.Join(target, ".faststrm-trash", "*", "电影", "managed.strm"))
 	if len(matches) != 1 {
 		t.Fatalf("trash matches = %v", matches)
+	}
+}
+
+type failingSubmitter struct{}
+
+func (failingSubmitter) SubmitDeferredBatch(context.Context, DeferredCleanupBatch) (string, error) {
+	return "", errors.New("disk full")
+}
+
+func TestCleanupOrphanStrms_ConfirmQueueFailureIsFailClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		submitter CleanupBatchSubmitter
+	}{
+		{name: "nil submitter", submitter: nil},
+		{name: "submitter error", submitter: failingSubmitter{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := t.TempDir()
+			allow := map[string]bool{}
+			var files []string
+			for i := 0; i < 6; i++ {
+				p := filepath.Join(target, "f"+string(rune('a'+i))+".strm")
+				if err := os.WriteFile(p, []byte("http://nas/api/strm?pickcode=d18nbyd6w552vx2zs"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				allow[filepath.Clean(p)] = true
+				files = append(files, p)
+			}
+			rec := &fakeManagedRecorder{allow: allow}
+			_, deleted, _, err := cleanupOrphanStrms(context.Background(), tc.submitter, nil,
+				"t", target, map[string]string{}, map[string]struct{}{"other": {}}, nil,
+				"auto_clean", model.CleanupSettings{RemoveStrm: true, StableThreshold: 5, ConfirmMode: "plugin_ui", MaxRatio: 1.0, MaxThreshold: 1000, MaxDirs: 20},
+				nil, rec, fakeCloudAbsence{absent: true})
+			if err == nil {
+				t.Fatal("confirm queue failure must return error")
+			}
+			if deleted != 0 {
+				t.Fatalf("deleted=%d, fail-closed expected 0", deleted)
+			}
+			for _, p := range files {
+				if _, statErr := os.Stat(p); statErr != nil {
+					t.Fatalf("file must be preserved: %s", p)
+				}
+			}
+		})
 	}
 }

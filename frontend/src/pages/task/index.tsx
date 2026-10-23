@@ -28,6 +28,7 @@ export default function Home() {
   const isMobile = useIsMobile();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<string | null>(null);
   const [deleteCleanStrm, setDeleteCleanStrm] = useState(false);
+  const [deleteHardDelete, setDeleteHardDelete] = useState(false);
   const [search, setSearch] = useState("");
   const [accountFilter, setAccountFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -343,16 +344,22 @@ export default function Home() {
         open={!!deleteDialogOpen}
         task={deleteTarget}
         cleanStrm={deleteCleanStrm}
-        onCleanStrmChange={setDeleteCleanStrm}
+        hardDelete={deleteHardDelete}
+        onCleanStrmChange={(checked) => {
+          setDeleteCleanStrm(checked);
+          if (!checked) setDeleteHardDelete(false);
+        }}
+        onHardDeleteChange={setDeleteHardDelete}
         onCancel={() => {
           setDeleteDialogOpen(null);
           setDeleteCleanStrm(false);
         }}
         onConfirm={() => {
           if (deleteDialogOpen) {
-            void deleteTask(deleteDialogOpen, deleteCleanStrm);
+            void deleteTask(deleteDialogOpen, deleteCleanStrm, deleteHardDelete);
             setDeleteDialogOpen(null);
             setDeleteCleanStrm(false);
+            setDeleteHardDelete(false);
           }
         }}
       />

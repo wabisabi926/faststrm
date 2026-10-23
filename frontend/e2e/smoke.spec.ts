@@ -51,7 +51,7 @@ test('正确凭证 → 登录成功进入概览', async ({ page }) => {
   await expect(page).not.toHaveURL(/\/login/, { timeout: 10000 });
   await expect(page.getByRole('heading', { name: '概览' })).toBeVisible({ timeout: 10000 });
   await expect(page.getByText('媒体库', { exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: '账号管理', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: '网盘账号', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: '任务管理', exact: true })).toBeVisible();
 });
 

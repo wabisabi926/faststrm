@@ -100,7 +100,7 @@ func TestListAllFilesRecursive_RetriesFailedDir(t *testing.T) {
 	}
 }
 
-// TestListAllFilesRecursive_FailedDirRecorded 子目录始终失败：
+// TestListAllFilesRecursive_FailedDirRecorded 子目录返回业务失败（非认证/限流）：
 // 任务不失败，该子树零产出，FailedDirs 记录 relPath。
 func TestListAllFilesRecursive_FailedDirRecorded(t *testing.T) {
 	oldWait := scanRetryWait
@@ -113,8 +113,9 @@ func TestListAllFilesRecursive_FailedDirRecorded(t *testing.T) {
 				`{"n":"subdir","cid":200,"fc":2},` +
 				`{"n":"root.mkv","fid":11,"pc":"abcdefghij1234567","s":100000,"cid":100}]}`,
 		},
-		failCIDs: map[string]int{"200": 999}, // 始终失败
-		requests: map[string]int{},
+		failCIDs:  map[string]int{"200": 999}, // 始终失败
+		failState: true,                       // 业务失败，非网络/限流
+		requests:  map[string]int{},
 	}
 
 	var stats ScanStats
@@ -131,6 +132,33 @@ func TestListAllFilesRecursive_FailedDirRecorded(t *testing.T) {
 	}
 	if len(stats.FailedDirs) != 1 || stats.FailedDirs[0] != "subdir" {
 		t.Fatalf("FailedDirs 应为 [subdir], got %v", stats.FailedDirs)
+	}
+}
+
+// TestListAllFilesRecursive_NetworkExhaustedAborts 网络错误重试耗尽：
+// 继续遍历其余目录会放大请求，必须中止整轮扫描。
+func TestListAllFilesRecursive_NetworkExhaustedAborts(t *testing.T) {
+	oldWait := scanRetryWait
+	scanRetryWait = 1
+	t.Cleanup(func() { scanRetryWait = oldWait })
+
+	rt := &flakyRT{
+		fixtures: map[string]string{
+			"100": `{"state":true,"data":[` +
+				`{"n":"subdir","cid":200,"fc":2},` +
+				`{"n":"root.mkv","fid":11,"pc":"abcdefghij1234567","s":100000,"cid":100}]}`,
+		},
+		failCIDs: map[string]int{"200": 999},
+		requests: map[string]int{},
+	}
+	var stats ScanStats
+	_, err := listAllFilesRecursive(
+		context.Background(), newMockClient(rt), "cookie", 100, "电影",
+		map[string]struct{}{".mkv": {}}, map[string]struct{}{},
+		0, nil, "", nil, nil, nil, "", &stats,
+	)
+	if err == nil {
+		t.Fatal("network retry exhausted should abort scan")
 	}
 }
 

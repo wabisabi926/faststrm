@@ -170,7 +170,9 @@ func newLifeClient(cookie string, rateLimit bool) *LifeClient {
 // 关键点：DefaultLimiter 设为 TypeLife，使生活事件轮询与目录扫描分属不同配额桶，
 // 避免大库扫描期间生活事件被饿死（表现为监控停滞、事件积压）。
 func newLifeFsClient(cookie string) *Client {
-	c := NewClient(cookie)
+	// NewClient 的参数是 User-Agent，不是 cookie。此前误传 cookie 会把
+	// UID/CID/SEID 暴露在 User-Agent 里，并触发 115 风控。
+	c := NewClient(DefaultUA)
 	c.DefaultLimiter = rate.TypeLife
 	return c
 }
@@ -384,10 +386,8 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 				if IsAuthError(ClassifyError(err)) || IsRateLimitError(ClassifyError(err)) {
 					return nil, err
 				}
-				if len(allFiltered) > 0 {
-					break // 已有数据，返回已拉取的
-				}
-				return nil, fmt.Errorf("pullEvents request: %w", err)
+				// 不能把部分页当成功返回：调用方会推进游标，失败页及更旧事件会被永久跳过。
+				return nil, fmt.Errorf("pullEvents request failed after %d entries: %w", len(allFiltered), err)
 			}
 		}
 
@@ -401,10 +401,8 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(body, &resp); err != nil {
-			if len(allFiltered) > 0 {
-				break
-			}
-			return nil, fmt.Errorf("parse pullEvents response: %w (body=%s)", err, truncateBody(body, 512))
+			return nil, fmt.Errorf("parse pullEvents response after %d entries: %w (body=%s)",
+				len(allFiltered), err, truncateBody(body, 512))
 		}
 
 		if resp.Code != 0 {
@@ -415,10 +413,7 @@ func (c *LifeClient) PullEvents(ctx context.Context, account string, fromTime, f
 			if IsRateLimitError(codeErr) || IsAuthError(codeErr) {
 				return nil, codeErr
 			}
-			if len(allFiltered) > 0 {
-				break
-			}
-			return nil, fmt.Errorf("pullEvents 失败 code=%d: %s", resp.Code, resp.Error)
+			return nil, fmt.Errorf("pullEvents 失败 code=%d after %d entries: %s", resp.Code, len(allFiltered), resp.Error)
 		}
 
 		if len(resp.Data.List) == 0 {
@@ -593,11 +588,7 @@ func (c *LifeClient) doRequest(ctx context.Context, method, urlStr, body string)
 			continue
 		}
 		if status < 200 || status >= 300 {
-			snippet := string(data)
-			if len(snippet) > 256 {
-				snippet = snippet[:256]
-			}
-			return nil, fmt.Errorf("HTTP %d: %s", status, snippet)
+			return nil, newHTTPStatusError(status, truncateBody(data, 256))
 		}
 		return data, nil
 	}

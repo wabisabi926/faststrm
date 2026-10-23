@@ -129,3 +129,25 @@ func TestProbeAccount_InvalidCookie(t *testing.T) {
 		t.Errorf("缺字段 cookie 应判定失效，got %v", err)
 	}
 }
+
+func TestClassifyError_TLSCertExpiredIsTransient(t *testing.T) {
+	err := errors.New("x509: certificate has expired or is not yet valid")
+	if IsAuthError(ClassifyError(err)) {
+		t.Fatal("TLS certificate expiry must not be classified as cookie expired")
+	}
+	if !errors.Is(ClassifyError(err), ErrTransient) {
+		t.Fatal("TLS error should be transient")
+	}
+}
+
+func TestNewHTTPStatusError_ClassifiesRateLimitAndAuth(t *testing.T) {
+	for _, status := range []int{429, 430, 599} {
+		e := newHTTPStatusError(status, "blocked")
+		if !IsRateLimitError(e) {
+			t.Fatalf("HTTP %d should be rate limited", status)
+		}
+	}
+	if !IsAuthError(newHTTPStatusError(401, "unauthorized")) {
+		t.Fatal("HTTP 401 should be auth error")
+	}
+}

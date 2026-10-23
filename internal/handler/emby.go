@@ -10,6 +10,7 @@ import (
 	neturl "net/url"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -513,13 +514,27 @@ func resolveEmbyTestCredentials(deps EmbyDeps, url, apiKey string) (string, stri
 	if err != nil || saved == nil {
 		return url, apiKey
 	}
+	savedURL := strings.TrimRight(strings.TrimSpace(saved.Emby.URL), "/")
 	if url == "" {
-		url = strings.TrimSpace(saved.Emby.URL)
+		url = savedURL
+		apiKey = strings.TrimSpace(saved.Emby.APIKey)
+		return url, apiKey
 	}
-	if apiKey == "" || containsAsterisk(apiKey) {
+	// 改了 URL 时绝不能把已保存的 Key 发到新主机，否则测试连接会变成凭据外带。
+	if strings.TrimRight(url, "/") == savedURL && (apiKey == "" || containsAsterisk(apiKey)) {
 		apiKey = strings.TrimSpace(saved.Emby.APIKey)
 	}
 	return url, apiKey
+}
+
+// redactEmbyError 避免网络错误里的 api_key 回显到前端/日志。
+func redactEmbyError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	re := regexp.MustCompile(`(?i)(api_key=)[^&\s]+`)
+	return re.ReplaceAllString(msg, "${1}***")
 }
 
 // HandleEmbyTestConnection POST /api/emby/test-connection 测试 Emby 连通性
@@ -592,11 +607,12 @@ func HandleEmbyTestConnection(deps EmbyDeps) http.HandlerFunc {
 			return
 		}
 
-		// 网络层错误（DNS / 连接拒绝 / 超时）
-		logger.S().Debugf("[emby/test-connection] network error: %v", err)
+		// 网络层错误（DNS / 连接拒绝 / 超时）；错误里的 api_key 必须脱敏。
+		safeErr := redactEmbyError(err)
+		logger.S().Debugf("[emby/test-connection] network error: %s", safeErr)
 		httpx.OkJson(w, map[string]any{
 			"success": false,
-			"message": "连接失败：" + errStr,
+			"message": "连接失败：" + safeErr,
 		})
 	}
 }

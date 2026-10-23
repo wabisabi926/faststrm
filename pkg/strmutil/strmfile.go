@@ -93,9 +93,19 @@ func WriteStrmFile(strmPath, content string) (unchanged bool, err error) {
 	if existing, rerr := os.ReadFile(strmPath); rerr == nil && string(existing) == content {
 		return true, nil
 	}
-	tmpPath := strmPath + ".tmp"
-	if werr := os.WriteFile(tmpPath, []byte(content), 0o600); werr != nil {
+	// 唯一临时名：两个并发写入同一路径时，固定 .tmp 会互相截断/rename 竞争。
+	tmp, terr := os.CreateTemp(filepath.Dir(strmPath), filepath.Base(strmPath)+".tmp-*")
+	if terr != nil {
+		return false, terr
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, werr := tmp.WriteString(content); werr != nil {
+		tmp.Close()
 		return false, werr
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		return false, cerr
 	}
 	return false, os.Rename(tmpPath, strmPath)
 }

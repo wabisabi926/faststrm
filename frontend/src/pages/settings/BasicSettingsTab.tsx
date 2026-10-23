@@ -234,48 +234,6 @@ export function BasicSettingsTab(props: BasicSettingsTabProps) {
           </div>
         </details>
 
-        <details className="group space-y-3 pt-2 border-t">
-          <summary className="flex cursor-pointer list-none items-center gap-2">
-            <span className="text-sm font-medium">高级：自定义 URL / 文件名模板</span>
-            <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="space-y-4 pt-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="strm-url-template">STRM URL 模板</Label>
-              <Input
-                id="strm-url-template"
-                value={data.strm?.strmUrlTemplate || ""}
-                onChange={(e) =>
-                  setData({ ...data, strm: { ...(data.strm || {}), strmUrlTemplate: e.target.value } })
-                }
-                placeholder="{prefix}/api/strm?account={account}&pickcode={pickcode}&file_name={filename}"
-              />
-              <p className="text-xs text-muted-foreground">
-                留空使用默认 URL 拼接。支持 <code>{"{prefix}"}</code> <code>{"{account}"}</code>{" "}
-                <code>{"{pickcode}"}</code> <code>{"{filename}"}</code> <code>{"{ext}"}</code>{" "}
-                <code>{"{stem}"}</code> 等变量。
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="strm-filename-template">STRM 文件名模板</Label>
-              <Input
-                id="strm-filename-template"
-                value={data.strm?.strmFilenameTemplate || ""}
-                onChange={(e) =>
-                  setData({ ...data, strm: { ...(data.strm || {}), strmFilenameTemplate: e.target.value } })
-                }
-                placeholder="{stem}.strm"
-              />
-              <p className="text-xs text-muted-foreground">
-                留空使用默认文件名。支持 <code>{"{filename}"}</code> <code>{"{stem}"}</code>{" "}
-                <code>{"{ext}"}</code>；.iso 会自动保留 .iso.strm。
-              </p>
-            </div>
-            <p className="text-xs text-amber-600 dark:text-amber-500">
-              模板只影响新生成或重建的 STRM；已有文件需要重跑任务或重新生成才会更新。
-            </p>
-          </div>
-        </details>
 
         {/* 全局文件过滤 */}
         <div className="space-y-4 pt-4 border-t">

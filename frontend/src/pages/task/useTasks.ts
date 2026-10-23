@@ -40,7 +40,7 @@ export interface UseTasksResult {
   // API 调用
   fetchTasks: () => Promise<void>;
   fetchAccounts: () => Promise<void>;
-  deleteTask: (id: string, cleanStrm: boolean) => Promise<void>;
+  deleteTask: (id: string, cleanStrm: boolean, hardDelete?: boolean) => Promise<void>;
   startTask: (id: string) => Promise<void>;
   cancelTask: (id: string) => Promise<void>;
   goToLog: (id: string) => Promise<void>;
@@ -153,6 +153,7 @@ export function useTasks(): UseTasksResult {
         // 使用状态映射将后端状态转换为前端状态
         status: STATUS_MAP[(t.runtime?.status || t.status || "") as keyof typeof STATUS_MAP] || "pending",
         error: t.runtime?.error ?? null,
+        runtime: t.runtime,
         schedule: t.schedule ? {
           enabled: t.schedule.enabled ?? false,
           mode: t.schedule.mode || "interval",
@@ -186,15 +187,17 @@ export function useTasks(): UseTasksResult {
   };
 
   // 删除任务
-  const deleteTask = async (id: string, cleanStrm: boolean) => {
+  const deleteTask = async (id: string, cleanStrm: boolean, hardDelete = false) => {
     try {
       const res = await axiosInstance.delete(
-        `/api/task?id=${encodeURIComponent(id)}${cleanStrm ? "&cleanStrm=true" : ""}`
+        `/api/task?id=${encodeURIComponent(id)}${cleanStrm ? "&cleanStrm=true" : ""}${cleanStrm && hardDelete ? "&hardDelete=true" : ""}`
       );
       const removed: number = res.data?.strmRemoved ?? 0;
       toast.success(
         cleanStrm
-          ? `任务删除成功，已清理 ${removed} 个 STRM 文件`
+          ? hardDelete
+            ? `任务删除成功，已永久删除 ${removed} 个 STRM 文件`
+            : `任务删除成功，已移入回收站 ${removed} 个 STRM 文件`
           : "任务删除成功"
       );
       void fetchTasks();

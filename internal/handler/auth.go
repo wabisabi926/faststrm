@@ -203,6 +203,7 @@ func ChangePassword() http.HandlerFunc {
 				return // 二次校验不通过：保持 admin 不变，外层再返回错误
 			}
 			admin.Password = pwdcrypto.HashPassword(snap.Salt, req.NewPassword)
+			admin.TokenVersion++
 			updated = true
 		}, true)
 		if err != nil {
@@ -321,6 +322,7 @@ func ChangeCredentials() http.HandlerFunc {
 			if passwordInput != "" {
 				admin.Password = pwdcrypto.HashPassword(snap.Salt, passwordInput)
 			}
+			admin.TokenVersion++
 			updated = true
 		}, true)
 		if err != nil {
@@ -343,6 +345,9 @@ func ChangeCredentials() http.HandlerFunc {
 // JWT 无状态，但登录时下发的 HttpOnly cookie 仍可建立 SSE，必须同时过期。
 func Logout() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := config.MutateAdmin(func(admin *model.AppConfig) { admin.TokenVersion++ }, true); err != nil {
+			logger.S().Warnf("logout 吊销 token 失败: %v", err)
+		}
 		secureCookie := r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 		http.SetCookie(w, &http.Cookie{
 			Name:     "token",

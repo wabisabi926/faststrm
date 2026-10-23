@@ -247,8 +247,8 @@ func TestResolveEmbyTestCredentials_FallbackToSaved(t *testing.T) {
 	}
 
 	url, key = resolveEmbyTestCredentials(deps, "http://emby-new:8096", "***")
-	if url != "http://emby-new:8096" || key != "real-saved-key" {
-		t.Fatalf("masked key fallback should keep explicit URL: url=%q key=%q", url, key)
+	if url != "http://emby-new:8096" || key != "***" {
+		t.Fatalf("changed URL must not reuse saved key: url=%q key=%q", url, key)
 	}
 }
 

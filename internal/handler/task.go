@@ -19,8 +19,10 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/internal/service/sse"
 	"github.com/wabisabi926/faststrm/internal/service/store"
+	"github.com/wabisabi926/faststrm/internal/service/strm"
 	"github.com/wabisabi926/faststrm/internal/service/task"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // TaskHandlerDeps 任务 handler 依赖
@@ -495,6 +497,37 @@ func (req *UpsertTaskRequest) toTask(existing *task.Task) task.Task {
 	return t
 }
 
+// validateTaskTarget 校验任务目标路径：绝对路径、目录、且默认不与已有任务共用。
+// 返回 (0,"") 表示通过；否则返回 HTTP 状态码与错误文案。
+func validateTaskTarget(t task.Task, existing []task.Task) (int, string) {
+	target := strings.TrimSpace(t.TargetPath)
+	if target == "" {
+		return 0, ""
+	}
+	if !filepath.IsAbs(target) {
+		return http.StatusBadRequest, "本地目标路径必须是绝对路径（如 /app/data/strm 或 D:\\strm）"
+	}
+	if info, statErr := os.Stat(target); statErr == nil && !info.IsDir() {
+		return http.StatusBadRequest, "本地目标路径必须是目录，不能是文件"
+	}
+	cleanTarget := filepath.Clean(target)
+	for i := range existing {
+		other := existing[i]
+		if other.ID == t.ID || strings.TrimSpace(other.TargetPath) == "" {
+			continue
+		}
+		otherTarget := filepath.Clean(other.TargetPath)
+		same := otherTarget == cleanTarget
+		if !same && filepath.Separator == '\\' {
+			same = strings.EqualFold(otherTarget, cleanTarget)
+		}
+		if same {
+			return http.StatusConflict, "目标路径已被任务「" + other.ID + "」使用；默认不允许共用 TargetPath，请为任务设置独立目录"
+		}
+	}
+	return 0, ""
+}
+
 // HandleUpsertTask POST /api/task 创建新任务；PUT /api/task 更新任务
 func HandleUpsertTask(deps TaskHandlerDeps, isUpdate bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -560,19 +593,9 @@ func HandleUpsertTask(deps TaskHandlerDeps, isUpdate bool) http.HandlerFunc {
 		}
 
 		t := req.toTask(existing)
-		if target := strings.TrimSpace(t.TargetPath); target != "" {
-			if !filepath.IsAbs(target) {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
-					"error": "本地目标路径必须是绝对路径（如 /app/data/strm 或 D:\\strm）",
-				})
-				return
-			}
-			if info, statErr := os.Stat(target); statErr == nil && !info.IsDir() {
-				httpx.WriteJson(w, http.StatusBadRequest, map[string]string{
-					"error": "本地目标路径必须是目录，不能是文件",
-				})
-				return
-			}
+		if code, msg := validateTaskTarget(t, list); code != 0 {
+			httpx.WriteJson(w, code, map[string]string{"error": msg})
+			return
 		}
 		if err := deps.TasksStore.UpsertTask(t); err != nil {
 			logger.S().Errorf("[UpsertTask] save %s: %v", t.ID, err)
@@ -602,23 +625,59 @@ func HandleDeleteTask(deps TaskHandlerDeps) http.HandlerFunc {
 			httpx.WriteJson(w, http.StatusBadRequest, map[string]string{"error": "缺少任务 ID"})
 			return
 		}
-		// cleanStrm=true：删除任务前先取其输出目录，删掉目录下所有 STRM 文件并清理空目录。
-		// 用户在删除对话框显式勾选（带红色警告）后才传该参数。
+		// cleanStrm=true：删除任务前先取其输出目录，只清理当前任务托管的 STRM。
+		// 默认移入 .faststrm-trash；hardDelete=true 才永久删除（需前端二次确认）。
 		cleanStrm := r.URL.Query().Get("cleanStrm") == "true"
+		hardDelete := cleanStrm && r.URL.Query().Get("hardDelete") == "true"
 		strmRemoved := 0
+		strmSkipped := 0
+		var cleanupWarning string
 		if cleanStrm {
-			if tasks, rerr := deps.TasksStore.ReadTasks(); rerr == nil {
-				for _, t := range tasks {
-					if t.ID == id && strings.TrimSpace(t.TargetPath) != "" {
-						strmRemoved = removeStrmFiles(t.TargetPath)
-						logger.S().Infof("[DeleteTask] 清理任务 %s STRM 目录 %s: removed=%d", id, t.TargetPath, strmRemoved)
-						break
-					}
+			tasks, rerr := deps.TasksStore.ReadTasks()
+			if rerr != nil {
+				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取任务失败: " + rerr.Error()})
+				return
+			}
+			var target *task.Task
+			for i := range tasks {
+				if tasks[i].ID == id {
+					target = &tasks[i]
+					break
 				}
 			}
+			if target == nil {
+				httpx.WriteJson(w, http.StatusNotFound, map[string]string{"error": "任务不存在"})
+				return
+			}
+			if deps.Runtime != nil {
+				_ = deps.Runtime.Cancel(id)
+				if !deps.Runtime.Wait(id, 30*time.Second) {
+					httpx.WriteJson(w, http.StatusConflict, map[string]string{
+						"error": "任务仍在停止中，请稍后重试删除",
+					})
+					return
+				}
+			}
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			removed, skipped, cerr := cleanupTaskStrms(cleanupCtx, *target, deps.ExecutorDeps.ManagedStrm, hardDelete)
+			cleanupCancel()
+			if cerr != nil {
+				httpx.WriteJson(w, http.StatusConflict, map[string]string{"error": "清理 STRM 失败，任务未删除: " + cerr.Error()})
+				return
+			}
+			strmRemoved, strmSkipped = removed, skipped
+			if deps.ExecutorDeps.ManagedStrm == nil {
+				cleanupWarning = "未启用托管索引，无法确认文件归属，本次未删除任何 STRM" //nolint:gosec // 误报：说明文案不是凭据
+			} else if skipped > 0 {
+				cleanupWarning = fmt.Sprintf("有 %d 个 STRM 不属于当前任务或指纹已变化，已保留", skipped)
+			}
+			logger.S().Infof("[DeleteTask] 清理任务 %s 目录 %s: removed=%d skipped=%d hardDelete=%v",
+				id, target.TargetPath, removed, skipped, hardDelete)
 		}
 		// 先尝试 cancel 避免残留
-		_ = deps.Runtime.Cancel(id)
+		if deps.Runtime != nil {
+			_ = deps.Runtime.Cancel(id)
+		}
 		deleted, err := deps.TasksStore.DeleteTask(id)
 		if err != nil {
 			logger.S().Errorf("[DeleteTask] %s: %v", id, err)
@@ -633,36 +692,86 @@ func HandleDeleteTask(deps TaskHandlerDeps) http.HandlerFunc {
 		w.Header().Set("HX-Trigger", "tasks-changed")
 		httpx.WriteJson(w, http.StatusOK, map[string]any{
 			"success": true, "message": "任务已删除", "strmRemoved": strmRemoved,
+			"strmSkipped": strmSkipped, "hardDelete": hardDelete, "warning": cleanupWarning,
 		})
 	}
 }
 
-// removeStrmFiles 删除 root 目录下所有 .strm 文件并清理空目录，返回删除数。
-// 只碰 .strm，不碰其他文件（媒体/海报/nfo 等一律保留）；目录不存在时返回 0。
-func removeStrmFiles(root string) int {
-	root = strings.TrimSpace(root)
+// cleanupTaskStrms 只清理属于指定任务的托管 STRM。
+// 默认移入回收站；hardDelete=true 时永久删除（调用方必须已完成二次确认）。
+func cleanupTaskStrms(ctx context.Context, t task.Task, managed strm.ManagedRecorder, hardDelete bool) (removed, skipped int, err error) {
+	root := strings.TrimSpace(t.TargetPath)
 	if root == "" {
-		return 0
+		return 0, 0, fmt.Errorf("任务目标目录为空")
 	}
-	if _, err := os.Stat(root); err != nil {
-		return 0
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return 0, 0, fmt.Errorf("目标目录无效: %w", err)
 	}
-	removed := 0
-	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	if filepath.Dir(absRoot) == absRoot {
+		return 0, 0, fmt.Errorf("拒绝清理文件系统根目录")
+	}
+	if _, statErr := os.Stat(absRoot); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("读取目标目录失败: %w", statErr)
+	}
+	if managed == nil {
+		return 0, 0, nil
+	}
+
+	trashDir := strmutil.TrashSessionDir(absRoot)
+	walkErr := filepath.Walk(absRoot, func(p string, info os.FileInfo, werr error) error {
+		if werr != nil {
 			return nil
 		}
-		if strings.EqualFold(filepath.Ext(p), ".strm") {
-			if rmErr := os.Remove(p); rmErr == nil {
-				removed++
-			} else {
-				logger.S().Warnf("[DeleteTask] remove strm %s failed: %v", p, rmErr)
+		if info.IsDir() {
+			if info.Name() == strmutil.TrashDirName {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(p), ".strm") {
+			return nil
+		}
+		pc, perr := strmutil.ExtractPickcode(p)
+		if perr != nil || pc == "" {
+			skipped++
+			return nil
+		}
+		ok, verr := managed.VerifyFile(ctx, p, pc)
+		if verr != nil || !ok {
+			skipped++
+			return nil
+		}
+		owned, oerr := managed.OwnedBy(ctx, p, t.ID)
+		if oerr != nil || !owned {
+			skipped++
+			return nil
+		}
+		if hardDelete {
+			if rerr := os.Remove(p); rerr != nil {
+				return fmt.Errorf("删除 %s 失败: %w", p, rerr)
+			}
+		} else {
+			if _, terr := strmutil.MoveToTrash(p, absRoot, trashDir); terr != nil {
+				return fmt.Errorf("移入回收站 %s 失败: %w", p, terr)
 			}
 		}
+		if managed != nil {
+			_ = managed.MarkDeleted(ctx, p)
+		}
+		removed++
 		return nil
 	})
-	rmEmptyDirs(root)
-	return removed
+	if walkErr != nil {
+		return removed, skipped, walkErr
+	}
+	if removed > 0 {
+		rmEmptyDirs(absRoot)
+	}
+	return removed, skipped, nil
 }
 
 // ==================== 任务 ID 生成 ====================

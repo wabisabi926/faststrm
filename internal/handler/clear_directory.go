@@ -230,6 +230,9 @@ func rmEmptyDirs(root string) {
 			if err != nil || p == root || !info.IsDir() {
 				return nil
 			}
+			if info.Name() == strmutil.TrashDirName {
+				return filepath.SkipDir
+			}
 			entries, err := os.ReadDir(p)
 			if err != nil {
 				logger.S().Warnf("[clearDir] read dir %s failed: %v", p, err)

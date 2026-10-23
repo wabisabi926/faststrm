@@ -33,9 +33,15 @@ type Settings struct {
 	CleanupDefaultsV3 bool `json:"cleanupDefaultsV3"`
 	// FormatProxyDefaultsV1 标记「按格式代理」从开关+列表迁移为单一列表语义：
 	// 列表为空 = 不按格式代理；迁移后不再把空列表回填默认值。
-	FormatProxyDefaultsV1 bool                  `json:"formatProxyDefaultsV1"`
-	Cleanup               CleanupSettings       `json:"cleanup"`
-	CookieInspect         CookieInspectSettings `json:"cookieInspect"`
+	FormatProxyDefaultsV1 bool `json:"formatProxyDefaultsV1"`
+	// StrmTemplatesRemovedV1 标记旧的「自定义 URL/文件名模板」已下线并清空。
+	// 仅用于老配置一次性迁移；后端仍保留模板字段供手工兼容。
+	StrmTemplatesRemovedV1 bool `json:"strmTemplatesRemovedV1"`
+	// CleanupOrphansDefaultsV1 标记孤儿清理默认值迁移已完成：
+	// 老配置迁移为 mark_only，新装仍为 auto_clean。
+	CleanupOrphansDefaultsV1 bool                  `json:"cleanupOrphansDefaultsV1"`
+	Cleanup                  CleanupSettings       `json:"cleanup"`
+	CookieInspect            CookieInspectSettings `json:"cookieInspect"`
 
 	downloadExtensionsSet bool
 }
@@ -447,6 +453,8 @@ type EventTypesSettings struct {
 type AppConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"` // 格式: $sha256$<hex>
+	// TokenVersion 每次改密/登出递增，用于让已签发的 JWT 立即失效。
+	TokenVersion int `json:"tokenVersion,omitempty"`
 }
 
 // DefaultUserAgent 115 API 默认 UA（iOS 115 客户端）
@@ -491,6 +499,9 @@ func DefaultSettings() *Settings {
 		StrmExtensions:     append([]string{}, DefaultStrmExtensions...),
 		DownloadExtensions: append([]string{}, DefaultDownloadExtensions...),
 		EnablePathEncoding: true, // URL 路径编码 —— 含特殊字符的路径不编码会挂
+		// 新装用户直接使用当前默认语义，不触发老配置迁移。
+		StrmTemplatesRemovedV1:   true,
+		CleanupOrphansDefaultsV1: true,
 		Download: DownloadSettings{
 			StrmMaxConcurrent:     intPtr(20), // STRM 写入并发数默认 20
 			AutoDownloadMetadata:  true,       // 默认开启，保持向后兼容

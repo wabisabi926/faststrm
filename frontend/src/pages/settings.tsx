@@ -259,8 +259,6 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
         disableRangeProxy: data.strm?.disableRangeProxy,
         proxyChunkSizeMB: data.strm?.proxyChunkSizeMB,
         proxyConcurrency: data.strm?.proxyConcurrency,
-        strmUrlTemplate: data.strm?.strmUrlTemplate ?? "",
-        strmFilenameTemplate: data.strm?.strmFilenameTemplate ?? "",
       },
       rateLimit: data.rateLimit,
     };
@@ -275,7 +273,7 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
     enabled: monitorEnabled,
     accounts: selectedAccounts,
     pollInterval,
-    pathMappings: pathMappings.map((mapping) => ({ ...mapping, mappingType: "media" })),
+    pathMappings: pathMappings.map((mapping) => ({ ...mapping, mappingType: mapping.mappingType ?? "media" })),
     removeEmptyDirs,
     notifyOnlyOnError,
     eventTypes,

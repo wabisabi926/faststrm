@@ -33,6 +33,9 @@ func (f fakeManaged) Record(context.Context, strm.ManagedInput) error { return n
 func (f fakeManaged) VerifyFile(context.Context, string, string) (bool, error) {
 	return true, nil
 }
+func (f fakeManaged) OwnedBy(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 func (f fakeManaged) MarkDeleted(context.Context, string) error { return nil }
 func (f fakeManaged) Bootstrap(context.Context, []string, []string) (int, int, error) {
 	return 0, 0, nil

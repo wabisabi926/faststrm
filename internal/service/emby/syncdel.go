@@ -478,8 +478,8 @@ func deleteMultiVersionStrms(strmPath string, itemName string, rootDirs []string
 		if ext != ".strm" {
 			continue
 		}
-		// 检查文件名是否以 title 开头（多版本匹配）
-		if strings.HasPrefix(name, title) {
+		// 多版本匹配必须带边界，避免 Alien 误删 Alien 2 / Alien Trailer。
+		if isMultiVersionName(name, title) {
 			extraFiles, extraDirs := deleteStrmFile(fullPath, rootDirs, opts)
 			deletedFiles += extraFiles
 			deletedDirs += extraDirs
@@ -487,6 +487,33 @@ func deleteMultiVersionStrms(strmPath string, itemName string, rootDirs []string
 	}
 	logger.S().Infof("[%s] 多版本删除完成: deleted=%d dirs=%d", SyncDeleteTag, deletedFiles, deletedDirs)
 	return deletedFiles, deletedDirs
+}
+
+// isMultiVersionName 判断文件名是否是同一 title 的版本。
+// 规则：title 相同，或以 title 开头且后续是版本/编码后缀；
+// 排除续集（title 后直接跟数字）与 trailer/sample。
+func isMultiVersionName(fileName, title string) bool {
+	name := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	if strings.EqualFold(name, title) {
+		return true
+	}
+	if len(name) <= len(title) || !strings.EqualFold(name[:len(title)], title) {
+		return false
+	}
+	rest := strings.TrimSpace(name[len(title):])
+	if rest == "" {
+		return true
+	}
+	if rest[0] >= '0' && rest[0] <= '9' {
+		return false // Alien 2
+	}
+	lower := strings.ToLower(rest)
+	for _, bad := range []string{"trailer", "sample", "teaser", "featurette"} {
+		if strings.Contains(lower, bad) {
+			return false
+		}
+	}
+	return true
 }
 
 // extractTitleForMultiVersion 从 itemName 中提取多版本匹配用的 title 前缀

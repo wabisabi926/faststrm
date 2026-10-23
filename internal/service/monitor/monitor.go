@@ -68,6 +68,9 @@ type AccountMonitor struct {
 	lastRateLimitNotify int64 // 上次风控告警时间（毫秒），独立节流
 	// 文件删除批量聚合（oncePoll 串行，每轮 reset，批次结束按父目录合并发送）
 	delCollector *deleteNotifyCollector
+	// 事件级失败计数：同一事件连续失败超过上限后转死信并推进游标，
+	// 避免一个永久失败事件阻塞该账号后续所有事件。
+	eventFailures map[string]int
 }
 
 // AccountMonitorStatus 账号监控状态（对外暴露）
@@ -212,6 +215,7 @@ func (m *Monitor) Start(ctx context.Context, account string) error {
 		consecutiveFailures: 0,
 		rateLimiter:         rateLimiter,
 		delCollector:        &deleteNotifyCollector{},
+		eventFailures:       make(map[string]int),
 	}
 
 	// P2-9: 从 DB 恢复事件游标（对齐参考项目重启后恢复 fromID/fromTime）
@@ -404,7 +408,6 @@ func (m *Monitor) VerifyAccount(ctx context.Context, account string) error {
 
 	// 测试生活事件开关
 	if err := lifeClient.LifeShow(ctx); err != nil {
-		// 标记 cookie 可能失效
 		m.markCookiePotentiallyInvalid(account, err)
 		return fmt.Errorf("生活事件未开启或 cookie 失效: %w", err)
 	}
@@ -576,11 +579,31 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 		counts.AddEntered()
 		if err := m.processEvent(ctx2, account, event, lifeClient); err != nil {
 			counts.AddError(err)
-			logger.S().Warnf("[Monitor] 处理事件失败 account=%s type=%d file=%s: %v",
-				account, event.Type, event.FileName, err)
-			// 游标不能越过失败事件：下一轮从同一位置重新拉取，避免事件永久丢失。
-			break
+			key := monitorEventKey(event)
+			attempts := m.bumpEventFailure(account, key)
+			logger.S().Warnf("[Monitor] 处理事件失败 account=%s type=%d file=%s attempts=%d: %v",
+				account, event.Type, event.FileName, attempts, err)
+			if attempts < monitorMaxEventAttempts {
+				// 游标不能越过失败事件：下一轮从同一位置重新拉取，避免事件永久丢失。
+				break
+			}
+			// 连续失败达到上限：转入死信，推进游标并继续处理后续事件，
+			// 否则一个永久失败事件会让整个账号的事件管道永久停摆。
+			m.clearEventFailure(account, key)
+			m.markDedupProcessed(event)
+			msg := fmt.Sprintf("事件连续失败 %d 次，已转入死信并跳过: %s (%v)", attempts, event.FileName, err)
+			logger.S().Errorf("[Monitor] %s account=%s event=%s", msg, account, key)
+			m.appendLog(ctx2, account, "dead-letter", false, event.FilePath, "", msg)
+			if eid, _ := strconv.ParseInt(event.ID, 10, 64); eid > 0 {
+				cursorID = eid
+				cursorTime = event.UpdateTime
+			} else if event.UpdateTime > 0 {
+				// 没有 event id 时至少推进时间游标，避免同一死信事件无限重现。
+				cursorTime = event.UpdateTime + 1
+			}
+			continue
 		}
+		m.clearEventFailure(account, monitorEventKey(event))
 
 		// P1-5: 游标成对推进（对齐参考项目 once_pull 的 return_from_id/return_from_time）
 		// 逆序后按时间正序处理，最后成功处理的事件即本批次最新事件。
@@ -654,6 +677,38 @@ func (m *Monitor) oncePoll(ctx context.Context, account string) error { //nolint
 	}
 
 	return nil
+}
+
+// monitorMaxEventAttempts 同一事件在内存中连续失败的最大次数，超过后转死信。
+const monitorMaxEventAttempts = 3
+
+func monitorEventKey(event client115.LifeEventItem) string {
+	if event.ID != "" {
+		return event.ID
+	}
+	return event.FileID + ":" + strconv.Itoa(event.Type)
+}
+
+func (m *Monitor) bumpEventFailure(account, key string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	accMon, ok := m.accounts[account]
+	if !ok {
+		return 1
+	}
+	if accMon.eventFailures == nil {
+		accMon.eventFailures = make(map[string]int)
+	}
+	accMon.eventFailures[key]++
+	return accMon.eventFailures[key]
+}
+
+func (m *Monitor) clearEventFailure(account, key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if accMon, ok := m.accounts[account]; ok && accMon.eventFailures != nil {
+		delete(accMon.eventFailures, key)
+	}
 }
 
 // pullEventsWithRetry 带重试的事件拉取（游标模式：from_time + from_id）
@@ -890,6 +945,11 @@ func (m *Monitor) markCookiePotentiallyInvalid(account string, err error) {
 		return
 	}
 	classified := client115.ClassifyError(err)
+	if !client115.IsAuthError(classified) {
+		// 网络/限流/TLS 等临时故障不能改写账号状态，否则一次抖动就会让有效 Cookie 变红。
+		logger.S().Warnf("[Monitor] 账号 %s 验证失败但非认证错误，保持原账号状态: %v", account, err)
+		return
+	}
 	errno := client115.ErrnoOf(classified)
 	if serr := m.accountReader.SetCookieStatus(account, model.CookieStatusInvalid, errno, model.CookieSourceMonitor); serr != nil {
 		logger.S().Warnf("[Monitor] 标记 cookie 失效失败 account=%s: %v", account, serr)

@@ -40,3 +40,26 @@ func TestFinishCancelledTaskKeepsCancelledState(t *testing.T) {
 		t.Fatalf("cancelled task should not keep an error: %q", state.Error)
 	}
 }
+
+func TestRuntimeWaitWaitsForExecutorExit(t *testing.T) {
+	rt := GetRuntime()
+	id := "runtime-wait-test"
+	task := &Task{ID: id, Account: "wait-account"}
+	rt.Register(task)
+	done := make(chan bool, 1)
+	go func() {
+		done <- rt.Wait(id, time.Second)
+	}()
+	time.Sleep(30 * time.Millisecond)
+	rt.Cancel(id)
+	// Cancel 只改状态，不代表执行器已退出；Wait 必须等 Unregister。
+	select {
+	case <-done:
+		t.Fatal("Wait returned before executor unregistered")
+	case <-time.After(50 * time.Millisecond):
+	}
+	rt.Unregister(id)
+	if !<-done {
+		t.Fatal("Wait should return true after unregister")
+	}
+}

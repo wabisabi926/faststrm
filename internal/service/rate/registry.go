@@ -222,12 +222,19 @@ func (r *Registry) globalCapLimiter() *Limiter {
 // 由于各分桶自身额度有限（扫描 60/分/账号），全局桶在正常负载下始终有令牌，
 // 不会让扫描把播放挡在门口；它只在多账号叠加时起保护作用。
 func (r *Registry) Acquire(ctx context.Context, accountKey string, t LimiterType) error {
-	if lim := r.globalCapLimiter(); lim != nil {
-		if err := lim.Acquire(ctx); err != nil {
+	// 先账号桶再全局桶：账号桶排队时不能提前消耗全局配额，
+	// 否则一个被限流的账号会把其他账号/用途的全局额度占光。
+	accountLimiter := r.GetLimiter(accountKey, t)
+	if err := accountLimiter.Acquire(ctx); err != nil {
+		return err
+	}
+	if global := r.globalCapLimiter(); global != nil {
+		if err := global.Acquire(ctx); err != nil {
+			accountLimiter.Refund()
 			return err
 		}
 	}
-	return r.GetLimiter(accountKey, t).Acquire(ctx)
+	return nil
 }
 
 // GetBottleneck 获取或创建并发数限制器

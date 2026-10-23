@@ -3,7 +3,6 @@
 // 详见 v1.1.1 改进任务清单 T4。
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Check, ChevronDown, Server, XCircle } from "lucide-react";
@@ -13,7 +12,7 @@ import { useEmbySettings } from "./emby-notify/useEmbySettings";
 import { ConnectionSection } from "./emby-notify/ConnectionSection";
 import { NotifySettingsSection } from "./emby-notify/NotifySettingsSection";
 import { RefreshSettingsSection } from "./emby-notify/RefreshSettingsSection";
-import { WebhookInfoCard } from "./emby-notify/WebhookInfoCard";
+import { WebhookSection } from "./emby-notify/WebhookSection";
 import { SyncDeleteSection } from "./emby-notify/SyncDeleteSection";
 
 export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolean }) {
@@ -23,7 +22,6 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
   const {
     settings,
     loaded,
-    telegram,
     loading,
     error,
     success,
@@ -32,6 +30,7 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
     updateSetting,
     handleSave,
     testConnection,
+    saveWebhookAuth,
     setError,
     newMappingEmbyPath,
     newMappingCloudPath,
@@ -104,17 +103,6 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
         </Alert>
       )}
 
-      {loaded && !telegram.configured && (
-        <Alert>
-          <Server className="h-4 w-4" />
-          <AlertDescription>
-            Emby 通知通过 Telegram 发送，但当前未配置 Telegram 机器人，通知会被静默丢弃。
-            <Link to="/notify?tab=telegram" className="ml-1 underline underline-offset-2">
-              去配置 Telegram
-            </Link>
-          </AlertDescription>
-        </Alert>
-      )}
 
       {success && (
         <Alert>
@@ -138,13 +126,23 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
         onTest={testConnection}
       />
 
+      {/* Webhook：密钥、URL 与配置指引放在同一区块，生成后立即保存 */}
+      <WebhookSection
+        settings={settings}
+        updateSetting={updateSetting}
+        webhookUrl={webhookUrl}
+        copied={webhookCopied}
+        onCopy={copyWebhookUrl}
+        onSaveAuth={saveWebhookAuth}
+      />
+
       {/* 通知设置 */}
       <NotifySettingsSection
         settings={settings}
         updateSetting={updateSetting}
       />
 
-      {/* 高级设置：刷库、Webhook 指引、删除同步 */}
+      {/* 高级设置：媒体库刷新、删除同步 */}
       <div className="space-y-4">
         <button
           type="button"
@@ -155,7 +153,7 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
           <div>
             <h2 className="text-base font-medium">高级设置</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              媒体库刷新、Webhook 配置指引与删除同步
+              媒体库刷新与删除同步
             </p>
           </div>
           <ChevronDown
@@ -170,14 +168,6 @@ export default function EmbyNotifyPage({ embedded = false }: { embedded?: boolea
             <RefreshSettingsSection
               settings={settings}
               updateSetting={updateSetting}
-            />
-
-            <WebhookInfoCard
-              webhookUrl={webhookUrl}
-              authConfigured={Boolean(webhookAuth)}
-              telegramConfigured={telegram.configured}
-              copied={webhookCopied}
-              onCopy={copyWebhookUrl}
             />
 
             <SyncDeleteSection

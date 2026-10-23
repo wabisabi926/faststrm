@@ -2,6 +2,7 @@ export type PathMapping = {
   account?: string;
   cloudPath: string;
   localPath: string;
+  mappingType?: "media" | "transfer" | "unrecognized";
 };
 
 export type LifeMonitorConfig = {
@@ -58,10 +59,6 @@ export type Settings = {
     disableRangeProxy?: boolean;
     proxyChunkSizeMB?: number;
     proxyConcurrency?: number;
-    // STRM URL 模板：由「标准 URL + 附加参数勾选」生成；空 = 走后端硬编码默认
-    strmUrlTemplate?: string;
-    // STRM 文件名模板：空 = 后端默认（{stem}.strm / {stem}.iso.strm）
-    strmFilenameTemplate?: string;
   };
   // 115 API 限流（保存后即时重建令牌桶）
   rateLimit?: {

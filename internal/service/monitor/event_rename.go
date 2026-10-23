@@ -11,6 +11,7 @@ import (
 	"github.com/wabisabi926/faststrm/internal/service/client115"
 	"github.com/wabisabi926/faststrm/internal/service/db"
 	"github.com/wabisabi926/faststrm/pkg/logger"
+	"github.com/wabisabi926/faststrm/pkg/strmutil"
 )
 
 // ==================== handleRenameEvent：重命名 STRM ====================
@@ -201,7 +202,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 				oldDir := filepath.Dir(oldLocalPath)
 				oldFileName := filepath.Base(oldLocalPath)
 				oldStem := strings.TrimSuffix(oldFileName, filepath.Ext(oldFileName))
-				newStem := strings.TrimSuffix(event.FileName, filepath.Ext(event.FileName))
+				newStem := strmutil.SanitizeFileName(strings.TrimSuffix(event.FileName, filepath.Ext(event.FileName)))
 				_ = os.MkdirAll(newLocalDir, 0o755)
 				moveOrRenameRelatedAssets(oldDir, oldStem, newStem)
 				moveOrRenameRelatedAssets(newLocalDir, oldStem, newStem)
@@ -269,7 +270,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 
 	// 公共：stem 计算（原始文件名 stem，对齐参考项目 Path.stem + glob）
 	oldStem := strings.TrimSuffix(oldFileName, filepath.Ext(oldFileName))
-	newStem := strings.TrimSuffix(event.FileName, filepath.Ext(event.FileName))
+	newStem := strmutil.SanitizeFileName(strings.TrimSuffix(event.FileName, filepath.Ext(event.FileName)))
 
 	// ⑥ 合并场景：新 STRM 已存在且非同文件（对齐 L1285-1337）
 	if newStrmExists && !sameStrmPath {

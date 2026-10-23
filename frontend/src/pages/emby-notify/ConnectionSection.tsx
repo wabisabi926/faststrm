@@ -53,13 +53,6 @@ export function ConnectionSection({
   })();
   const clientAddr = proxyStatus?.clientAddr || fallbackClientAddr;
 
-  const generateWebhookAuth = () => {
-    const token =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID().replace(/-/g, "")
-        : Math.random().toString(36).slice(2) + Date.now().toString(36);
-    updateSetting("webhookAuth", token);
-  };
 
   const refreshProxyStatus = async () => {
     setStatusLoading(true);
@@ -111,27 +104,6 @@ export function ConnectionSection({
             />
             <p className="text-xs text-muted-foreground">
               在 Emby 后台「设置 → 高级设置 → API Key」获取
-            </p>
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <Label htmlFor="embyWebhookAuth">
-              Webhook 鉴权密钥 <span className="text-xs text-muted-foreground">（Webhook 必填）</span>
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                id="embyWebhookAuth"
-                type="password"
-                placeholder="必填；未设置时 Emby Webhook 会被 401 拒绝"
-                value={settings.webhookAuth || ""}
-                onChange={(e) => updateSetting("webhookAuth", e.target.value)}
-                autoComplete="off"
-              />
-              <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={generateWebhookAuth}>
-                生成
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              必填。未设置密钥时 Emby Webhook 会被直接拒绝；Emby 侧请使用下方「Webhook 配置指引」里复制出的带 auth 参数 URL。
             </p>
           </div>
         </div>

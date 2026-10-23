@@ -335,6 +335,8 @@ func resolveOldLocalPath(oldCloudPath string, mappings []model.MonitorPathMappin
 // sourceStem: 旧文件名 stem（仅去掉最后一个扩展名，对齐参考项目 Path.stem + glob 行为）；targetStem: 新的 stem
 // 对齐 MoviePilot: _move_local_related_asset + PathRemoveUtils.clean_related_files 的反向 rename
 func moveOrRenameRelatedAssets(dir, sourceStem, targetStem string) int {
+	targetStem = strmutil.SanitizeFileName(targetStem)
+	sourceStem = strmutil.SanitizeFileName(sourceStem)
 	if dir == "" || sourceStem == "" || targetStem == "" || sourceStem == targetStem {
 		return 0
 	}
@@ -604,7 +606,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 	}
 	// 公共 stem 计算（原始文件名 stem，对齐参考项目 Path.stem + glob）
 	oldStem := strings.TrimSuffix(oldFileName, filepath.Ext(oldFileName))
-	newStem := strings.TrimSuffix(event.FileName, filepath.Ext(event.FileName))
+	newStem := strmutil.SanitizeFileName(strings.TrimSuffix(event.FileName, filepath.Ext(event.FileName)))
 
 	// ① old_strm_exists && !new_strm_exists: rename + 内容重同步（对齐 L1811-1826）
 	if oldStrmExists && !newStrmExists {

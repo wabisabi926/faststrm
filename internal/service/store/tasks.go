@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -47,11 +48,16 @@ func NewTasksStore(configDir string) *TasksStore {
 	}
 }
 
-// ReadTasks 读取任务列表
+// ReadTasks 读取任务列表。
+// 文件不存在视为空列表；读取/解析失败返回错误，调用方不得继续写回。
 func (s *TasksStore) ReadTasks() ([]task.Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.readTasksLocked()
+}
 
+// readTasksLocked 读取任务列表；调用方必须持有 s.mu。
+func (s *TasksStore) readTasksLocked() ([]task.Task, error) {
 	info, statErr := os.Stat(s.path)
 	if statErr != nil {
 		if errors.Is(statErr, os.ErrNotExist) {
@@ -65,17 +71,14 @@ func (s *TasksStore) ReadTasks() ([]task.Task, error) {
 			}
 			return []task.Task{}, nil
 		}
-		logger.S().Warnf("[ReadTasks] stat failed: %v", statErr)
-		return []task.Task{}, nil
+		return nil, fmt.Errorf("读取 tasks.json 失败: %w", statErr)
 	}
 	if info.IsDir() {
-		logger.S().Warnf("[ReadTasks] path is a directory: %s", s.path)
-		return []task.Task{}, nil
+		return nil, fmt.Errorf("tasks.json 是目录: %s", s.path)
 	}
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		logger.S().Warnf("[ReadTasks] read failed: %v", err)
-		return []task.Task{}, nil
+		return nil, fmt.Errorf("读取 tasks.json 失败: %w", err)
 	}
 	var persisted []persistedTask
 	if len(bytesTrimSpace(raw)) == 0 {
@@ -87,8 +90,7 @@ func (s *TasksStore) ReadTasks() ([]task.Task, error) {
 		if string(bytesTrimSpace(raw)) == "{}" {
 			return []task.Task{}, nil
 		}
-		logger.S().Warnf("[ReadTasks] json unmarshal failed: %v, returning empty list", err)
-		return []task.Task{}, nil
+		return nil, fmt.Errorf("解析 tasks.json 失败: %w", err)
 	}
 	out := make([]task.Task, 0, len(persisted))
 	for _, p := range persisted {
@@ -153,7 +155,8 @@ func (s *TasksStore) saveTasksLocked(tasks []task.Task) error {
 	return nil
 }
 
-// UpsertTask 创建或更新单个任务
+// UpsertTask 创建或更新单个任务。
+// 读取、修改、写盘必须在同一把锁内完成，否则并发 Upsert 会互相覆盖。
 func (s *TasksStore) UpsertTask(t task.Task) error {
 	if t.ID == "" {
 		return errors.New("task id required")
@@ -163,7 +166,9 @@ func (s *TasksStore) UpsertTask(t task.Task) error {
 	}
 	t.UpdatedAt = time.Now().UnixMilli()
 
-	tasks, err := s.ReadTasks()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tasks, err := s.readTasksLocked()
 	if err != nil {
 		return err
 	}
@@ -182,12 +187,14 @@ func (s *TasksStore) UpsertTask(t task.Task) error {
 	if !found {
 		tasks = append(tasks, t)
 	}
-	return s.SaveTasks(tasks)
+	return s.saveTasksLocked(tasks)
 }
 
-// DeleteTask 按 id 删除
+// DeleteTask 按 id 删除（读取+写回同一把锁，避免与并发 Upsert 互相覆盖）
 func (s *TasksStore) DeleteTask(id string) (bool, error) {
-	tasks, err := s.ReadTasks()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tasks, err := s.readTasksLocked()
 	if err != nil {
 		return false, err
 	}
@@ -203,7 +210,10 @@ func (s *TasksStore) DeleteTask(id string) (bool, error) {
 	if !deleted {
 		return false, nil
 	}
-	return true, s.SaveTasks(out)
+	if err := s.saveTasksLocked(out); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ==================== 辅助 ====================

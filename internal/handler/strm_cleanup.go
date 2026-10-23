@@ -687,7 +687,13 @@ func ScanCleanupMapping(ctx context.Context, deps StrmCleanupDeps, req MappingSc
 	if _, ok := accountMap[req.Account]; !ok {
 		return MappingScanResult{}, fmt.Errorf("账号不存在: %s", req.Account)
 	}
-	settings, _ := deps.SettingsStore.ReadSettings()
+	settings, serr := deps.SettingsStore.ReadSettings()
+	if serr != nil {
+		return MappingScanResult{}, fmt.Errorf("读取设置失败: %w", serr)
+	}
+	if settings == nil {
+		return MappingScanResult{}, fmt.Errorf("读取设置失败: empty settings")
+	}
 	return scanMapping(ctx, req, deps, accountMap, newStrmScanRules(settings)), nil
 }
 
@@ -1165,44 +1171,31 @@ func walkCloudTreeAt(
 		return fmt.Errorf("云端目录检测到循环引用（cid=%d）", cid)
 	}
 	visited[cid] = struct{}{}
-	offset := 0
-	for {
-		resp, err := client.FsFiles(ctx, strconv.FormatInt(cid, 10), 1000, offset, cookie)
-		if err != nil {
-			return fmt.Errorf("walk cloud dir cid=%d: %w", cid, err)
-		}
-		if resp == nil || !resp.State {
-			return fmt.Errorf("walk cloud dir cid=%d: 接口未返回成功状态", cid)
-		}
-		for i := range resp.Data {
-			f := resp.Data[i]
-			// 115 文件/目录名可含 '/'，拼入 RelPath 前必须结构转义，
-			// 与生成侧（task/monitor 的 JoinCloudPath）同一规则，否则该文件的本地 STRM
-			// 会因与云端名单对不上而被误判失效删除。Name 字段保留原始名供 pickcode 对账。
-			rel := strmutil.JoinCloudPath(relBase, f.Name)
-			*out = append(*out, cloudWalkItem{
-				Name:     f.Name,
-				RelPath:  rel,
-				IsDir:    f.IsDir,
-				PickCode: f.PickCode,
-				Size:     f.Size,
-			})
-			if f.IsDir {
-				subCID, ok := anyInt64(f.CID)
-				if !ok || subCID <= 0 {
-					continue
-				}
-				if err := walkCloudTreeAt(ctx, client, cookie, subCID, rel, out, visited, depth+1); err != nil {
-					return err
-				}
+	entries, _, err := client.ListAllFsFiles(ctx, strconv.FormatInt(cid, 10), cookie, client115.FsListPageSize)
+	if err != nil {
+		return fmt.Errorf("walk cloud dir cid=%d: %w", cid, err)
+	}
+	for i := range entries {
+		f := entries[i]
+		// 115 文件/目录名可含 '/'，拼入 RelPath 前必须结构转义，
+		// 与生成侧（task/monitor 的 JoinCloudPath）同一规则，否则该文件的本地 STRM
+		// 会因与云端名单对不上而被误判失效删除。Name 字段保留原始名供 pickcode 对账。
+		rel := strmutil.JoinCloudPath(relBase, f.Name)
+		*out = append(*out, cloudWalkItem{
+			Name:     f.Name,
+			RelPath:  rel,
+			IsDir:    f.IsDir,
+			PickCode: f.PickCode,
+			Size:     f.Size,
+		})
+		if f.IsDir {
+			subCID, ok := anyInt64(f.CID)
+			if !ok || subCID <= 0 {
+				continue
 			}
-		}
-		if len(resp.Data) < 1000 {
-			break
-		}
-		offset += len(resp.Data)
-		if offset >= resp.Count {
-			break
+			if err := walkCloudTreeAt(ctx, client, cookie, subCID, rel, out, visited, depth+1); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -59,11 +59,13 @@ var authMsgPatterns = []string{
 	"重新登录",
 	"未登录",
 	"登录过期",
-	"cookie",
-	"expired",
+	"会话过期",
+	"cookie 已过期",
+	"cookie expired",
+	"session expired",
 	"unauthorized",
-	// 只匹配明确的凭据错误；不要用泛化的 "invalid"/"401"/"403"，
-	// 否则 WAF/风控/参数错误会被误判为 Cookie 失效。
+	// 只匹配明确的凭据错误；不要用泛化的 "cookie"/"expired"/"401"/"403"，
+	// 否则 TLS 证书过期、WAF/风控/参数错误会被误判为 Cookie 失效。
 	"key invalid",
 	"invalid key",
 	"cookie invalid",
@@ -94,14 +96,18 @@ var rateLimitMsgPatterns = []string{
 // Kind 为 ErrCookieExpired / ErrRateLimited / ErrTransient 之一，
 // 通过 Unwrap 暴露给 errors.Is 判定。
 type APIError struct {
-	Errno   int
-	Message string
-	Kind    error
+	Errno      int
+	HTTPStatus int
+	Message    string
+	Kind       error
 }
 
 func (e *APIError) Error() string {
 	if e.Errno != 0 {
 		return fmt.Sprintf("115 API error errno=%d: %s", e.Errno, e.Message)
+	}
+	if e.HTTPStatus != 0 {
+		return fmt.Sprintf("115 API HTTP %d: %s", e.HTTPStatus, e.Message)
 	}
 	return "115 API error: " + e.Message
 }
@@ -115,6 +121,22 @@ func newAPIError(errno int, msg string) error {
 		msg = "unknown error"
 	}
 	return &APIError{Errno: errno, Message: msg, Kind: classifyAPIError(errno, msg)}
+}
+
+// newHTTPStatusError 把非 2xx 响应转成类型化错误。
+// 429/430/599 统一按限流处理，避免上层把 WAF/风控当成普通临时错误继续重试。
+func newHTTPStatusError(status int, msg string) error {
+	if msg == "" {
+		msg = "empty body"
+	}
+	kind := ErrTransient
+	switch {
+	case status == 401 || status == 403:
+		kind = ErrCookieExpired
+	case status == 429 || status == 430 || status == 599:
+		kind = ErrRateLimited
+	}
+	return &APIError{HTTPStatus: status, Message: msg, Kind: kind}
 }
 
 // classifyAPIError 将 errno / 文案映射为类型化错误。

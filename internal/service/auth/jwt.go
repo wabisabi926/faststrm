@@ -13,7 +13,8 @@ import (
 
 // Claims FastStrm JWT 自定义声明
 type Claims struct {
-	Username string `json:"username"`
+	Username     string `json:"username"`
+	TokenVersion int    `json:"ver,omitempty"`
 	// 预留后续扩展：role / csrf 等
 	jwt.RegisteredClaims
 }
@@ -24,6 +25,8 @@ type TokenIssuer struct {
 	// 默认有效期（可配置）
 	Validity time.Duration
 	Issuer   string
+	// VersionFn 返回当前账号的 token 版本；为空时跳过版本校验（测试/兼容）。
+	VersionFn func() int
 }
 
 // DefaultValidity JWT 默认有效期（7 天，与前端登录态一致）
@@ -54,8 +57,13 @@ func (t *TokenIssuer) Sign(username string) (string, error) {
 		return "", errors.New("jwt secret not set")
 	}
 	now := time.Now()
+	version := 0
+	if t.VersionFn != nil {
+		version = t.VersionFn()
+	}
 	claims := Claims{
-		Username: username,
+		Username:     username,
+		TokenVersion: version,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    t.Issuer,
 			Subject:   username,
@@ -83,6 +91,9 @@ func (t *TokenIssuer) Parse(tokenString string) (*Claims, error) {
 		return nil, err
 	}
 	if claims, ok := tok.Claims.(*Claims); ok && tok.Valid {
+		if t.VersionFn != nil && claims.TokenVersion != t.VersionFn() {
+			return nil, errors.New("token 已失效，请重新登录")
+		}
 		return claims, nil
 	}
 	return nil, errors.New("invalid token")
