@@ -34,7 +34,7 @@ faststrm-migrate -config /path/to/.config \
 | `-account` | 目标账号；p115 必填 |
 | `-account-map` | LitePan accountID → FastStrm 账号，如 `1=alice` |
 | `-prefix` | 目标 URL 前缀；为空时用 settings 或自动内网 IP |
-| `-cloud-root` | 本地根对应的云端路径，用于托管登记和模板变量 |
+| `-cloud-root` | 本地根对应的云端路径，用于托管登记 |
 | `-write` | 实际写入；不加为 dry-run |
 | `-backup` | 写入前把旧内容备份到 `<root>/.faststrm-migrate-backup/<时间>` |
 | `-register` | 写入后登记 managed_strms；需要 `-cloud-root` |
@@ -50,5 +50,5 @@ faststrm-migrate -config /path/to/.config \
 ## 注意
 
 - 迁移前停止 FastStrm 或确认没有任务在写同一目录；`-register` 会写 SQLite。
-- 自定义 URL 模板依赖 `{file_path}` 时，必须提供 `-cloud-root`，否则生成的路径变量为空。
+- 自定义 URL/文件名模板已下线，迁移统一生成标准 URL；需要使用 `-register` 时提供 `-cloud-root`。
 - 迁移后建议 Emby 刷新媒体库；如果托管记录缺失，先跑一次全量扫描再执行清理。

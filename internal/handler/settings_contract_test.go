@@ -33,8 +33,6 @@ func newContractSettings() *model.Settings {
 	s.Download.StrmGenerateBlacklist = []string{"trailer"}
 	s.Download.FullSyncCleanupOrphans = "mark_only"
 
-	s.Strm.StrmUrlTemplate = "http://nas:8090/api/strm?account={account}&pickcode={pickcode}&file_name={file_name}"
-	s.Strm.StrmFilenameTemplate = "[{account}] {stem}.strm"
 	s.Strm.ForceProxyUaTokens = []string{"Infuse"}
 	s.Strm.AccountProxyConcurrencyLimit = 7
 	s.Strm.RedirectCheckTimeoutMs = 4000
@@ -209,8 +207,8 @@ func TestSettingsContract_StrmAdvancedFieldsWritable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Strm.StrmFilenameTemplate != "{stem}.iso.strm" {
-		t.Fatalf("strmFilenameTemplate not applied: %q", stored.Strm.StrmFilenameTemplate)
+	if stored.Strm.StrmFilenameTemplate != "" {
+		t.Fatalf("removed strmFilenameTemplate must be ignored: %q", stored.Strm.StrmFilenameTemplate)
 	}
 	if !reflect.DeepEqual(stored.Strm.ForceProxyFormats, []string{"iso"}) {
 		t.Fatalf("forceProxyFormats not applied: %v", stored.Strm.ForceProxyFormats)
@@ -276,8 +274,8 @@ func TestSettingsContract_PartialPostPreservesOmittedFields(t *testing.T) {
 	if stored.StrmPrefix != original.StrmPrefix {
 		t.Fatalf("omitted strmPrefix lost: %q", stored.StrmPrefix)
 	}
-	if stored.Strm.StrmFilenameTemplate != original.Strm.StrmFilenameTemplate {
-		t.Fatalf("omitted filename template lost: %q", stored.Strm.StrmFilenameTemplate)
+	if stored.Strm.StrmFilenameTemplate != "" {
+		t.Fatalf("removed filename template must stay empty: %q", stored.Strm.StrmFilenameTemplate)
 	}
 	if stored.Emby.ProxyPort != original.Emby.ProxyPort {
 		t.Fatalf("omitted emby proxyPort lost: %d", stored.Emby.ProxyPort)

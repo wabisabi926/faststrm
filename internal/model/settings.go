@@ -35,7 +35,7 @@ type Settings struct {
 	// 列表为空 = 不按格式代理；迁移后不再把空列表回填默认值。
 	FormatProxyDefaultsV1 bool `json:"formatProxyDefaultsV1"`
 	// StrmTemplatesRemovedV1 标记旧的「自定义 URL/文件名模板」已下线并清空。
-	// 仅用于老配置一次性迁移；后端仍保留模板字段供手工兼容。
+	// 模板字段仅为解析旧配置而保留，任何读写路径都会清空。
 	StrmTemplatesRemovedV1 bool `json:"strmTemplatesRemovedV1"`
 	// CleanupOrphansDefaultsV1 标记孤儿清理默认值迁移已完成：
 	// 老配置迁移为 mark_only，新装仍为 auto_clean。
@@ -66,6 +66,27 @@ func (s *Settings) UnmarshalJSON(data []byte) error {
 // DownloadExtensionsProvided 是否显式提供过 downloadExtensions。
 func (s *Settings) DownloadExtensionsProvided() bool {
 	return s != nil && s.downloadExtensionsSet
+}
+
+// ClearRemovedStrmTemplates 清空已下线的自定义 URL/文件名模板。
+// 返回是否有变化（包括写入下线标记）。所有配置读写路径都必须调用，
+// 避免手工编辑 settings.json 绕过 A1 迁移后，模板只在新生成时生效、
+// 重命名/清理却仍按默认文件名推导，产生重复 STRM 或旧文件残留。
+func (s *Settings) ClearRemovedStrmTemplates() bool {
+	if s == nil {
+		return false
+	}
+	changed := s.Strm.StrmUrlTemplate != "" || s.Strm.StrmFilenameTemplate != "" ||
+		s.LifeMonitor.StrmUrlTemplate != "" || s.LifeMonitor.StrmFilenameTemplate != ""
+	s.Strm.StrmUrlTemplate = ""
+	s.Strm.StrmFilenameTemplate = ""
+	s.LifeMonitor.StrmUrlTemplate = ""
+	s.LifeMonitor.StrmFilenameTemplate = ""
+	if !s.StrmTemplatesRemovedV1 {
+		s.StrmTemplatesRemovedV1 = true
+		changed = true
+	}
+	return changed
 }
 
 // RateLimitSettings 115 API 限流配置（按「账号 × 用途」分桶）
@@ -203,14 +224,9 @@ type StrmSettings struct {
 	ForceProxyUaTokens           []string `json:"forceProxyUaTokens"`
 	AccountProxyConcurrencyLimit int      `json:"accountProxyConcurrencyLimit"`
 	RedirectCheckTimeoutMs       int      `json:"redirectCheckTimeoutMs"`
-	// STRM URL/文件名高级自定义模板（P1-4）
-	//   支持变量：{prefix} {account} {pickcode} {filename} {ext} {stem}
-	//   示例："{prefix}/api/strm?account={account}&pickcode={pickcode}&file_name={filename}"
-	//   空字符串表示走默认拼接逻辑
-	StrmUrlTemplate string `json:"strmUrlTemplate"`
-	// 文件名模板：默认 {stem}.strm（.iso 为 {stem}.iso.strm）
-	//   支持变量：{filename} {stem} {ext}
-	//   示例："[{account}] {stem}.strm"
+	// 已下线的自定义 URL/文件名模板：仅保留字段用于解析旧配置，
+	// Settings.ClearRemovedStrmTemplates 会在读写时强制清空。
+	StrmUrlTemplate      string `json:"strmUrlTemplate"`
 	StrmFilenameTemplate string `json:"strmFilenameTemplate"`
 	// ForceProxyFormats 需要服务端代理流（而非 302 直连）的格式列表。
 	// 支持容器名或扩展名，大小写不敏感、点号可省略（如 "iso" / ".ts" 等价）。
@@ -234,12 +250,10 @@ type StrmSettings struct {
 	// 单一控制，列表为空即关闭。字段仅用于读取老配置并迁移。
 	DisableSeekFormatProxy bool `json:"disableSeekFormatProxy,omitempty"`
 
-	disableRangeProxySet    bool
-	strmUrlTemplateSet      bool
-	strmFilenameTemplateSet bool
+	disableRangeProxySet bool
 }
 
-// UnmarshalJSON 记录 bool 开关/模板字段是否出现在 JSON 中，供 POST 合并时区分
+// UnmarshalJSON 记录 bool 开关是否出现在 JSON 中，供 POST 合并时区分
 // 「未提供」与「显式 false」；未提供时保留旧配置，避免旧前端把用户已关闭的开关重置。
 func (s *StrmSettings) UnmarshalJSON(data []byte) error {
 	type plain StrmSettings
@@ -253,21 +267,11 @@ func (s *StrmSettings) UnmarshalJSON(data []byte) error {
 	}
 	*s = StrmSettings(decoded)
 	_, s.disableRangeProxySet = raw["disableRangeProxy"]
-	_, s.strmUrlTemplateSet = raw["strmUrlTemplate"]
-	_, s.strmFilenameTemplateSet = raw["strmFilenameTemplate"]
 	return nil
 }
 
 // DisableRangeProxyProvided 表示请求是否显式提供了 disableRangeProxy。
 func (s *StrmSettings) DisableRangeProxyProvided() bool { return s != nil && s.disableRangeProxySet }
-
-// StrmUrlTemplateProvided 表示请求是否显式提供了 strmUrlTemplate（支持清空）。
-func (s *StrmSettings) StrmUrlTemplateProvided() bool { return s != nil && s.strmUrlTemplateSet }
-
-// StrmFilenameTemplateProvided 表示请求是否显式提供了 strmFilenameTemplate（支持清空）。
-func (s *StrmSettings) StrmFilenameTemplateProvided() bool {
-	return s != nil && s.strmFilenameTemplateSet
-}
 
 // DefaultForceProxyFormats 默认强制代理格式（容器名 / 扩展名，均按小写匹配）。
 //
@@ -392,7 +396,7 @@ type LifeMonitorSettings struct {
 	MoveMediaMode         string   `json:"moveMediaMode"`
 	AutoDownloadMetadata  bool     `json:"autoDownloadMetadata"` // 生活监控 STRM 创建后是否自动占位同名 nfo/jpg/png/srt 等关联资源（空则继承全局 Download.AutoDownloadMetadata）
 	DownloadExtensions    []string `json:"downloadExtensions"`   // 生活监控 关联资源扩展名；空则继承全局 Download.DownloadExtensions
-	// P1-4 高级模板（空则继承全局 StrmSettings 模板，仍为空则走默认拼接）
+	// 已下线的自定义模板字段：仅为解析旧配置保留，读写时会被清空。
 	StrmUrlTemplate      string `json:"strmUrlTemplate"`
 	StrmFilenameTemplate string `json:"strmFilenameTemplate"`
 	NotifyOnlyOnError    bool   `json:"notifyOnlyOnError"` // true=仅错误时发TG通知，正常操作不通知

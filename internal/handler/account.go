@@ -142,6 +142,10 @@ func CreateAccount(accountStore *store.AccountStore) http.HandlerFunc { //nolint
 		if err := accountStore.Flush(); err != nil {
 			logger.S().Warnf("flush account after create: %v", err)
 		}
+		// Store 返回快照；重新读取以带上 SetCookieStatus 刚写入的三态字段。
+		if fresh := accountStore.Get(req.Name); fresh != nil {
+			newAcc = fresh
+		}
 
 		w.Header().Set("HX-Trigger", "accounts-changed")
 		httpx.WriteJson(w, http.StatusCreated, newAcc)
@@ -288,6 +292,10 @@ func UpdateAccount(accountStore *store.AccountStore, cascade *AccountCascadeDeps
 
 		if err := accountStore.Flush(); err != nil {
 			logger.S().Warnf("flush account after update: %v", err)
+		}
+		// Store 返回快照；acc 是更新前读取的副本，必须重新读取才能返回最新 Cookie/状态。
+		if fresh := accountStore.Get(req.Name); fresh != nil {
+			acc = fresh
 		}
 
 		// 改名成功后的引用联动：任务 / 生活监控 / SQLite 账号分区 / 监控运行时。

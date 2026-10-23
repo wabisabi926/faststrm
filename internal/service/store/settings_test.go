@@ -151,6 +151,72 @@ func TestReadSettings_RemovesLegacyTemplates(t *testing.T) {
 	}
 }
 
+// TestSettingsStore_RemovedTemplatesCannotBeReintroduced 模板下线不仅是首次迁移：
+// 手工编辑 settings.json、SaveSettings、Update 三条路径都不能让模板重新生效。
+func TestSettingsStore_RemovedTemplatesCannotBeReintroduced(t *testing.T) {
+	// 1) 迁移标记已存在，但手工把模板写回配置 → 读取时仍清空并回写
+	dir := t.TempDir()
+	writeSettings(t, dir, `{"strmTemplatesRemovedV1":true,"strm":{"strmUrlTemplate":"{prefix}/x?pc={pickcode}","strmFilenameTemplate":"[{account}] {stem}.strm"},"lifeMonitor":{"strmUrlTemplate":"{prefix}/life","strmFilenameTemplate":"[lm] {stem}.strm"}}`)
+	s := NewSettingsStore("test_salt", dir)
+	got, err := s.ReadSettings()
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if got.Strm.StrmUrlTemplate != "" || got.Strm.StrmFilenameTemplate != "" ||
+		got.LifeMonitor.StrmUrlTemplate != "" || got.LifeMonitor.StrmFilenameTemplate != "" {
+		t.Fatalf("hand-edited templates must be cleared: %+v / %+v", got.Strm, got.LifeMonitor)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "{prefix}/x?pc={pickcode}") || strings.Contains(string(raw), "[lm] {stem}.strm") {
+		t.Fatalf("cleared templates must be persisted back: %s", raw)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "settings.json.templates-v1.*"))
+	if len(matches) == 0 {
+		t.Fatal("hand-edited template config should be backed up")
+	}
+
+	// 2) SaveSettings 直接写入模板 → 落盘前清空
+	cfg := model.DefaultSettings()
+	cfg.Strm.StrmUrlTemplate = "{prefix}/save?pc={pickcode}"
+	cfg.Strm.StrmFilenameTemplate = "[save] {stem}.strm"
+	if err := s.SaveSettings(cfg); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	if cfg.Strm.StrmUrlTemplate != "" || cfg.Strm.StrmFilenameTemplate != "" {
+		t.Fatalf("SaveSettings must clear templates in-place: %+v", cfg.Strm)
+	}
+	reloaded, err := s.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Strm.StrmUrlTemplate != "" || reloaded.Strm.StrmFilenameTemplate != "" {
+		t.Fatalf("templates persisted through SaveSettings: %+v", reloaded.Strm)
+	}
+
+	// 3) Update 的 mutate 重新设置模板 → 返回值与磁盘均为空
+	updated, err := s.Update(func(c *model.Settings) error {
+		c.Strm.StrmUrlTemplate = "{prefix}/update?pc={pickcode}"
+		c.Strm.StrmFilenameTemplate = "[update] {stem}.strm"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Strm.StrmUrlTemplate != "" || updated.Strm.StrmFilenameTemplate != "" {
+		t.Fatalf("Update must clear templates before returning: %+v", updated.Strm)
+	}
+	reloaded, err = s.ReadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Strm.StrmUrlTemplate != "" || reloaded.Strm.StrmFilenameTemplate != "" {
+		t.Fatalf("templates persisted through Update: %+v", reloaded.Strm)
+	}
+}
+
 // TestReadSettings_CleanupRelatedDefaults 清理连带动作的一次性迁移：
 // v1.5 起破坏性动作默认关闭；旧版本自动开过的值在首次升级时统一关闭。
 func TestReadSettings_CleanupRelatedDefaults(t *testing.T) {

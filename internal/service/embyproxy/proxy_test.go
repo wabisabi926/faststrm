@@ -507,10 +507,12 @@ func TestPlaybackURLCache_TTLExpire(t *testing.T) {
 
 	proxy, _ := New(emby.URL)
 
-	// PlaybackInfo + Stream → 缓存写入
+	// PlaybackInfo + Stream → 缓存写入（缓存只对有认证身份的请求生效）
 	req1 := httptest.NewRequest("POST", emby.URL+"/Items/123/PlaybackInfo", strings.NewReader("{}"))
+	req1.Header.Set("X-Emby-Token", "test-token")
 	proxy.Handler().ServeHTTP(httptest.NewRecorder(), req1)
 	req2 := httptest.NewRequest("GET", emby.URL+"/Videos/123/stream?Static=true&MediaSourceId=src1", nil)
+	req2.Header.Set("X-Emby-Token", "test-token")
 	proxy.HandleMediaStream(httptest.NewRecorder(), req2)
 
 	proxy.playbackCacheMu.Lock()

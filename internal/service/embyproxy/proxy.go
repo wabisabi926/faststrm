@@ -202,11 +202,12 @@ type playbackCacheEntry struct {
 	expiry   time.Time
 }
 
-// playbackUserKey playbackUserCache 的复合 key（ip, ua, itemID）
+// playbackUserKey playbackUserCache 的复合 key（ip, ua, itemID, auth）
 type playbackUserKey struct {
-	ip     string
-	ua     string
-	itemID string
+	ip       string
+	ua       string
+	itemID   string
+	authHash string
 }
 
 // playbackUserEntry (ip, ua, itemID) → userID 关联
@@ -680,14 +681,14 @@ func (p *Proxy) modifyPlaybackInfo(resp *http.Response) error {
 	// DirectPlay 由客户端自己拿 302 直链（带正确 UA）拉流，才是可靠路径。
 	p.forceDirectPlay(data, resp.Request)
 
-	// 缓存 STRM 源映射（带 TTL 过期）
-	if itemID != "" && len(strmMap) > 0 {
+	// 缓存 STRM 源映射（带 TTL 过期）；无认证身份的响应不进入缓存。
+	if itemID != "" && len(strmMap) > 0 && authCacheHash(resp.Request) != "" {
 		p.cacheStrmSources(itemID, computeHeaderHash(resp.Request), strmMap)
 		logger.S().Infof("[EmbyProxy] STRM 缓存: item=%s sources=%d", itemID, len(strmMap))
 	}
 
-	// 同时缓存 (ip, ua, itemID) → userID 关联，供 HandleMediaStream 构建 playbackCacheKey
-	if itemID != "" {
+	// 同时缓存 (ip, ua, itemID, auth) → userID 关联，供 HandleMediaStream 构建 playbackCacheKey
+	if itemID != "" && authCacheHash(resp.Request) != "" {
 		if uid, _ := data["UserId"].(string); uid != "" {
 			p.cachePlaybackUser(resp.Request, itemID, uid)
 		}
@@ -1244,6 +1245,10 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	itemID := extractItemID(r.URL.Path)
 	sourceID := r.URL.Query().Get("MediaSourceId")
 
+	// 播放缓存必须绑定认证身份：无认证请求不读/写可能属于其他会话的缓存，
+	// 但仍允许走 PlaybackInfo/透传，由 Emby 自己决定是否公开播放。
+	authenticated := authCacheHash(r) != ""
+
 	// ===== 步骤 1: 查三层缓存 =====
 	userID := p.getUserForPlayback(r, itemID)
 	headerHash := computeHeaderHash(r)
@@ -1255,17 +1260,19 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1a. playbackURLCache — 已解析的最终 CDN URL（命中率最高）
-	if finalURL, ok := p.getCachedPlaybackURL(cacheKey); ok {
-		logger.S().Debugf("[EmbyProxy] playbackURLCache 命中: item=%s source=%s -> %s", itemID, sourceID, redactURLForLog(finalURL))
-		w.Header().Set("Cache-Control", mediaRedirectCacheControl(finalURL))
-		w.Header().Set("Location", finalURL)
-		w.WriteHeader(http.StatusFound)
-		return
+	if authenticated {
+		if finalURL, ok := p.getCachedPlaybackURL(cacheKey); ok {
+			logger.S().Debugf("[EmbyProxy] playbackURLCache 命中: item=%s source=%s -> %s", itemID, sourceID, redactURLForLog(finalURL))
+			w.Header().Set("Cache-Control", mediaRedirectCacheControl(finalURL))
+			w.Header().Set("Location", finalURL)
+			w.WriteHeader(http.StatusFound)
+			return
+		}
 	}
 
 	// 1b. strmSourcesCache — PlaybackInfo 阶段缓存的 STRM 源元数据
 	meta := strmSourceMeta{}
-	if itemID != "" {
+	if itemID != "" && authenticated {
 		if strmEntry, ok := p.getCachedStrmSources(itemID, headerHash); ok {
 			if sourceID != "" {
 				if m, ok2 := strmEntry.sources[sourceID]; ok2 {
@@ -1336,7 +1343,9 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ===== 步骤 3: 缓存最终 URL 并 302 =====
-	p.cachePlaybackURL(cacheKey, finalURL)
+	if authenticated {
+		p.cachePlaybackURL(cacheKey, finalURL)
+	}
 
 	logger.S().Infof("[EmbyProxy] media 302: item=%s source=%s -> %s", itemID, sourceID, redactURLForLog(finalURL))
 	w.Header().Set("Cache-Control", mediaRedirectCacheControl(finalURL))
@@ -1682,7 +1691,7 @@ func (p *Proxy) getCachedStrmSources(itemID, headerHash string) (strmCacheEntry,
 func (p *Proxy) cachePlaybackUser(r *http.Request, itemID, userID string) {
 	ip := getClientIP(r)
 	ua := r.Header.Get("User-Agent")
-	key := playbackUserKey{ip: ip, ua: ua, itemID: itemID}
+	key := playbackUserKey{ip: ip, ua: ua, itemID: itemID, authHash: authCacheHash(r)}
 
 	p.playbackUserCacheMu.Lock()
 	defer p.playbackUserCacheMu.Unlock()
@@ -1707,7 +1716,7 @@ func (p *Proxy) cachePlaybackUser(r *http.Request, itemID, userID string) {
 func (p *Proxy) getUserForPlayback(r *http.Request, itemID string) string {
 	ip := getClientIP(r)
 	ua := r.Header.Get("User-Agent")
-	key := playbackUserKey{ip: ip, ua: ua, itemID: itemID}
+	key := playbackUserKey{ip: ip, ua: ua, itemID: itemID, authHash: authCacheHash(r)}
 
 	p.playbackUserCacheMu.Lock()
 	defer p.playbackUserCacheMu.Unlock()
@@ -1916,16 +1925,40 @@ func extractItemID(path string) string {
 // computeHeaderHash 对 cacheKeyHeaders 白名单内的请求头做稳定序列化并 sha256
 // 对齐 MoviePilot _header_hash
 func computeHeaderHash(r *http.Request) string {
-	parts := make([]string, 0, len(cacheKeyHeaders))
+	parts := make([]string, 0, len(cacheKeyHeaders)+1)
 	for _, name := range cacheKeyHeaders {
 		value := r.Header.Get(name)
 		if value != "" {
 			parts = append(parts, name+":"+value)
 		}
 	}
+	// 查询参数里的令牌（api_key / X-Emby-Token / X-MediaBrowser-Token）不在
+	// cacheKeyHeaders 中；必须纳入缓存身份，否则仅靠查询参数认证的请求会共用缓存。
+	if authHash := authCacheHash(r); authHash != "" {
+		parts = append(parts, "auth:"+authHash)
+	}
 	sort.Strings(parts)
 	joined := strings.Join(parts, "\n")
 	sum := sha256.Sum256([]byte(joined))
+	return hex.EncodeToString(sum[:])
+}
+
+// authCacheHash 返回当前请求认证身份的哈希，用于缓存键隔离。
+// 支持请求头/查询参数令牌和 Cookie 会话；无认证身份返回空。
+func authCacheHash(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	identity := strings.TrimSpace(extractAPIKey(r))
+	if identity == "" {
+		if cookie := strings.TrimSpace(r.Header.Get("Cookie")); cookie != "" {
+			identity = "cookie:" + cookie
+		}
+	}
+	if identity == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])
 }
 

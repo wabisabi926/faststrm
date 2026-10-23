@@ -182,10 +182,10 @@ func TestHandleSettingsPOST_MoveOutRemoveLocalStrm(t *testing.T) {
 // 回归：关闭编码必须能保存；旧前端不提交时保留旧值
 // ================================================================
 
-func TestHandleSettingsPOST_EnablePathEncodingAndTemplate(t *testing.T) {
+func TestHandleSettingsPOST_EnablePathEncodingAndTemplateIgnored(t *testing.T) {
 	ss := newTestSettingsStore(t)
 
-	// 1) 显式关闭编码 + 设置模板
+	// 1) 显式关闭编码 + 提交已下线的模板（必须被忽略）
 	body := `{"enablePathEncoding":false,"strm":{"strmUrlTemplate":"{prefix}/api/strm?account={account}&pickcode={pickcode}&file_name={file_name}&file_id={file_id}"}}`
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(body))
@@ -201,8 +201,8 @@ func TestHandleSettingsPOST_EnablePathEncodingAndTemplate(t *testing.T) {
 	if got.EnablePathEncoding {
 		t.Fatal("显式提交 enablePathEncoding=false 后仍为 true")
 	}
-	if got.Strm.StrmUrlTemplate == "" {
-		t.Fatal("strmUrlTemplate 未保存")
+	if got.Strm.StrmUrlTemplate != "" {
+		t.Fatalf("已下线的 strmUrlTemplate 不应被保存: %q", got.Strm.StrmUrlTemplate)
 	}
 
 	// 2) 旧前端不提交这两个字段 → 保留旧值
@@ -221,8 +221,8 @@ func TestHandleSettingsPOST_EnablePathEncodingAndTemplate(t *testing.T) {
 	if got2.EnablePathEncoding {
 		t.Fatal("未提交 enablePathEncoding 时不应被重置为 true（应保留 false）")
 	}
-	if got2.Strm.StrmUrlTemplate != got.Strm.StrmUrlTemplate {
-		t.Fatal("未提交 strmUrlTemplate 时不应被清空")
+	if got2.Strm.StrmUrlTemplate != "" {
+		t.Fatalf("未提交模板后仍应为空: %q", got2.Strm.StrmUrlTemplate)
 	}
 }
 

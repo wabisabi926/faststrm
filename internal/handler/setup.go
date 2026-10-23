@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,7 +11,6 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 
 	"github.com/wabisabi926/faststrm/internal/config"
-	"github.com/wabisabi926/faststrm/internal/model"
 	"github.com/wabisabi926/faststrm/internal/service/auth"
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
@@ -79,10 +79,14 @@ func SetupAdmin(issuer *auth.TokenIssuer) http.HandlerFunc {
 
 		salt := config.Get().Salt
 		hashed := config.HashPassword(salt, req.Password)
-		if err := config.MutateAdmin(func(admin *model.AppConfig) {
-			admin.Username = username
-			admin.Password = hashed
-		}, true); err != nil {
+		if err := config.InitializeAdmin(username, hashed); err != nil {
+			if errors.Is(err, config.ErrAdminAlreadyInitialized) {
+				httpx.WriteJson(w, http.StatusConflict, map[string]string{
+					"code":  "SETUP_ALREADY_COMPLETED",
+					"error": "管理员账号已初始化",
+				})
+				return
+			}
 			logger.S().Errorf("[Setup] 保存管理员配置失败: %v", err)
 			httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "保存管理员配置失败"})
 			return

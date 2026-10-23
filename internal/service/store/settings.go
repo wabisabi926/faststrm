@@ -70,6 +70,10 @@ func (s *SettingsStore) Update(mutate func(*model.Settings) error) (*model.Setti
 		}
 		changed = true
 	}
+	// Update 的 mutate 可能重新写入已下线的模板字段（旧前端/手工调用），落盘前统一清空。
+	if out.ClearRemovedStrmTemplates() {
+		changed = true
+	}
 	if changed {
 		if err := s.saveLocked(out); err != nil {
 			return nil, err
@@ -161,17 +165,15 @@ func (s *SettingsStore) readLocked() (*model.Settings, bool, error) {
 	}
 
 	// A1：自定义 URL/文件名模板下线。老配置先备份，再清空，回到标准 query + 默认文件名。
-	if !out.StrmTemplatesRemovedV1 {
-		if out.Strm.StrmUrlTemplate != "" || out.Strm.StrmFilenameTemplate != "" ||
-			out.LifeMonitor.StrmUrlTemplate != "" || out.LifeMonitor.StrmFilenameTemplate != "" {
-			s.backupFileLocked(data, "templates-v1")
-			logger.S().Warnf("[SettingsStore] 迁移: 自定义 STRM 模板已下线，原配置已备份并清空")
-		}
-		out.Strm.StrmUrlTemplate = ""
-		out.Strm.StrmFilenameTemplate = ""
-		out.LifeMonitor.StrmUrlTemplate = ""
-		out.LifeMonitor.StrmFilenameTemplate = ""
-		out.StrmTemplatesRemovedV1 = true
+	// 迁移标记已存在但字段再次出现（手工编辑 settings.json）时同样清空，
+	// 否则模板只在新生成时生效，重命名/清理仍按默认名推导，会留下重复 STRM。
+	templatesPresent := out.Strm.StrmUrlTemplate != "" || out.Strm.StrmFilenameTemplate != "" ||
+		out.LifeMonitor.StrmUrlTemplate != "" || out.LifeMonitor.StrmFilenameTemplate != ""
+	if templatesPresent {
+		s.backupFileLocked(data, "templates-v1")
+		logger.S().Warnf("[SettingsStore] 自定义 STRM 模板已下线，忽略并清空（原配置已备份）")
+	}
+	if out.ClearRemovedStrmTemplates() {
 		migrationChanged = true
 	}
 
@@ -479,6 +481,8 @@ func (s *SettingsStore) saveLocked(cfg *model.Settings) error {
 	if norm, changed := normalizeExtensions(cfg.DownloadExtensions); changed {
 		cfg.DownloadExtensions = norm
 	}
+	// 最后一道闸：任何写盘路径（含 SaveSettings/测试/未来调用方）都不能持久化已下线的模板。
+	cfg.ClearRemovedStrmTemplates()
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err

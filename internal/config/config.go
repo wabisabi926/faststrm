@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -180,6 +181,9 @@ func Replace(cfg AppConfig) {
 	appCfgMu.Unlock()
 }
 
+// ErrAdminAlreadyInitialized 管理员已完成初始化（并发 setup 的失败方）。
+var ErrAdminAlreadyInitialized = errors.New("admin already initialized")
+
 // MutateAdmin 原子地读取-修改-写回 cfg.Admin，并可选持久化到磁盘。
 // 保证修改过程与并发 Get / 其他 Mutate* 之间无 data race。
 func MutateAdmin(mutate func(admin *model.AppConfig), persist bool) error {
@@ -194,10 +198,36 @@ func MutateAdmin(mutate func(admin *model.AppConfig), persist bool) error {
 		nextAdmin = *appCfg.Admin
 	}
 	mutate(&nextAdmin)
-	appCfg.Admin = &nextAdmin
+	// 先落盘再替换内存：保存失败时不能留下“内存已改、磁盘未改”的半状态。
 	if persist {
-		return saveAdminLocked()
+		if err := writeAdminFileLocked(&nextAdmin); err != nil {
+			return err
+		}
 	}
+	appCfg.Admin = &nextAdmin
+	return nil
+}
+
+// InitializeAdmin 原子完成首次管理员初始化：
+// 在同一把写锁内检查“密码仍为空”，先写盘成功后再替换内存。
+// 并发请求中只有一个能成功，其余返回 ErrAdminAlreadyInitialized。
+func InitializeAdmin(username, passwordHash string) error {
+	appCfgMu.Lock()
+	defer appCfgMu.Unlock()
+	if appCfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	if appCfg.Admin != nil && appCfg.Admin.Password != "" {
+		return ErrAdminAlreadyInitialized
+	}
+	next := model.AppConfig{Username: username, Password: passwordHash}
+	if appCfg.Admin != nil {
+		next.TokenVersion = appCfg.Admin.TokenVersion
+	}
+	if err := writeAdminFileLocked(&next); err != nil {
+		return err
+	}
+	appCfg.Admin = &next
 	return nil
 }
 
@@ -288,11 +318,27 @@ func saveAdminLocked() error {
 	if appCfg == nil {
 		return fmt.Errorf("config not loaded")
 	}
-	data, err := json.MarshalIndent(appCfg.Admin, "", "  ")
+	return writeAdminFileLocked(appCfg.Admin)
+}
+
+// writeAdminFileLocked 原子写入 config.json（调用方需持有 appCfgMu）。
+func writeAdminFileLocked(admin *model.AppConfig) error {
+	if appCfg == nil || appCfg.Paths.ConfigPath == "" {
+		return fmt.Errorf("config not loaded")
+	}
+	data, err := json.MarshalIndent(admin, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(appCfg.Paths.ConfigPath, data, 0600)
+	tmp := appCfg.Paths.ConfigPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, appCfg.Paths.ConfigPath); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // GenerateInternalToken 如果 settings 没有 internalToken 则生成并持久化

@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -132,6 +133,102 @@ func ListManagedStrmsByRoot(db *sql.DB, root string) (map[string]ManagedStrm, er
 		out[m.LocalPath] = *m
 	}
 	return out, rows.Err()
+}
+
+// UpdateManagedPathPrefix 迁移托管记录的本地/云端路径前缀（目录或文件 rename/move）。
+// 使用事务并逐条检查新路径冲突：任何冲突都会整体回滚，避免覆盖另一条托管记录。
+func UpdateManagedPathPrefix(db *sql.DB, oldLocalRoot, newLocalRoot, oldCloudRoot, newCloudRoot string) (int64, error) {
+	if db == nil {
+		return 0, nil
+	}
+	oldRoot := NormalizeManagedLocalPath(oldLocalRoot)
+	newRoot := NormalizeManagedLocalPath(newLocalRoot)
+	if oldRoot == "" || newRoot == "" || oldRoot == newRoot {
+		return 0, nil
+	}
+	if filepath.Dir(oldRoot) == oldRoot || filepath.Dir(newRoot) == newRoot {
+		return 0, errors.New("managed path: filesystem root is not allowed")
+	}
+	sep := string(filepath.Separator)
+	if strings.HasPrefix(newRoot, oldRoot+sep) || strings.HasPrefix(oldRoot, newRoot+sep) {
+		return 0, errors.New("managed path: nested prefix moves are not supported")
+	}
+	// managed_strms.cloud_path 统一保存带前导 "/" 的云端路径，
+	// normalizeDbPath 会去掉前导斜杠，这里补回后再做前缀匹配。
+	oldCloud := cloudRootWithSlash(oldCloudRoot)
+	newCloud := cloudRootWithSlash(newCloudRoot)
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	prefix := oldRoot + sep
+	rows, err := tx.Query(
+		`SELECT local_path, cloud_path FROM managed_strms
+		 WHERE local_path = ? OR local_path LIKE ? ESCAPE '\'`,
+		oldRoot, escapeLike(prefix)+"%")
+	if err != nil {
+		return 0, err
+	}
+	type pathRow struct{ localPath, cloudPath string }
+	var pending []pathRow
+	for rows.Next() {
+		var row pathRow
+		if err := rows.Scan(&row.localPath, &row.cloudPath); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	now := time.Now().UnixMilli()
+	var updated int64
+	for _, row := range pending {
+		newLocal := newRoot + strings.TrimPrefix(row.localPath, oldRoot)
+		newCloudPath := row.cloudPath
+		if oldCloud != "" && newCloud != "" {
+			if row.cloudPath == oldCloud {
+				newCloudPath = newCloud
+			} else if strings.HasPrefix(row.cloudPath, oldCloud+"/") {
+				newCloudPath = newCloud + strings.TrimPrefix(row.cloudPath, oldCloud)
+			}
+		}
+
+		var exists string
+		err := tx.QueryRow(`SELECT local_path FROM managed_strms WHERE local_path = ?`, newLocal).Scan(&exists)
+		switch {
+		case err == nil:
+			return 0, fmt.Errorf("managed path conflict: %s already exists", newLocal)
+		case !errors.Is(err, sql.ErrNoRows):
+			return 0, err
+		}
+		if _, err := tx.Exec(
+			`UPDATE managed_strms SET local_path = ?, cloud_path = ?, last_seen_at = ? WHERE local_path = ?`,
+			newLocal, newCloudPath, now, row.localPath,
+		); err != nil {
+			return 0, err
+		}
+		updated++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return updated, nil
+}
+
+func cloudRootWithSlash(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	return "/" + strings.Trim(normalizeDbPath(p), "/")
 }
 
 // MarkManagedStrmDeleted 标记托管记录已被清理（保留墓碑，便于诊断）。

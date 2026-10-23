@@ -209,20 +209,36 @@ func (s *AccountStore) setCookieStatusLocked(acc *model.AccountInfo, status stri
 
 // ==================== 热路径 API（内存操作） ====================
 
-// Get 按名称获取单个账号（O(1)），返回只读指针
+// cloneAccountInfo 深拷贝账号，调用方可以安全读取/修改返回值。
+// CookieValid 是指针字段，必须单独复制，否则快照仍与 Store 共享可变状态。
+func cloneAccountInfo(acc *model.AccountInfo) *model.AccountInfo {
+	if acc == nil {
+		return nil
+	}
+	cp := *acc
+	if acc.CookieValid != nil {
+		v := *acc.CookieValid
+		cp.CookieValid = &v
+	}
+	return &cp
+}
+
+// Get 按名称获取单个账号快照（O(1)）。
+// 返回副本而不是内部指针：后台巡检/监控可能同时通过 SetCookieStatus/Update
+// 修改账号，持锁期间复制才能保证调用方读到一致状态。
 func (s *AccountStore) Get(name string) *model.AccountInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.accounts[name]
+	return cloneAccountInfo(s.accounts[name])
 }
 
-// List 返回所有账号的指针切片（按名称排序，稳定顺序）
+// List 返回所有账号的快照（按名称排序，稳定顺序）
 func (s *AccountStore) List() []*model.AccountInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]*model.AccountInfo, 0, len(s.accounts))
 	for _, acc := range s.accounts {
-		result = append(result, acc)
+		result = append(result, cloneAccountInfo(acc))
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Name < result[j].Name
@@ -250,7 +266,7 @@ func (s *AccountStore) Upsert(acc *model.AccountInfo) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.accounts[acc.Name] = acc
+	s.accounts[acc.Name] = cloneAccountInfo(acc)
 	s.dirty = true
 	return nil
 }
@@ -276,8 +292,7 @@ func (s *AccountStore) ReadAccounts() ([]model.AccountInfo, error) {
 	defer s.mu.RUnlock()
 	result := make([]model.AccountInfo, 0, len(s.accounts))
 	for _, acc := range s.accounts {
-		cp := *acc
-		result = append(result, cp)
+		result = append(result, *cloneAccountInfo(acc))
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Name < result[j].Name
@@ -296,8 +311,7 @@ func (s *AccountStore) WriteAccounts(accounts []model.AccountInfo) error {
 		if acc.Name == "" {
 			continue
 		}
-		accCopy := acc
-		newMap[acc.Name] = &accCopy
+		newMap[acc.Name] = cloneAccountInfo(&acc)
 	}
 	s.accounts = newMap
 	s.dirty = true

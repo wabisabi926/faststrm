@@ -832,13 +832,7 @@ func HandleSettingsPOST(deps EmbyDeps) http.HandlerFunc { //nolint:cyclop // com
 
 			// ====== STRM 嵌套对象 ======
 			if body.Strm != nil {
-				// 空串显式提交表示清空模板，回退默认拼接；未提交则保留旧值。
-				if body.Strm.StrmUrlTemplateProvided() {
-					settings.Strm.StrmUrlTemplate = strings.TrimSpace(body.Strm.StrmUrlTemplate)
-				}
-				if body.Strm.StrmFilenameTemplateProvided() {
-					settings.Strm.StrmFilenameTemplate = strings.TrimSpace(body.Strm.StrmFilenameTemplate)
-				}
+				// 自定义 URL/文件名模板已下线：即使旧前端提交也忽略（SettingsStore 落盘时会清空）。
 				// 空数组也允许覆盖：用户清空输入框时前端发送 []，必须能清掉旧值
 				if body.Strm.ForceProxyUaTokens != nil {
 					settings.Strm.ForceProxyUaTokens = body.Strm.ForceProxyUaTokens

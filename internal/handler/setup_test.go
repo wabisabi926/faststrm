@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/wabisabi926/faststrm/internal/config"
@@ -91,6 +92,82 @@ func TestSetupFlow(t *testing.T) {
 	SetupStatus(statusRec, httptest.NewRequest(http.MethodGet, "/api/setup/status", nil))
 	if !strings.Contains(statusRec.Body.String(), `"required":false`) {
 		t.Fatalf("setup status after init = %s", statusRec.Body.String())
+	}
+}
+
+// TestSetupAdminConcurrentOnlyOneSucceeds 复现 review R2：
+// 两个同时进入的初始化请求只能有一个成功，已完成的凭据不能被后到请求覆盖。
+func TestSetupAdminConcurrentOnlyOneSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	config.SetForTest(&config.AppConfig{
+		Admin: &model.AppConfig{Username: "admin"},
+		Salt:  "setup_test_salt_32b_padding______",
+		Paths: config.AppConfigPaths{ConfigDir: dir, ConfigPath: filepath.Join(dir, "config.json")},
+	})
+	issuer := auth.NewTokenIssuer([]byte("setup_jwt_secret_32b___________"))
+
+	candidates := []struct {
+		name, password, ip string
+	}{
+		{"owner-a", "StrongPass123!", "192.0.2.70"},
+		{"owner-b", "AnotherPass123!", "192.0.2.71"},
+	}
+	type result struct {
+		code int
+		body string
+	}
+	results := make(chan result, len(candidates))
+	var wg sync.WaitGroup
+	for _, c := range candidates {
+		wg.Add(1)
+		go func(c struct{ name, password, ip string }) {
+			defer wg.Done()
+			payload, _ := json.Marshal(SetupAdminRequest{Username: c.name, Password: c.password})
+			req := httptest.NewRequest(http.MethodPost, "/api/setup/admin", strings.NewReader(string(payload)))
+			req.Header.Set("Content-Type", "application/json")
+			req.RemoteAddr = c.ip + ":1234"
+			authLoginGuard.reset(loginClientKey(req))
+			rec := httptest.NewRecorder()
+			SetupAdmin(issuer)(rec, req)
+			results <- result{code: rec.Code, body: rec.Body.String()}
+		}(c)
+	}
+	wg.Wait()
+	close(results)
+
+	okCount, conflictCount := 0, 0
+	for res := range results {
+		switch res.code {
+		case http.StatusOK:
+			okCount++
+		case http.StatusConflict:
+			conflictCount++
+			if !strings.Contains(res.body, "SETUP_ALREADY_COMPLETED") {
+				t.Fatalf("conflict body = %s", res.body)
+			}
+		default:
+			t.Fatalf("unexpected setup status %d: %s", res.code, res.body)
+		}
+	}
+	if okCount != 1 || conflictCount != 1 {
+		t.Fatalf("ok=%d conflict=%d, want 1/1", okCount, conflictCount)
+	}
+
+	admin := config.Get().Admin
+	if admin == nil {
+		t.Fatal("admin not initialized")
+	}
+	winner := candidates[0]
+	if admin.Username == candidates[1].name {
+		winner = candidates[1]
+	} else if admin.Username != candidates[0].name {
+		t.Fatalf("admin overwritten by unknown request: %+v", admin)
+	}
+	if admin.Password != config.HashPassword(config.Get().Salt, winner.password) {
+		t.Fatalf("admin password does not match winning request: %+v", admin)
+	}
+	if config.NeedsSetup() {
+		t.Fatal("setup should be complete after one success")
 	}
 }
 

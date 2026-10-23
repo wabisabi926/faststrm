@@ -46,21 +46,11 @@ STRM:  /电影/2024/星际穿越.iso.strm
 
 为什么双扩展名？Emby/Jellyfin 看到 `.iso.strm` 就知道"这是一个 ISO 原盘的 STRM 代理"，播放时会按原盘模式（支持菜单、章节、音轨切换）而不是普通视频模式。
 
-### STRM 文件名模板
+### STRM 文件名规则
 
-默认模板：`{stem}.strm`（iso 自动变 `{stem}.iso.strm`）
+文件名固定为 `{stem}.strm`（iso 自动变 `{stem}.iso.strm`），不再支持自定义文件名模板。
 
-支持的变量：
-
-| 变量 | 含义 | 示例 |
-|------|------|------|
-| `{filename}` | 完整文件名（含扩展名） | `星际穿越.iso` |
-| `{stem}` | 去掉最后一个扩展名的文件名 | `星际穿越.iso`（iso 的 stem 保留 iso 后缀） |
-| `{ext}` | 扩展名（带点） | `.iso` |
-
-通过任务级「STRM 文件名模板」覆盖，或全局配置 `settings.json → strm.strmFilenameTemplate`。
-
-> **v1.5.5 起自定义 URL / 文件名模板入口已下线**：老配置首次读取会备份为 `settings.json.templates-v1.*` 后清空，新生成使用默认拼接与命名；上面字段仅保留手工兼容。
+> **v1.5.5 起自定义 URL / 文件名模板已下线**：老配置首次读取会备份为 `settings.json.templates-v1.*` 后清空；手工写回 `settings.json` 也会在读取/保存时被清空。
 
 **v1.2.3+ 统一 STRM 模式**：
 - `strmPrefix = http://服务器:8090`（不含 `/api/strm`，前端自动追加）
