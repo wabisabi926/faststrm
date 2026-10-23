@@ -64,14 +64,15 @@ type TaskSchedule struct {
 
 // Task 任务定义（持久化在 .settings.json tasks 中）
 type Task struct {
-	ID                 string        `json:"id"`
-	Name               string        `json:"name,omitempty"`
-	Account            string        `json:"account"`
-	AccountType        string        `json:"accountType,omitempty"`
-	OriginPath         string        `json:"originPath"`
-	TargetPath         string        `json:"targetPath"`
-	StrmType           string        `json:"strmType,omitempty"` // STRM 类型（如 "local"、"remote" 等）
-	StrmPrefix         string        `json:"strmPrefix,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Account     string `json:"account"`
+	AccountType string `json:"accountType,omitempty"`
+	OriginPath  string `json:"originPath"`
+	TargetPath  string `json:"targetPath"`
+	StrmType    string `json:"strmType,omitempty"` // STRM 类型（如 "local"、"remote" 等）
+	StrmPrefix  string `json:"strmPrefix,omitempty"`
+	// Deprecated: 仅兼容旧 tasks.json；执行时始终使用全局 Settings.EnablePathEncoding。
 	EnablePathEncoding bool          `json:"enablePathEncoding,omitempty"`
 	Schedule           *TaskSchedule `json:"schedule,omitempty"`
 	CreatedAt          int64         `json:"createdAt,omitempty"`
