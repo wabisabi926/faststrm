@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 
@@ -342,12 +343,32 @@ func ChangeCredentials() http.HandlerFunc {
 // ==================== Logout ====================
 
 // Logout POST /api/auth/logout
-// JWT 无状态，但登录时下发的 HttpOnly cookie 仍可建立 SSE，必须同时过期。
-func Logout() http.HandlerFunc {
+// 只吊销当前 Bearer/Cookie 的 jti，多设备登录互不影响；改密仍会使全部旧 token 失效。
+func Logout(issuer *auth.TokenIssuer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := config.MutateAdmin(func(admin *model.AppConfig) { admin.TokenVersion++ }, true); err != nil {
-			logger.S().Warnf("logout 吊销 token 失败: %v", err)
+		revoke := func(raw string) {
+			raw = strings.TrimSpace(raw)
+			if strings.HasPrefix(raw, "Bearer ") {
+				raw = strings.TrimSpace(raw[len("Bearer "):])
+			}
+			if raw == "" || issuer == nil {
+				return
+			}
+			claims, err := issuer.Parse(raw)
+			if err != nil || claims == nil || claims.ID == "" {
+				return
+			}
+			exp := time.Now().Add(auth.DefaultValidity)
+			if claims.ExpiresAt != nil {
+				exp = claims.ExpiresAt.Time
+			}
+			issuer.Revoke(claims.ID, exp)
 		}
+		revoke(r.Header.Get("Authorization"))
+		if cookie, err := r.Cookie("token"); err == nil {
+			revoke(cookie.Value)
+		}
+
 		secureCookie := r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 		http.SetCookie(w, &http.Cookie{
 			Name:     "token",

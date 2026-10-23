@@ -27,6 +27,8 @@ type TokenIssuer struct {
 	Issuer   string
 	// VersionFn 返回当前账号的 token 版本；为空时跳过版本校验（测试/兼容）。
 	VersionFn func() int
+	// Revocations 登出后的 jti 吊销表；为空时跳过单会话吊销。
+	Revocations *RevocationList
 }
 
 // DefaultValidity JWT 默认有效期（7 天，与前端登录态一致）
@@ -61,10 +63,15 @@ func (t *TokenIssuer) Sign(username string) (string, error) {
 	if t.VersionFn != nil {
 		version = t.VersionFn()
 	}
+	jti, err := randomJTI()
+	if err != nil {
+		return "", fmt.Errorf("generate jti: %w", err)
+	}
 	claims := Claims{
 		Username:     username,
 		TokenVersion: version,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			Issuer:    t.Issuer,
 			Subject:   username,
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -74,6 +81,22 @@ func (t *TokenIssuer) Sign(username string) (string, error) {
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tok.SignedString(t.secret)
+}
+
+// Revoke 吊销单个 token（登出当前会话）。
+func (t *TokenIssuer) Revoke(jti string, expiresAt time.Time) {
+	if t == nil || t.Revocations == nil {
+		return
+	}
+	t.Revocations.Revoke(jti, expiresAt)
+}
+
+func randomJTI() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 // Parse 解析并校验 token；返回 *Claims 或 错误
@@ -93,6 +116,9 @@ func (t *TokenIssuer) Parse(tokenString string) (*Claims, error) {
 	if claims, ok := tok.Claims.(*Claims); ok && tok.Valid {
 		if t.VersionFn != nil && claims.TokenVersion != t.VersionFn() {
 			return nil, errors.New("token 已失效，请重新登录")
+		}
+		if claims.ID != "" && t.Revocations != nil && t.Revocations.Revoked(claims.ID) {
+			return nil, errors.New("token 已登出，请重新登录")
 		}
 		return claims, nil
 	}

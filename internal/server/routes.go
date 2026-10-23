@@ -48,7 +48,7 @@ func RegisterRoutes(
 		{Method: http.MethodGet, Path: "/api/auth/security-status", Handler: middleware.CORS(jwtMW(handler.SecurityStatus))},
 		{Method: http.MethodPost, Path: "/api/auth/change-password", Handler: middleware.CORS(jwtMW(handler.ChangePassword()))},
 		{Method: http.MethodPost, Path: "/api/auth/change-credentials", Handler: middleware.CORS(jwtMW(handler.ChangeCredentials()))},
-		{Method: http.MethodPost, Path: "/api/auth/logout", Handler: middleware.CORS(jwtMW(handler.Logout()))},
+		{Method: http.MethodPost, Path: "/api/auth/logout", Handler: middleware.CORS(jwtMW(handler.Logout(issuer)))},
 		// SSE 事件流（JWT Cookie 鉴权）
 		{Method: http.MethodGet, Path: "/api/events/stream", Handler: middleware.CORS(sse.Handler(issuer))},
 		// 阶段6: Emby Webhook 回调（公开，无 JWT）

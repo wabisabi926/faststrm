@@ -118,7 +118,7 @@ func TestRegression_FieldTypes(t *testing.T) {
 	})
 
 	t.Run("logout_response", func(t *testing.T) {
-		code, raw := doReq(handler.Logout(), "POST", "/api/auth/logout", nil, "")
+		code, raw := doReq(handler.Logout(issuer), "POST", "/api/auth/logout", nil, "")
 		if code != 200 {
 			t.Fatalf("want 200, got %d", code)
 		}

@@ -47,6 +47,50 @@ func TestJWTExpired(t *testing.T) {
 	}
 }
 
+func TestJWTRevocationPersists(t *testing.T) {
+	secret := []byte("test-secret-test-secret-32bytes!!")
+	path := t.TempDir() + "/revocations.json"
+	iss := NewTokenIssuer(secret)
+	iss.Revocations = NewRevocationList(path)
+
+	tok, err := iss.Sign("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := iss.Parse(tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.ID == "" {
+		t.Fatal("token must carry a jti")
+	}
+	iss.Revoke(claims.ID, claims.ExpiresAt.Time)
+
+	restarted := NewTokenIssuer(secret)
+	restarted.Revocations = NewRevocationList(path)
+	if _, err := restarted.Parse(tok); err == nil {
+		t.Fatal("revoked token should stay revoked after restart")
+	}
+}
+
+func TestJWTRevocationOnlyAffectsOneToken(t *testing.T) {
+	iss := NewTokenIssuer([]byte("test-secret-test-secret-32bytes!!"))
+	iss.Revocations = NewRevocationList("")
+	tokA, _ := iss.Sign("admin")
+	tokB, _ := iss.Sign("admin")
+	claimsA, err := iss.Parse(tokA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss.Revoke(claimsA.ID, claimsA.ExpiresAt.Time)
+	if _, err := iss.Parse(tokA); err == nil {
+		t.Fatal("token A should be revoked")
+	}
+	if _, err := iss.Parse(tokB); err != nil {
+		t.Fatalf("token B should remain valid: %v", err)
+	}
+}
+
 func TestGenerateSecret(t *testing.T) {
 	s, err := GenerateSecret()
 	if err != nil || len(s) != 64 {

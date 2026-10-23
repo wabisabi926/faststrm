@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -58,6 +59,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// 初始化依赖
 	issuer := auth.NewTokenIssuer([]byte(cfg.Settings.InternalToken))
 	issuer.VersionFn = func() int { return config.Get().Admin.TokenVersion }
+	issuer.Revocations = auth.NewRevocationList(filepath.Join(cfg.Paths.ConfigDir, ".jwt_revocations.json"))
 	client := client115.NewClient(cfg.Settings.UserAgent)
 	accountStore, err := store.NewAccountStore(cfg.Salt, cfg.Paths.ConfigDir)
 	if err != nil {

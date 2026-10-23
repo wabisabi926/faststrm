@@ -72,7 +72,7 @@ type Task struct {
 	TargetPath  string `json:"targetPath"`
 	StrmType    string `json:"strmType,omitempty"` // STRM 类型（如 "local"、"remote" 等）
 	StrmPrefix  string `json:"strmPrefix,omitempty"`
-	// Deprecated: 仅兼容旧 tasks.json；执行时始终使用全局 Settings.EnablePathEncoding。
+	// Legacy：仅兼容旧 tasks.json；执行时始终使用全局 Settings.EnablePathEncoding。
 	EnablePathEncoding bool          `json:"enablePathEncoding,omitempty"`
 	Schedule           *TaskSchedule `json:"schedule,omitempty"`
 	CreatedAt          int64         `json:"createdAt,omitempty"`

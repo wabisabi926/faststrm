@@ -41,6 +41,8 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
   }, [searchParams, navigate]);
 
   const [data, setData] = useState<SettingsType>({});
+  // 页面加载时的设置快照：保存时只提交与它不同的字段，避免多标签用旧快照覆盖其他页面的修改。
+  const [initialData, setInitialData] = useState<SettingsType>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [strmExtensionsInput, setStrmExtensionsInput] = useState("");
@@ -127,6 +129,7 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
         const settingsResp = await axiosInstance.get("/api/settings");
         const settings = settingsResp.data || {};
         setData(settings);
+        setInitialData(settings);
         setStrmExtensionsInput((settings.strmExtensions || []).join(", "));
         setDownloadExtensionsInput((settings.downloadExtensions || []).join(", "));
         setForceProxyUaInput((settings.strm?.forceProxyUaTokens || []).join(", "));
@@ -217,51 +220,73 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
       )
     );
 
-  // 常规设置只提交自己负责的字段，避免把 Emby/Telegram/清理配置按旧快照覆盖。
+  // 常规设置只提交自己负责且相对加载快照发生变化的字段：
+  // 1) 避免把 Emby/Telegram/清理配置按旧快照覆盖；
+  // 2) 多标签并发编辑不同字段时，不会用整份旧快照把对方刚保存的值写回。
   const buildSaveData = () => {
-    // 解析强制代理 UA tokens
     const forceProxyUaTokens = forceProxyUaInput
       .split(",")
       .map(token => token.trim())
       .filter(token => token.length > 0);
 
-    // 解析强制代理格式（容器名/扩展名，点号可选；后端按小写匹配）
     const forceProxyFormats = forceProxyFormatsInput
       .split(",")
       .map(token => token.trim().toLowerCase())
       .filter(token => token.length > 0);
 
-    // 解析全局文件名黑名单关键词
     const globalBlacklist = globalBlacklistInput
       .split(",")
       .map(keyword => keyword.trim())
       .filter(keyword => keyword.length > 0);
 
     const downloadExtensions = parseExts(downloadExtensionsInput);
-    return {
-      "user-agent": data["user-agent"] ?? "",
-      strmExtensions: parseExts(strmExtensionsInput),
-      downloadExtensions,
-      strmPrefix: data.strmPrefix ?? "",
-      enablePathEncoding: data.enablePathEncoding !== false,
-      download: {
-        downloadMaxConcurrent: data.download?.downloadMaxConcurrent,
-        // 扩展名列表是唯一开关；留空 = 不下载附带文件。
-        autoDownloadMetadata: downloadExtensions.length > 0,
-        minFileSize: parseMb(globalMinFileSizeMb),
-        strmGenerateBlacklist: globalBlacklist,
-      },
-      strm: {
-        forceProxyUaTokens,
-        forceProxyFormats,
-        accountProxyConcurrencyLimit: data.strm?.accountProxyConcurrencyLimit,
-        redirectCheckTimeoutMs: data.strm?.redirectCheckTimeoutMs,
-        disableRangeProxy: data.strm?.disableRangeProxy,
-        proxyChunkSizeMB: data.strm?.proxyChunkSizeMB,
-        proxyConcurrency: data.strm?.proxyConcurrency,
-      },
-      rateLimit: data.rateLimit,
-    };
+    const strmExtensions = parseExts(strmExtensionsInput);
+    const minFileSize = parseMb(globalMinFileSizeMb);
+    const userAgent = data["user-agent"] ?? "";
+    const strmPrefix = data.strmPrefix ?? "";
+    const enablePathEncoding = data.enablePathEncoding !== false;
+
+    const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    const patch: Record<string, unknown> = {};
+
+    if (!same(userAgent, initialData["user-agent"] ?? "")) patch["user-agent"] = userAgent;
+    if (!same(strmExtensions, initialData.strmExtensions ?? [])) patch.strmExtensions = strmExtensions;
+    if (!same(downloadExtensions, initialData.downloadExtensions ?? [])) patch.downloadExtensions = downloadExtensions;
+    if (!same(strmPrefix, initialData.strmPrefix ?? "")) patch.strmPrefix = strmPrefix;
+    if (enablePathEncoding !== (initialData.enablePathEncoding !== false)) {
+      patch.enablePathEncoding = enablePathEncoding;
+    }
+
+    const downloadPatch: Record<string, unknown> = {};
+    if (!same(data.download?.downloadMaxConcurrent, initialData.download?.downloadMaxConcurrent)) {
+      downloadPatch.downloadMaxConcurrent = data.download?.downloadMaxConcurrent;
+    }
+    if (minFileSize !== (initialData.download?.minFileSize ?? 0)) {
+      downloadPatch.minFileSize = minFileSize;
+    }
+    if (!same(globalBlacklist, initialData.download?.strmGenerateBlacklist ?? [])) {
+      downloadPatch.strmGenerateBlacklist = globalBlacklist;
+    }
+    if (Object.keys(downloadPatch).length > 0) patch.download = downloadPatch;
+
+    const strmPatch: Record<string, unknown> = {};
+    const strmPairs: Array<[string, unknown, unknown]> = [
+      ["forceProxyUaTokens", forceProxyUaTokens, initialData.strm?.forceProxyUaTokens ?? []],
+      ["forceProxyFormats", forceProxyFormats, initialData.strm?.forceProxyFormats ?? []],
+      ["accountProxyConcurrencyLimit", data.strm?.accountProxyConcurrencyLimit, initialData.strm?.accountProxyConcurrencyLimit],
+      ["redirectCheckTimeoutMs", data.strm?.redirectCheckTimeoutMs, initialData.strm?.redirectCheckTimeoutMs],
+      ["disableRangeProxy", data.strm?.disableRangeProxy, initialData.strm?.disableRangeProxy],
+      ["proxyChunkSizeMB", data.strm?.proxyChunkSizeMB, initialData.strm?.proxyChunkSizeMB],
+      ["proxyConcurrency", data.strm?.proxyConcurrency, initialData.strm?.proxyConcurrency],
+    ];
+    for (const [key, current, initial] of strmPairs) {
+      if (!same(current, initial)) strmPatch[key] = current;
+    }
+    if (Object.keys(strmPatch).length > 0) patch.strm = strmPatch;
+
+    if (!same(data.rateLimit, initialData.rateLimit)) patch.rateLimit = data.rateLimit;
+
+    return patch;
   };
 
   // 生活监控统一走 /api/lifeMonitor：后端会校验账号并 Refresh，避免保存后仍跑旧配置。
@@ -289,9 +314,19 @@ export default function SettingsPage({ section }: { section?: "general" | "monit
     setSaving(true);
     try {
       const saveData = buildSaveData();
+      if (Object.keys(saveData).length === 0) {
+        toast.info("没有需要保存的修改");
+        return true;
+      }
       await axiosInstance.post("/api/settings", saveData);
-      // 留空保持空：不回填默认值，只把本地快照合并为刚提交的内容。
-      setData(prev => ({ ...prev, ...saveData }));
+      // 保存后重新读取，更新「已保存快照」，避免下一次保存把刚写入的值再次提交。
+      try {
+        const fresh = await axiosInstance.get("/api/settings");
+        setData(fresh.data || {});
+        setInitialData(fresh.data || {});
+      } catch {
+        // 刷新基线失败时保留旧基线；下次保存会重新提交本次变更，不会误覆盖其他字段。
+      }
       toast.success("保存成功");
       return true;
     } catch (error: unknown) {

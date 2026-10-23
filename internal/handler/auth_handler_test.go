@@ -50,7 +50,7 @@ func handlerGet(handlerFunc http.HandlerFunc) *httptest.ResponseRecorder {
 // ==================== Logout ====================
 
 func TestLogout(t *testing.T) {
-	w := handlerPost(Logout(), "")
+	w := handlerPost(Logout(nil), "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", w.Code)
 	}
@@ -83,12 +83,40 @@ func TestLogout(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
 		req.Header.Set("X-Forwarded-Proto", "https")
 		rec := httptest.NewRecorder()
-		Logout()(rec, req)
+		Logout(nil)(rec, req)
 		cookies := rec.Result().Cookies()
 		if len(cookies) == 0 || !cookies[0].Secure {
 			t.Fatal("expected Secure cookie behind https proxy")
 		}
 	})
+}
+
+func TestLogoutRevokesOnlyCurrentToken(t *testing.T) {
+	issuer := auth.NewTokenIssuer([]byte("test-secret-32b________________"))
+	issuer.Revocations = auth.NewRevocationList(t.TempDir() + "/revocations.json")
+
+	tokenA, err := issuer.Sign("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenB, err := issuer.Sign("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenA)
+	w := httptest.NewRecorder()
+	Logout(issuer)(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("logout status=%d", w.Code)
+	}
+	if _, err := issuer.Parse(tokenA); err == nil {
+		t.Fatal("logged-out token should be revoked")
+	}
+	if _, err := issuer.Parse(tokenB); err != nil {
+		t.Fatalf("other session should remain valid: %v", err)
+	}
 }
 
 // ==================== Login ====================
