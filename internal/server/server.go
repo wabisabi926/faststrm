@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -56,6 +58,20 @@ func setShutdownFn(fn func(context.Context) error) {
 	shutdownMu.Unlock()
 }
 
+// logLevelFromEnv 解析 FASTSTRM_LOG_LEVEL（debug/info/warn/error），默认 info。
+func logLevelFromEnv() zapcore.Level {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FASTSTRM_LOG_LEVEL"))) {
+	case "debug":
+		return zapcore.DebugLevel
+	case "warn", "warning":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
+	}
+}
+
 // Run 启动 go-zero HTTP 服务
 func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// 初始化日志
@@ -63,7 +79,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	if cfg.Server.Mode == "prod" {
 		logDir = cfg.Paths.LogDir
 	}
-	logger.InitLogger(logDir, zapcore.InfoLevel)
+	logger.InitLogger(logDir, logLevelFromEnv())
 	defer logger.Sync()
 	// go-zero 在 Unix 上收到信号后会先排空再强杀；放宽窗口，避免任务排空被 5.5s 截断。
 	proc.SetTimeToForceQuit(25 * time.Second)
