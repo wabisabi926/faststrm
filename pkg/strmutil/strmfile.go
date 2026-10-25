@@ -104,6 +104,11 @@ func WriteStrmFile(strmPath, content string) (unchanged bool, err error) {
 		tmp.Close()
 		return false, werr
 	}
+	// rename 前落盘，避免断电后留下空文件/半截文件。
+	if serr := tmp.Sync(); serr != nil {
+		tmp.Close()
+		return false, serr
+	}
 	if cerr := tmp.Close(); cerr != nil {
 		return false, cerr
 	}
