@@ -315,6 +315,11 @@ func New(embyHost string, forceProxyUaTokens ...[]string) (*Proxy, error) {
 			if len(via) >= 10 {
 				return fmt.Errorf("too many redirects: %d", len(via))
 			}
+			// 跨主机跳转时兜底清除 Emby 凭据：媒体源与 Emby 认证服务属于
+			// 不同信任边界。同主机跳转保留，避免影响 Emby API 自身的重定向。
+			if len(via) > 0 && !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+				stripSensitiveForwardHeaders(req.Header)
+			}
 			return nil // 跟随所有重定向
 		},
 	}
@@ -1323,7 +1328,7 @@ func (p *Proxy) HandleMediaStream(w http.ResponseWriter, r *http.Request) {
 	// 客户端连接始终停留在 FastStrm，由服务端拉 STRM→CDN 再回传，外网/内网均能兜底播放。
 	// 对其他可直连的外部源（非 /api/strm），保留原 302 回退行为。
 	// upstreamStatus 仅用于诊断日志。
-	finalURL, upstreamStatus := p.resolveRedirectChain(r.Context(), meta.path, r, userID)
+	finalURL, upstreamStatus := p.resolveRedirectChain(r.Context(), meta.path, r)
 	if finalURL == meta.path {
 		if isSelfStrmEndpoint(meta.path) {
 			logger.S().Infof("[EmbyProxy] media 直链解析无重定向（FastStrm /api/strm：HEAD 固定 200），改走代理流: item=%s source=%s strm=%s",
@@ -1489,7 +1494,7 @@ func (p *Proxy) passthroughToEmby(w http.ResponseWriter, r *http.Request) {
 //
 // 第二个返回值是上游最终 HTTP 状态码（仅用于调用方诊断日志，不影响响应行为）：
 // 无 HTTP 响应（构造失败/超时）时为 0，其余为 resp.StatusCode。
-func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *http.Request, userID string) (string, int) {
+func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *http.Request) (string, int) {
 	// 自身 /api/strm：直接在进程内跑一次 HEAD redirect=1，拿 Location，
 	// 不再经过域名/DNS/TLS/NAT 回环。
 	if p.internalStrm != nil && isSelfStrmEndpoint(startURL) {
@@ -1499,10 +1504,9 @@ func (p *Proxy) resolveRedirectChain(ctx context.Context, startURL string, r *ht
 		}
 	}
 
-	fwdHeaders := buildForwardHeaders(r)
-	if userID != "" {
-		fwdHeaders["X-Emby-UserId"] = userID
-	}
+	// 外部媒体源只发最小请求头：Emby 的 X-Emby-Token / Authorization / Cookie
+	// 属于 Emby 上游，不能随 STRM 地址或重定向链外发。
+	fwdHeaders := buildMediaSourceHeaders(r)
 
 	// FastStrm 自身 /api/strm 端点的 HEAD 默认固定返回 200（见 strm.go writeStrmHeadResponse），
 	// 使解析永远走不出重定向链、取不到 CDN URL。追加内部参数 redirect=1 后，该端点对
@@ -1981,20 +1985,38 @@ func getClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// buildForwardHeaders 构建转发请求头，排除 hop-by-hop 和 host
-// 对齐 MoviePilot _build_forward_headers
-func buildForwardHeaders(r *http.Request) map[string]string {
-	result := make(map[string]string, len(r.Header))
-	for k, vv := range r.Header {
-		kLower := strings.ToLower(k)
-		if hopByHopHeaders[kLower] || kLower == "host" {
-			continue
-		}
-		if len(vv) > 0 {
-			result[k] = vv[0]
+// mediaSourceHeaderAllowlist 允许发往外部媒体源（STRM 地址 / CDN 重定向）的请求头。
+// Emby 认证头属于 Emby 上游的信任边界，禁止随媒体源请求外发。
+var mediaSourceHeaderAllowlist = []string{"User-Agent", "Accept"}
+
+// sensitiveForwardHeaders 仅允许发往 Emby 上游；跨主机重定向时必须清除。
+var sensitiveForwardHeaders = []string{
+	"Authorization",
+	"Cookie",
+	"X-Emby-Token",
+	"X-MediaBrowser-Token",
+	"X-Emby-UserId",
+}
+
+// buildMediaSourceHeaders 按白名单构建外部媒体源 HEAD 请求头。
+func buildMediaSourceHeaders(r *http.Request) map[string]string {
+	if r == nil {
+		return nil
+	}
+	result := make(map[string]string, len(mediaSourceHeaderAllowlist))
+	for _, name := range mediaSourceHeaderAllowlist {
+		if v := r.Header.Get(name); v != "" {
+			result[name] = v
 		}
 	}
 	return result
+}
+
+// stripSensitiveForwardHeaders 清除 Emby 凭据，作为跨主机重定向的兜底。
+func stripSensitiveForwardHeaders(h http.Header) {
+	for _, name := range sensitiveForwardHeaders {
+		h.Del(name)
+	}
 }
 
 // 确保 context 包已导入

@@ -1097,7 +1097,7 @@ func TestResolveRedirectChain_HTTPError(t *testing.T) {
 
 	startURL := badCDN.URL + "/expired.iso"
 	req, _ := http.NewRequest("GET", "/Videos/123/stream", nil)
-	finalURL, status := proxy.resolveRedirectChain(context.Background(), startURL, req, "u1")
+	finalURL, status := proxy.resolveRedirectChain(context.Background(), startURL, req)
 
 	// 关键：不能 hang；403 未发生重定向 → 回退原始 URL（对齐 MP）
 	if finalURL != startURL {
@@ -1127,7 +1127,7 @@ func TestResolveRedirectChain_StrmEndpointError(t *testing.T) {
 
 	startURL := strm.URL + "/api/strm?account=a&pickcode=p"
 	req, _ := http.NewRequest("GET", "/Videos/123/stream", nil)
-	finalURL, status := proxy.resolveRedirectChain(context.Background(), startURL, req, "u1")
+	finalURL, status := proxy.resolveRedirectChain(context.Background(), startURL, req)
 	if finalURL != startURL {
 		t.Fatalf("STRM 端点 5xx 时应回退原始 URL %q，got %q", startURL, finalURL)
 	}
@@ -1206,7 +1206,7 @@ func TestResolveRedirectChain_SelfStrm_ReturnCDN302(t *testing.T) {
 
 	// 1) redirect=1 命中 → 解析出 CDN URL（且已脱离 /api/strm）
 	hitURL := strmHit.URL + "/api/strm?account=a&pickcode=p"
-	finalURL, status := proxy.resolveRedirectChain(context.Background(), hitURL, req, "u1")
+	finalURL, status := proxy.resolveRedirectChain(context.Background(), hitURL, req)
 	if finalURL == hitURL || finalURL == "" {
 		t.Fatalf("redirect=1 命中时应解析出 CDN URL，got %q", finalURL)
 	}
@@ -1224,7 +1224,7 @@ func TestResolveRedirectChain_SelfStrm_ReturnCDN302(t *testing.T) {
 	}))
 	defer strmProxy.Close()
 	proxyURL := strmProxy.URL + "/api/strm?account=a&pickcode=p"
-	finalURL2, _ := proxy.resolveRedirectChain(context.Background(), proxyURL, req, "u1")
+	finalURL2, _ := proxy.resolveRedirectChain(context.Background(), proxyURL, req)
 	if finalURL2 != proxyURL {
 		t.Fatalf("未得到 CDN 302 时应规范化回原始 STRM URL %q，got %q（避免带上 redirect=1）", proxyURL, finalURL2)
 	}
