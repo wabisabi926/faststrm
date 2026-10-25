@@ -153,8 +153,9 @@ func (s *Server) Subscribe(taskID string) *Subscriber {
 	}
 	s.mu.Lock()
 	s.subscribers[sub.ID] = sub
+	total := len(s.subscribers)
 	s.mu.Unlock()
-	logger.S().Debugf("[SSE] subscribe id=%s task=%s (total=%d)", sub.ID, taskID, len(s.subscribers))
+	logger.S().Debugf("[SSE] subscribe id=%s task=%s (total=%d)", sub.ID, taskID, total)
 
 	// 重放历史日志
 	s.logMu.Lock()
@@ -181,8 +182,9 @@ func (s *Server) Unsubscribe(sub *Subscriber) {
 		delete(s.subscribers, sub.ID)
 		sub.close()
 	}
+	total := len(s.subscribers)
 	s.mu.Unlock()
-	logger.S().Debugf("[SSE] unsubscribe id=%s (total=%d)", sub.ID, len(s.subscribers))
+	logger.S().Debugf("[SSE] unsubscribe id=%s (total=%d)", sub.ID, total)
 }
 
 // Broadcast 广播事件给所有匹配的订阅者，同时写入 taskLogs 环形缓冲
