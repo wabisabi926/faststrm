@@ -286,10 +286,3 @@ func PickcodeExists(db *sql.DB, account, pickcode string) (bool, error) {
 	}
 	return true, nil
 }
-
-func escapeLike(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `%`, `\%`)
-	s = strings.ReplaceAll(s, `_`, `\_`)
-	return s
-}

@@ -155,12 +155,12 @@ func UpdatePathPrefixBatch(db *sql.DB, account, oldPrefix, newPrefix string) (in
 	//     substr(path, 5) 从第 5 字符 '/' 开始 => "/a.mkv"
 	//     拼接 newP || substr(path, Y) => "新文件夹/a.mkv" ✅
 	oldPrefixLen := len([]rune(oldP)) + 1
-	oldPLike := oldP + "/%"
+	oldPLike := literalPrefixPattern(oldP)
 
 	res, err := db.Exec(`
 		UPDATE files
 		SET path = ? || substr(path, ?)
-		WHERE account = ? AND (path = ? OR path LIKE ?)`,
+		WHERE account = ? AND (path = ? OR path LIKE ? ESCAPE '\')`,
 		newP, oldPrefixLen, account, oldP, oldPLike,
 	)
 	if err != nil {
@@ -186,13 +186,14 @@ func DeleteByPathPrefix(db *sql.DB, account, pathPrefix string) (int64, error) {
 	if p == "" || p == "/" {
 		return 0, nil
 	}
-	res, err := db.Exec(`DELETE FROM files WHERE account = ? AND (path = ? OR path LIKE ?)`,
-		account, p, p+"/%")
+	pLike := literalPrefixPattern(p)
+	res, err := db.Exec(`DELETE FROM files WHERE account = ? AND (path = ? OR path LIKE ? ESCAPE '\')`,
+		account, p, pLike)
 	if err != nil {
 		return 0, err
 	}
-	_, ferr := db.Exec(`DELETE FROM folders WHERE account = ? AND (path = ? OR path LIKE ?)`,
-		account, p, p+"/%")
+	_, ferr := db.Exec(`DELETE FROM folders WHERE account = ? AND (path = ? OR path LIKE ? ESCAPE '\')`,
+		account, p, pLike)
 	if ferr != nil {
 		return res.RowsAffected()
 	}
@@ -233,10 +234,10 @@ func CountFilesByPrefix(db *sql.DB, account, cloudPathPrefix string) (int64, err
 	if !strings.HasSuffix(prefixNorm, "/") {
 		prefixNorm = prefixNorm + "/"
 	}
-	like := prefixNorm + "%"
+	like := escapeLike(prefixNorm) + "%"
 	var n int64
 	err := db.QueryRow(
-		"SELECT COUNT(*) FROM files WHERE account = ? AND (path = ? OR path LIKE ?)",
+		`SELECT COUNT(*) FROM files WHERE account = ? AND (path = ? OR path LIKE ? ESCAPE '\')`,
 		account, base, like,
 	).Scan(&n)
 	return n, err
@@ -263,13 +264,9 @@ func ListSnapshotByAccount(db *sql.DB, account string, cloudPathPrefix string) (
 	)
 	base := `SELECT path, pickcode, file_name FROM files WHERE account = ?`
 	if cloudPathPrefix != "" {
-		base += ` AND (path = ? OR path LIKE ?)`
-		prefixNorm := cloudPathPrefix
-		if !strings.HasSuffix(prefixNorm, "/") {
-			prefixNorm = prefixNorm + "/"
-		}
-		like := prefixNorm + "%"
-		rows, err = db.Query(base, account, cloudPathPrefix, like)
+		prefix := strings.TrimSuffix(normalizeDbPath(cloudPathPrefix), "/")
+		base += ` AND (path = ? OR path LIKE ? ESCAPE '\')`
+		rows, err = db.Query(base, account, prefix, literalPrefixPattern(prefix))
 	} else {
 		rows, err = db.Query(base, account)
 	}
@@ -420,11 +417,11 @@ func UpdateFolderPathPrefixBatch(db *sql.DB, account, oldPrefix, newPrefix strin
 		return 0, nil
 	}
 	oldPrefixLen := len([]rune(oldP)) + 1
-	oldPLike := oldP + "/%"
+	oldPLike := literalPrefixPattern(oldP)
 	res, err := db.Exec(`
 		UPDATE folders
 		SET path = ? || substr(path, ?)
-		WHERE account = ? AND (path = ? OR path LIKE ?)`,
+		WHERE account = ? AND (path = ? OR path LIKE ? ESCAPE '\')`,
 		newP, oldPrefixLen, account, oldP, oldPLike,
 	)
 	if err != nil {
@@ -439,8 +436,8 @@ func DeleteFolderByPathPrefix(db *sql.DB, account, pathPrefix string) (int64, er
 	if p == "" || p == "/" {
 		return 0, nil
 	}
-	res, err := db.Exec(`DELETE FROM folders WHERE account = ? AND (path = ? OR path LIKE ?)`,
-		account, p, p+"/%")
+	res, err := db.Exec(`DELETE FROM folders WHERE account = ? AND (path = ? OR path LIKE ? ESCAPE '\')`,
+		account, p, literalPrefixPattern(p))
 	if err != nil {
 		return 0, err
 	}
