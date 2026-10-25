@@ -12,9 +12,9 @@ type HealthResponse struct {
 	Version string `json:"version"`
 }
 
-// appVersion 通过 ldflags 在构建时注入，默认值兜底。
-// 默认 v1.5.4：设置项默认值修复、后台每日维护与未托管明细版本。
-var appVersion = "v1.5.4"
+// appVersion 通过 ldflags 在构建时注入；未注入时返回 dev，避免源码兜底版本漂移。
+// 启动时 main 会调用 SetVersion 覆盖；release 构建仍可通过 ldflags 直接覆盖 appVersion。
+var appVersion = "dev"
 
 // SetVersion 由 main 在启动时注入当前构建版本，保证本地构建的 /api/health
 // 与启动日志一致；release 构建仍可通过 ldflags 直接覆盖 appVersion。
