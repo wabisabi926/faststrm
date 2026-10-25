@@ -208,12 +208,21 @@ func ExecuteTask(ctx context.Context, taskID string, deps ExecutorDeps, onStarte
 				status = "failed"
 				errMsg = histErrMsg
 			}
-			_ = deps.TaskHistory.CompleteExecution(ctx, execID, status,
-				db.TaskExecutionSummary{
-					TotalFiles:      totalFiles,
-					DownloadedFiles: int(dl),
-					DeletedFiles:    cleanupDeleted,
-				}, errMsg, elapsedMs)
+			summary := db.TaskExecutionSummary{
+				TotalFiles:      totalFiles,
+				DownloadedFiles: int(dl),
+				DeletedFiles:    cleanupDeleted,
+			}
+			complete := func() error {
+				return deps.TaskHistory.CompleteExecution(ctx, execID, status, summary, errMsg, elapsedMs)
+			}
+			if cerr := complete(); cerr != nil {
+				logger.S().Errorf("[Task] 完成执行记录失败 exec=%d: %v，重试一次", execID, cerr)
+				time.Sleep(200 * time.Millisecond)
+				if rerr := complete(); rerr != nil {
+					logger.S().Errorf("[Task] 重试仍失败 exec=%d: %v", execID, rerr)
+				}
+			}
 
 			// 把内存日志落库：否则历史记录点「日志」永远是空白页
 			// （此前 AddLog 没有任何调用方，task_logs 表恒为 0 行）。
