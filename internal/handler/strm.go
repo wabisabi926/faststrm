@@ -40,9 +40,12 @@ func getProxyHTTPClient() *http.Client {
 	proxyHTTPClientOnce.Do(func() {
 		proxyHTTPClient = &http.Client{
 			Transport: &http.Transport{
+				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 				MaxIdleConns:          128,
 				MaxIdleConnsPerHost:   64,
+				MaxConnsPerHost:       16,
 				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
 				ResponseHeaderTimeout: 60 * time.Second, // 防止 CDN 卡在响应头导致请求永久挂起
 				DisableCompression:    true,
 				Proxy:                 http.ProxyFromEnvironment,

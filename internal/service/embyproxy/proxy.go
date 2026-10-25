@@ -329,9 +329,12 @@ func New(embyHost string, forceProxyUaTokens ...[]string) (*Proxy, error) {
 	streamClient := &http.Client{
 		Timeout: 0,
 		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 			MaxIdleConns:          128,
 			MaxIdleConnsPerHost:   64,
+			MaxConnsPerHost:       16,
 			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 0,
 			DisableCompression:    true,
 			Proxy:                 nil, // 直连上游，避免环境变量代理误伤内网 Emby
