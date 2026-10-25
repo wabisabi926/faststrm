@@ -2,12 +2,15 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/proc"
 	"github.com/zeromicro/go-zero/core/service"
 	"github.com/zeromicro/go-zero/rest"
 	"go.uber.org/zap/zapcore"
@@ -30,6 +33,29 @@ import (
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
+var (
+	shutdownMu sync.Mutex
+	shutdownFn func(context.Context) error
+)
+
+// Shutdown 触发当前 Run 实例的优雅退出；未启动或已退出时为空操作，可重复调用。
+func Shutdown(ctx context.Context) error {
+	shutdownMu.Lock()
+	fn := shutdownFn
+	shutdownFn = nil // 一次性：重复调用直接返回
+	shutdownMu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(ctx)
+}
+
+func setShutdownFn(fn func(context.Context) error) {
+	shutdownMu.Lock()
+	shutdownFn = fn
+	shutdownMu.Unlock()
+}
+
 // Run 启动 go-zero HTTP 服务
 func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	// 初始化日志
@@ -39,6 +65,8 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	}
 	logger.InitLogger(logDir, zapcore.InfoLevel)
 	defer logger.Sync()
+	// go-zero 在 Unix 上收到信号后会先排空再强杀；放宽窗口，避免任务排空被 5.5s 截断。
+	proc.SetTimeToForceQuit(25 * time.Second)
 
 	// go-zero log 配置（禁用其内部日志输出，统一走 zap）
 	logx.DisableStat()
@@ -55,6 +83,7 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 
 	server := rest.MustNewServer(restCfg, rest.WithNotFoundHandler(web.SPAHandler()))
 	defer server.Stop()
+	defer setShutdownFn(nil)
 
 	// 初始化依赖
 	issuer := auth.NewTokenIssuer([]byte(cfg.Settings.InternalToken))
@@ -96,6 +125,15 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 		}
 	} else {
 		logger.S().Warnf("sqlite not available, TaskHistoryRepo disabled")
+	}
+	if taskHistoryRepo != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if n, merr := taskHistoryRepo.MarkInterrupted(ctx, "服务异常退出，执行记录已中断"); merr != nil {
+			logger.S().Warnf("标记遗留执行记录失败: %v", merr)
+		} else if n > 0 {
+			logger.S().Infof("已将 %d 条遗留 running/pending 执行记录标记为失败", n)
+		}
+		cancel()
 	}
 	var lifeEventRepo *db.LifeEventRepo
 	if sqliteDB != nil {
@@ -401,6 +439,32 @@ func Run(cfg *config.AppConfig) error { //nolint:cyclop // complexity: 40
 	if initSettings != nil {
 		embyProxyManager.SetExternalPlayers(initSettings.Emby.ExternalPlayerEnabled)
 	}
+
+	// 优雅退出：停止接入与后台组件，取消并等待运行中任务。
+	setShutdownFn(func(ctx context.Context) error {
+		logger.S().Info("[Shutdown] 收到退出请求，开始排空...")
+
+		// go-zero 的 Stop() 只关闭日志；HTTP 优雅停服由其 shutdown 监听器完成
+		// （Unix 生效，Windows 为 no-op，进程退出时由系统关闭监听）。
+		go proc.Shutdown()
+		scheduler.Stop()
+		if mon != nil {
+			mon.StopAll()
+		}
+		embyProxyManager.StopAll()
+
+		var errs []error
+		if n := taskRuntime.CancelAll(); n > 0 {
+			logger.S().Infof("[Shutdown] 已取消 %d 个运行中任务，等待退出...", n)
+			if !taskRuntime.WaitAll(ctx) {
+				errs = append(errs, fmt.Errorf("任务排空超时: %w", ctx.Err()))
+			}
+		}
+
+		logger.Sync()
+		logger.S().Info("[Shutdown] 排空完成")
+		return errors.Join(errs...)
+	})
 
 	server.Start()
 	return nil

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -97,6 +98,12 @@ func main() {
 	case <-quitCh:
 		logger.S().Infof("托盘请求退出，正在关闭...")
 	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.S().Warnf("优雅退出未完成: %v", err)
+	}
+	cancel()
 
 	journal.Info("server", "FastStrm 服务关闭", nil)
 	logger.S().Infof("FastStrm 已关闭")

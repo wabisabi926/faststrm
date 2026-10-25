@@ -264,6 +264,39 @@ func (r *Runtime) Cancel(taskID string) (found bool) {
 	return ok
 }
 
+// CancelAll 取消所有运行中的任务（进程退出排空用），返回触发取消的数量。
+func (r *Runtime) CancelAll() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, rt := range r.tasks {
+		rt.cancel()
+		if rt.state.Status == StatusRunning || rt.state.Status == StatusPending {
+			rt.state.Status = StatusCancelled
+			rt.state.EndedAt = time.Now().UnixMilli()
+		}
+	}
+	return len(r.tasks)
+}
+
+// WaitAll 等待所有任务退出（执行器 Unregister）。ctx 到期返回 false。
+func (r *Runtime) WaitAll(ctx context.Context) bool {
+	r.mu.Lock()
+	dones := make([]<-chan struct{}, 0, len(r.tasks))
+	for _, rt := range r.tasks {
+		dones = append(dones, rt.done)
+	}
+	r.mu.Unlock()
+
+	for _, done := range dones {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return true
+}
+
 // RunningTasks 当前全部运行中的任务
 func (r *Runtime) RunningTasks() map[string]*RuntimeState {
 	r.mu.Lock()

@@ -159,6 +159,25 @@ func (r *TaskHistoryRepo) CompleteExecution(ctx context.Context, id int64, statu
 	return r.UpdateExecution(ctx, id, patch)
 }
 
+// MarkInterrupted 将上次进程退出时遗留的 running/pending 执行记录标记为失败。
+// 正常优雅退出由执行器写入最终状态；这里只处理崩溃/硬退出遗留。
+func (r *TaskHistoryRepo) MarkInterrupted(ctx context.Context, reason string) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
+	now := NowMs()
+	res, err := r.db.ExecContext(ctx, `UPDATE task_executions
+SET status = 'failed',
+    error = ?,
+    ended_at = ?,
+    duration_ms = CASE WHEN started_at > 0 THEN ? - started_at ELSE duration_ms END
+WHERE status IN ('running', 'pending')`, reason, now, now)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // 保留策略：执行记录只留最近 N 条（含日志）。任务日志按行存，不设上限会无限增长。
 const (
 	TaskHistoryKeepExecutions = 200

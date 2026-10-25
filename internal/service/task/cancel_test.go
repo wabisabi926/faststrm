@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -61,5 +62,52 @@ func TestRuntimeWaitWaitsForExecutorExit(t *testing.T) {
 	rt.Unregister(id)
 	if !<-done {
 		t.Fatal("Wait should return true after unregister")
+	}
+}
+
+func TestRuntimeCancelAllWaitsForUnregister(t *testing.T) {
+	rt := GetRuntime()
+	ids := []string{"cancelall-test-1", "cancelall-test-2"}
+	ctxs := make([]context.Context, 0, len(ids))
+	for _, id := range ids {
+		ctx, _ := rt.Register(&Task{ID: id, Account: "cancelall-account"})
+		ctxs = append(ctxs, ctx)
+	}
+	defer func() {
+		for _, id := range ids {
+			rt.Unregister(id)
+		}
+	}()
+
+	if n := rt.CancelAll(); n < len(ids) {
+		t.Fatalf("CancelAll = %d, want >= %d", n, len(ids))
+	}
+	for i, ctx := range ctxs {
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatalf("task %s context not cancelled", ids[i])
+		}
+	}
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan bool, 1)
+	go func() { done <- rt.WaitAll(waitCtx) }()
+
+	select {
+	case <-done:
+		t.Fatal("WaitAll returned before executor unregistered")
+	case <-time.After(30 * time.Millisecond):
+	}
+	rt.Unregister(ids[0])
+	select {
+	case <-done:
+		t.Fatal("WaitAll returned while another task still running")
+	case <-time.After(30 * time.Millisecond):
+	}
+	rt.Unregister(ids[1])
+	if !<-done {
+		t.Fatal("WaitAll should return true after all tasks unregistered")
 	}
 }
