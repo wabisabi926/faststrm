@@ -169,7 +169,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 					oldCloudPath, cloudPath, n)
 			}
 		}
-		m.migrateManagedPaths(oldLocalPath, mapping.localPath, oldCloudPath, cloudPath)
+		m.migrateManagedPaths(ctx, account, "rename", oldLocalPath, mapping.localPath, oldCloudPath, cloudPath)
 		m.appendLog(ctx, account, "rename", true, cloudPath, mapping.localPath,
 			fmt.Sprintf("文件夹已原子重命名: %s → %s", oldLocalPath, mapping.localPath))
 		logger.S().Infof("[Monitor] 文件夹原子重命名: %s → %s", oldLocalPath, mapping.localPath)
@@ -339,7 +339,7 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 		logger.S().Infof("[Monitor] 本地 STRM 重命名完成: %s → %s", oldStrmPath, newStrmPath)
 		// 先迁移托管索引，再重同步内容：writeStrmFile 会按新路径重新登记，
 		// 若先登记会造成新旧两条记录并存，迁移时新路径冲突。
-		m.migrateManagedPaths(oldStrmPath, newStrmPath, oldCloudPath, cloudPath)
+		m.migrateManagedPaths(ctx, account, "rename", oldStrmPath, newStrmPath, oldCloudPath, cloudPath)
 	}
 	// 3. STRM 内容重同步（对齐 L1360: _sync_strm_text_with_event）
 	if event.PickCode != "" {

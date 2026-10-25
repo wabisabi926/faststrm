@@ -334,14 +334,16 @@ func (m *Monitor) deleteOldStrmAtLocalPath(
 }
 
 // migrateManagedPaths 在文件/目录 rename/move 后同步托管索引的本地与云端路径。
-// 失败时保留旧记录并记录错误，调用方仍已完成文件移动；下一次托管登记/巡检可修复。
-func (m *Monitor) migrateManagedPaths(oldLocal, newLocal, oldCloud, newCloud string) {
+// 失败时文件已移动，无法回滚；记录事件日志提示，下一次启动纳管会按本地文件修复。
+func (m *Monitor) migrateManagedPaths(ctx context.Context, account, eventType, oldLocal, newLocal, oldCloud, newCloud string) {
 	if m.sqliteDB == nil || oldLocal == "" || newLocal == "" || oldLocal == newLocal {
 		return
 	}
 	n, err := db.UpdateManagedPathPrefix(m.sqliteDB, oldLocal, newLocal, oldCloud, newCloud)
 	if err != nil {
 		logger.S().Warnf("[Monitor] 托管索引路径迁移失败 %s → %s: %v", oldLocal, newLocal, err)
+		m.appendLog(ctx, account, eventType, false, newCloud, newLocal,
+			fmt.Sprintf("托管索引迁移失败（文件已移动，下次启动纳管会修复）: %v", err))
 		return
 	}
 	if n > 0 {

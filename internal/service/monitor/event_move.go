@@ -532,7 +532,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 					oldCloudPath, cloudPath, n)
 			}
 		}
-		m.migrateManagedPaths(oldLocalPath, mapping.localPath, oldCloudPath, cloudPath)
+		m.migrateManagedPaths(ctx, account, "move", oldLocalPath, mapping.localPath, oldCloudPath, cloudPath)
 		m.appendLog(ctx, account, "move", true, cloudPath, mapping.localPath,
 			fmt.Sprintf("文件夹已原子移动: %s → %s", oldLocalPath, mapping.localPath))
 		logger.S().Infof("[Monitor] 文件夹原子移动: %s → %s", oldLocalPath, mapping.localPath)
@@ -623,7 +623,7 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 			}
 			logger.S().Infof("[Monitor] local_move STRM rename 完成: %s → %s", oldStrmPath, newStrmPath)
 			// 与 rename 分支一致：先迁移托管索引，再由 writeStrmFile 刷新新路径记录。
-			m.migrateManagedPaths(oldStrmPath, newStrmPath, oldCloudPath, cloudPath)
+			m.migrateManagedPaths(ctx, account, "move", oldStrmPath, newStrmPath, oldCloudPath, cloudPath)
 		}
 		// STRM 内容重同步（对齐 L1820-1826: _sync_strm_text_with_event）
 		if event.PickCode != "" {
