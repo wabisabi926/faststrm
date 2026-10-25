@@ -284,6 +284,14 @@ func (r *managedRecorder) Bootstrap(ctx context.Context, roots []string, account
 	return state.added, state.skipped, nil
 }
 
+// staleStrmTmpAge STRM 临时文件保留期。WriteStrmFile 使用 .strm.tmp-*，
+// 进程被硬杀时可能残留，启动纳管时顺手清理。
+const staleStrmTmpAge = 24 * time.Hour
+
+func isStaleStrmTmp(name string, modTime, now time.Time) bool {
+	return strings.Contains(name, ".strm.tmp-") && now.Sub(modTime) > staleStrmTmpAge
+}
+
 type bootstrapState struct {
 	recorder   *managedRecorder
 	accountSet map[string]struct{}
@@ -305,6 +313,14 @@ func (s *bootstrapState) walkRoot(ctx context.Context, root string) error {
 		if d.IsDir() {
 			if d.Name() == strmutil.TrashDirName {
 				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil && isStaleStrmTmp(d.Name(), info.ModTime(), time.Now()) {
+			if rerr := os.Remove(p); rerr != nil {
+				logger.S().Warnf("[ManagedStrm] 清理陈旧临时文件失败 %s: %v", p, rerr)
+			} else {
+				logger.S().Infof("[ManagedStrm] 已清理陈旧临时文件: %s", p)
 			}
 			return nil
 		}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/wabisabi926/faststrm/internal/service/db"
 )
@@ -92,6 +93,38 @@ func TestManagedRecorderVerifyAndBootstrap(t *testing.T) {
 	}
 	if m, _ := db.GetManagedStrm(database, thirdParty); m != nil {
 		t.Fatal("non-standard URL with pickcode must not be managed")
+	}
+}
+
+func TestBootstrapCleansStaleStrmTmp(t *testing.T) {
+	database, err := db.OpenNew(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	root := t.TempDir()
+	stale := filepath.Join(root, "movie.strm.tmp-old")
+	fresh := filepath.Join(root, "movie.strm.tmp-new")
+	for _, p := range []string{stale, fresh} {
+		if err := os.WriteFile(p, []byte("tmp"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldTime := time.Now().Add(-staleStrmTmpAge - time.Hour)
+	if err := os.Chtimes(stale, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := NewManagedRecorder(database)
+	if _, _, err := rec.Bootstrap(context.Background(), []string{root}, []string{"alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("超过保留期的临时文件应被清理，stat err=%v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("未到保留期的临时文件应保留: %v", err)
 	}
 }
 
