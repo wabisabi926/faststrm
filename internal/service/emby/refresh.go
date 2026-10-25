@@ -13,6 +13,12 @@ import (
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
+// 刷库并发与排队上限：全量任务会一次安排大量目录，必须限制同时打向 Emby 的请求数。
+const (
+	refreshConcurrency  = 4
+	refreshQueueTimeout = 30 * time.Second
+)
+
 // MediaServerRefresh 媒体服务器刷新服务
 // 对齐 qmediasync：不缓存 Client，每次动态创建
 type MediaServerRefresh struct {
@@ -20,6 +26,7 @@ type MediaServerRefresh struct {
 
 	debounceMap map[string]*time.Timer
 	mu          sync.Mutex
+	sem         chan struct{}
 }
 
 // NewMediaServerRefresh 创建刷新服务
@@ -28,6 +35,7 @@ func NewMediaServerRefresh(_ *Client, settingsFn func() model.EmbySettings) *Med
 	return &MediaServerRefresh{
 		settingsFn:  settingsFn,
 		debounceMap: make(map[string]*time.Timer),
+		sem:         make(chan struct{}, refreshConcurrency),
 	}
 }
 
@@ -40,7 +48,9 @@ func (r *MediaServerRefresh) getClient() *Client {
 	return NewClient(s.URL, s.APIKey)
 }
 
-// RefreshByPath 按路径刷新（带防抖）
+// RefreshByPath 按路径刷新（按目录防抖 + 有界并发）。
+// 同一目录下的多个文件只保留一个 timer，避免全量任务生成上万个刷库请求；
+// 刷新父目录时 Recursive=true 已覆盖其下所有新增/删除项。
 func (r *MediaServerRefresh) RefreshByPath(ctx context.Context, filePath string) error {
 	if r == nil {
 		return nil
@@ -55,28 +65,41 @@ func (r *MediaServerRefresh) RefreshByPath(ctx context.Context, filePath string)
 		return nil
 	}
 
+	target := filepath.Dir(filepath.Clean(filePath))
+
 	delay := 10 * time.Second
 	if settings.DebounceSeconds > 0 {
 		delay = time.Duration(settings.DebounceSeconds) * time.Second
 	}
 
 	r.mu.Lock()
-	if oldTimer, ok := r.debounceMap[filePath]; ok {
+	if oldTimer, ok := r.debounceMap[target]; ok {
 		oldTimer.Stop()
 	}
 
 	timer := time.AfterFunc(delay, func() {
-		// 回调中只做 doRefresh，不加锁/解锁（避免与主 goroutine 重复 Unlock 导致 fatal）
-		r.doRefresh(context.Background(), filePath)
+		r.runRefresh(target)
 		r.mu.Lock()
-		delete(r.debounceMap, filePath)
+		delete(r.debounceMap, target)
 		r.mu.Unlock()
 	})
-	r.debounceMap[filePath] = timer
+	r.debounceMap[target] = timer
 	r.mu.Unlock()
 
-	logger.S().Debugf("[Emby] 已安排刷库: %s (延迟 %v)", filePath, delay)
+	logger.S().Debugf("[Emby] 已安排刷库(目录): %s 触发=%s (延迟 %v)", target, filePath, delay)
 	return nil
+}
+
+// runRefresh 在并发上限内执行单个目录刷新；排队超时则跳过，避免 goroutine 堆积。
+func (r *MediaServerRefresh) runRefresh(dir string) {
+	select {
+	case r.sem <- struct{}{}:
+		defer func() { <-r.sem }()
+	case <-time.After(refreshQueueTimeout):
+		logger.S().Warnf("[Emby] 刷库排队超时，跳过: %s", dir)
+		return
+	}
+	r.doRefresh(context.Background(), dir)
 }
 
 // RefreshOnCreate 创建后刷新
