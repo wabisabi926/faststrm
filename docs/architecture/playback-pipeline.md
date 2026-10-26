@@ -34,6 +34,7 @@
 - 并发相同 pickcode 用 singleflight 合并。
 - 失败短时负面缓存，避免 115 API 雪崩。
 - 代理流遇到 401/403/404/408/429/5xx 会换链重试一次；Range 分片换链用 singleflight 合并。
+- 代理 HTTP 客户端连接/TLS 握手超时 10s，单主机连接上限 16；CDN 黑洞节点不会长期占用代理并发额度。
 
 ## Range 分片代理
 
@@ -54,6 +55,7 @@
   - 原盘格式 → `proxyStreamToStrm`，由 STRM 端点走 Range 代理。
   - 普通格式 → 解析 302 链，客户端直连 CDN；解析不到自身端点时回退代理。
   - 自身 `/api/strm` 的 seek 代理和 302 解析走进程内 Handler，不经过域名/DNS/NAT 回环；外部 STRM 保留 HTTP fallback。
+  - 解析外部 STRM 时只发送 `User-Agent` / `Accept`，不向第三方源外发 `X-Emby-Token`、`Authorization`、`Cookie`；跨主机重定向再兜底清除这些凭据。
 - Web HTML/JS 注入 crossOrigin 补丁，避免浏览器跨域拉 CDN 失败。
 - 外部播放器按钮只在通过 8097 访问 Emby 网页端时注入。
 

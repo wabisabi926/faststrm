@@ -25,6 +25,8 @@ JWT 保护。返回当前进程与反代的聚合状态：
 
 `0.0.0.0` 是监听地址；客户端使用 `clientAddr`。
 
+源码构建未通过 ldflags 注入版本时，`version` 返回 `dev`（避免显示源码里的兜底版本号）。
+
 ## `GET /api/runtime/journal`
 
 JWT 保护。参数：

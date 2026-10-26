@@ -37,9 +37,28 @@ ports:
 - **STRM 前缀 `strmPrefix`**：用 `http://<宿主机IP>:8090`，保证 Emby 与播放器都能访问。
 - 客户端连接反代时用 `http://<宿主机IP>:8097`，不要用容器名。
 
+## 日志级别
+
+默认 `info`；排查播放/刷库问题时可在 compose 环境变量中设置：
+
+```yaml
+environment:
+  - FASTSTRM_LOG_LEVEL=debug   # debug / info / warn / error
+```
+
+非法值回退 `info`，修改后重启容器生效。
+
+## 优雅退出
+
+服务收到 SIGTERM 后先停止调度、监控和反代，再取消并等待运行中任务退出，最长 20s。Docker 默认只等 10s 就 SIGKILL，会截断任务排空；请给容器设置：
+
+```yaml
+stop_grace_period: 25s
+```
+
 ## 健康检查
 
-`GET /api/health` 返回 `{"status":"ok","version":"..."}`。
+`GET /api/health` 返回 `{"status":"ok","version":"..."}`；源码构建未注入版本时返回 `dev`。
 
 ## 首次启动
 

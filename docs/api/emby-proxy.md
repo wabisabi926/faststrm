@@ -26,6 +26,16 @@ FastStrm 在独立端口（默认 8097）运行 Emby 反向代理；客户端必
 
 原盘格式（`iso/bdmv/bdav/dvd/bluray`）走服务端代理；普通格式解析 302 链后直连 CDN。
 
+## 外部 STRM 请求头边界
+
+解析外部 STRM 的 HEAD/重定向请求只携带 `User-Agent` / `Accept`：
+
+- 不发送 `X-Emby-Token`、`Authorization`、`Cookie` 及用户身份头；
+- 跨主机重定向时再兜底清除敏感头；
+- 若外部源依赖 Emby 认证头鉴权，需要在源侧配置独立凭据。
+
+内置 `/api/strm` 不受影响：自身端点走进程内 Handler，不经过外部 HTTP 请求。
+
 ## 状态接口
 
 `GET /api/emby/proxy/status`（JWT）返回：

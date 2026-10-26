@@ -27,6 +27,8 @@ services:
       - ./strmData:/app/data
       - ./config:/app/config
     restart: unless-stopped
+    # 服务退出时最多等待 20s 排空运行中任务；Docker 默认 10s 会提前 SIGKILL。
+    stop_grace_period: 25s
     logging:
       driver: "json-file"
       options:

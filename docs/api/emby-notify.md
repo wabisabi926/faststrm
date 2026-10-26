@@ -22,6 +22,16 @@
 
 通知统一通过 Telegram 发送；未配置 Telegram 时 Webhook 仍会被接收，但不会推送消息。
 
+## 刷库
+
+启用「入库/删除后刷新 Emby」时，刷库按目录防抖并限制并发：
+
+- 同一目录只保留一个防抖 timer，默认 10s（`emby.debounceSeconds` 可调）；
+- 刷新父目录时 `Recursive=true`，覆盖其下新增/删除项；
+- 同时最多 4 个刷新请求，排队超过 30s 的目录跳过并记录警告，避免全量任务把 Emby 打满。
+
+全量任务只对发生变化的目录刷库，不会为每个文件单独请求 Emby。
+
 ## `GET /api/emby/settings`
 
 JWT 保护。返回 `EmbySettings`，其中 `apiKey` 已脱敏。

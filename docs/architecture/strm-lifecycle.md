@@ -13,7 +13,8 @@
 
 - 普通：`movie.mkv` → `movie.strm`
 - ISO：`movie.iso` → `movie.iso.strm`
-- 写入使用 `.tmp` + rename；内容未变化时不写盘，避免 Emby 假重扫。
+- 写入使用 `.tmp` + `fsync` + rename；内容未变化时不写盘，避免 Emby 假重扫。
+- 启动纳管会清理超过 24h 的 `.strm.tmp-*` 残留，避免异常退出留下垃圾文件。
 
 ## BDMV
 
@@ -24,6 +25,7 @@
 - **create**：生成 STRM，写入 files 表并登记 managed。
 - **move/rename**：
   - 默认 `local_move`：文件重命名/移动 STRM 并同步内容；文件夹只原子移动目录 + 更新 DB 路径前缀，不递归改内容。
+  - 文件/目录路径变化后同步迁移 `managed_strms` 的本地与云端路径；迁移失败写入生活事件日志，下次启动纳管可修复。
   - `recreate`：删除旧 STRM，在新位置重新生成。
 - **delete**：只删除已托管且指纹未变的 STRM，走回收站。
 - 事件缺少 pickcode 时按 file_id 反查（DB → `files/info`）。
