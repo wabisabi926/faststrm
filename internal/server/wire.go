@@ -15,6 +15,23 @@ import (
 	"github.com/wabisabi926/faststrm/pkg/logger"
 )
 
+// newTelegramDispatcher 按启动配置构造通知分发器。
+// NewDispatcher 在 Token+ChatID 存在时会默认启用；这里必须按用户开关覆盖，
+// 否则「启用通知=false」只在保存设置后生效，重启后又会继续发送。
+func newTelegramDispatcher(tg model.TelegramSettings) (*notify.Dispatcher, *notify.TelegramBot) {
+	var tgBot *notify.TelegramBot
+	if tg.BotToken != "" {
+		var err error
+		tgBot, err = notify.CreateBotFromSettings(tg)
+		if err != nil {
+			logger.S().Errorf("[Telegram] 创建 Bot 失败: %v", err)
+		}
+	}
+	dispatcher := notify.NewDispatcher(tgBot)
+	dispatcher.SetEnabled(tg.Enabled)
+	return dispatcher, tgBot
+}
+
 // ==================== 阶段6 依赖装配 ====================
 
 // initPhase6Deps 装配 Telegram / Emby / LifeMonitor 三组 handler 依赖，并返回 Monitor 实例
@@ -44,19 +61,7 @@ func initPhase6Deps(
 	}
 
 	// ---------- Telegram / Notify ----------
-	// 优先构造持久 TelegramBot（若启动时已配置 BotToken）；否则留 nil，由 handler 在请求时按 settings 临时构造
-	var tgBot *notify.TelegramBot
-	if tgSettings.BotToken != "" {
-		var err error
-		tgBot, err = notify.CreateBotFromSettings(tgSettings)
-		if err != nil {
-			logger.S().Errorf("[Telegram] 创建 Bot 失败: %v", err)
-		}
-	}
-	dispatcher := notify.NewDispatcher(tgBot)
-	if tgSettings.Enabled {
-		dispatcher.SetEnabled(true)
-	}
+	dispatcher, tgBot := newTelegramDispatcher(tgSettings)
 
 	// 延迟注入 Notifier 到 execDeps（因为 dispatcher 刚创建好）
 	// execDeps 是参数值拷贝，本函数内修改影响 menuActionsAdapter
