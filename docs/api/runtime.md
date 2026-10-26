@@ -7,7 +7,7 @@ JWT 保护。返回当前进程与反代的聚合状态：
 ```json
 {
   "status": "ok",
-  "version": "v1.5.6",
+  "version": "v1.5.7",
   "startedAt": "2026-10-22T09:59:57+08:00",
   "uptimeSeconds": 120,
   "proxy": {
