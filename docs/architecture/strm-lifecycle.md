@@ -25,6 +25,10 @@
 - **create**：生成 STRM，写入 files 表并登记 managed。
 - **move/rename**：
   - 默认 `local_move`：文件重命名/移动 STRM 并同步内容；文件夹只原子移动目录 + 更新 DB 路径前缀，不递归改内容。
+  - move/rename 的 `parent_id → folders` 缓存必须校验：通过 `FsDirGetID(path)` 确认路径仍对应同一 cid，否则回退 API；结果短 TTL 缓存。
+  - 移动/改名成功后显式刷新目标 cid 的目录缓存；前缀批量更新未命中或失败时记录告警。
+  - 旧本地目录或旧 STRM 不存在时，在正确目标位置重建，不再静默跳过。
+  - 包含 `..`、本地盘符或本地映射根前缀的 `folders/files` 旧路径会被拒绝，避免本地路径写回云端缓存。
   - 文件/目录路径变化后同步迁移 `managed_strms` 的本地与云端路径；迁移失败写入生活事件日志，下次启动纳管可修复。
   - `recreate`：删除旧 STRM，在新位置重新生成。
 - **delete**：只删除已托管且指纹未变的 STRM，走回收站。

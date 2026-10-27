@@ -30,6 +30,7 @@
 - [Emby 反向代理](emby-proxy.md)
 - [Emby 通知与 Webhook](emby-notify.md)
 - [系统状态与系统事件](runtime.md)
+- [生活事件日志](life-events.md)
 
 ## OpenAPI
 
