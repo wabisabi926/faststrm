@@ -19,7 +19,7 @@ cd ..
 go build ./cmd/server
 
 # 指定版本
-go build -ldflags "-X 'main.version=v1.5.7' -X 'main.BuildDate=2026-10-23T00:00:00Z'" ./cmd/server
+go build -ldflags "-X 'main.version=v1.5.8' -X 'main.BuildDate=2026-10-23T00:00:00Z'" ./cmd/server
 ```
 
 前端产物必须位于 `internal/web/spa/index.html`，否则嵌入的 Web UI 为空。
@@ -29,7 +29,7 @@ go build -ldflags "-X 'main.version=v1.5.7' -X 'main.BuildDate=2026-10-23T00:00:
 ```bash
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
   -trimpath \
-  -ldflags "-X 'main.version=v1.5.7' -X 'main.BuildDate=...'" \
+  -ldflags "-X 'main.version=v1.5.8' -X 'main.BuildDate=...'" \
   -o dist/faststrm-windows-amd64-test-<date>-<version>.exe \
   ./cmd/server
 ```
@@ -38,7 +38,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
 
 ```bash
 export SCRIPTS=$(cygpath -u "$PWD/scripts")   # Windows Git Bash
-BUILD_FNOS_QUIET=1 FASTSTRM_VERSION=1.5.7 PATH="$SCRIPTS:$PATH" ./scripts/build-fnos.sh all
+BUILD_FNOS_QUIET=1 FASTSTRM_VERSION=1.5.8 PATH="$SCRIPTS:$PATH" ./scripts/build-fnos.sh all
 ```
 
 `FASTSTRM_VERSION` 用于未打 tag 的预发布；否则脚本会回落到最新 git tag。
