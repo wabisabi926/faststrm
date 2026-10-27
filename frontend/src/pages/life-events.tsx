@@ -90,6 +90,7 @@ export default function LifeEventsPage({
   const [accountFilter, setAccountFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [successFilter, setSuccessFilter] = useState<string>("all");
+  const [mappedOnly, setMappedOnly] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   // 默认隐藏「轮询」类型：历史轮询失败记录量大，会把业务事件挤出视野
   const [showPoll, setShowPoll] = useState(false);
@@ -101,6 +102,7 @@ export default function LifeEventsPage({
       if (accountFilter) params.set("account", accountFilter);
       if (typeFilter !== "all") params.set("eventType", typeFilter);
       if (successFilter !== "all") params.set("success", successFilter);
+      if (mappedOnly) params.set("mapped", "true");
       params.set("limit", "500");
 
       const res = await axiosInstance.get(
@@ -113,7 +115,7 @@ export default function LifeEventsPage({
     } finally {
       setLoading(false);
     }
-  }, [accountFilter, typeFilter, successFilter]);
+  }, [accountFilter, typeFilter, successFilter, mappedOnly]);
 
   useEffect(() => {
     fetchData();
@@ -299,6 +301,22 @@ export default function LifeEventsPage({
                 <option value="true">成功</option>
                 <option value="false">失败</option>
               </select>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <input
+                id="mapped-only"
+                type="checkbox"
+                className="h-4 w-4 rounded border-input"
+                checked={mappedOnly}
+                onChange={(e) => setMappedOnly(e.target.checked)}
+              />
+              <label
+                htmlFor="mapped-only"
+                className="text-sm text-muted-foreground cursor-pointer whitespace-nowrap"
+                title="只显示 filePath 或本地路径命中生活监控路径映射的事件"
+              >
+                仅显示映射路径
+              </label>
             </div>
             <div className="flex items-center gap-1.5">
               <input

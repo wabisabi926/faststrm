@@ -249,6 +249,39 @@ test.describe('核心页面可达性', () => {
     await expect(page.getByRole('columnheader', { name: '耗时' })).toBeVisible();
   });
 
+  test('生活事件支持仅显示映射路径', async ({ page }) => {
+    let sawMapped = false;
+    await page.route(/\/api\/lifeEvents(\?.*)?$/, (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("mapped") === "true") {
+        sawMapped = true;
+        return route.fulfill({
+          json: {
+            total: 1,
+            items: [
+              {
+                id: "1",
+                timestamp: Date.now(),
+                account: "e2e-account",
+                eventType: "create",
+                success: true,
+                filePath: "Service/movie/a.mkv",
+                localPath: "/app/data/strm/Service/movie/a.strm",
+                message: "映射内事件",
+              },
+            ],
+          },
+        });
+      }
+      return route.fulfill({ json: { total: 0, items: [] } });
+    });
+
+    await page.goto('/life-events');
+    await page.getByLabel('仅显示映射路径').check();
+    await expect.poll(() => sawMapped).toBe(true);
+    await expect(page.getByText('映射内事件')).toBeVisible();
+  });
+
   test('日志详情页可达且深色模式正常', async ({ page }) => {
     await page.goto('/log/e2e-no-task');
     await expect(page.getByRole('heading', { name: '任务日志' })).toBeVisible();

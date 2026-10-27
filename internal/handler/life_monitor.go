@@ -263,7 +263,7 @@ func HandleLifeMonitorPOST(deps LifeMonitorDeps) http.HandlerFunc { //nolint:cyc
 // ==================== Life Events ====================
 
 // HandleLifeEventsGET GET /api/lifeEvents 列出生活事件处理日志
-// query: account, eventType, success, since, until, limit
+// query: account, eventType, success, since, until, limit, mapped
 func HandleLifeEventsGET(deps LifeMonitorDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if deps.LifeEventLogRepo == nil {
@@ -300,6 +300,26 @@ func HandleLifeEventsGET(deps LifeMonitorDeps) http.HandlerFunc {
 		if l := q.Get("limit"); l != "" {
 			if n, err := strconv.Atoi(l); err == nil {
 				query.Limit = n
+			}
+		}
+		if mapped := strings.ToLower(strings.TrimSpace(q.Get("mapped"))); mapped == "true" || mapped == "1" {
+			settings, serr := deps.SettingsStore.ReadSettings()
+			if serr != nil {
+				httpx.WriteJson(w, http.StatusInternalServerError, map[string]string{"error": "读取路径映射失败: " + serr.Error()})
+				return
+			}
+			if settings != nil {
+				query.MappedOnly = true
+				for _, mp := range settings.LifeMonitor.PathMappings {
+					if strings.TrimSpace(mp.CloudPath) == "" && strings.TrimSpace(mp.LocalPath) == "" {
+						continue
+					}
+					query.MappedPaths = append(query.MappedPaths, db.LifeEventPathFilter{
+						Account:   strings.TrimSpace(mp.Account),
+						CloudPath: strings.TrimSpace(mp.CloudPath),
+						LocalPath: strings.TrimSpace(mp.LocalPath),
+					})
+				}
 			}
 		}
 

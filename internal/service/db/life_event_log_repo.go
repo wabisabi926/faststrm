@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 )
 
 // ==================== LifeEventLog（事件处理日志，区别于 life_events 待处理队列） ====================
@@ -99,9 +101,61 @@ type LifeEventLogQuery struct {
 	UntilMs   int64  // < UntilMs
 	Limit     int
 	Offset    int
+	// MappedOnly=true 时只返回命中生活监控路径映射的事件。
+	MappedOnly  bool
+	MappedPaths []LifeEventPathFilter
+}
+
+// LifeEventPathFilter 一条生活监控路径映射的过滤条件。
+type LifeEventPathFilter struct {
+	Account   string
+	CloudPath string
+	LocalPath string
 }
 
 // Query 查询事件日志（按时间倒序）
+
+// applyMappedFilter 把生活监控路径映射条件拼进 WHERE。
+// 单独拆出以控制 Query 的圈复杂度。
+func applyMappedFilter(where []string, args []any, q LifeEventLogQuery) ([]string, []any) {
+	if !q.MappedOnly {
+		return where, args
+	}
+	groups := make([]string, 0, len(q.MappedPaths))
+	for _, mp := range q.MappedPaths {
+		parts := make([]string, 0, 6)
+		if mp.Account != "" {
+			parts = append(parts, "account = ?")
+			args = append(args, mp.Account)
+		}
+		pathParts := make([]string, 0, 4)
+		cloud := strings.Trim(strings.TrimSpace(mp.CloudPath), "/")
+		if cloud != "" {
+			pathParts = append(pathParts, "file_path = ?", "file_path LIKE ? ESCAPE '\\'")
+			args = append(args, cloud, literalPrefixPattern(cloud))
+		}
+		local := strings.TrimSpace(mp.LocalPath)
+		if local != "" {
+			local = filepath.Clean(local)
+			pathParts = append(pathParts, "local_path = ?")
+			args = append(args, local)
+			for _, sep := range []string{"/", "\\"} {
+				pathParts = append(pathParts, "local_path LIKE ? ESCAPE '\\'")
+				args = append(args, escapeLike(local+sep)+"%")
+			}
+		}
+		if len(pathParts) == 0 {
+			continue
+		}
+		parts = append(parts, "("+strings.Join(pathParts, " OR ")+")")
+		groups = append(groups, "("+strings.Join(parts, " AND ")+")")
+	}
+	if len(groups) == 0 {
+		return append(where, "1=0"), args
+	}
+	return append(where, "("+strings.Join(groups, " OR ")+")"), args
+}
+
 func (r *LifeEventLogRepo) Query(ctx context.Context, q LifeEventLogQuery) ([]LifeEventLog, error) {
 	if r == nil || r.db == nil {
 		return nil, nil
@@ -132,6 +186,7 @@ func (r *LifeEventLogRepo) Query(ctx context.Context, q LifeEventLogQuery) ([]Li
 		where = append(where, "timestamp < ?")
 		args = append(args, q.UntilMs)
 	}
+	where, args = applyMappedFilter(where, args, q)
 	limit := q.Limit
 	if limit <= 0 {
 		limit = 200
