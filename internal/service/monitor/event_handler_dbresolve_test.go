@@ -259,3 +259,115 @@ func TestResolveCloudDirPathByMappingPrefix_EmptyParentID(t *testing.T) {
 		t.Fatalf("parent_id 非法不应打接口, 实际 %d 次", n)
 	}
 }
+
+// 校验 folders 缓存：move/rename 必须确认缓存路径仍对应同一个 cid。
+type fakeDirResolver struct {
+	cids map[string]int64
+	err  error
+}
+
+func (f fakeDirResolver) FsDirGetID(_ context.Context, dirPath string) (int64, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.cids[dirPath], nil
+}
+
+func TestResolveCloudDirPathByParentIDChecked_RejectsStaleCache(t *testing.T) {
+	sqldb := newTestSqliteDB(t)
+	if err := db.UpsertFolderEntry(sqldb, "acc1", db.FilePathEntry{
+		FileID:   "200",
+		Path:     "Service/movie/XXX2",
+		FileName: "XXX2",
+		ParentID: "100",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := &Monitor{sqliteDB: sqldb}
+	cfg := model.LifeMonitorSettings{PathMappings: []model.MonitorPathMapping{
+		{Account: "acc1", CloudPath: "Service", LocalPath: "/app/data/strm/Service"},
+	}}
+	// 缓存路径当前解析到 cid=300，不是事件 parentID=200 → 必须拒绝
+	got := m.resolveCloudDirPathByParentIDChecked(
+		context.Background(), "acc1", "200", cfg,
+		fakeDirResolver{cids: map[string]int64{"Service/movie/XXX2": 300}}, true,
+	)
+	if got != "" {
+		t.Fatalf("stale folders cache must be rejected, got %q", got)
+	}
+}
+
+func TestResolveCloudDirPathByParentIDChecked_AcceptsVerifiedCache(t *testing.T) {
+	sqldb := newTestSqliteDB(t)
+	if err := db.UpsertFolderEntry(sqldb, "acc1", db.FilePathEntry{
+		FileID:   "200",
+		Path:     "Service/movie",
+		FileName: "movie",
+		ParentID: "100",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := &Monitor{sqliteDB: sqldb}
+	cfg := model.LifeMonitorSettings{PathMappings: []model.MonitorPathMapping{
+		{Account: "acc1", CloudPath: "Service", LocalPath: "/app/data/strm/Service"},
+	}}
+	got := m.resolveCloudDirPathByParentIDChecked(
+		context.Background(), "acc1", "200", cfg,
+		fakeDirResolver{cids: map[string]int64{"Service/movie": 200}}, true,
+	)
+	if got != "Service/movie" {
+		t.Fatalf("verified cache should be accepted, got %q", got)
+	}
+}
+
+func TestResolveCloudDirPathByParentIDChecked_RejectsLocalPrefixPollution(t *testing.T) {
+	sqldb := newTestSqliteDB(t)
+	if err := db.UpsertFolderEntry(sqldb, "acc1", db.FilePathEntry{
+		FileID:   "200",
+		Path:     "app/data/strm/Service/movie/XXX2",
+		FileName: "XXX2",
+		ParentID: "100",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := &Monitor{sqliteDB: sqldb}
+	cfg := model.LifeMonitorSettings{PathMappings: []model.MonitorPathMapping{
+		{Account: "acc1", CloudPath: "Service", LocalPath: "/app/data/strm"},
+	}}
+	got := m.resolveCloudDirPathByParentIDChecked(
+		context.Background(), "acc1", "200", cfg, nil, false,
+	)
+	if got != "" {
+		t.Fatalf("path polluted by local root must be rejected, got %q", got)
+	}
+}
+
+func TestUpsertFolderCacheAfterMove_RefreshesTarget(t *testing.T) {
+	sqldb := newTestSqliteDB(t)
+	if err := db.UpsertFolderEntry(sqldb, "acc1", db.FilePathEntry{
+		FileID: "200", Path: "Service/movie/XXX2", FileName: "XXX2", ParentID: "100",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := &Monitor{sqliteDB: sqldb}
+	m.upsertFolderCacheAfterMove("acc1", "200", "Service/movie", "100")
+	entry, err := db.GetFolderEntry(sqldb, "acc1", "200")
+	if err != nil || entry == nil {
+		t.Fatalf("folder entry: %v", err)
+	}
+	if entry.Path != "Service/movie" {
+		t.Fatalf("target cache not refreshed: %q", entry.Path)
+	}
+}
+
+func TestLocalPathAllowed(t *testing.T) {
+	mappings := []model.MonitorPathMapping{
+		{Account: "acc1", CloudPath: "Service", LocalPath: "/app/data/strm/Service"},
+	}
+	if !localPathAllowed("/app/data/strm/Service/movie/a.strm", mappings, "acc1") {
+		t.Fatal("path under mapping root should be allowed")
+	}
+	if localPathAllowed("/app/data/strm/Other/a.strm", mappings, "acc1") {
+		t.Fatal("path outside mapping root must be rejected")
+	}
+}

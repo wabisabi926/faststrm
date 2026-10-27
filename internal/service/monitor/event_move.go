@@ -34,6 +34,10 @@ func (m *Monitor) handleMoveOutEvent(
 	config := m.settingsFn()
 
 	oldCloudPath := m.resolveOldCloudPathByFileID(account, event.FileID)
+	if oldCloudPath != "" && !plausibleCloudDirPath(oldCloudPath, config) {
+		logger.S().Warnf("[Monitor] 拒绝可疑旧路径缓存，改为 recreate: oldCloudPath=%q", oldCloudPath)
+		oldCloudPath = ""
+	}
 	oldLocalPath, _ := resolveOldLocalPath(oldCloudPath, config.PathMappings, account)
 
 	// DB 查不到旧路径时：在本地 Strm 目录中按文件名匹配查找
@@ -319,6 +323,126 @@ func (m *Monitor) findLocalStrmByFileName(account, fileName string, fileCategory
 	return ""
 }
 
+// upsertFolderCacheAfterMove folder move/rename 成功后显式刷新目标 cid 的缓存。
+// 仅靠 UpdateFolderPathPrefixBatch 在旧路径已污染/0 行命中时不会修复目标行，
+// 下一次事件还会继续拿到旧路径。
+func (m *Monitor) upsertFolderCacheAfterMove(account, fileID, cloudPath, parentID string) {
+	if m.sqliteDB == nil || strings.TrimSpace(fileID) == "" || fileID == "0" {
+		return
+	}
+	cp := normalizeCloudPath(cloudPath)
+	if cp == "" {
+		return
+	}
+	if parentID == "" {
+		parentID = "0"
+	}
+	if err := db.UpsertFolderEntry(m.sqliteDB, account, db.FilePathEntry{
+		FileID:     fileID,
+		Path:       cp,
+		FileName:   filepath.Base(cp),
+		ParentID:   parentID,
+		UpdateTime: time.Now().Unix(),
+	}); err != nil {
+		logger.S().Warnf("[Monitor] 刷新 folders 目标缓存失败 account=%s fid=%s path=%s: %v", account, fileID, cp, err)
+	}
+	m.invalidateFolderVerifyCache(account)
+}
+
+// localPathAllowed 判断路径是否落在账号的某个配置映射根内。
+// 用于 local_move 前阻断被污染到映射外的旧路径。
+func localPathAllowed(p string, mappings []model.MonitorPathMapping, account string) bool {
+	absPath, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	for _, mp := range mappings {
+		if strings.TrimSpace(mp.LocalPath) == "" {
+			continue
+		}
+		if strings.TrimSpace(mp.Account) != "" && !strings.EqualFold(strings.TrimSpace(mp.Account), strings.TrimSpace(account)) {
+			continue
+		}
+		root, rerr := filepath.Abs(mp.LocalPath)
+		if rerr != nil {
+			continue
+		}
+		rel, rerr := filepath.Rel(root, absPath)
+		if rerr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return true
+		}
+	}
+	return false
+}
+
+// recreateFolderAtTarget 旧本地目录缺失/不可信时，在正确目标位置递归重建。
+func (m *Monitor) recreateFolderAtTarget(
+	ctx context.Context,
+	account string,
+	event client115.LifeEventItem,
+	mapping *pathMapping,
+	cloudPath string,
+	lifeClient *client115.LifeClient,
+	action string,
+) error {
+	if mapping == nil {
+		return fmt.Errorf("recreate folder: mapping is nil")
+	}
+	if err := os.MkdirAll(mapping.localPath, 0o755); err != nil {
+		return fmt.Errorf("mkdir 失败: %w", err)
+	}
+	created := 0
+	var rerr error
+	if lifeClient != nil {
+		created, rerr = m.handleCreateFolderRecursive(ctx, account, mapping, lifeClient, event.FileID, cloudPath, 0)
+	} else {
+		rerr = fmt.Errorf("lifeClient 为空，无法重建文件夹")
+	}
+	m.upsertFolderCacheAfterMove(account, event.FileID, cloudPath, event.ParentID)
+	ok := rerr == nil
+	m.appendLog(ctx, account, action, ok, cloudPath, mapping.localPath,
+		fmt.Sprintf("%s：旧本地目录不可用，已在目标位置重建，生成 STRM %d 个", action, created))
+	if ok {
+		if action == "rename" {
+			m.notifyRename(ctx, account, cloudPath, "目录", mapping.localPath)
+		} else {
+			m.notifyMove(ctx, account, cloudPath, "目录", mapping.localPath)
+		}
+	}
+	return rerr
+}
+
+// recreateFileAtTarget 旧 STRM/旧本地目录缺失时，在正确目标位置重建单个文件。
+func (m *Monitor) recreateFileAtTarget(
+	ctx context.Context,
+	account string,
+	event client115.LifeEventItem,
+	mapping *pathMapping,
+	cloudPath string,
+	lifeClient *client115.LifeClient,
+	action string,
+) error {
+	if mapping == nil {
+		return fmt.Errorf("recreate file: mapping is nil")
+	}
+	var err error
+	if lifeClient != nil {
+		err = m.handleCreateEvent(ctx, account, event, mapping, cloudPath, lifeClient, false)
+	} else {
+		err = fmt.Errorf("lifeClient 为空，无法重建文件")
+	}
+	if err == nil {
+		m.appendLog(ctx, account, action, true, cloudPath, mapping.localPath,
+			action+"：旧本地文件不可用，已在目标位置重建 STRM")
+		if action == "rename" {
+			m.notifyRename(ctx, account, cloudPath, "文件", mapping.localPath)
+		} else {
+			m.notifyMove(ctx, account, cloudPath, "文件", mapping.localPath)
+		}
+	}
+	return err
+}
+
 // resolveOldLocalPathByCloudPath 通过旧 cloudPath + 映射配置，计算旧的本地路径
 func resolveOldLocalPath(oldCloudPath string, mappings []model.MonitorPathMapping, account string) (oldLocalPath string, oldMapping *pathMapping) {
 	if oldCloudPath == "" {
@@ -474,11 +598,15 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		}
 
 		// ② local_move 模式 + DB 有旧路径：对齐 _move_local_media_assets L1768-1788
-		// a) 旧目录不存在 → 跳过（L1769-1774）
+		// a) 旧目录不存在 → 不能直接跳过：本地目录可能被手动删除，
+		//    应在正确目标位置递归重建，避免媒体库缺口。
 		if _, stErr := os.Stat(oldLocalPath); stErr != nil {
-			m.appendLog(ctx, account, "move", false, cloudPath, mapping.localPath,
-				fmt.Sprintf("跳过: 本地旧文件夹不存在 %s", oldLocalPath))
-			return nil
+			logger.S().Warnf("[Monitor] 文件夹move: 本地旧目录不存在，改为目标位置重建 old=%s target=%s", oldLocalPath, mapping.localPath)
+			return m.recreateFolderAtTarget(ctx, account, event, mapping, cloudPath, lifeClient, "move")
+		}
+		if !localPathAllowed(oldLocalPath, config.PathMappings, account) || !localPathAllowed(mapping.localPath, config.PathMappings, account) {
+			logger.S().Warnf("[Monitor] 文件夹move: 路径越出映射根，改为目标位置重建 old=%s target=%s", oldLocalPath, mapping.localPath)
+			return m.recreateFolderAtTarget(ctx, account, event, mapping, cloudPath, lifeClient, "move")
 		}
 		// b) 新目录已存在 → fallback 到 recreate（先清理旧STRM，再在新位置重新生成）
 		// 原因：115 可能先触发创建事件在目标位置生成STRM，再触发move事件，
@@ -526,12 +654,16 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 				logger.S().Infof("[Monitor] 文件夹move后DB路径前缀更新完成: %s→%s (%d条)",
 					oldCloudPath, cloudPath, n)
 			}
-			// P0-2: 同时更新 folders 表
-			if n, upErr := db.UpdateFolderPathPrefixBatch(m.sqliteDB, account, oldCloudPath, cloudPath); upErr == nil && n > 0 {
-				logger.S().Infof("[Monitor] folders表路径前缀更新: %s→%s (%d条)",
-					oldCloudPath, cloudPath, n)
+			// P0-2: 同时更新 folders 表；未命中说明旧前缀已不可信，必须显式刷新目标 cid。
+			if n, upErr := db.UpdateFolderPathPrefixBatch(m.sqliteDB, account, oldCloudPath, cloudPath); upErr != nil {
+				logger.S().Warnf("[Monitor] folders表路径前缀更新失败 %s→%s: %v", oldCloudPath, cloudPath, upErr)
+			} else if n == 0 {
+				logger.S().Warnf("[Monitor] folders表路径前缀更新未命中 %s→%s，强制刷新目标目录缓存", oldCloudPath, cloudPath)
+			} else {
+				logger.S().Infof("[Monitor] folders表路径前缀更新: %s→%s (%d条)", oldCloudPath, cloudPath, n)
 			}
 		}
+		m.upsertFolderCacheAfterMove(account, event.FileID, cloudPath, event.ParentID)
 		m.migrateManagedPaths(ctx, account, "move", oldLocalPath, mapping.localPath, oldCloudPath, cloudPath)
 		m.appendLog(ctx, account, "move", true, cloudPath, mapping.localPath,
 			fmt.Sprintf("文件夹已原子移动: %s → %s", oldLocalPath, mapping.localPath))
@@ -580,10 +712,9 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 				"DB 无旧路径,新 STRM 已存在,同步内容")
 			return nil
 		}
-		// !old_strm && !new_strm → 跳过（对齐 L1866-1871）
-		m.appendLog(ctx, account, "move", true, cloudPath, mapping.localPath,
-			"跳过: DB 无旧路径且新 STRM 不存在（源与目标均不存在）")
-		return nil
+		// !old_strm && !new_strm → 旧本地文件已丢失，按云端事件在目标位置重建。
+		logger.S().Warnf("[Monitor] 文件move: DB无旧路径且新 STRM 不存在，改为目标位置重建 cloudPath=%s target=%s", cloudPath, mapping.localPath)
+		return m.recreateFileAtTarget(ctx, account, event, mapping, cloudPath, lifeClient, "move")
 	}
 
 	// 计算旧 STRM 路径
@@ -611,6 +742,10 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 
 	// ① old_strm_exists && !new_strm_exists: rename + 内容重同步（对齐 L1811-1826）
 	if oldStrmExists && !newStrmExists {
+		if !localPathAllowed(oldStrmPath, config.PathMappings, account) || !localPathAllowed(newStrmPath, config.PathMappings, account) {
+			logger.S().Warnf("[Monitor] 文件move: STRM 路径越出映射根，改为目标位置重建 old=%s target=%s", oldStrmPath, newStrmPath)
+			return m.recreateFileAtTarget(ctx, account, event, mapping, cloudPath, lifeClient, "move")
+		}
 		if err := os.MkdirAll(newLocalDir, 0o755); err != nil {
 			return fmt.Errorf("创建父目录失败: %w", err)
 		}
@@ -767,8 +902,8 @@ func (m *Monitor) handleMoveEvent( //nolint:cyclop // complexity: 96
 		return nil
 	}
 
-	// ④ !old_strm_exists && !new_strm_exists: 跳过（对齐 L1866-1871: 源与目标均不存在）
-	m.appendLog(ctx, account, "move", true, cloudPath, mapping.localPath,
-		"跳过: 源与目标 STRM 均不存在")
-	return nil
+	// ④ !old_strm_exists && !new_strm_exists: 本地旧文件可能已被删除，
+	// 不能静默跳过，应按云端事件在目标位置重建。
+	logger.S().Warnf("[Monitor] 文件move: 源与目标 STRM 均不存在，改为目标位置重建 cloudPath=%s target=%s", cloudPath, mapping.localPath)
+	return m.recreateFileAtTarget(ctx, account, event, mapping, cloudPath, lifeClient, "move")
 }

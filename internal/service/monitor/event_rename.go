@@ -30,6 +30,10 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 ) error {
 	config := m.settingsFn()
 	oldCloudPath := m.resolveOldCloudPathByFileID(account, event.FileID)
+	if oldCloudPath != "" && !plausibleCloudDirPath(oldCloudPath, config) {
+		logger.S().Warnf("[Monitor] 拒绝可疑旧路径缓存，改为 recreate: oldCloudPath=%q", oldCloudPath)
+		oldCloudPath = ""
+	}
 	oldLocalPath, _ := resolveOldLocalPath(oldCloudPath, config.PathMappings, account)
 
 	// MoveMediaMode 决策（与 handleMoveEvent 对齐）：
@@ -85,12 +89,10 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 	// recreate 模式时前面已 cleanupOldStrmAssets 删旧目录，此处走 mkdir + 递归 recreate（对应参考项目 recreate 模式重建步骤）
 	if event.FileCategory == 0 {
 		if oldLocalPath == "" {
-			// ① DB无旧路径 → 跳过（对齐 L1179-1183）
-			logger.S().Warnf("[Monitor] 文件夹rename: DB无旧路径记录，跳过 fid=%s name=%s",
-				event.FileID, event.FileName)
-			m.appendLog(ctx, account, "rename", false, cloudPath, mapping.localPath,
-				"跳过: DB无旧文件夹路径记录")
-			return nil
+			// ① DB 无旧路径 → 不能直接跳过：可能在别的设备/手动移动过，
+			// 在正确目标位置递归重建。
+			logger.S().Warnf("[Monitor] 文件夹rename: DB无旧路径，改为目标位置重建 fid=%s name=%s", event.FileID, event.FileName)
+			return m.recreateFolderAtTarget(ctx, account, event, mapping, cloudPath, lifeClient, "rename")
 		}
 
 		// recreate 模式：前面已 cleanupOldStrmAssets 删旧目录，此处重建
@@ -112,18 +114,21 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 		}
 
 		// local_move 模式：对齐 L1185-1217 严格条件 + 失败直接返回错误
-		// ② 父目录不一致 → 跳过
+		// ② old_path 不存在 → 本地目录可能被删除，优先在目标位置重建
+		if _, stErr := os.Stat(oldLocalPath); stErr != nil {
+			logger.S().Warnf("[Monitor] 文件夹rename: 本地旧目录不存在，改为目标位置重建 old=%s target=%s", oldLocalPath, mapping.localPath)
+			return m.recreateFolderAtTarget(ctx, account, event, mapping, cloudPath, lifeClient, "rename")
+		}
+		// ③ 父目录不一致 → 跳过
 		if filepath.Dir(oldLocalPath) != filepath.Dir(mapping.localPath) {
 			m.appendLog(ctx, account, "rename", false, cloudPath, mapping.localPath,
 				fmt.Sprintf("跳过: 旧文件夹父目录与新文件夹不一致 old=%s new=%s",
 					filepath.Dir(oldLocalPath), filepath.Dir(mapping.localPath)))
 			return nil
 		}
-		// ③ old_path 不存在 → 跳过
-		if _, stErr := os.Stat(oldLocalPath); stErr != nil {
-			m.appendLog(ctx, account, "rename", false, cloudPath, mapping.localPath,
-				fmt.Sprintf("跳过: 本地旧文件夹不存在 %s", oldLocalPath))
-			return nil
+		if !localPathAllowed(oldLocalPath, config.PathMappings, account) || !localPathAllowed(mapping.localPath, config.PathMappings, account) {
+			logger.S().Warnf("[Monitor] 文件夹rename: 路径越出映射根，改为目标位置重建 old=%s target=%s", oldLocalPath, mapping.localPath)
+			return m.recreateFolderAtTarget(ctx, account, event, mapping, cloudPath, lifeClient, "rename")
 		}
 		// ④ new_path 已存在 → fallback 到 recreate（清理旧STRM + 重新生成）
 		if _, dstErr := os.Stat(mapping.localPath); dstErr == nil {
@@ -163,12 +168,16 @@ func (m *Monitor) handleRenameEvent( //nolint:cyclop // complexity: 90
 				logger.S().Infof("[Monitor] 文件夹rename后DB路径前缀更新完成: %s→%s (%d条)",
 					oldCloudPath, cloudPath, n)
 			}
-			// P0-2: 同时更新 folders 表
-			if n, upErr := db.UpdateFolderPathPrefixBatch(m.sqliteDB, account, oldCloudPath, cloudPath); upErr == nil && n > 0 {
-				logger.S().Infof("[Monitor] folders表路径前缀更新(rename): %s→%s (%d条)",
-					oldCloudPath, cloudPath, n)
+			// P0-2: 同时更新 folders 表；未命中说明旧前缀已不可信，必须显式刷新目标 cid。
+			if n, upErr := db.UpdateFolderPathPrefixBatch(m.sqliteDB, account, oldCloudPath, cloudPath); upErr != nil {
+				logger.S().Warnf("[Monitor] folders表路径前缀更新(rename)失败 %s→%s: %v", oldCloudPath, cloudPath, upErr)
+			} else if n == 0 {
+				logger.S().Warnf("[Monitor] folders表路径前缀更新(rename)未命中 %s→%s，强制刷新目标目录缓存", oldCloudPath, cloudPath)
+			} else {
+				logger.S().Infof("[Monitor] folders表路径前缀更新(rename): %s→%s (%d条)", oldCloudPath, cloudPath, n)
 			}
 		}
+		m.upsertFolderCacheAfterMove(account, event.FileID, cloudPath, event.ParentID)
 		m.migrateManagedPaths(ctx, account, "rename", oldLocalPath, mapping.localPath, oldCloudPath, cloudPath)
 		m.appendLog(ctx, account, "rename", true, cloudPath, mapping.localPath,
 			fmt.Sprintf("文件夹已原子重命名: %s → %s", oldLocalPath, mapping.localPath))

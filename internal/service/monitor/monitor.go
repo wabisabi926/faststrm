@@ -115,6 +115,11 @@ type Monitor struct {
 	// prefixCIDCache 映射云端前缀 → cid 缓存（P0-2 前缀反查用，避免每个事件都打 /files/getid）
 	prefixCIDMu    sync.Mutex
 	prefixCIDCache map[string]prefixCIDEntry
+
+	// folderVerifyCache 目录路径缓存校验结果：move/rename 事件不能盲信 folders 表，
+	// 必须用 API 确认 path 仍对应同一个 cid。正/负结果都短 TTL 缓存。
+	folderVerifyMu    sync.Mutex
+	folderVerifyCache map[string]folderVerifyEntry
 }
 
 // ==================== 构造函数 ====================

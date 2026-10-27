@@ -117,7 +117,7 @@ func (m *Monitor) processEvent(ctx context.Context, account string, event client
 	//   2.1 P0-1: parent_id → folders 表（对齐参考 `_get_path_by_cid(event["parent_id"])`）
 	//   2.2 P0-2: 映射云端前缀 → cid 比对，走 /files/getid，不依赖 /files/medialist
 	if strings.TrimSpace(rawCloudPath) == "" && strings.TrimSpace(event.FileName) != "" {
-		if dir := m.resolveCloudDirPathByParentID(account, event.ParentID); dir != "" {
+		if dir := m.resolveCloudDirPathByParentIDChecked(ctx, account, event.ParentID, config, lifeClient, isRenameOrMove); dir != "" {
 			// 事件文件名可含 '/'（115 允许），拼路径前结构转义，
 			// 与任务侧写入 files 表的转义路径保持一致，否则匹配不上
 			rawCloudPath = strmutil.JoinCloudPath(dir, event.FileName)
@@ -365,6 +365,10 @@ func (m *Monitor) resolveCloudPathFromDB(account string, event client115.LifeEve
 	//   - SINGLE_SEG 但 mapping 中存在 "该路径本身即为 CloudPrefix"（如 "电影"）→ 信任（new_folder type=17 常见）
 	//   - 否则 → 历史脏数据（旧版 parent_id=0 直写），丢弃后强制走 API
 	np := normalizeCloudPath(entry.Path)
+	if !plausibleCloudDirPath(np, config) {
+		logger.S().Warnf("[Monitor] 拒绝可疑 files 缓存: fileID=%s name=%s path=%q", event.FileID, event.FileName, entry.Path)
+		return "", srcDBRejected
+	}
 	trustDB := strings.Contains(np, "/")
 	if !trustDB {
 		for _, mm := range config.PathMappings {
@@ -398,11 +402,43 @@ type prefixCIDEntry struct {
 // prefixCIDNegativeTTL 反查失败结果的缓存时长，避免映射写错时每个事件都打接口
 const prefixCIDNegativeTTL = 5 * time.Minute
 
+// cloudDirCIDResolver 按云端路径反查 cid；*client115.LifeClient 实现。
+type cloudDirCIDResolver interface {
+	FsDirGetID(ctx context.Context, dirPath string) (int64, error)
+}
+
+// folderVerifyEntry 目录路径缓存校验结果。
+type folderVerifyEntry struct {
+	ok     bool
+	expire time.Time
+}
+
+const (
+	folderVerifyPositiveTTL = 10 * time.Minute
+	folderVerifyNegativeTTL = time.Minute
+)
+
 // resolveCloudDirPathByParentID P0-1：按事件 parent_id 反查 folders 表，取回父目录云路径。
 //
 // 对齐参考项目 `_get_path_by_cid(event["parent_id"])` 的第一级 FileDbHelper 缓存命中。
 // 事件的 parent_id 就是父目录自身的 cid，而 folders.file_id 存的正是该 cid。
+//
+// 兼容旧调用：不做 API 校验，仅供不涉及移动的旧测试/调用使用；生产路径应使用 Checked 版本。
 func (m *Monitor) resolveCloudDirPathByParentID(account, parentID string) string {
+	return m.resolveCloudDirPathByParentIDChecked(context.Background(), account, parentID,
+		model.LifeMonitorSettings{}, nil, false)
+}
+
+// resolveCloudDirPathByParentIDChecked 读取 folders 缓存并按需校验。
+// verify=true（move/rename）时，必须用 FsDirGetID(path) 确认 path 仍对应 parentID；
+// 不匹配或接口失败都返回空串，让调用方回退到 API 解析，绝不用可疑路径继续生成。
+func (m *Monitor) resolveCloudDirPathByParentIDChecked(
+	ctx context.Context,
+	account, parentID string,
+	config model.LifeMonitorSettings,
+	resolver cloudDirCIDResolver,
+	verify bool,
+) string {
 	parentID = strings.TrimSpace(parentID)
 	if m.sqliteDB == nil || parentID == "" || parentID == "0" {
 		return ""
@@ -412,11 +448,91 @@ func (m *Monitor) resolveCloudDirPathByParentID(account, parentID string) string
 		return ""
 	}
 	dir := normalizeCloudPath(entry.Path)
-	if dir == "" {
+	if dir == "" || !plausibleCloudDirPath(dir, config) {
+		if dir != "" {
+			logger.S().Warnf("[Monitor] 拒绝可疑 folders 缓存: account=%s parentID=%s path=%q", account, parentID, dir)
+		}
 		return ""
 	}
-	logger.S().Debugf("[Monitor] 路径父目录反查命中: parentID=%s → %s (src=%s)", parentID, dir, srcDBParent)
+	if !verify {
+		logger.S().Debugf("[Monitor] 路径父目录反查命中(未校验): parentID=%s → %s (src=%s)", parentID, dir, srcDBParent)
+		return dir
+	}
+	if resolver == nil {
+		logger.S().Warnf("[Monitor] move/rename 无法校验 folders 缓存（lifeClient 为空），拒绝路径: parentID=%s path=%q", parentID, dir)
+		return ""
+	}
+
+	key := account + "\x00" + parentID + "\x00" + dir
+	m.folderVerifyMu.Lock()
+	if e, ok := m.folderVerifyCache[key]; ok && time.Now().Before(e.expire) {
+		m.folderVerifyMu.Unlock()
+		if e.ok {
+			return dir
+		}
+		return ""
+	}
+	m.folderVerifyMu.Unlock()
+
+	cid, cerr := resolver.FsDirGetID(ctx, dir)
+	ok := cerr == nil && strconv.FormatInt(cid, 10) == parentID
+	ttl := folderVerifyNegativeTTL
+	if ok {
+		ttl = folderVerifyPositiveTTL
+	}
+	m.folderVerifyMu.Lock()
+	if m.folderVerifyCache == nil {
+		m.folderVerifyCache = make(map[string]folderVerifyEntry)
+	}
+	m.folderVerifyCache[key] = folderVerifyEntry{ok: ok, expire: time.Now().Add(ttl)}
+	m.folderVerifyMu.Unlock()
+
+	if !ok {
+		logger.S().Warnf("[Monitor] folders 缓存校验失败，拒绝旧路径: account=%s parentID=%s cachedPath=%q resolvedCID=%d err=%v",
+			account, parentID, dir, cid, cerr)
+		return ""
+	}
+	logger.S().Debugf("[Monitor] 路径父目录反查命中(已校验): parentID=%s → %s (src=%s)", parentID, dir, srcDBParent)
 	return dir
+}
+
+// plausibleCloudDirPath 便宜的本地路径污染检查：拒绝绝对本地路径、.. 段、
+// 以及直接包含配置本地映射根前缀的路径（这类值通常是本地路径被误写回云端缓存）。
+func plausibleCloudDirPath(p string, config model.LifeMonitorSettings) bool {
+	np := normalizeCloudPath(p)
+	if np == "" {
+		return false
+	}
+	for _, part := range strings.Split(np, "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	// Windows 盘符/UNC/本地绝对路径
+	if len(np) >= 2 && np[1] == ':' {
+		return false
+	}
+	if strings.HasPrefix(np, "//") {
+		return false
+	}
+	for _, mp := range config.PathMappings {
+		local := normalizeCloudPath(mp.LocalPath)
+		if local != "" && (np == local || strings.HasPrefix(np, local+"/")) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Monitor) invalidateFolderVerifyCache(account string) {
+	m.folderVerifyMu.Lock()
+	defer m.folderVerifyMu.Unlock()
+	prefix := account + "\x00"
+	for k := range m.folderVerifyCache {
+		if strings.HasPrefix(k, prefix) {
+			delete(m.folderVerifyCache, k)
+		}
+	}
 }
 
 // resolveCloudDirPathByMappingPrefix P0-2：用配置的映射云端前缀反查 cid，与事件 parent_id 比对。
